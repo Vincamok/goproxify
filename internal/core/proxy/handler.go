@@ -888,11 +888,12 @@ func applyRequestHeaderManipulation(req *http.Request, route *router.Route) {
 			req.Header.Del(name)
 		}
 	}
+	vars := middleware.GetRequestVars(req.Context())
 	for k, v := range hm.RequestSetHeader {
 		k = strings.TrimSpace(k)
 		if k == "" {
 			continue
 		}
-		req.Header.Set(k, v)
+		req.Header.Set(k, middleware.ExpandVars(v, vars))
 	}
 }

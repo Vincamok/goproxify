@@ -751,6 +751,42 @@ window.openProxyModal = async function(id, initialTab) {
             </div>
             <button class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="addSubFilterRow()">+ Règle</button>
           </div>
+
+          <!-- Variables de requête — map {} -->
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;">
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:4px;">Variables de requête — map {}</div>
+            <div style="font-size:11px;color:var(--text3);margin-bottom:10px;">Dérive des variables depuis les attributs de la requête (header, cookie, query, method, path, remote_ip). Utilisables dans <code>request_set_header</code> via <code>${"{"}nom{"}"}</code>.</div>
+            <div id="p-reqvars-list" style="display:flex;flex-direction:column;gap:6px;">
+              ${(cfg.request_vars||[]).map((v,i)=>`
+              <div class="p-rv-row" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:6px;">
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr 28px;gap:4px 6px;align-items:center;">
+                  <input class="input p-rv-name" placeholder="nom (ex: country)" style="font-size:12px;padding:4px 6px;" value="${esc(v.name||'')}">
+                  <select class="input p-rv-source" style="font-size:12px;padding:4px 6px;" onchange="toggleRvKey(this)">
+                    ${['header','cookie','query','method','remote_ip','path'].map(s=>`<option value="${s}" ${v.source===s?'selected':''}>${s}</option>`).join('')}
+                  </select>
+                  <input class="input p-rv-key" placeholder="clé header/cookie/query" style="font-size:12px;padding:4px 6px;display:${['header','cookie','query'].includes(v.source)?'':'none'};" value="${esc(v.key||'')}">
+                  <span></span>
+                  <button onclick="this.closest('.p-rv-row').remove()" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:15px;grid-column:4;grid-row:1;" title="Supprimer">✕</button>
+                </div>
+                <div style="font-size:10px;color:var(--text3);margin-bottom:2px;">Cas (pattern → valeur) :</div>
+                <div class="p-rv-cases" style="display:flex;flex-direction:column;gap:3px;">
+                  ${(v.cases||[]).map(c=>`
+                  <div class="p-rvc-row" style="display:grid;grid-template-columns:24px 1fr 1fr 28px;gap:3px 5px;align-items:center;">
+                    <input type="checkbox" class="p-rvc-regex" title="Regex" ${c.regex?'checked':''}>
+                    <input class="input p-rvc-pattern" placeholder="pattern" style="font-size:12px;padding:3px 5px;" value="${esc(c.pattern||'')}">
+                    <input class="input p-rvc-value" placeholder="valeur" style="font-size:12px;padding:3px 5px;" value="${esc(c.value||'')}">
+                    <button onclick="this.closest('.p-rvc-row').remove()" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:13px;" title="Supprimer">✕</button>
+                  </div>`).join('')}
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <button onclick="addRvCaseRow(this)" style="font-size:11px;" class="btn btn-sm">+ Cas</button>
+                  <span style="font-size:11px;color:var(--text3);">Défaut :</span>
+                  <input class="input p-rv-default" placeholder="valeur par défaut" style="font-size:12px;padding:3px 5px;flex:1;" value="${esc(v.default||'')}">
+                </div>
+              </div>`).join('')}
+            </div>
+            <button onclick="addReqVarRow()" style="margin-top:8px;font-size:11px;padding:3px 10px;" class="btn btn-sm">+ Variable</button>
+          </div>
         </div>
 
         <!-- Panel TLS (vide, fusionné dans Général) -->
@@ -941,6 +977,29 @@ window.openProxyModal = async function(id, initialTab) {
             </div>
             <div class="field" style="margin-top:10px;max-width:50%;"><label class="field-label" style="font-size:11px">Max body client (Mo)</label><input id="p-body-size" class="input" type="number" min="1" placeholder="100" value="${cfg.max_body_size ? Math.round(cfg.max_body_size/1048576) : ''}"></div>
           </div>
+          <!-- Cache avancé -->
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:4px;">Cache avancé — proxy_cache_valid</div>
+            <div style="font-size:11px;color:var(--text3);margin-bottom:10px;">Règles TTL par code HTTP. Si aucune règle n'est définie, le TTL ci-dessus (Cache-Control max-age) s'applique. Bypass : contourner le cache si un header ou cookie est présent.</div>
+            <div style="display:grid;grid-template-columns:1fr 140px 28px;gap:4px 6px;align-items:center;margin-bottom:4px;">
+              <span style="font-size:10px;color:var(--text3)">Codes HTTP (ex: 200 ou vide=tous)</span>
+              <span style="font-size:10px;color:var(--text3)">TTL (ex: 10m)</span>
+              <span></span>
+            </div>
+            <div id="p-cache-rules-list" style="display:flex;flex-direction:column;gap:4px;">
+              ${(cfg.cache?.valid_rules||[]).map((r,i)=>`
+              <div class="p-cache-rule-row" style="display:grid;grid-template-columns:1fr 140px 28px;gap:4px 6px;align-items:center;">
+                <input class="input p-cr-codes" style="font-size:12px;padding:4px 6px;" placeholder="200 404" value="${esc((r.status_codes||[]).join(' '))}">
+                <input class="input p-cr-ttl" style="font-size:12px;padding:4px 6px;" placeholder="1h" value="${esc(r.ttl||'')}">
+                <button onclick="this.closest('.p-cache-rule-row').remove()" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:15px;" title="Supprimer">✕</button>
+              </div>`).join('')}
+            </div>
+            <button onclick="addCacheRuleRow()" style="margin-top:8px;font-size:11px;padding:3px 10px;" class="btn btn-sm">+ Règle</button>
+            <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:10px;">
+              <div class="field" style="flex:1;min-width:180px;margin:0;"><label class="field-label" style="font-size:11px">Bypass si header présent (un par ligne)</label><textarea id="p-cache-bypass-headers" class="input" style="font-size:12px;min-height:48px;" placeholder="X-No-Cache">${esc((cfg.cache?.bypass_headers||[]).join('\n'))}</textarea></div>
+              <div class="field" style="flex:1;min-width:180px;margin:0;"><label class="field-label" style="font-size:11px">Bypass si cookie présent (un par ligne)</label><textarea id="p-cache-bypass-cookies" class="input" style="font-size:12px;min-height:48px;" placeholder="session">${esc((cfg.cache?.bypass_cookies||[]).join('\n'))}</textarea></div>
+            </div>
+          </div>
           <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
             <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:10px;">Timeouts backend (secondes)</div>
             <div class="form-row" style="gap:8px">
@@ -1113,6 +1172,18 @@ window.addLocationRow = function() {
   div.querySelector('.p-loc-path')?.focus();
 };
 
+window.addCacheRuleRow = function() {
+  const list = document.getElementById('p-cache-rules-list');
+  if (!list) return;
+  const div = document.createElement('div');
+  div.className = 'p-cache-rule-row';
+  div.style.cssText = 'display:grid;grid-template-columns:1fr 140px 28px;gap:4px 6px;align-items:center;';
+  div.innerHTML = `<input class="input p-cr-codes" style="font-size:12px;padding:4px 6px;" placeholder="200 404">
+    <input class="input p-cr-ttl" style="font-size:12px;padding:4px 6px;" placeholder="1h">
+    <button onclick="this.closest('.p-cache-rule-row').remove()" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:15px;" title="Supprimer">✕</button>`;
+  list.appendChild(div);
+};
+
 let subFilterCounter = 500;
 window.addSubFilterRow = function() {
   const list = document.getElementById('p-subfilters-list');
@@ -1127,6 +1198,52 @@ window.addSubFilterRow = function() {
     <button type="button" class="btn-icon" title="Supprimer" onclick="this.closest('.p-sf-row').remove()" style="opacity:.55;">×</button>`;
   list.appendChild(div);
   div.querySelector('.p-sf-from')?.focus();
+};
+
+window.toggleRvKey = function(sel) {
+  const row = sel.closest('.p-rv-row');
+  const keyInput = row?.querySelector('.p-rv-key');
+  if (!keyInput) return;
+  keyInput.style.display = ['header','cookie','query'].includes(sel.value) ? '' : 'none';
+};
+
+window.addRvCaseRow = function(btn) {
+  const caseList = btn.closest('.p-rv-row')?.querySelector('.p-rv-cases');
+  if (!caseList) return;
+  const div = document.createElement('div');
+  div.className = 'p-rvc-row';
+  div.style.cssText = 'display:grid;grid-template-columns:24px 1fr 1fr 28px;gap:3px 5px;align-items:center;';
+  div.innerHTML = `<input type="checkbox" class="p-rvc-regex" title="Regex">
+    <input class="input p-rvc-pattern" placeholder="pattern" style="font-size:12px;padding:3px 5px;">
+    <input class="input p-rvc-value" placeholder="valeur" style="font-size:12px;padding:3px 5px;">
+    <button onclick="this.closest('.p-rvc-row').remove()" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:13px;" title="Supprimer">✕</button>`;
+  caseList.appendChild(div);
+};
+
+window.addReqVarRow = function() {
+  const list = document.getElementById('p-reqvars-list');
+  if (!list) return;
+  const div = document.createElement('div');
+  div.className = 'p-rv-row';
+  div.style.cssText = 'background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:6px;';
+  div.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 28px;gap:4px 6px;align-items:center;">
+      <input class="input p-rv-name" placeholder="nom (ex: country)" style="font-size:12px;padding:4px 6px;">
+      <select class="input p-rv-source" style="font-size:12px;padding:4px 6px;" onchange="toggleRvKey(this)">
+        ${['header','cookie','query','method','remote_ip','path'].map(s=>`<option value="${s}">${s}</option>`).join('')}
+      </select>
+      <input class="input p-rv-key" placeholder="clé header/cookie/query" style="font-size:12px;padding:4px 6px;">
+      <button onclick="this.closest('.p-rv-row').remove()" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:15px;grid-column:4;grid-row:1;" title="Supprimer">✕</button>
+    </div>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:2px;">Cas (pattern → valeur) :</div>
+    <div class="p-rv-cases" style="display:flex;flex-direction:column;gap:3px;"></div>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <button onclick="addRvCaseRow(this)" style="font-size:11px;" class="btn btn-sm">+ Cas</button>
+      <span style="font-size:11px;color:var(--text3);">Défaut :</span>
+      <input class="input p-rv-default" placeholder="valeur par défaut" style="font-size:12px;padding:3px 5px;flex:1;">
+    </div>`;
+  list.appendChild(div);
+  div.querySelector('.p-rv-name')?.focus();
 };
 
 let cookieRewriteCounter = 400;
@@ -1359,6 +1476,28 @@ window.saveProxy = async function(id) {
     return entry;
   }).filter(Boolean);
 
+  // Request vars (map {})
+  const request_vars = Array.from(document.querySelectorAll('#p-reqvars-list .p-rv-row')).map(row => {
+    const name = row.querySelector('.p-rv-name')?.value.trim() || '';
+    if (!name) return null;
+    const source = row.querySelector('.p-rv-source')?.value || 'header';
+    const key = row.querySelector('.p-rv-key')?.value.trim() || '';
+    const def = row.querySelector('.p-rv-default')?.value || '';
+    const cases = Array.from(row.querySelectorAll('.p-rvc-row')).map(cr => {
+      const pattern = cr.querySelector('.p-rvc-pattern')?.value || '';
+      const value = cr.querySelector('.p-rvc-value')?.value || '';
+      if (!pattern) return null;
+      const c = { pattern, value };
+      if (cr.querySelector('.p-rvc-regex')?.checked) c.regex = true;
+      return c;
+    }).filter(Boolean);
+    const v = { name, source };
+    if (key) v.key = key;
+    if (def) v.default = def;
+    if (cases.length) v.cases = cases;
+    return v;
+  }).filter(Boolean);
+
   // limit_conn
   const limitConnMax = parseInt(document.getElementById('p-limit-conn')?.value || '0');
 
@@ -1459,6 +1598,23 @@ window.saveProxy = async function(id) {
     ...(gzipEnabled || gzipMin ? { compression_gzip: { enabled: gzipEnabled, min_length: gzipMin||undefined } } : {}),
   } : undefined;
 
+  // Cache avancé
+  const cacheRules = Array.from(document.querySelectorAll('#p-cache-rules-list .p-cache-rule-row')).map(row => {
+    const codesRaw = (row.querySelector('.p-cr-codes')?.value||'').trim();
+    const ttl = (row.querySelector('.p-cr-ttl')?.value||'').trim();
+    if (!ttl) return null;
+    const status_codes = codesRaw ? codesRaw.split(/\s+/).map(Number).filter(n=>n>0) : [];
+    return { status_codes, ttl };
+  }).filter(Boolean);
+  const cacheBypassHeaders = (document.getElementById('p-cache-bypass-headers')?.value||'').split('\n').map(s=>s.trim()).filter(Boolean);
+  const cacheBypassCookies = (document.getElementById('p-cache-bypass-cookies')?.value||'').split('\n').map(s=>s.trim()).filter(Boolean);
+  const cacheAdvanced = (cacheEnabled && (cacheRules.length || cacheBypassHeaders.length || cacheBypassCookies.length)) ? {
+    enabled: true,
+    valid_rules: cacheRules.length ? cacheRules : undefined,
+    bypass_headers: cacheBypassHeaders.length ? cacheBypassHeaders : undefined,
+    bypass_cookies: cacheBypassCookies.length ? cacheBypassCookies : undefined,
+  } : null;
+
   // Timeouts backend natifs (stockés en nanosecondes pour time.Duration Go)
   const connectTimeoutS = parseInt(document.getElementById('p-connect-timeout')?.value||'0');
   const responseTimeoutS = parseInt(document.getElementById('p-response-timeout')?.value||'0');
@@ -1557,6 +1713,8 @@ window.saveProxy = async function(id) {
     ...(cookie_paths.length ? { cookie_paths } : {}),
     ...(sub_filters.length ? { sub_filters } : {}),
     ...(limitConnMax > 0 ? { limit_conn: { max_per_ip: limitConnMax } } : {}),
+    ...(cacheAdvanced ? { cache: cacheAdvanced } : {}),
+    ...(request_vars.length ? { request_vars } : {}),
     ...(circuit_breaker ? { circuit_breaker } : {}),
     ...(retry_policy ? { retry_policy } : {}),
     ...(headers ? { headers } : {}),

@@ -724,7 +724,16 @@ func (s *Server) handlerForRoute(route *router.Route, locPath string) http.Handl
 	}
 
 	h := http.Handler(proxy.NewHandler(route, s.health, s.metrics, s.peers, s.log.Logger()))
-	if route.CachePath != "" {
+	if route.Cache != nil && route.Cache.Enabled {
+		dir := route.Cache.Dir
+		if dir == "" {
+			dir = route.CachePath
+		}
+		if dir == "" {
+			dir = "/tmp/goproxify-cache/" + route.ID
+		}
+		h = proxy.New(dir).MiddlewareWithConfig(route.Cache)(h)
+	} else if route.CachePath != "" {
 		h = proxy.New(route.CachePath).Middleware(h)
 	}
 	h = middleware.SSOAuth(route.SSO)(h)
@@ -749,6 +758,7 @@ func (s *Server) handlerForRoute(route *router.Route, locPath string) http.Handl
 	h = middleware.IPFilter(route.IPFilter)(h)
 	h = middleware.RateLimit(route.RateLimit)(h)
 	h = middleware.LimitConn(route.LimitConn)(h)
+	h = middleware.ResolveRequestVars(route.RequestVars)(h)
 	h = middleware.BotProtection(route.Bot)(h)
 	if route.WAF != nil && route.WAF.Enabled {
 		h = s.wafEngine.Middleware(route.WAF, h)

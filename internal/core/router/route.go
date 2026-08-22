@@ -51,6 +51,8 @@ type Route struct {
 
 	// Cache proxy sur disque (vide = désactivé)
 	CachePath string `json:"cache_path,omitempty"`
+	// Cache avancé : TTL par code, bypass, no-store (équivalent nginx proxy_cache_valid / proxy_cache_bypass).
+	Cache *CacheConfig `json:"cache,omitempty"`
 
 	// Timeouts vers le backend (0 = valeurs par défaut Go)
 	ConnectTimeout  time.Duration `json:"connect_timeout,omitempty"`  // TCP dial (nginx: proxy_connect_timeout)
@@ -83,6 +85,10 @@ type Route struct {
 	// venant du backend (équivalent nginx proxy_redirect).
 	// Chaque règle remplace la première correspondance ; les règles sont évaluées en ordre.
 	ProxyRedirects []ProxyRedirect `json:"proxy_redirects,omitempty"`
+
+	// RequestVars définit des variables dérivées de la requête (équivalent nginx map {}).
+	// Utilisables dans request_set_header via le template ${var_name}.
+	RequestVars []RequestVar `json:"request_vars,omitempty"`
 
 	// SubFilters réécrit le corps des réponses texte du backend
 	// (équivalent nginx sub_filter). Appliqué uniquement sur Content-Type text/* et application/json.
@@ -179,6 +185,48 @@ type LimitConnConfig struct {
 type IPFilterConfig struct {
 	Mode  string   `json:"mode"`   // allow | deny
 	CIDRs []string `json:"cidrs"`
+}
+
+// CacheConfig configure le cache proxy HTTP avancé par route.
+// Équivalent nginx proxy_cache_valid / proxy_cache_bypass.
+type CacheConfig struct {
+	Enabled bool `json:"enabled"`
+	// Dir est le répertoire de stockage (vide = valeur de CachePath si présent, sinon /tmp/goproxify-cache/<route-id>).
+	Dir string `json:"dir,omitempty"`
+	// ValidRules définit le TTL par code de statut (équivalent proxy_cache_valid 200 10m).
+	// Chaque règle s'applique si le code de la réponse est dans StatusCodes (vide = tous).
+	ValidRules []CacheValidRule `json:"valid_rules,omitempty"`
+	// BypassHeaders : si l'un de ces headers de requête est non-vide, le cache est ignoré (bypass + no-store).
+	BypassHeaders []string `json:"bypass_headers,omitempty"`
+	// BypassCookies : si l'un de ces cookies est présent, le cache est ignoré.
+	BypassCookies []string `json:"bypass_cookies,omitempty"`
+	// Methods : méthodes mises en cache (défaut : ["GET", "HEAD"]).
+	Methods []string `json:"methods,omitempty"`
+}
+
+// CacheValidRule associe un TTL à un ensemble de codes HTTP.
+// Équivalent nginx `proxy_cache_valid 200 302 10m`.
+type CacheValidRule struct {
+	// StatusCodes : codes HTTP concernés. Vide = tous (équivalent "any").
+	StatusCodes []int  `json:"status_codes,omitempty"`
+	TTL         string `json:"ttl"` // ex: "10m", "1h", "30s"
+}
+
+// RequestVar définit une variable dérivée de la requête (équivalent nginx map {}).
+// La variable est résolue à chaque requête et peut être injectée via request_set_header.
+type RequestVar struct {
+	Name    string           `json:"name"`             // nom de la variable (sans $)
+	Source  string           `json:"source"`           // header | cookie | query | method | remote_ip | path
+	Key     string           `json:"key,omitempty"`    // nom du header/cookie/query param (si source=header/cookie/query)
+	Default string           `json:"default,omitempty"` // valeur si aucun cas ne correspond
+	Cases   []RequestVarCase `json:"cases,omitempty"`
+}
+
+// RequestVarCase mappe un pattern à une valeur de variable.
+type RequestVarCase struct {
+	Pattern string `json:"pattern"`           // valeur ou regex à matcher
+	Value   string `json:"value"`             // valeur retournée si pattern correspond
+	Regex   bool   `json:"regex,omitempty"`   // interpréter Pattern comme regex
 }
 
 // SubFilter décrit une règle de remplacement dans le corps des réponses texte.

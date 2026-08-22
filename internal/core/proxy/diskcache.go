@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/vincamok/goproxify/internal/core/router"
 )
 
 // DiskCache est un cache proxy HTTP sur disque (RFC 7234 simplifié).
@@ -96,63 +98,144 @@ type responseRecorder struct {
 	buf     bytes.Buffer
 }
 
-func (rr *responseRecorder) Header() http.Header        { return rr.headers }
-func (rr *responseRecorder) WriteHeader(code int)       { rr.code = code }
+func (rr *responseRecorder) Header() http.Header         { return rr.headers }
+func (rr *responseRecorder) WriteHeader(code int)        { rr.code = code }
 func (rr *responseRecorder) Write(b []byte) (int, error) { return rr.buf.Write(b) }
 
-// Middleware applique le cache disque.
+// Middleware applique le cache disque (legacy : TTL depuis Cache-Control backend).
 func (dc *DiskCache) Middleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			next.ServeHTTP(w, r)
-			return
+	return dc.MiddlewareWithConfig(nil)(next)
+}
+
+// MiddlewareWithConfig applique le cache disque avec configuration avancée.
+func (dc *DiskCache) MiddlewareWithConfig(cfg *router.CacheConfig) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		allowedMethods := map[string]bool{"GET": true, "HEAD": true}
+		if cfg != nil && len(cfg.Methods) > 0 {
+			allowedMethods = make(map[string]bool, len(cfg.Methods))
+			for _, m := range cfg.Methods {
+				allowedMethods[strings.ToUpper(m)] = true
+			}
 		}
 
-		key := cacheKey(r)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !allowedMethods[r.Method] {
+				next.ServeHTTP(w, r)
+				return
+			}
 
-		if entry := dc.get(key); entry != nil {
-			for name, vals := range entry.Headers {
+			// Bypass : si un header ou cookie de bypass est présent et non vide
+			if cfg != nil && isBypass(r, cfg) {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			key := cacheKey(r)
+
+			if entry := dc.get(key); entry != nil {
+				for name, vals := range entry.Headers {
+					for _, v := range vals {
+						w.Header().Add(name, v)
+					}
+				}
+				w.Header().Set("X-Cache", "HIT")
+				w.WriteHeader(entry.Status)
+				w.Write(entry.Body) //nolint:errcheck
+				return
+			}
+
+			rec := &responseRecorder{
+				code:    http.StatusOK,
+				headers: make(http.Header),
+			}
+			next.ServeHTTP(rec, r)
+
+			w.Header().Set("X-Cache", "MISS")
+			for name, vals := range rec.headers {
 				for _, v := range vals {
 					w.Header().Add(name, v)
 				}
 			}
-			w.Header().Set("X-Cache", "HIT")
-			w.WriteHeader(entry.Status)
-			w.Write(entry.Body) //nolint:errcheck
-			return
-		}
+			w.WriteHeader(rec.code)
+			w.Write(rec.buf.Bytes()) //nolint:errcheck
 
-		rec := &responseRecorder{
-			code:    http.StatusOK,
-			headers: make(http.Header),
-		}
-		next.ServeHTTP(rec, r)
+			// Déterminer le TTL à appliquer
+			ttl := resolveTTL(rec.code, rec.headers, cfg)
+			if ttl <= 0 {
+				return
+			}
+			dc.set(key, &cacheEntry{
+				Status:  rec.code,
+				Headers: map[string][]string(rec.headers),
+				Body:    rec.buf.Bytes(),
+				Expires: time.Now().Add(ttl),
+			})
+		})
+	}
+}
 
-		w.Header().Set("X-Cache", "MISS")
-		for name, vals := range rec.headers {
-			for _, v := range vals {
-				w.Header().Add(name, v)
+// isBypass retourne vrai si la requête doit contourner le cache.
+func isBypass(r *http.Request, cfg *router.CacheConfig) bool {
+	for _, h := range cfg.BypassHeaders {
+		if r.Header.Get(h) != "" {
+			return true
+		}
+	}
+	for _, name := range cfg.BypassCookies {
+		if _, err := r.Cookie(name); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// parseTTL convertit une string de durée humaine ("10m", "1h", "30s") en time.Duration.
+func parseTTL(s string) time.Duration {
+	d, err := time.ParseDuration(s)
+	if err == nil {
+		return d
+	}
+	// Accepter "10m30s" déjà géré par ParseDuration.
+	// Essayer un entier seul (secondes).
+	if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil && n > 0 {
+		return time.Duration(n) * time.Second
+	}
+	return 0
+}
+
+// resolveTTL détermine combien de temps mettre en cache la réponse.
+// Ordre de priorité : CacheConfig.ValidRules > Cache-Control backend.
+func resolveTTL(status int, headers http.Header, cfg *router.CacheConfig) time.Duration {
+	// CacheConfig rules (proxy_cache_valid)
+	if cfg != nil && len(cfg.ValidRules) > 0 {
+		for _, rule := range cfg.ValidRules {
+			if matchesRule(status, rule.StatusCodes) {
+				return parseTTL(rule.TTL)
 			}
 		}
-		w.WriteHeader(rec.code)
-		w.Write(rec.buf.Bytes()) //nolint:errcheck
+		// Si des règles sont définies mais aucune ne correspond, ne pas cacher.
+		return 0
+	}
 
-		// Stocker si cacheable
-		if rec.code == http.StatusOK {
-			cc := rec.headers.Get("Cache-Control")
-			if !strings.Contains(cc, "no-store") {
-				maxAge := parseMaxAge(cc)
-				if maxAge > 0 {
-					expires := time.Now().Add(time.Duration(maxAge) * time.Second)
-					entry := &cacheEntry{
-						Status:  rec.code,
-						Headers: map[string][]string(rec.headers),
-						Body:    rec.buf.Bytes(),
-						Expires: expires,
-					}
-					dc.set(key, entry)
-				}
-			}
+	// Fallback legacy : max-age du backend
+	cc := headers.Get("Cache-Control")
+	if strings.Contains(cc, "no-store") {
+		return 0
+	}
+	if maxAge := parseMaxAge(cc); maxAge > 0 {
+		return time.Duration(maxAge) * time.Second
+	}
+	return 0
+}
+
+func matchesRule(status int, codes []int) bool {
+	if len(codes) == 0 {
+		return true // "any"
+	}
+	for _, c := range codes {
+		if c == status {
+			return true
 		}
-	})
+	}
+	return false
 }
