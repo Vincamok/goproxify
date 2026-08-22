@@ -4,9 +4,14 @@
 package proxy
 
 import (
+	"errors"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -120,6 +125,40 @@ func (h *BackendHealth) Snapshot() map[string]string {
 		}
 	}
 	return out
+}
+
+// quarantineDuration retourne la durée de quarantaine adaptée au type d'erreur.
+// Les erreurs transitoires (connexion réinitialisée, EOF) obtiennent une courte
+// quarantaine de 2s afin de ne pas bloquer les rafraîchissements rapides ; les vraies
+// pannes (connexion refusée) obtiennent 15s.
+func quarantineDuration(err error) time.Duration {
+	if err == nil {
+		return 15 * time.Second
+	}
+	// Déballer *url.Error et *net.OpError
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		err = ue.Err
+	}
+	// Erreur réseau temporaire ou connexion réinitialisée/fermée par le pair
+	var ne *net.OpError
+	if errors.As(err, &ne) {
+		if ne.Temporary() {
+			return 2 * time.Second
+		}
+		if errors.Is(ne.Err, syscall.ECONNRESET) || errors.Is(ne.Err, syscall.EPIPE) {
+			return 2 * time.Second
+		}
+		// ECONNREFUSED → vraie panne
+		if errors.Is(ne.Err, syscall.ECONNREFUSED) {
+			return 15 * time.Second
+		}
+	}
+	// EOF / connexion fermée proprement côté serveur (keep-alive expiré)
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return 2 * time.Second
+	}
+	return 15 * time.Second
 }
 
 // StartChecks lance les health checks pour une liste d'URLs.
