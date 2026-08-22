@@ -12,6 +12,96 @@ import (
 	"time"
 )
 
+// TestYAMLRoundTrip vérifie que la conversion JSON→YAML→JSON préserve
+// fidèlement les valeurs à risque : URLs avec //, backslashes, PEM,
+// regex, filtres LDAP, bcrypt, valeurs YAML ambiguës (true/false/null/yes/no).
+func TestYAMLRoundTrip(t *testing.T) {
+	tricky := map[string]any{
+		// URLs avec double slash
+		"url":            "http://backend:8080",
+		"url_https":      "https://id.example.com/auth//callback",
+		"ldap_url":       "ldap://dc.corp.local:389",
+		"forward_url":    "http://authelia//api/verify",
+		// Backslashes dans des regex
+		"regex_simple":   `\d+`,
+		"regex_path":     `^\/api\/v\d+\/.*`,
+		"regex_named":    `(?P<version>\d+\.\d+)`,
+		"sub_filter_to":  `$1//new-path`,
+		// Filtre LDAP
+		"ldap_filter":    "(sAMAccountName=%s)",
+		"ldap_group":     "(&(objectClass=group)(member=%s))",
+		// bcrypt (contient $)
+		"bcrypt":         "$2b$10$abcdefghijklmnopqrstuvuABCDEFGHIJKLMNOPQRSTUVWXYZabc",
+		// Valeurs ambiguës YAML (doivent rester des strings)
+		"ambig_true":     "true",
+		"ambig_false":    "false",
+		"ambig_null":     "null",
+		"ambig_yes":      "yes",
+		"ambig_no":       "no",
+		"ambig_on":       "on",
+		"ambig_off":      "off",
+		"ambig_tilde":    "~",
+		"ambig_number":   "1.0",
+		"ambig_octal":    "0755",
+		// PEM avec newlines réels
+		"cert_pem": "-----BEGIN CERTIFICATE-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA\n-----END CERTIFICATE-----\n",
+		"key_pem":  "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY-----\n",
+		// Caractères spéciaux divers
+		"colon_in_val":   "host:port:extra",
+		"hash_in_val":    "value#with#hashes",
+		"bracket_val":    "[not-an-array]",
+		"brace_val":      "{not-a-map}",
+		"percent_val":    "100%",
+		"backslash_n":    `literal \n not newline`,
+		"double_quote":   `say "hello"`,
+		"single_quote":   "it's fine",
+	}
+
+	configJSON, err := json.Marshal(tricky)
+	if err != nil {
+		t.Fatal("marshal initial:", err)
+	}
+
+	dir := t.TempDir()
+	st := New(dir)
+	now := time.Now().UTC().Truncate(time.Second)
+	env := &Envelope{
+		SchemaVersion: SchemaVersionV1,
+		ID:            "round-trip-1",
+		Host:          "app.example.fr",
+		Enabled:       true,
+		UpdatedAt:     now,
+		Config:        json.RawMessage(configJSON),
+	}
+	if err := st.WriteProd(env); err != nil {
+		t.Fatal("WriteProd:", err)
+	}
+
+	got, err := st.ReadProdByID("round-trip-1")
+	if err != nil {
+		t.Fatal("ReadProdByID:", err)
+	}
+
+	var gotMap map[string]any
+	if err := json.Unmarshal(got.Config, &gotMap); err != nil {
+		t.Fatal("unmarshal result:", err)
+	}
+
+	for k, want := range tricky {
+		gotVal, ok := gotMap[k]
+		if !ok {
+			t.Errorf("clé %q absente après round-trip", k)
+			continue
+		}
+		// Toutes les valeurs sont des strings ; json.Unmarshal les restitue en string.
+		if gotStr, ok := gotVal.(string); !ok {
+			t.Errorf("clé %q : type attendu string, obtenu %T (%v)", k, gotVal, gotVal)
+		} else if gotStr != want.(string) {
+			t.Errorf("clé %q :\n  want %q\n  got  %q", k, want, gotStr)
+		}
+	}
+}
+
 func sampleConfig(id, host string) json.RawMessage {
 	raw, _ := json.Marshal(map[string]any{
 		"id":   id,
