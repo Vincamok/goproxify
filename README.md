@@ -153,71 +153,31 @@ Pour générer un `JOIN_TOKEN` : Admin UI → Tokens → Créer → rôle `agent
 ```
 goproxify <commande> [options]
 
-Modes de service :
-  admin    Démarre l'Administration (Control Plane + Web UI)
+Commandes de service :
+  admin    Démarre l’Administration (Control Plane + Web UI)
   core     Démarre le Core (Data Plane — Reverse Proxy)
-  agent    Démarre l'Agent (Discovery Docker)
+  agent    Démarre l’Agent (Discovery Docker)
   landing  Démarre la landing page (optionnel)
 
-Commandes opérationnelles :
-  token      Gestion des tokens d'appairage Core/Agent
+Commandes opérationnelles (parlent à l’Admin via HTTP) :
+  token      Tokens d’appairage Core/Agent
   backup     Sauvegardes et restauration
-  import     Import de configurations (nginx, Traefik, Caddy, HAProxy…)
-  alert      Test des canaux d'alerte
+  import     Import nginx / Traefik / Caddy / HAProxy
+  alert      Test des canaux d’alerte
   status     État du cluster
-  access     GoProxify Access (config, catalogue, users, templates)
+  access     GoProxify Access (config, catalogue, users, templates, audit)
   nodes      Nœuds Infrastructure (list / accept / reject)
   declared   Nœuds déclarés wizard architecture
-  bootstrap  Tickets QR / curl|bash d'intégration
+  bootstrap  Tickets QR / curl|bash d’intégration d’hôtes
+  update     Mise à jour des images Docker (via Agent)
 
   version  Version du binaire
   help     Aide
 ```
 
-### Exemples
+Auth commune pour les commandes opérationnelles : `-admin-url` / `-token` ou variables `GPX_CONTROLPLANE_ADMIN_ENDPOINT` / `GPX_CONTROLPLANE_AUTH_TOKEN`.
 
-Les commandes opérationnelles (`token`, `backup`, `alert`, `import`, `status`, `access`, `nodes`, `declared`, `bootstrap`) parlent à l’Admin via HTTP. Auth : `-admin-url` / `-token`, ou `GPX_CONTROLPLANE_ADMIN_ENDPOINT` / `GPX_CONTROLPLANE_AUTH_TOKEN` (JWT session ou PAT).
-
-```bash
-# Tokens d'appairage Core/Agent
-goproxify token create -role core  -node "prod-1" -endpoint http://core:8000
-goproxify token create -role agent -node "app-2" -ttl 24h
-goproxify token list
-goproxify token revoke <token-id>
-
-# Sauvegardes (JSON .gpx-admin-backup / .gpx-core-backup)
-goproxify backup create
-goproxify backup create -target admin -output /var/backups/goproxify
-goproxify backup list
-goproxify backup restore -file backup-2026-07-15.gpx-admin-backup -yes
-
-# Import de configurations
-goproxify import -file nginx.conf -dry-run
-goproxify import -file traefik.yml -format traefik-yaml
-
-# Cache local du Core
-goproxify core cache show
-goproxify core cache refresh
-goproxify core cache clear
-
-# Test des canaux d'alerte
-goproxify alert test -channel <channel-id>
-goproxify alert test -all
-
-# État du cluster
-goproxify status
-
-# GoProxify Access
-goproxify access config get -core core-a
-goproxify access destinations list -core core-a
-goproxify access users list
-goproxify access templates list
-
-# Infrastructure / wizard
-goproxify nodes list
-goproxify declared list
-goproxify bootstrap create -host edge-1 -core-endpoint http://192.0.2.10:8000 -node-names core-edge -no-qr
-```
+Référence complète → **[docs/cli.md](docs/cli.md)**
 
 ---
 
@@ -324,6 +284,7 @@ Voir `.env.example` pour la liste complète.
 
 | Document | Description |
 |----------|-------------|
+| [CLI](docs/cli.md) | Référence complète de toutes les commandes et options |
 | [Architecture détaillée](docs/architecture.md) | Flux de données, décisions techniques |
 | [Délégation inter-Cores](docs/delegation.md) | Modes Passthrough vs Terminate, IP client, prérequis |
 | [Fonctionnalités](docs/fonctionnalites.md) | Catalogue des capacités produit |
