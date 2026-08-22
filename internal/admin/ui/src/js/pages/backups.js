@@ -34,12 +34,6 @@ const BK_TABS = [
     descKey: 'backups.tab.routing.desc',
     icon: '<circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 010 8.49"/><path d="M7.76 16.24a6 6 0 010-8.49"/><path d="M19.07 4.93a10 10 0 010 14.14"/><path d="M4.93 19.07a10 10 0 010-14.14"/>',
   },
-  {
-    id: 'history',
-    titleKey: 'backups.tab.history.title',
-    descKey: 'backups.tab.history.desc',
-    icon: '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/>',
-  },
 ];
 
 function bkNewSchedule(partial = {}) {
@@ -92,10 +86,8 @@ pages.backups = async function() {
   const content = document.getElementById('content');
   content.innerHTML = '<p style="color:var(--text2)">' + t('common.loading') + '</p>';
 
-  let activeTab = 'snapshots'; // snapshots | schedule | routing | history
-  let allProxies = null;
+  let activeTab = 'snapshots'; // snapshots | schedule | routing
   let draftSchedules = [];
-  let histProxyId = '';
 
   function setTopbar() {
     const actions = document.getElementById('topbar-actions');
@@ -161,16 +153,9 @@ pages.backups = async function() {
     let body = '';
     if (activeTab === 'snapshots') body = snapshotsTab(snaps, draftSchedules);
     else if (activeTab === 'schedule') body = scheduleTab(draftSchedules);
-    else if (activeTab === 'routing') body = routingTab();
-    else body = await historyTab();
+    else body = routingTab();
 
     content.innerHTML = `${navHtml()}<div id="bk-body">${body}</div>`;
-
-    if (activeTab === 'history' && histProxyId) {
-      const sel = document.getElementById('bk-hist-proxy');
-      if (sel) sel.value = histProxyId;
-      await window.bkLoadHistory(histProxyId);
-    }
   }
 
   window._bkTab = function(tab) {
@@ -248,12 +233,16 @@ pages.backups = async function() {
           <td style="color:var(--text2);font-size:12px">${esc(plan)}</td>
           <td style="color:var(--text2);white-space:nowrap">${fmtBytes(s.size_bytes)}</td>
           <td style="font-size:12px;white-space:nowrap">${fmtDate(s.created_at)}</td>
-          <td style="display:flex;gap:4px;justify-content:flex-end">
-            <button class="btn btn-ghost btn-sm" onclick="bkDownload('${s.id}','${esc(fname)}')" title="${t('common.download')}">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <td style="display:flex;gap:4px;justify-content:flex-end;align-items:center">
+            <button class="btn btn-ghost btn-icon" onclick="bkDownload('${s.id}','${esc(fname)}')" title="${t('common.download')}">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             </button>
-            <button class="btn btn-secondary btn-sm" onclick="restoreSnapshot('${s.id}','${esc(s.name)}')">${t('common.restore')}</button>
-            <button class="btn btn-danger btn-sm" onclick="deleteSnapshot('${s.id}','${esc(s.name)}')">${t('common.delete')}</button>
+            <button class="btn btn-ghost btn-icon" onclick="restoreSnapshot('${s.id}','${esc(s.name)}')" title="${t('common.restore')}" style="color:var(--accent)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+            </button>
+            <button class="btn btn-ghost btn-icon" onclick="deleteSnapshot('${s.id}','${esc(s.name)}')" title="${t('common.delete')}" style="color:var(--danger,#c44)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
+            </button>
           </td>
         </tr>`;
       }).join('')}</tbody>
@@ -316,8 +305,8 @@ pages.backups = async function() {
             <label>${t('common.name')}</label>
             <input class="input bk-name" value="${esc(sch.name)}" placeholder="${t('backups.schedule.name_ph')}">
           </div>
-          <button type="button" class="btn btn-ghost btn-sm" title="${t('common.delete')}" onclick="bkRemoveSchedule('${esc(sch.id)}')" style="margin-left:auto;color:var(--danger,#c44)">
-            ${t('common.delete')}
+          <button type="button" class="btn btn-ghost btn-icon" title="${t('common.delete')}" onclick="bkRemoveSchedule('${esc(sch.id)}')" style="margin-left:auto;color:var(--danger,#c44)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
           </button>
         </div>
 
@@ -435,58 +424,6 @@ pages.backups = async function() {
   window.bkDownloadCore = function() {
     const ts = new Date().toISOString().slice(0,10);
     authDownload('/api/v1/backups/core', `goproxify-routing-${ts}.gpx-core-backup`);
-  };
-
-  // ── Onglet Historique ─────────────────────────────────────────────────────
-  async function historyTab() {
-    if (!allProxies) allProxies = await api('GET', '/proxies').catch(() => []);
-    const proxyOpts = allProxies.map(p =>
-      `<option value="${esc(p.id)}" ${histProxyId===p.id?'selected':''}>${esc(p.name||p.id)}</option>`).join('');
-    return `
-      <div class="card blueprint">
-        <div class="card-kicker">${t('backups.kicker.versioning')}</div>
-        <div class="card-title">${t('backups.history.title')}</div>
-        <p style="color:var(--text2);font-size:13px;margin:12px 0 0;line-height:1.5;max-width:520px">
-          ${t('backups.history.desc')}
-        </p>
-        ${allProxies.length ? `
-          <div class="field" style="max-width:360px;margin:16px 0 0">
-            <label>${t('backups.history.proxy')}</label>
-            <select id="bk-hist-proxy" class="input" onchange="bkLoadHistory(this.value)">
-              <option value="">${t('backups.history.select_proxy')}</option>
-              ${proxyOpts}
-            </select>
-          </div>
-          <div id="bk-hist-body" style="margin-top:16px"></div>
-        ` : `<div class="empty"><p>${t('backups.history.no_proxies')}</p></div>`}
-      </div>`;
-  }
-
-  window.bkLoadHistory = async function(proxyId) {
-    histProxyId = proxyId || '';
-    const el = document.getElementById('bk-hist-body');
-    if (!el || !proxyId) {
-      if (el && !proxyId) el.innerHTML = '';
-      return;
-    }
-    el.innerHTML = '<p style="color:var(--text2);font-size:13px">' + t('common.loading') + '</p>';
-    const versions = await api('GET', `/backups/proxy-history/${proxyId}`).catch(() => []);
-    if (!versions.length) {
-      el.innerHTML = '<p style="color:var(--text2);font-size:13px;margin:0">' + t('backups.history.no_versions') + '</p>';
-      return;
-    }
-    const proxy = allProxies.find(p => p.id === proxyId);
-    const pName = proxy ? esc(proxy.name||proxy.id) : esc(proxyId);
-    el.innerHTML = `<div class="table-wrap"><table>
-      <thead><tr><th>${t('common.date')}</th><th>${t('common.note')}</th><th style="text-align:right"></th></tr></thead>
-      <tbody>${versions.map(v => `<tr>
-        <td style="font-size:12px;white-space:nowrap">${fmtDate(v.created_at)}</td>
-        <td style="color:var(--text2);font-size:12px">${esc(v.note||'—')}</td>
-        <td style="text-align:right">
-          <button class="btn btn-secondary btn-sm" onclick="restoreProxyVersion('${v.id}','${pName}','${fmtDate(v.created_at)}')">${t('common.restore')}</button>
-        </td>
-      </tr>`).join('')}</tbody>
-    </table></div>`;
   };
 
   await render();

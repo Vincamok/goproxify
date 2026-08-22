@@ -404,6 +404,7 @@ async function renderTraficPage(ctx) {
 
       const labelsBtn = `<button class="btn btn-ghost btn-icon" onclick="openDockerLabelsFromProxy('${esc(p.id)}')" title="${esc(t('trafic.docker_labels'))}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="8" width="20" height="10" rx="2"/><path d="M6 8V6h3v2M11 8V5h3v3M16 8V6h3v2"/></svg></button>`;
       const flowBtn = `<button class="btn btn-ghost btn-icon" onclick="openTrafficFlowModal('proxy','${esc(p.id)}')" title="${esc(t('trafic.flow_title'))}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><circle cx="6" cy="5" r="2"/><path d="M18 7v4a2 2 0 0 1-2 2H8a2 2 0 0 0-2 2v2"/></svg></button>`;
+      const histBtn = !isStr ? `<button class="btn btn-ghost btn-icon" onclick="openProxyHistoryModal('${esc(p.id)}','${esc(host)}')" title="${t('backups.history.title')||'Historique'}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg></button>` : '';
 
       const domainsHtml = allDomains.map((d, i) => domainLink(d, i === 0, hasTLS)).join('');
 
@@ -415,7 +416,7 @@ async function renderTraficPage(ctx) {
           <div class="trafic-tile-actions">
             <button class="btn btn-ghost btn-icon" onclick="logsFilters.domain='${esc(host)}';navigate('logs')" title="${esc(t('trafic.access_logs'))}"><svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 8h10M7 12h10M7 16h6"/></svg></button>
             <button class="btn btn-ghost btn-icon" onclick="openPrismForProxy('${esc(host)}','${esc(p.node_id||p.core_id||'')}')" title="Prism"><svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 20V10M12 20V4M6 20v-6"/></svg></button>
-            ${flowBtn}${labelsBtn}${secBtn}${editBtn}${delBtn}
+            ${histBtn}${flowBtn}${labelsBtn}${secBtn}${editBtn}${delBtn}
           </div>
         </div>
         <div style="min-width:0;margin-bottom:7px">${domainsHtml}${chips?`<div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:3px">${chips}</div>`:''}</div>
@@ -457,6 +458,7 @@ async function renderTraficPage(ctx) {
 
       const labelsBtn = `<button class="btn btn-ghost btn-icon" onclick="openDockerLabelsFromProxy('${esc(p.id)}')" title="${esc(t('trafic.docker_labels'))}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="8" width="20" height="10" rx="2"/><path d="M6 8V6h3v2M11 8V5h3v3M16 8V6h3v2"/></svg></button>`;
       const flowBtn = `<button class="btn btn-ghost btn-icon" onclick="openTrafficFlowModal('proxy','${esc(p.id)}')" title="${esc(t('trafic.flow_title'))}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><circle cx="6" cy="5" r="2"/><path d="M18 7v4a2 2 0 0 1-2 2H8a2 2 0 0 0-2 2v2"/></svg></button>`;
+      const histBtn2 = !isStr ? `<button class="btn btn-ghost btn-icon" onclick="openProxyHistoryModal('${esc(p.id)}','${esc(host)}')" title="${t('backups.history.title')||'Historique'}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg></button>` : '';
 
       const hostLink = `<a href="${hasTLS?'https':'http'}://${esc(host)}" target="_blank" rel="noopener noreferrer"
         onclick="event.stopPropagation()"
@@ -493,7 +495,7 @@ async function renderTraficPage(ctx) {
         <td style="padding:8px 10px;white-space:nowrap;text-align:right">
           <button class="btn btn-ghost btn-icon" onclick="logsFilters.domain='${esc(host)}';navigate('logs')" title="${esc(t('trafic.access_logs'))}"><svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 8h10M7 12h10M7 16h6"/></svg></button>
           <button class="btn btn-ghost btn-icon" onclick="openPrismForProxy('${esc(host)}','${esc(p.node_id||p.core_id||'')}')" title="Prism"><svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 20V10M12 20V4M6 20v-6"/></svg></button>
-          ${flowBtn}${labelsBtn}${secBtn}${editBtn}${delBtn}
+          ${histBtn2}${flowBtn}${labelsBtn}${secBtn}${editBtn}${delBtn}
         </td>
       </tr>`;
     }
@@ -1385,4 +1387,39 @@ window.openTrafficFlowModal = function(kind, ref) {
     `<button class="btn btn-primary" onclick="closeModal()">${t('common.close')}</button>`,
     true
   );
+};
+
+// ── Historique des versions d'un proxy ────────────────────────────────────
+window.openProxyHistoryModal = async function(proxyId, proxyName) {
+  modal(
+    `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:6px"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>${esc(proxyName)} — Historique`,
+    '<p style="color:var(--text2);font-size:13px">' + t('common.loading') + '</p>',
+    `<button class="btn btn-secondary" onclick="closeModal()">${t('common.close')}</button>`,
+    false
+  );
+  const body = document.querySelector('#modal-overlay .dialog-body');
+  if (!body) return;
+
+  const versions = await api('GET', `/backups/proxy-history/${proxyId}`).catch(() => []);
+  if (!versions.length) {
+    body.innerHTML = '<p style="color:var(--text2);font-size:13px;margin:0">' + t('backups.history.no_versions') + '</p>';
+    return;
+  }
+  const pName = esc(proxyName);
+  body.innerHTML = `<div class="table-wrap"><table>
+    <thead><tr>
+      <th>${t('common.date')}</th>
+      <th>${t('common.note')}</th>
+      <th style="text-align:right"></th>
+    </tr></thead>
+    <tbody>${versions.map(v => `<tr>
+      <td style="font-size:12px;white-space:nowrap">${fmtDate(v.created_at)}</td>
+      <td style="color:var(--text2);font-size:12px">${esc(v.note||'—')}</td>
+      <td style="text-align:right">
+        <button class="btn btn-ghost btn-icon" onclick="restoreProxyVersion('${esc(v.id)}','${pName}','${fmtDate(v.created_at)}')" title="${t('common.restore')}" style="color:var(--accent)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+        </button>
+      </td>
+    </tr>`).join('')}</tbody>
+  </table></div>`;
 };
