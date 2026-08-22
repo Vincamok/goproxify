@@ -2,6 +2,176 @@
 // Chargé avant pages/* (trafic.js dépend de openProxyModal, etc.).
 // Extrait de pages-all.js — phase 1 du plan split pages-all.
 
+// ── YAML lite engine ────────────────────────────────────────────────────────
+// Sérialiseur/parseur YAML minimal pour l'onglet "YAML brut" de la modale proxy.
+// Gère le sous-ensemble produit par le Go proxystore : strings, numbers,
+// booleans, null, arrays, objects imbriqués, block literals (|).
+const _yaml = (function () {
+  const AMBIGUOUS = /^(true|false|null|yes|no|on|off|~)$/i;
+  const LOOKS_NUM  = /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$|^0[xX][0-9a-fA-F]+$|^0[0-7]+$/;
+  const NEEDS_Q    = /^[:{}\[\]#&*!|>'"%@` ]|[ \t]$/;
+
+  function quoteStr(s) {
+    if (s.includes('\n')) {
+      const lines = s.split('\n');
+      if (lines[lines.length - 1] === '') lines.pop();
+      return { block: true, lines };
+    }
+    if (AMBIGUOUS.test(s) || LOOKS_NUM.test(s) || NEEDS_Q.test(s) || s === '')
+      return { q: '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"' };
+    return { q: s };
+  }
+
+  function ser(val, indent) {
+    const pad = ' '.repeat(indent);
+    if (val === null || val === undefined) return 'null';
+    if (typeof val === 'boolean') return String(val);
+    if (typeof val === 'number')  return String(val);
+    if (typeof val === 'string') {
+      const q = quoteStr(val);
+      if (q.block) return '|\n' + q.lines.map(l => pad + '  ' + l).join('\n') + '\n';
+      return q.q;
+    }
+    if (Array.isArray(val)) {
+      if (!val.length) return '[]';
+      if (val.every(v => v === null || typeof v !== 'object')) {
+        const inline = '[' + val.map(v => ser(v, 0)).join(', ') + ']';
+        if (inline.length <= 80) return inline;
+      }
+      return '\n' + val.map(v => {
+        if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+          const inner = ser(v, indent + 2).trimStart();
+          return pad + '- ' + inner;
+        }
+        return pad + '- ' + ser(v, indent + 2);
+      }).join('\n');
+    }
+    if (typeof val === 'object') {
+      const keys = Object.keys(val);
+      if (!keys.length) return '{}';
+      return '\n' + keys.map(k => {
+        const v = val[k];
+        if (v !== null && typeof v === 'object') return pad + k + ': ' + ser(v, indent + 2);
+        if (typeof v === 'string' && v.includes('\n')) return pad + k + ': ' + ser(v, indent);
+        return pad + k + ': ' + ser(v, indent + 2);
+      }).join('\n');
+    }
+    return String(val);
+  }
+
+  function dump(obj) {
+    if (typeof obj !== 'object' || !obj) return String(obj) + '\n';
+    return Object.keys(obj).map(k => {
+      const v = obj[k];
+      if (v !== null && typeof v === 'object') return k + ': ' + ser(v, 2);
+      if (typeof v === 'string' && v.includes('\n')) return k + ': ' + ser(v, 0);
+      return k + ': ' + ser(v, 2);
+    }).join('\n') + '\n';
+  }
+
+  // ── parseur ────────────────────────────────────────────────────────────────
+  function scalar(s) {
+    if (s === 'null' || s === '~') return null;
+    if (s === 'true'  || s === 'yes' || s === 'on')  return true;
+    if (s === 'false' || s === 'no'  || s === 'off') return false;
+    if (s.startsWith('"') && s.endsWith('"'))
+      return s.slice(1,-1).replace(/\\"/g,'"').replace(/\\\\/g,'\\');
+    if (s.startsWith("'") && s.endsWith("'")) return s.slice(1,-1).replace(/''/g,"'");
+    if ((s.startsWith('[') && s.endsWith(']')) || (s.startsWith('{') && s.endsWith('}')))
+      { try { return JSON.parse(s); } catch { return s; } }
+    const n = Number(s);
+    return (s !== '' && !isNaN(n)) ? n : s;
+  }
+
+  function nextNE(lines, from) {
+    let i = from; while (i < lines.length && !lines[i].trim()) i++; return i;
+  }
+
+  function parseBlock(lines, start, base) {
+    let i = nextNE(lines, start);
+    if (i >= lines.length) return { v: null, i };
+    const ind = lines[i].search(/\S/);
+    if (ind < base) return { v: null, i };
+    return lines[i].trimStart().startsWith('- ')
+      ? parseSeq(lines, i, ind) : parseMap(lines, i, ind);
+  }
+
+  function parseSeq(lines, start, ind) {
+    const arr = []; let i = start;
+    while (i < lines.length) {
+      const line = lines[i];
+      if (!line.trim()) { i++; continue; }
+      if (line.search(/\S/) < ind) break;
+      if (line.search(/\S/) > ind) { i++; continue; }
+      const c = line.trimStart();
+      if (!c.startsWith('- ') && c !== '-') break;
+      const item = c.startsWith('- ') ? c.slice(2) : '';
+      i++; // avancer dès maintenant — évite les boucles infinies
+      if (!item.trim()) {
+        const s = parseBlock(lines, i, ind+2); arr.push(s.v); i = s.i;
+      } else if (item.includes(': ')) {
+        // map débutant sur la ligne du tiret : inline k/v + lignes suivantes au même niveau
+        const obj = {};
+        const ci = item.indexOf(': ');
+        const k0 = item.slice(0, ci);
+        const v0 = item.slice(ci+2).trim();
+        obj[k0] = v0 === '' ? null : scalar(v0);
+        // lire les champs suivants au niveau ind+2
+        const rest = parseMap(lines, i, ind+2);
+        Object.assign(obj, rest.v);
+        arr.push(obj);
+        i = rest.i;
+      } else {
+        arr.push(scalar(item.trim()));
+      }
+    }
+    return { v: arr, i };
+  }
+
+  function parseMap(lines, start, ind) {
+    const obj = {}; let i = start;
+    while (i < lines.length) {
+      const raw = lines[i];
+      if (!raw.trim()) { i++; continue; }
+      const li = raw.search(/\S/);
+      if (li < ind) break;
+      if (li > ind) { i++; continue; }
+      const c = raw.trimStart();
+      const ci = c.indexOf(': ');
+      if (ci === -1 && !c.endsWith(':')) { i++; continue; }
+      const key = ci !== -1 ? c.slice(0, ci) : c.slice(0, -1);
+      const vs  = ci !== -1 ? c.slice(ci+2).trim() : '';
+      if (!vs || vs === '|') {
+        i++;
+        const ni = nextNE(lines, i);
+        if (vs === '|' || (ni < lines.length && lines[ni].trimStart() === '|')) {
+          const bl = parseLiteral(lines, vs==='|' ? i : ni+1, ind+2);
+          obj[key] = bl.v; i = bl.i;
+        } else {
+          const s = parseBlock(lines, i, ind+2); obj[key] = s.v; i = s.i;
+        }
+      } else { obj[key] = scalar(vs); i++; }
+    }
+    return { v: obj, i };
+  }
+
+  function parseLiteral(lines, start, bInd) {
+    const parts = []; let i = start;
+    while (i < lines.length) {
+      const l = lines[i];
+      if (!l.trim()) { parts.push(''); i++; continue; }
+      if (l.search(/\S/) < bInd) break;
+      parts.push(l.slice(bInd)); i++;
+    }
+    while (parts.length && !parts[parts.length-1]) parts.pop();
+    return { v: parts.join('\n') + '\n', i };
+  }
+
+  function parse(text) { return parseBlock(text.split('\n'), 0, 0).v; }
+
+  return { dump, parse };
+})();
+
 function tryJSON2(s) { if (!s || typeof s === 'object') return s||{}; try { return JSON.parse(s); } catch { return {}; } }
 
 const FWD_HEADER_OPTIONS = ['X-Real-IP', 'X-Forwarded-For', 'X-Forwarded-Proto', 'X-Forwarded-Host'];
@@ -512,6 +682,10 @@ window.openProxyModal = async function(id, initialTab) {
         <div data-tab="avance" onclick="switchProxyTab('avance')" style="display:flex;align-items:center;gap:9px;padding:9px 14px;cursor:pointer;font-size:12.5px;color:var(--text2);font-weight:400;border-left:2.5px solid transparent;border-right:2.5px solid transparent;">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
           Avancé
+        </div>
+        <div data-tab="yaml" onclick="switchProxyTab('yaml')" style="display:flex;align-items:center;gap:9px;padding:9px 14px;cursor:pointer;font-size:12.5px;color:var(--text2);font-weight:400;border-left:2.5px solid transparent;border-right:2.5px solid transparent;">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+          YAML
         </div>
       </div>
 
@@ -1047,6 +1221,27 @@ window.openProxyModal = async function(id, initialTab) {
         </div>
 
       </div><!-- end content area -->
+        <!-- Panel YAML brut -->
+        <div id="ptab-yaml" style="padding:16px 20px;display:none;flex-direction:column;gap:10px;height:100%;box-sizing:border-box;">
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div>
+              <div style="font-size:13px;font-weight:600;">Config YAML brute</div>
+              <div style="font-size:11px;color:var(--text3);margin-top:2px;">Édition directe — les autres onglets sont ignorés à la sauvegarde depuis cet onglet.</div>
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="window._refreshYamlTab()" title="Recharger depuis les autres onglets" style="display:flex;align-items:center;gap:5px;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></svg>
+              Sync
+            </button>
+          </div>
+          <div id="p-yaml-error" style="display:none;background:color-mix(in srgb,var(--error,#e53e3e) 10%,transparent);border:1px solid color-mix(in srgb,var(--error,#e53e3e) 30%,transparent);border-radius:6px;padding:8px 12px;font-size:12px;color:var(--error,#e53e3e);"></div>
+          <textarea id="p-yaml-editor"
+            spellcheck="false"
+            style="flex:1;min-height:340px;font-family:ui-monospace,'Fira Code',monospace;font-size:12.5px;line-height:1.6;resize:none;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px;color:var(--text);tab-size:2;outline:none;transition:border-color .15s;"
+            onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'"
+            oninput="document.getElementById('p-yaml-error').style.display='none'"
+            placeholder="# Config YAML du proxy&#10;host: app.example.fr&#10;backends:&#10;  - url: http://10.0.0.1:8080"></textarea>
+        </div>
+
     </div><!-- end flex container -->`;
 
   const footer = `
@@ -1115,7 +1310,7 @@ window.updateProxyForm = function() {
 };
 
 window.switchProxyTab = function(tab) {
-  ['general','entetes','auth','resilience','avance'].forEach(t => {
+  ['general','entetes','auth','resilience','avance','yaml'].forEach(t => {
     const panel = document.getElementById('ptab-' + t);
     if (panel) panel.style.display = t === tab ? 'flex' : 'none';
   });
@@ -1126,6 +1321,44 @@ window.switchProxyTab = function(tab) {
     el.style.background = active ? 'color-mix(in srgb,var(--accent) 8%,transparent)' : '';
     el.style.borderLeft = active ? '2.5px solid var(--accent)' : '2.5px solid transparent';
   });
+  if (tab === 'yaml') window._refreshYamlTab();
+};
+
+// Collecte la config depuis les autres onglets et l'affiche en YAML dans la textarea.
+window._refreshYamlTab = function() {
+  const ta = document.getElementById('p-yaml-editor');
+  if (!ta) return;
+  const cfg = window._collectProxyConfig();
+  if (!cfg) return;
+  try { ta.value = _yaml.dump(cfg); } catch(e) { ta.value = '# erreur: ' + e.message; }
+};
+
+// Collecte la config courante du formulaire sans déclencher la sauvegarde.
+// Réutilise la logique de saveProxy() — extrait dans une fonction partagée.
+window._collectProxyConfig = function() {
+  try {
+    const isHTTPS = document.getElementById('p-https')?.checked;
+    const type = isHTTPS ? 'https' : 'http';
+    const backends = [...document.querySelectorAll('.p-backend-row')].map(row => {
+      const url = row.querySelector('.p-backend-url')?.value.trim();
+      const weight = parseInt(row.querySelector('.p-backend-weight')?.value||'0')||0;
+      return url ? (weight > 0 ? { url, weight } : { url }) : null;
+    }).filter(Boolean);
+    const domainVals = [...document.querySelectorAll('.p-domain-val')].map(i=>i.value.trim()).filter(Boolean);
+    const host = domainVals[0] || '';
+    const aliases = domainVals.slice(1);
+    return {
+      type, host, ...(aliases.length ? { aliases } : {}),
+      tls_enabled: isHTTPS || false,
+      backends,
+      lb: document.getElementById('p-lb')?.value || 'round_robin',
+      // on inclut la config complète telle que connue
+      ...window._openProxyCfg,
+      // on écrase les champs édités dans le formulaire
+      type, host, ...(aliases.length ? { aliases } : { aliases: undefined }),
+      tls_enabled: isHTTPS || false, backends,
+    };
+  } catch { return window._openProxyCfg || {}; }
 };
 
 window.updateSSOForm = function() {
@@ -1390,6 +1623,38 @@ window._addErrorPageRow = function() {
 };
 
 window.saveProxy = async function(id) {
+  // ── Mode YAML brut : la textarea prime sur tous les autres onglets ──
+  const yamlPanel = document.getElementById('ptab-yaml');
+  const yamlActive = yamlPanel && yamlPanel.style.display !== 'none';
+  if (yamlActive) {
+    const ta = document.getElementById('p-yaml-editor');
+    const errEl = document.getElementById('p-yaml-error');
+    if (!ta) return;
+    let config;
+    try {
+      config = _yaml.parse(ta.value);
+      if (!config || typeof config !== 'object') throw new Error('La config doit être un objet YAML.');
+      if (!config.backends?.length) throw new Error('Au moins un backend est requis.');
+    } catch(e) {
+      if (errEl) { errEl.textContent = e.message; errEl.style.display = ''; }
+      return;
+    }
+    if (errEl) errEl.style.display = 'none';
+    const payload = { config, enabled: document.getElementById('p-enabled')?.checked !== false };
+    try {
+      if (id) {
+        await api('PUT', `/proxies/${encodeURIComponent(id)}`, payload);
+        toast('Proxy mis à jour', 'success');
+      } else {
+        await api('POST', '/proxies', payload);
+        toast('Proxy créé', 'success');
+      }
+      closeModal();
+      navigate(state.page);
+    } catch(e) { toast(e.message, 'error'); }
+    return;
+  }
+
   const isHTTPS = document.getElementById('p-https')?.checked;
   const type = isHTTPS ? 'https' : 'http';
   const isL4 = false;
