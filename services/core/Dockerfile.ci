@@ -1,0 +1,11 @@
+# Dockerfile CI — utilise le binaire pré-compilé par le step "compile" du pipeline.
+FROM scratch
+
+COPY dist/goproxify /goproxify
+COPY dist/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+# Config de production (pas internal/*/config.json = chemins de dev éphémères)
+COPY services/core/config.json /internal/core/config.json
+
+EXPOSE 80 443 443/udp 8000
+
+ENTRYPOINT ["/goproxify", "core"]

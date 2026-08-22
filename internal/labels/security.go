@@ -50,7 +50,7 @@ func ParseRateLimitParts(rpsLabel, burstLabel string) *router.RateLimitConfig {
 	return cfg
 }
 
-// ParseIPFilter interprète "allow:10.0.0.0/8,203.0.113.10/16" ou "deny:1.2.3.4/32".
+// ParseIPFilter interprète "allow:10.0.0.0/8,192.168.0.0/16" ou "deny:1.2.3.4/32".
 // Si plusieurs modes apparaissent (legacy allow:…,deny:…), le premier mode gagne
 // et seuls ses CIDR sont retenus.
 func ParseIPFilter(s string) *router.IPFilterConfig {

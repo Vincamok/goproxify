@@ -258,7 +258,7 @@ goproxify.tls: "true"
 
 # Sécurité (appliquée sur la route docker-host)
 goproxify.rate_limit: "100/s"                    # ou "100/s:50" (burst)
-goproxify.ip_filter: "allow:10.0.0.0/8,203.0.113.10/16"
+goproxify.ip_filter: "allow:10.0.0.0/8,192.168.0.0/16"
 goproxify.cors: "true"                           # ou origins CSV
 goproxify.geo_ip: "allow:FR,DE"                  # ou deny:CN,RU
 goproxify.snippets: "waf-default,headers-secure" # IDs snippets Admin

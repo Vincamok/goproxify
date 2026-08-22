@@ -25,6 +25,7 @@ func TestEnsure_SkipIfExists(t *testing.T) {
 }
 
 func TestEnsure_DownloadWhenMissing(t *testing.T) {
+	t.Setenv("GPX_GEOIP_ALLOW_PRIVATE", "true")
 	prev := openMMDB
 	openMMDB = func(string) error { return nil }
 	defer func() { openMMDB = prev }()
@@ -56,6 +57,7 @@ func TestEnsure_DownloadWhenMissing(t *testing.T) {
 }
 
 func TestEnsure_RejectTooSmall(t *testing.T) {
+	t.Setenv("GPX_GEOIP_ALLOW_PRIVATE", "true")
 	prev := openMMDB
 	openMMDB = func(string) error { return nil }
 	defer func() { openMMDB = prev }()

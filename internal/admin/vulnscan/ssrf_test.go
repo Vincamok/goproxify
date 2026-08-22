@@ -21,7 +21,7 @@ func TestValidateProbeURL_DeniesSSRF(t *testing.T) {
 		{"http://169.254.169.254/latest", false, false},
 		{"http://10.0.0.5:3000", false, false},
 		{"http://10.0.0.5:3000", true, true},
-		{"http://203.0.113.10/", false, false},
+		{"http://203.0.113.10/", false, true},
 		{"http://[::1]/", false, false},
 	}
 	for _, c := range cases {

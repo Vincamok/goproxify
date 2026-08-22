@@ -33,7 +33,7 @@ func TestParseRateLimit(t *testing.T) {
 }
 
 func TestParseIPFilter(t *testing.T) {
-	got := ParseIPFilter("allow:10.0.0.0/8,203.0.113.10/16")
+	got := ParseIPFilter("allow:10.0.0.0/8,192.168.0.0/16")
 	if got == nil || got.Mode != "allow" || len(got.CIDRs) != 2 {
 		t.Fatalf("got %#v", got)
 	}

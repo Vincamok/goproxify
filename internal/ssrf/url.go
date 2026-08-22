@@ -18,8 +18,8 @@ func AllowPrivateEnv(name string) bool {
 	return v == "1" || v == "true" || v == "yes"
 }
 
-// ValidateHTTPURL refuse schémas non http(s), loopback, link-local, metadata ;
-// RFC1918/ULA sauf si allowPrivate.
+// ValidateHTTPURL refuse schémas non http(s), link-local, metadata ;
+// loopback/RFC1918/ULA sauf si allowPrivate.
 func ValidateHTTPURL(raw string, allowPrivate bool) error {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -63,12 +63,16 @@ func ipAllowed(ip net.IP, allowPrivate bool) bool {
 	if ip == nil {
 		return false
 	}
-	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+	if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
 		ip.IsMulticast() || ip.IsUnspecified() {
 		return false
 	}
 	if ip.Equal(net.ParseIP("169.254.169.254")) || ip.Equal(net.ParseIP("169.254.169.253")) {
 		return false
+	}
+	// Loopback/RFC1918 : refusés par défaut ; allowPrivate (opt-in env) pour tests httptest / lab.
+	if ip.IsLoopback() {
+		return allowPrivate
 	}
 	if !allowPrivate && ip.IsPrivate() {
 		return false

@@ -209,7 +209,7 @@ window.openDockerLabelsModal = async function(opts = {}) {
                 </div>
                 <div class="field" style="margin:0">
                   <label class="field-label" style="font-size:11px">${t('dockerlbl.ipf_cidrs')}</label>
-                  <textarea id="lbl-ipf-cidrs" class="input" rows="3" placeholder="10.0.0.0/8&#10;203.0.113.10/16" oninput="genLabels()"></textarea>
+                  <textarea id="lbl-ipf-cidrs" class="input" rows="3" placeholder="10.0.0.0/8&#10;192.168.0.0/16" oninput="genLabels()"></textarea>
                   <div class="form-hint">${t('dockerlbl.ipf_hint')}</div>
                 </div>
               </div>

@@ -26,7 +26,7 @@ func TestNormalizeIP(t *testing.T) {
 }
 
 func TestIsPrivate(t *testing.T) {
-	priv := []string{"10.0.0.1", "172.17.0.2", "203.0.113.10", "127.0.0.1", "169.254.1.1", "100.64.0.1", "::1"}
+	priv := []string{"10.0.0.1", "172.17.0.2", "127.0.0.1", "169.254.1.1", "100.64.0.1", "::1"}
 	for _, ip := range priv {
 		if !isPrivate(ip) {
 			t.Errorf("isPrivate(%q)=false want true", ip)

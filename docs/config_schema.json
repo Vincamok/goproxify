@@ -17,7 +17,7 @@
         "name": "Réseau local uniquement (intégré)",
         "builtin": true,
         "rules": [
-          { "cidr": "203.0.113.10/16", "action": "allow" },
+          { "cidr": "192.168.0.0/16", "action": "allow" },
           { "cidr": "10.0.0.0/8",     "action": "allow" },
           { "cidr": "172.16.0.0/12",  "action": "allow" },
           { "cidr": "127.0.0.0/8",    "action": "allow" }

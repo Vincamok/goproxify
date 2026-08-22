@@ -23,7 +23,7 @@ const (
 	LabelRateLimit       = "goproxify.rate_limit"    // "100/s" ou "100/s:50"
 	LabelRateLimitRPS    = "goproxify.rate_limit.rps"   // alias générateur UI
 	LabelRateLimitBurst  = "goproxify.rate_limit.burst" // optionnel
-	LabelIPFilter        = "goproxify.ip_filter"     // "allow:10.0.0.0/8,203.0.113.10/16"
+	LabelIPFilter        = "goproxify.ip_filter"     // "allow:10.0.0.0/8,192.168.0.0/16"
 	LabelCORS            = "goproxify.cors"          // origins séparés par virgule (pas "true"/*)
 	LabelGeoIP           = "goproxify.geo_ip"        // "allow:FR,DE"
 	LabelSnippets        = "goproxify.snippets"      // IDs snippets Admin, CSV

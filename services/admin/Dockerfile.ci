@@ -1,0 +1,16 @@
+# Dockerfile CI — utilise le binaire pré-compilé par le step "compile" du pipeline.
+# Ne recompile pas Go (évite l'OOM du runner CI).
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates wget
+
+COPY dist/goproxify /goproxify
+# Config de production (pas internal/*/config.json = chemins de dev éphémères)
+COPY services/admin/config.json /internal/admin/config.json
+
+EXPOSE 9443
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD wget -qO- http://localhost:9443/api/v1/health || exit 1
+
+ENTRYPOINT ["/goproxify", "admin"]

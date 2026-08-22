@@ -1,0 +1,12 @@
+# Dockerfile CI — utilise le binaire pré-compilé par le step "compile" du pipeline.
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates
+
+COPY dist/goproxify /goproxify
+# Config de production (pas internal/*/config.json = chemins de dev)
+COPY services/agent/config.json /internal/agent/config.json
+
+EXPOSE 9191
+
+ENTRYPOINT ["/goproxify", "agent"]

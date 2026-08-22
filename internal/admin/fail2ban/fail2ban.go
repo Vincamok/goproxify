@@ -213,7 +213,7 @@ func isPrivateIP(ip string) bool {
 		return true
 	}
 	for _, cidr := range append([]string{
-		"10.0.0.0/8", "172.16.0.0/12", "203.0.113.10/16",
+		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
 		"127.0.0.0/8", "::1/128", "fc00::/7",
 	}, cloudflareRanges...) {
 		_, network, _ := net.ParseCIDR(cidr)
