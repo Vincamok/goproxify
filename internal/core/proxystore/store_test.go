@@ -40,17 +40,17 @@ func TestSanitizeHost(t *testing.T) {
 }
 
 func TestProdFilename(t *testing.T) {
-	if got := ProdFilename("app.example.fr", "uuid"); got != "app.example.fr.json" {
+	if got := ProdFilename("app.example.fr", "uuid"); got != "app.example.fr.yaml" {
 		t.Fatalf("got %q", got)
 	}
-	if got := ProdFilename("", "abc-123"); got != "tcp_abc-123.json" {
+	if got := ProdFilename("", "abc-123"); got != "tcp_abc-123.yaml" {
 		t.Fatalf("tcp got %q", got)
 	}
 }
 
 func TestRevisionFilename(t *testing.T) {
 	got := RevisionFilename("a1b2c3d4", "r7f3")
-	if got != "a1b2c3d4--r7f3.json" {
+	if got != "a1b2c3d4--r7f3.yaml" {
 		t.Fatalf("got %q", got)
 	}
 }
@@ -72,7 +72,7 @@ func TestWriteListReadProd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	path := filepath.Join(st.ProdDir(), "app.example.fr.json")
+	path := filepath.Join(st.ProdDir(), "app.example.fr.yaml")
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("fichier absent: %v", err)
 	}
