@@ -428,6 +428,56 @@ func marshalEnvelope(path string, env *Envelope) ([]byte, error) {
 	return data, nil
 }
 
+// MigrateResult is one JSON→YAML conversion outcome.
+type MigrateResult struct {
+	JSON string
+	YAML string
+	Err  error
+}
+
+// MigrateJSONToYAML converts every legacy .json envelope under ProdDir and
+// RevisionsDir into .yaml, then removes the .json source on success.
+// Already-present .yaml files are left untouched (JSON sibling is still removed
+// after a successful rewrite of the YAML from JSON content).
+func (s *Store) MigrateJSONToYAML() []MigrateResult {
+	var out []MigrateResult
+	for _, dir := range []string{s.ProdDir(), s.RevisionsDir()} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			out = append(out, MigrateResult{JSON: dir, Err: fmt.Errorf("proxystore: list %s: %w", dir, err)})
+			continue
+		}
+		for _, e := range entries {
+			name := e.Name()
+			if e.IsDir() || !strings.HasSuffix(name, ".json") {
+				continue
+			}
+			jsonPath := filepath.Join(dir, name)
+			yamlPath := strings.TrimSuffix(jsonPath, ".json") + ".yaml"
+			res := MigrateResult{JSON: jsonPath, YAML: yamlPath}
+			env, err := readEnvelope(jsonPath)
+			if err != nil {
+				res.Err = err
+				out = append(out, res)
+				continue
+			}
+			if err := atomicWriteJSON(yamlPath, env); err != nil {
+				res.Err = err
+				out = append(out, res)
+				continue
+			}
+			if err := os.Remove(jsonPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				res.Err = fmt.Errorf("proxystore: remove %s after migrate: %w", jsonPath, err)
+			}
+			out = append(out, res)
+		}
+	}
+	return out
+}
+
 func atomicWriteJSON(path string, env *Envelope) error {
 	data, err := marshalEnvelope(path, env)
 	if err != nil {

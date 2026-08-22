@@ -314,3 +314,48 @@ func TestRemoveProdIfHostChanged(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestMigrateJSONToYAML(t *testing.T) {
+	dir := t.TempDir()
+	st := New(dir)
+	if err := st.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	env := &Envelope{
+		SchemaVersion: SchemaVersionV1,
+		ID:            "mig-1",
+		Host:          "mig.example.fr",
+		Enabled:       true,
+		Status:        StatusProduction,
+		UpdatedAt:     now,
+		Config:        sampleConfig("mig-1", "mig.example.fr"),
+	}
+	jsonPath := filepath.Join(st.ProdDir(), "mig.example.fr.json")
+	data, err := json.MarshalIndent(env, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(jsonPath, append(data, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	results := st.MigrateJSONToYAML()
+	if len(results) != 1 {
+		t.Fatalf("results=%d want 1", len(results))
+	}
+	if results[0].Err != nil {
+		t.Fatalf("migrate: %v", results[0].Err)
+	}
+	if _, err := os.Stat(jsonPath); !os.IsNotExist(err) {
+		t.Fatal("json should be removed")
+	}
+	yamlPath := filepath.Join(st.ProdDir(), "mig.example.fr.yaml")
+	got, err := st.ReadProdFile(yamlPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != "mig-1" || got.Host != "mig.example.fr" {
+		t.Fatalf("got id=%q host=%q", got.ID, got.Host)
+	}
+}

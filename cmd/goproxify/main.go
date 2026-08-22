@@ -68,6 +68,8 @@ func main() {
 		runDeclared()
 	case "bootstrap":
 		runBootstrap()
+	case "migrate-yaml":
+		runMigrateYAML()
 	case "version":
 		fmt.Printf("goproxify\n")
 		fmt.Printf("  admin    %s\n", VersionAdmin)
@@ -109,7 +111,8 @@ Commandes d'administration (API Admin — -admin-url / -token) :
   access    GoProxify Access (config, catalogue, users, templates, audit)
   nodes     Nœuds Infrastructure (list / accept / reject pending)
   declared  Nœuds déclarés wizard architecture (list / create / delete)
-  bootstrap Tickets QR / curl|bash d'intégration d'hôtes
+  bootstrap     Tickets QR / curl|bash d'intégration d'hôtes
+  migrate-yaml  Convertit proxies/*.json → *.yaml (legacy)
 
   version  Affiche la version du binaire
   help     Affiche cette aide
