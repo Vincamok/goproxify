@@ -1220,7 +1220,6 @@ window.openProxyModal = async function(id, initialTab) {
           </div>
         </div>
 
-      </div><!-- end content area -->
         <!-- Panel YAML brut -->
         <div id="ptab-yaml" style="padding:16px 20px;display:none;flex-direction:column;gap:10px;height:100%;box-sizing:border-box;">
           <div style="display:flex;align-items:center;justify-content:space-between;">
@@ -1241,6 +1240,8 @@ window.openProxyModal = async function(id, initialTab) {
             oninput="document.getElementById('p-yaml-error').style.display='none'"
             placeholder="# Config YAML du proxy&#10;host: app.example.fr&#10;backends:&#10;  - url: http://10.0.0.1:8080"></textarea>
         </div>
+
+      </div><!-- end content area -->
 
     </div><!-- end flex container -->`;
 
