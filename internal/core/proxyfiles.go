@@ -38,7 +38,7 @@ func (s *Server) initProxyStore() {
 		"revisions", s.proxyStore.RevisionsDir())
 }
 
-// loadProductionProxies loads proxies/*.json into memory (wins over cache routes).
+// loadProductionProxies loads proxies/*.yaml into memory (wins over cache routes).
 func (s *Server) loadProductionProxies() {
 	if s.proxyStore == nil {
 		return

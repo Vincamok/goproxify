@@ -11,7 +11,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
+
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -77,12 +80,12 @@ func ProdFilename(host, id string) string {
 	if stem == "" {
 		stem = "tcp_" + sanitizeID(id)
 	}
-	return stem + ".json"
+	return stem + ".yaml"
 }
 
-// RevisionFilename returns the basename for a revision file: <id>--<rev>.json
+// RevisionFilename returns the basename for a revision file: <id>--<rev>.yaml
 func RevisionFilename(id, rev string) string {
-	return sanitizeID(id) + "--" + sanitizeID(rev) + ".json"
+	return sanitizeID(id) + "--" + sanitizeID(rev) + ".yaml"
 }
 
 func sanitizeID(id string) string {
@@ -255,10 +258,11 @@ func (s *Store) listDir(dir string, requireProdStatus bool) ([]*Envelope, error)
 	}
 	out := make([]*Envelope, 0, len(entries))
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+		name := e.Name()
+		if e.IsDir() || (!strings.HasSuffix(name, ".yaml") && !strings.HasSuffix(name, ".json")) {
 			continue
 		}
-		env, err := readEnvelope(filepath.Join(dir, e.Name()))
+		env, err := readEnvelope(filepath.Join(dir, name))
 		if err != nil {
 			return nil, err
 		}
@@ -270,19 +274,101 @@ func (s *Store) listDir(dir string, requireProdStatus bool) ([]*Envelope, error)
 	return out, nil
 }
 
+// readEnvelope reads a YAML envelope file. If the .yaml path does not exist
+// and the caller passed a .yaml path, it falls back to the equivalent .json
+// path to support legacy installations.
 func readEnvelope(path string) (*Envelope, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) && strings.HasSuffix(path, ".yaml") {
+			jsonPath := strings.TrimSuffix(path, ".yaml") + ".json"
+			data, err = os.ReadFile(jsonPath)
+			if err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					return nil, ErrNotFound
+				}
+				return nil, fmt.Errorf("proxystore: read %s: %w", jsonPath, err)
+			}
+			return parseEnvelopeJSON(jsonPath, data)
+		}
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("proxystore: read %s: %w", path, err)
 	}
+	if strings.HasSuffix(path, ".json") {
+		return parseEnvelopeJSON(path, data)
+	}
+	return parseEnvelopeYAML(path, data)
+}
+
+func parseEnvelopeJSON(path string, data []byte) (*Envelope, error) {
 	var env Envelope
 	if err := json.Unmarshal(data, &env); err != nil {
 		return nil, fmt.Errorf("proxystore: parse %s: %w", path, err)
 	}
 	return &env, nil
+}
+
+// envelopeYAML is the YAML-friendly representation of Envelope.
+// Config is stored as a raw YAML node and converted to/from json.RawMessage.
+type envelopeYAML struct {
+	SchemaVersion int            `yaml:"schema_version"`
+	ID            string         `yaml:"id"`
+	Revision      string         `yaml:"revision,omitempty"`
+	Host          string         `yaml:"host"`
+	Enabled       bool           `yaml:"enabled"`
+	Status        Status         `yaml:"status"`
+	CreatedAt     *timeWrapper   `yaml:"created_at,omitempty"`
+	UpdatedAt     timeWrapper    `yaml:"updated_at"`
+	CreatedBy     string         `yaml:"created_by,omitempty"`
+	DryRun        *DryRunResult  `yaml:"dry_run,omitempty"`
+	Config        yaml.Node      `yaml:"config"`
+}
+
+// timeWrapper lets time.Time round-trip through yaml as RFC3339.
+type timeWrapper struct{ T time.Time }
+
+func (tw timeWrapper) MarshalYAML() (any, error)  { return tw.T.UTC().Format(time.RFC3339Nano), nil }
+func (tw *timeWrapper) UnmarshalYAML(v *yaml.Node) error {
+	t, err := time.Parse(time.RFC3339Nano, v.Value)
+	if err != nil {
+		return err
+	}
+	tw.T = t
+	return nil
+}
+
+func parseEnvelopeYAML(path string, data []byte) (*Envelope, error) {
+	var y envelopeYAML
+	if err := yaml.Unmarshal(data, &y); err != nil {
+		return nil, fmt.Errorf("proxystore: parse %s: %w", path, err)
+	}
+	// Convert the config YAML node back to JSON so the rest of the app is unchanged.
+	var configAny any
+	if err := y.Config.Decode(&configAny); err != nil {
+		return nil, fmt.Errorf("proxystore: config decode %s: %w", path, err)
+	}
+	configJSON, err := json.Marshal(configAny)
+	if err != nil {
+		return nil, fmt.Errorf("proxystore: config marshal %s: %w", path, err)
+	}
+	env := &Envelope{
+		SchemaVersion: y.SchemaVersion,
+		ID:            y.ID,
+		Revision:      y.Revision,
+		Host:          y.Host,
+		Enabled:       y.Enabled,
+		Status:        y.Status,
+		UpdatedAt:     y.UpdatedAt.T,
+		CreatedBy:     y.CreatedBy,
+		DryRun:        y.DryRun,
+		Config:        json.RawMessage(configJSON),
+	}
+	if y.CreatedAt != nil {
+		env.CreatedAt = &y.CreatedAt.T
+	}
+	return env, nil
 }
 
 func removeFile(path string) error {
@@ -295,12 +381,51 @@ func removeFile(path string) error {
 	return nil
 }
 
-func atomicWriteJSON(path string, env *Envelope) error {
-	data, err := json.MarshalIndent(env, "", "  ")
-	if err != nil {
-		return fmt.Errorf("proxystore: marshal: %w", err)
+// marshalEnvelope serialises env as YAML (or JSON for legacy .json paths).
+func marshalEnvelope(path string, env *Envelope) ([]byte, error) {
+	if strings.HasSuffix(path, ".json") {
+		data, err := json.MarshalIndent(env, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("proxystore: marshal: %w", err)
+		}
+		return append(data, '\n'), nil
 	}
-	data = append(data, '\n')
+	// Convert Config (json.RawMessage) to a generic map so yaml.v3 can encode it.
+	var configAny any
+	if err := json.Unmarshal(env.Config, &configAny); err != nil {
+		return nil, fmt.Errorf("proxystore: config unmarshal: %w", err)
+	}
+	y := envelopeYAML{
+		SchemaVersion: env.SchemaVersion,
+		ID:            env.ID,
+		Revision:      env.Revision,
+		Host:          env.Host,
+		Enabled:       env.Enabled,
+		Status:        env.Status,
+		UpdatedAt:     timeWrapper{env.UpdatedAt},
+		CreatedBy:     env.CreatedBy,
+		DryRun:        env.DryRun,
+	}
+	if env.CreatedAt != nil {
+		tw := timeWrapper{*env.CreatedAt}
+		y.CreatedAt = &tw
+	}
+	// Encode configAny into y.Config YAML node.
+	if err := y.Config.Encode(configAny); err != nil {
+		return nil, fmt.Errorf("proxystore: config encode: %w", err)
+	}
+	data, err := yaml.Marshal(&y)
+	if err != nil {
+		return nil, fmt.Errorf("proxystore: marshal yaml: %w", err)
+	}
+	return data, nil
+}
+
+func atomicWriteJSON(path string, env *Envelope) error {
+	data, err := marshalEnvelope(path, env)
+	if err != nil {
+		return err
+	}
 
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
