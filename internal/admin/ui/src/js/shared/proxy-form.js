@@ -702,6 +702,33 @@ window.openProxyModal = async function(id, initialTab) {
             </div>
             <button class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="addRedirectRow()">+ Règle</button>
           </div>
+
+          <!-- Cookie Domain / Path rewrite -->
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;">
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:4px;">Cookies — proxy_cookie_domain / proxy_cookie_path</div>
+            <div style="font-size:11px;color:var(--text3);margin-bottom:10px;">Réécrit les attributs <code>Domain=</code> et <code>Path=</code> des <code>Set-Cookie</code> du backend.</div>
+            <div style="display:grid;grid-template-columns:60px 24px 1fr 1fr 28px;gap:4px 6px;align-items:center;margin-bottom:4px;">
+              <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);">Attribut</span>
+              <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);">Rx</span>
+              <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);">De</span>
+              <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);">Vers</span>
+              <span></span>
+            </div>
+            <div id="p-cookie-rewrites-list" style="display:flex;flex-direction:column;gap:4px;">
+              ${[...(cfg.cookie_domains||[]).map(r=>({...r,attr:'domain'})), ...(cfg.cookie_paths||[]).map(r=>({...r,attr:'path'}))].map((r,i)=>`
+              <div class="p-cookie-row" style="display:grid;grid-template-columns:60px 24px 1fr 1fr 28px;gap:4px 6px;align-items:center;">
+                <select class="input p-ck-attr" style="margin:0;font-size:11px;padding:3px 4px;">
+                  <option${r.attr==='domain'?' selected':''}>domain</option>
+                  <option${r.attr==='path'?' selected':''}>path</option>
+                </select>
+                <input type="checkbox" class="p-ck-regex" title="Regex" ${r.regex?'checked':''}>
+                <input class="input p-ck-from" placeholder="backend.internal" value="${esc(r.from||'')}" style="margin:0;font-family:monospace;font-size:12px;">
+                <input class="input p-ck-to" placeholder="app.example.fr" value="${esc(r.to||'')}" style="margin:0;font-family:monospace;font-size:12px;">
+                <button type="button" class="btn-icon" title="Supprimer" onclick="this.closest('.p-cookie-row').remove()" style="opacity:.55;">×</button>
+              </div>`).join('')}
+            </div>
+            <button class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="addCookieRewriteRow()">+ Règle</button>
+          </div>
         </div>
 
         <!-- Panel TLS (vide, fusionné dans Général) -->
@@ -1056,6 +1083,25 @@ window.addLocationRow = function() {
   div.querySelector('.p-loc-path')?.focus();
 };
 
+let cookieRewriteCounter = 400;
+window.addCookieRewriteRow = function() {
+  const list = document.getElementById('p-cookie-rewrites-list');
+  if (!list) return;
+  const div = document.createElement('div');
+  div.className = 'p-cookie-row';
+  div.style.cssText = 'display:grid;grid-template-columns:60px 24px 1fr 1fr 28px;gap:4px 6px;align-items:center;';
+  div.innerHTML = `
+    <select class="input p-ck-attr" style="margin:0;font-size:11px;padding:3px 4px;">
+      <option>domain</option><option>path</option>
+    </select>
+    <input type="checkbox" class="p-ck-regex" title="Regex">
+    <input class="input p-ck-from" placeholder="backend.internal" style="margin:0;font-family:monospace;font-size:12px;">
+    <input class="input p-ck-to" placeholder="app.example.fr" style="margin:0;font-family:monospace;font-size:12px;">
+    <button type="button" class="btn-icon" title="Supprimer" onclick="this.closest('.p-cookie-row').remove()" style="opacity:.55;">×</button>`;
+  list.appendChild(div);
+  div.querySelector('.p-ck-from')?.focus();
+};
+
 let redirectCounter = 300;
 window.addRedirectRow = function() {
   const i = redirectCounter++;
@@ -1257,6 +1303,18 @@ window.saveProxy = async function(id) {
     return entry;
   }).filter(Boolean);
 
+  // Cookie domain/path rewrites
+  const cookie_domains = [], cookie_paths = [];
+  document.querySelectorAll('#p-cookie-rewrites-list .p-cookie-row').forEach(row => {
+    const attr = row.querySelector('.p-ck-attr')?.value || 'domain';
+    const from = row.querySelector('.p-ck-from')?.value.trim() || '';
+    const to = row.querySelector('.p-ck-to')?.value.trim() || '';
+    if (!from || !to) return;
+    const entry = { from, to };
+    if (row.querySelector('.p-ck-regex')?.checked) entry.regex = true;
+    (attr === 'path' ? cookie_paths : cookie_domains).push(entry);
+  });
+
   // Proxy redirects
   const proxy_redirects = Array.from(document.querySelectorAll('#p-redirects-list .p-redirect-row')).map(row => {
     const from = row.querySelector('.p-rd-from')?.value.trim() || '';
@@ -1436,6 +1494,8 @@ window.saveProxy = async function(id) {
     ...(shadow ? { shadow } : {}),
     ...(conditions.length ? { conditions } : {}),
     ...(proxy_redirects.length ? { proxy_redirects } : {}),
+    ...(cookie_domains.length ? { cookie_domains } : {}),
+    ...(cookie_paths.length ? { cookie_paths } : {}),
     ...(circuit_breaker ? { circuit_breaker } : {}),
     ...(retry_policy ? { retry_policy } : {}),
     ...(headers ? { headers } : {}),

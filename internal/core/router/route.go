@@ -83,6 +83,14 @@ type Route struct {
 	// Chaque règle remplace la première correspondance ; les règles sont évaluées en ordre.
 	ProxyRedirects []ProxyRedirect `json:"proxy_redirects,omitempty"`
 
+	// CookieDomain remplace l'attribut Domain= dans les Set-Cookie du backend
+	// (équivalent nginx proxy_cookie_domain <backend_domain> <replace>).
+	// Slice de paires {From, To} ; vide = pas de réécriture.
+	CookieDomains []CookieRewrite `json:"cookie_domains,omitempty"`
+	// CookiePaths remplace l'attribut Path= dans les Set-Cookie du backend
+	// (équivalent nginx proxy_cookie_path <backend_path> <replace>).
+	CookiePaths []CookieRewrite `json:"cookie_paths,omitempty"`
+
 	// Observabilité par route
 	Logging    *RouteLoggingConfig `json:"logging,omitempty"`
 
@@ -160,6 +168,14 @@ type RateLimitConfig struct {
 type IPFilterConfig struct {
 	Mode  string   `json:"mode"`   // allow | deny
 	CIDRs []string `json:"cidrs"`
+}
+
+// CookieRewrite décrit une règle de remplacement d'attribut dans Set-Cookie.
+// Si Regex est vrai, From est une expression régulière (avec captures $1…).
+type CookieRewrite struct {
+	From  string `json:"from"`
+	To    string `json:"to"`
+	Regex bool   `json:"regex,omitempty"`
 }
 
 // ProxyRedirect décrit une règle de réécriture du header Location dans les

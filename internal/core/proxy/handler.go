@@ -558,6 +558,9 @@ func (h *Handler) reverseProxyFor(b *router.Backend, target *url.URL) *httputil.
 		Transport:  transport,
 		BufferPool: bufferPoolFor(h.route.BufferSize),
 		ModifyResponse: func(resp *http.Response) error {
+			if len(h.route.CookieDomains) > 0 || len(h.route.CookiePaths) > 0 {
+				rewriteSetCookieHeaders(resp, h.route.CookieDomains, h.route.CookiePaths)
+			}
 			if resp.StatusCode >= 300 && resp.StatusCode < 400 && len(h.route.ProxyRedirects) > 0 {
 				for _, hdr := range []string{"Location", "Refresh"} {
 					if v := resp.Header.Get(hdr); v != "" {
@@ -691,6 +694,87 @@ func scheme(r *http.Request) string {
 		return "https"
 	}
 	return "http"
+}
+
+// rewriteSetCookieHeaders réécrit les attributs Domain= et Path= dans tous les
+// headers Set-Cookie de la réponse selon les règles proxy_cookie_domain/path.
+func rewriteSetCookieHeaders(resp *http.Response, domainRules, pathRules []router.CookieRewrite) {
+	cookies := resp.Header["Set-Cookie"]
+	if len(cookies) == 0 {
+		return
+	}
+	changed := false
+	for i, raw := range cookies {
+		rewritten := rewriteCookieAttr(raw, "Domain", domainRules)
+		rewritten = rewriteCookieAttr(rewritten, "Path", pathRules)
+		if rewritten != raw {
+			cookies[i] = rewritten
+			changed = true
+		}
+	}
+	if changed {
+		resp.Header["Set-Cookie"] = cookies
+	}
+}
+
+// rewriteCookieAttr remplace la valeur d'un attribut nommé attr dans un Set-Cookie brut.
+func rewriteCookieAttr(raw, attr string, rules []router.CookieRewrite) string {
+	if len(rules) == 0 {
+		return raw
+	}
+	lower := strings.ToLower(raw)
+	needle := strings.ToLower(attr) + "="
+	idx := strings.Index(lower, "; "+needle)
+	if idx < 0 {
+		// peut être le premier attribut après le nom=valeur
+		idx = strings.Index(lower, needle)
+		if idx < 0 || idx == 0 {
+			// idx==0 serait "Domain=..." sans nom de cookie en tête — on ignore
+			return raw
+		}
+		// vérifier que c'est bien après un ";"
+		before := strings.TrimRight(lower[:idx], " ")
+		if !strings.HasSuffix(before, ";") {
+			return raw
+		}
+		idx-- // recule sur le ";"
+	}
+	// trouver la fin de la valeur de l'attribut
+	attrStart := idx + 2 + len(needle) // après "; Domain="
+	end := strings.IndexByte(raw[attrStart:], ';')
+	var attrVal string
+	if end < 0 {
+		attrVal = raw[attrStart:]
+	} else {
+		attrVal = raw[attrStart : attrStart+end]
+	}
+	newVal := applyCookieRewrites(attrVal, rules)
+	if newVal == attrVal {
+		return raw
+	}
+	if end < 0 {
+		return raw[:attrStart] + newVal
+	}
+	return raw[:attrStart] + newVal + raw[attrStart+end:]
+}
+
+func applyCookieRewrites(value string, rules []router.CookieRewrite) string {
+	for _, r := range rules {
+		if r.Regex {
+			re, err := regexp.Compile(r.From)
+			if err != nil {
+				continue
+			}
+			if re.MatchString(value) {
+				return re.ReplaceAllString(value, r.To)
+			}
+		} else {
+			if strings.EqualFold(value, r.From) {
+				return r.To
+			}
+		}
+	}
+	return value
 }
 
 // applyProxyRedirects réécrit une valeur de header Location/Refresh selon les règles
