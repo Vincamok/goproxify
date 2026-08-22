@@ -47,6 +47,7 @@ type proxyAttempt struct {
 	attempt      int
 	backend      string
 	failed       bool
+	err          error // erreur transport pour distinguer transitoire vs panne réelle
 }
 
 func NewHandler(route *router.Route, health *BackendHealth, metrics metricsScorer, peers *PeerRegistry, log *slog.Logger) *Handler {
@@ -337,7 +338,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		// Dernière chance d'écrire l'erreur : plus aucun candidat sain après celui-ci
 		writeOnError := !h.hasHealthyAfter(candidates, i)
-		ok, responded := h.do(w, r, backend, i, writeOnError)
+		ok, responded, transportErr := h.do(w, r, backend, i, writeOnError)
 		if ok {
 			h.health.MarkUp(backend.URL)
 			if h.route.StickyCookie != "" {
@@ -352,8 +353,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		// Échec dial/proxy : quarantaine pour que adaptive ne le re-sélectionne pas
-		h.health.MarkDown(backend.URL, 15*time.Second)
+		// Échec dial/proxy : quarantaine courte pour les erreurs transitoires (EOF, reset),
+		// longue pour les vraies pannes (connexion refusée).
+		h.health.MarkDown(backend.URL, quarantineDuration(transportErr))
 		if responded {
 			return
 		}
@@ -498,12 +500,12 @@ func (h *Handler) fireShadow(method, requestURI, host string, header http.Header
 	}
 }
 
-// do envoie la requête vers un backend. Retourne (succès, réponseÉcrite).
+// do envoie la requête vers un backend. Retourne (succès, réponseÉcrite, erreurTransport).
 // Si writeOnError est false, un échec transport n'écrit pas encore la page d'erreur (failover).
-func (h *Handler) do(w http.ResponseWriter, r *http.Request, b *router.Backend, attempt int, writeOnError bool) (ok bool, responded bool) {
+func (h *Handler) do(w http.ResponseWriter, r *http.Request, b *router.Backend, attempt int, writeOnError bool) (ok bool, responded bool, transportErr error) {
 	target, err := url.Parse(b.URL)
 	if err != nil {
-		return false, false
+		return false, false, err
 	}
 
 	// Limite la taille du corps si configurée (nginx: client_max_body_size)
@@ -516,9 +518,9 @@ func (h *Handler) do(w http.ResponseWriter, r *http.Request, b *router.Backend, 
 	rp := h.reverseProxyFor(b, target)
 	rp.ServeHTTP(w, r)
 	if att.failed {
-		return false, writeOnError // réponse écrite seulement si writeOnError
+		return false, writeOnError, att.err // réponse écrite seulement si writeOnError
 	}
-	return true, true
+	return true, true, nil
 }
 
 func (h *Handler) reverseProxyFor(b *router.Backend, target *url.URL) *httputil.ReverseProxy {
@@ -584,6 +586,7 @@ func (h *Handler) reverseProxyFor(b *router.Backend, target *url.URL) *httputil.
 			writeOnError := true
 			if att != nil {
 				att.failed = true
+				att.err = e
 				backend = att.backend
 				attempt = att.attempt
 				writeOnError = att.writeOnError
