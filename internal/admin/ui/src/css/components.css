@@ -450,7 +450,7 @@ td.mono{font-family:monospace;font-size:12px}
 .logs-desktop{display:block;min-width:0}
 .logs-mobile{display:none;min-width:0}
 .logs-cell-clip{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.logs-list{display:flex;flex-direction:column;min-width:0}
+.logs-list{flex-direction:column;min-width:0}
 .log-entry{
   display:flex;flex-direction:column;gap:4px;
   padding:10px 14px;border-bottom:1px solid var(--border);min-width:0;
