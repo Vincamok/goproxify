@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -20,22 +19,8 @@ import (
 	"github.com/vincamok/goproxify/internal/core/proxystore"
 )
 
-const (
-	ModeSQLite = "sqlite"
-	ModeFiles  = "files"
-)
-
-// StoreMode returns GPX_PROXY_STORE (sqlite|files). Default sqlite.
-func StoreMode() string {
-	m := strings.ToLower(strings.TrimSpace(os.Getenv("GPX_PROXY_STORE")))
-	if m == ModeFiles {
-		return ModeFiles
-	}
-	return ModeSQLite
-}
-
-// FilesEnabled is true when Admin should use Core file store.
-func FilesEnabled() bool { return StoreMode() == ModeFiles }
+// FilesEnabled is always true — YAML files are the only proxy store.
+func FilesEnabled() bool { return true }
 
 // Target is a Core control-plane endpoint + bearer token.
 type Target struct {

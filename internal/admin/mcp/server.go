@@ -605,20 +605,8 @@ func (h *Handler) toolCreateProxy(r *http.Request, args map[string]any) (any, er
 		return nil, err
 	}
 	actor := adminauth.ActorFromContext(r.Context())
-	if coreproxy.FilesEnabled() {
-		if err := h.publishToCores(r.Context(), id, host, true, cfgJSON, actor); err != nil {
-			return nil, err
-		}
-	} else {
-		_, err = h.DB.ExecContext(r.Context(),
-			`INSERT INTO proxies (id, name, enabled, config) VALUES (?, ?, 1, ?)`,
-			id, host, string(cfgJSON))
-		if err != nil {
-			return nil, err
-		}
-		if h.Pusher != nil {
-			go h.Pusher.PushRoutes(context.Background())
-		}
+	if err := h.publishToCores(r.Context(), id, host, true, cfgJSON, actor); err != nil {
+		return nil, err
 	}
 	_ = admindb.WriteAudit(h.DB, actor, "create", "proxy:"+id, host)
 	return map[string]any{"id": id, "host": host, "backend": backend, "type": rtype, "lb": lb}, nil
@@ -731,20 +719,8 @@ func (h *Handler) toolUpdateProxy(r *http.Request, args map[string]any) (any, er
 		return nil, err
 	}
 	actor := adminauth.ActorFromContext(r.Context())
-	if coreproxy.FilesEnabled() {
-		if err := h.publishToCores(r.Context(), id, name, enabled == 1, outJSON, actor); err != nil {
-			return nil, err
-		}
-	} else {
-		_, err = h.DB.ExecContext(r.Context(),
-			`UPDATE proxies SET name=?, config=?, enabled=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-			name, string(outJSON), enabled, id)
-		if err != nil {
-			return nil, err
-		}
-		if h.Pusher != nil {
-			go h.Pusher.PushRoutes(context.Background())
-		}
+	if err := h.publishToCores(r.Context(), id, name, enabled == 1, outJSON, actor); err != nil {
+		return nil, err
 	}
 	_ = admindb.WriteAudit(h.DB, actor, "update", "proxy:"+id, name)
 	return map[string]any{"id": id, "name": name, "enabled": enabled == 1, "config": cfg}, nil
@@ -761,23 +737,8 @@ func (h *Handler) toolSetProxyEnabled(r *http.Request, args map[string]any) (any
 		return nil, err
 	}
 	actor := adminauth.ActorFromContext(r.Context())
-	if coreproxy.FilesEnabled() {
-		if err := h.publishToCores(r.Context(), id, name, en, json.RawMessage(cfgJSON), actor); err != nil {
-			return nil, err
-		}
-	} else {
-		val := 0
-		if en {
-			val = 1
-		}
-		_, err = h.DB.ExecContext(r.Context(),
-			`UPDATE proxies SET enabled=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, val, id)
-		if err != nil {
-			return nil, err
-		}
-		if h.Pusher != nil {
-			go h.Pusher.PushRoutes(context.Background())
-		}
+	if err := h.publishToCores(r.Context(), id, name, en, json.RawMessage(cfgJSON), actor); err != nil {
+		return nil, err
 	}
 	action := "disable"
 	if en {
@@ -794,27 +755,13 @@ func (h *Handler) toolDeleteProxy(r *http.Request, id string) (any, error) {
 	}
 	id = env.ID
 	actor := adminauth.ActorFromContext(r.Context())
-	if coreproxy.FilesEnabled() {
-		targets, err := coreproxy.ListTargets(r.Context(), h.DB)
-		if err != nil || len(targets) == 0 {
-			return nil, fmt.Errorf("aucun Core joignable")
-		}
-		client := coreproxy.NewClient()
-		for _, t := range targets {
-			_ = client.Delete(r.Context(), t, id)
-		}
-	} else {
-		res, err := h.DB.ExecContext(r.Context(), `DELETE FROM proxies WHERE id=?`, id)
-		if err != nil {
-			return nil, err
-		}
-		n, _ := res.RowsAffected()
-		if n == 0 {
-			return nil, fmt.Errorf("proxy introuvable: %s", id)
-		}
-		if h.Pusher != nil {
-			go h.Pusher.DeleteRoute(context.Background(), id)
-		}
+	targets, err := coreproxy.ListTargets(r.Context(), h.DB)
+	if err != nil || len(targets) == 0 {
+		return nil, fmt.Errorf("aucun Core joignable")
+	}
+	client := coreproxy.NewClient()
+	for _, t := range targets {
+		_ = client.Delete(r.Context(), t, id)
 	}
 	_ = admindb.WriteAudit(h.DB, actor, "delete", "proxy:"+id, "")
 	return map[string]any{"deleted": id}, nil

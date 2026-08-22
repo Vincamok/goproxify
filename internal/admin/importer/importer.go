@@ -146,53 +146,27 @@ func Apply(db *sql.DB, b *Backup, sel ImportSelection) ImportResult {
 		if id == "" {
 			id = uuid.New().String()
 		}
-		enabled := 0
-		if p.Enabled {
-			enabled = 1
-		}
-		if coreproxy.FilesEnabled() {
-			var m map[string]any
-			_ = json.Unmarshal(cfg, &m)
-			m["id"] = id
-			cfgBytes, _ := json.Marshal(m)
-			targets, err := coreproxy.ListTargets(context.Background(), db)
-			if err != nil || len(targets) == 0 {
-				res.Errors++
-				continue
-			}
-			client := coreproxy.NewClient()
-			ok := false
-			for _, t := range targets {
-				if _, err := client.Publish(context.Background(), t, id, p.Name, p.Enabled, cfgBytes, "import"); err != nil {
-					continue
-				}
-				ok = true
-			}
-			if ok {
-				res.Proxies++
-			} else {
-				res.Errors++
-			}
+		var m map[string]any
+		_ = json.Unmarshal(cfg, &m)
+		m["id"] = id
+		cfgBytes, _ := json.Marshal(m)
+		targets, err := coreproxy.ListTargets(context.Background(), db)
+		if err != nil || len(targets) == 0 {
+			res.Errors++
 			continue
 		}
-		if overwrite {
-			_, err := db.Exec(
-				`INSERT OR REPLACE INTO proxies (id, name, config, enabled) VALUES (?,?,?,?)`,
-				id, p.Name, string(cfg), enabled)
-			if err == nil {
-				res.Proxies++
-			} else {
-				res.Errors++
+		client := coreproxy.NewClient()
+		ok := false
+		for _, t := range targets {
+			if _, err := client.Publish(context.Background(), t, id, p.Name, p.Enabled, cfgBytes, "import"); err != nil {
+				continue
 			}
+			ok = true
+		}
+		if ok {
+			res.Proxies++
 		} else {
-			_, err := db.Exec(
-				`INSERT OR IGNORE INTO proxies (id, name, config, enabled) VALUES (?,?,?,?)`,
-				id, p.Name, string(cfg), enabled)
-			if err == nil {
-				res.Proxies++
-			} else {
-				res.Skipped++
-			}
+			res.Errors++
 		}
 	}
 

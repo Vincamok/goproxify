@@ -15,7 +15,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/vincamok/goproxify/internal/admin/auth"
-	"github.com/vincamok/goproxify/internal/admin/coreproxy"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
 	"github.com/vincamok/goproxify/internal/core/router"
@@ -56,45 +55,19 @@ func (h *ProxiesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	useFiles := coreproxy.FilesEnabled()
-
 	switch {
 	case r.Method == http.MethodGet && id == "":
-		if useFiles {
-			h.listFiles(w, r)
-		} else {
-			h.list(w, r)
-		}
+		h.listFiles(w, r)
 	case r.Method == http.MethodPost && id == "":
-		if useFiles {
-			h.createFiles(w, r)
-		} else {
-			h.create(w, r)
-		}
+		h.createFiles(w, r)
 	case r.Method == http.MethodGet && id != "":
-		if useFiles {
-			h.getFiles(w, r, id)
-		} else {
-			h.get(w, r, id)
-		}
+		h.getFiles(w, r, id)
 	case r.Method == http.MethodPut && id != "":
-		if useFiles {
-			h.updateFiles(w, r, id)
-		} else {
-			h.update(w, r, id)
-		}
+		h.updateFiles(w, r, id)
 	case r.Method == http.MethodPatch && id != "":
-		if useFiles {
-			h.patchFiles(w, r, id)
-		} else {
-			h.patch(w, r, id)
-		}
+		h.patchFiles(w, r, id)
 	case r.Method == http.MethodDelete && id != "":
-		if useFiles {
-			h.deleteFiles(w, r, id)
-		} else {
-			h.delete(w, r, id)
-		}
+		h.deleteFiles(w, r, id)
 	default:
 		writeErr(w, r, http.StatusMethodNotAllowed, "api.err.method")
 	}

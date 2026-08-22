@@ -115,7 +115,7 @@ type proxyRow struct {
 	Config router.Route
 }
 
-// LoadProxies charge les proxies actifs (SQLite ou fichiers Core selon GPX_PROXY_STORE).
+// LoadProxies charge les proxies actifs depuis les fichiers YAML Core.
 func (s *Store) LoadProxies() []proxyRow {
 	envs, err := coreproxy.LoadEnabledEnvelopes(context.Background(), s.db)
 	if err != nil {

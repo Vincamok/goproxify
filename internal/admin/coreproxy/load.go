@@ -12,31 +12,26 @@ import (
 	"github.com/vincamok/goproxify/internal/core/router"
 )
 
-// LoadProductionEnvelopes loads unique production envelopes.
-// Mode files: from all Core targets. Mode sqlite: from Admin DB.
+// db is kept in signatures for API compatibility (e.g. listing Core targets from tokens table).
+
+// LoadProductionEnvelopes loads unique production envelopes from all Core targets.
 func LoadProductionEnvelopes(ctx context.Context, db *sql.DB) ([]*proxystore.Envelope, error) {
-	if FilesEnabled() {
-		return loadFromCores(ctx, db)
-	}
-	return loadFromSQLite(ctx, db, false)
+	return loadFromCores(ctx, db)
 }
 
 // LoadEnabledEnvelopes is like LoadProductionEnvelopes but only enabled=true.
 func LoadEnabledEnvelopes(ctx context.Context, db *sql.DB) ([]*proxystore.Envelope, error) {
-	if FilesEnabled() {
-		all, err := loadFromCores(ctx, db)
-		if err != nil {
-			return nil, err
-		}
-		out := make([]*proxystore.Envelope, 0, len(all))
-		for _, e := range all {
-			if e != nil && e.Enabled {
-				out = append(out, e)
-			}
-		}
-		return out, nil
+	all, err := loadFromCores(ctx, db)
+	if err != nil {
+		return nil, err
 	}
-	return loadFromSQLite(ctx, db, true)
+	out := make([]*proxystore.Envelope, 0, len(all))
+	for _, e := range all {
+		if e != nil && e.Enabled {
+			out = append(out, e)
+		}
+	}
+	return out, nil
 }
 
 // LoadEnabledRoutes parses enabled envelopes into router.Route.
@@ -84,41 +79,3 @@ func loadFromCores(ctx context.Context, db *sql.DB) ([]*proxystore.Envelope, err
 	return out, nil
 }
 
-func loadFromSQLite(ctx context.Context, db *sql.DB, enabledOnly bool) ([]*proxystore.Envelope, error) {
-	q := `SELECT id, name, config, enabled, created_at, updated_at FROM proxies`
-	if enabledOnly {
-		q += ` WHERE enabled=1`
-	}
-	q += ` ORDER BY name`
-	rows, err := db.QueryContext(ctx, q)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make([]*proxystore.Envelope, 0)
-	for rows.Next() {
-		var id, name, cfg string
-		var enabled int
-		var created, updated sql.NullTime
-		if rows.Scan(&id, &name, &cfg, &enabled, &created, &updated) != nil {
-			continue
-		}
-		env := &proxystore.Envelope{
-			SchemaVersion: proxystore.SchemaVersionV1,
-			ID:            id,
-			Host:          name,
-			Enabled:       enabled == 1,
-			Status:        proxystore.StatusProduction,
-			Config:        json.RawMessage(cfg),
-		}
-		if updated.Valid {
-			env.UpdatedAt = updated.Time
-		}
-		if created.Valid {
-			t := created.Time
-			env.CreatedAt = &t
-		}
-		out = append(out, env)
-	}
-	return out, nil
-}

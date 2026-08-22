@@ -13,7 +13,51 @@ import (
 	"testing"
 
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
+	"github.com/vincamok/goproxify/internal/core/proxystore"
 )
+
+// fakeCoreServer simule les endpoints /internal/v1/proxies du Core pour les tests MCP.
+func fakeCoreServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	store := make(map[string]*proxystore.Envelope)
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /internal/v1/proxies/revisions", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		id, _ := body["id"].(string)
+		env := &proxystore.Envelope{ID: id, Host: body["host"].(string), Revision: "r1", Status: "pending"}
+		if cfg, ok := body["config"].(map[string]any); ok {
+			env.Config, _ = json.Marshal(cfg)
+		}
+		store[id] = env
+		_ = json.NewEncoder(w).Encode(env)
+	})
+	mux.HandleFunc("POST /internal/v1/proxies/{id}/revisions/{rev}/dry-run", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		env := store[id]
+		env.DryRun = &proxystore.DryRunResult{OK: true}
+		_ = json.NewEncoder(w).Encode(env)
+	})
+	mux.HandleFunc("POST /internal/v1/proxies/{id}/revisions/{rev}/promote", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		env := store[id]
+		env.Status = proxystore.StatusProduction
+		env.Revision = ""
+		_ = json.NewEncoder(w).Encode(env)
+	})
+	mux.HandleFunc("GET /internal/v1/proxies", func(w http.ResponseWriter, r *http.Request) {
+		list := make([]*proxystore.Envelope, 0, len(store))
+		for _, e := range store {
+			list = append(list, e)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"production": list})
+	})
+	mux.HandleFunc("DELETE /internal/v1/proxies/{id}", func(w http.ResponseWriter, r *http.Request) {
+		delete(store, r.PathValue("id"))
+		w.WriteHeader(http.StatusNoContent)
+	})
+	return httptest.NewServer(mux)
+}
 
 func setupMCPDB(t *testing.T) *Handler {
 	t.Helper()
@@ -22,6 +66,13 @@ func setupMCPDB(t *testing.T) *Handler {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
+
+	// Injecter un faux Core dans la table tokens pour que ListTargets le trouve.
+	srv := fakeCoreServer(t)
+	t.Cleanup(srv.Close)
+	_, _ = db.Exec(`INSERT INTO tokens (id, node_name, role, token, node_endpoint, revoked)
+		VALUES ('tok-test','core-test','core','gpx_core_testtoken123',?,0)`, srv.URL)
+
 	return &Handler{DB: db, Log: slog.Default()}
 }
 

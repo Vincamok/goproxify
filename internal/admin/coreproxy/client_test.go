@@ -11,14 +11,9 @@ import (
 	"testing"
 )
 
-func TestStoreMode(t *testing.T) {
-	t.Setenv("GPX_PROXY_STORE", "")
-	if StoreMode() != ModeSQLite {
-		t.Fatal(StoreMode())
-	}
-	t.Setenv("GPX_PROXY_STORE", "files")
+func TestFilesEnabled(t *testing.T) {
 	if !FilesEnabled() {
-		t.Fatal("expected files")
+		t.Fatal("expected files mode always enabled")
 	}
 }
 

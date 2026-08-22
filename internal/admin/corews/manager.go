@@ -16,7 +16,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/vincamok/goproxify/internal/admin/api"
 	"github.com/vincamok/goproxify/internal/admin/auth"
-	"github.com/vincamok/goproxify/internal/admin/coreproxy"
 	"github.com/vincamok/goproxify/internal/admin/delegation"
 	"github.com/vincamok/goproxify/internal/admin/mailer"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
@@ -462,15 +461,12 @@ func (m *Manager) allEntries() []*coreEntry {
 // --- Interfaces compatibles corepush.Pusher ---
 
 // PushRoutes envoie les routes filtrées par RBAC à tous les Cores.
-// Bloque jusqu'à la fin des envois.
-// En mode GPX_PROXY_STORE=files, n'envoie pas les routes SQLite (fichiers Core = source de vérité) :
-// un push vide préserve agents + proxies fichiers côté Core.
+// Les proxies fichiers YAML sont la source de vérité côté Core — on ne pousse pas les routes ici.
 func (m *Manager) PushRoutes(ctx context.Context) {
-	if coreproxy.FilesEnabled() {
-		m.log.Info("corews/manager: PushRoutes mode fichiers — pas de push SQLite (évite d'écraser la table live)")
-		go m.PushGatewayPeers(ctx)
-		return
-	}
+	go m.PushGatewayPeers(ctx)
+}
+
+func (m *Manager) pushRoutesSQLite(ctx context.Context) {
 	allRoutes, err := m.loadRoutes(ctx)
 	if err != nil {
 		m.log.Error("corews/manager: lecture routes", "err", err)
@@ -945,31 +941,17 @@ func (m *Manager) PushAll(ctx context.Context, settings Settings) {
 
 // pushAllToEntry envoie la config complète à un Core spécifique.
 func (m *Manager) pushAllToEntry(ctx context.Context, e *coreEntry, s Settings) {
-	allRoutes, _ := m.loadRoutes(ctx)
-	if coreproxy.FilesEnabled() {
-		m.log.Info("corews/manager: full_sync mode fichiers — routes SQLite non envoyées", "core", e.nodeName)
-		allRoutes = nil
-	}
-	acc := rbac.LoadCoreAccess(ctx, m.db, e.id, e.nodeName)
-	filteredRoutes := rbac.FilterRoutesByScopes(acc.Role, acc.Scopes, allRoutes)
-	filteredRoutes = delegation.FilterRoutesForCore(e.id, e.nodeName, filteredRoutes, m.loadDelegationBindings(ctx))
-	if filteredRoutes == nil {
-		filteredRoutes = []router.Route{}
-	}
-
 	snippets, _ := m.loadSnippets(ctx)
 	providers, _ := m.loadAuthProviders(ctx)
 	profiles, _ := m.loadIPProfiles(ctx)
 	banList, _ := m.loadActiveBans(ctx)
 
+	// Routes non envoyées : les fichiers YAML Core sont la source de vérité.
 	fsync := map[string]any{
 		"snippets":    snippets,
 		"providers":   providers,
 		"ip_profiles": profiles,
 		"bans":        banList,
-	}
-	if !coreproxy.FilesEnabled() {
-		fsync["routes"] = filteredRoutes
 	}
 	// Pages d'erreur avant full_sync : les routes peuvent référencer des template_id.
 	if tpls, err := m.loadErrorPages(ctx); err != nil {
@@ -1015,8 +997,7 @@ func (m *Manager) pushAllToEntry(ctx context.Context, e *coreEntry, s Settings) 
 		}
 	}()
 
-	m.log.Info("corews/manager: full_sync envoyé", "core", e.nodeName,
-		"routes", len(filteredRoutes), "scopes", len(acc.Scopes), "token", acc.TokenID)
+	m.log.Info("corews/manager: full_sync envoyé", "core", e.nodeName)
 }
 
 // --- Chargement des données depuis la DB ---

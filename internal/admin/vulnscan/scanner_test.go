@@ -4,12 +4,16 @@
 package vulnscan
 
 import (
+	"encoding/json"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"slices"
 	"testing"
 
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
+	"github.com/vincamok/goproxify/internal/core/proxystore"
 )
 
 func TestProgressPct(t *testing.T) {
@@ -35,24 +39,23 @@ func TestLoadBackends_ReadsBackendsArray(t *testing.T) {
 	}
 	t.Cleanup(func() { db.Close() })
 
-	_, err = db.Exec(
-		`INSERT INTO proxies (id, name, config, enabled) VALUES
-		 (?, ?, ?, 1),
-		 (?, ?, ?, 1),
-		 (?, ?, ?, 0),
-		 (?, ?, ?, 1)`,
-		"p1", "app",
-		`{"host":"app.example.com","type":"http","backends":[{"url":"http://10.0.0.5:3000","weight":1},{"url":"http://10.0.0.6:3000"}]}`,
-		"p2", "agent",
-		`{"host":"agent.example.com","type":"http","backends":["http://10.0.0.7:80"]}`,
-		"p3", "disabled",
-		`{"host":"off.example.com","type":"http","backends":[{"url":"http://10.0.0.8:80"}]}`,
-		"p4", "tcp",
-		`{"host":"redis","type":"tcp","listen_port":6379,"backends":[{"url":"10.0.0.9:6379"}]}`,
-	)
-	if err != nil {
-		t.Fatal(err)
+	// Proxies servis par un faux Core.
+	proxies := []*proxystore.Envelope{
+		{ID: "p1", Host: "app.example.com", Enabled: true, Status: proxystore.StatusProduction,
+			Config: json.RawMessage(`{"host":"app.example.com","type":"http","backends":[{"url":"http://10.0.0.5:3000","weight":1},{"url":"http://10.0.0.6:3000"}]}`)},
+		{ID: "p2", Host: "agent.example.com", Enabled: true, Status: proxystore.StatusProduction,
+			Config: json.RawMessage(`{"host":"agent.example.com","type":"http","backends":["http://10.0.0.7:80"]}`)},
+		{ID: "p3", Host: "off.example.com", Enabled: false, Status: proxystore.StatusProduction,
+			Config: json.RawMessage(`{"host":"off.example.com","type":"http","backends":[{"url":"http://10.0.0.8:80"}]}`)},
+		{ID: "p4", Host: "redis", Enabled: true, Status: proxystore.StatusProduction,
+			Config: json.RawMessage(`{"host":"redis","type":"tcp","listen_port":6379,"backends":[{"url":"10.0.0.9:6379"}]}`)},
 	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"production": proxies})
+	}))
+	t.Cleanup(srv.Close)
+	_, _ = db.Exec(`INSERT INTO tokens (id, node_name, role, token, node_endpoint, revoked)
+		VALUES ('tok-vs','core-vs','core','gpx_core_vstesttoken',?,0)`, srv.URL)
 
 	s := New(db, slog.Default(), "")
 	got := s.loadBackends()
