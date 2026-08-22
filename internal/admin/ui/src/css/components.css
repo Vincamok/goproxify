@@ -1150,3 +1150,204 @@ textarea.input { resize: vertical; min-height: 80px; }
   .stat-value { font-size: 22px; }
   .logs-stream { max-height: calc(100vh - 280px); padding: 8px 10px; }
 }
+/* ── Architecture composer ────────────────────────────────────────────────
+   Trois niveaux visuellement distincts :
+   Hôte (châssis) → Rôle (module posé dessus) → Capacité (option du rôle). */
+
+.arch-page { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+/* Bandeau modèle mental : hôte → rôle → capacité */
+.arch-legend {
+  display: flex; align-items: stretch; gap: 0; flex-wrap: wrap;
+  border: 1px solid var(--border); background: var(--bg2);
+  border-radius: var(--radius-lg); overflow: hidden;
+}
+.arch-legend-step { flex: 1 1 180px; min-width: 0; padding: 11px 14px; display: flex; gap: 10px; align-items: flex-start; }
+.arch-legend-step + .arch-legend-step { border-left: 1px solid var(--border); }
+.arch-legend-glyph {
+  flex: none; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text2);
+}
+.arch-legend-name { font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.arch-legend-desc { font-size: 11.5px; color: var(--text2); line-height: 1.4; margin-top: 2px; }
+.arch-legend-step[data-level="host"] .arch-legend-glyph { color: var(--text); }
+.arch-legend-step[data-level="role"] .arch-legend-glyph { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.arch-legend-step[data-level="cap"] .arch-legend-glyph { color: var(--cyan); border-color: color-mix(in srgb, var(--cyan) 45%, var(--border)); }
+
+/* Grille principale : bibliothèque · toile · inspecteur */
+.arch-layout { display: grid; grid-template-columns: 208px minmax(0, 1fr) 300px; gap: 14px; align-items: start; min-width: 0; }
+.arch-rail { position: sticky; top: 12px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+.arch-panel { border: 1px solid var(--border); background: var(--bg2); border-radius: var(--radius-lg); min-width: 0; }
+.arch-panel-head { padding: 10px 12px 8px; border-bottom: 1px solid var(--border); }
+.arch-panel-title { font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--text2); }
+.arch-panel-sub { font-size: 11px; color: var(--text2); line-height: 1.4; margin-top: 4px; }
+.arch-panel-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+
+/* Palette de rôles (glissables) */
+.arch-role-src {
+  display: flex; gap: 9px; align-items: flex-start; padding: 9px 10px;
+  border: 1px solid var(--border); border-left: 3px solid var(--arch-accent, var(--border));
+  border-radius: var(--radius); background: var(--bg);
+  cursor: grab; user-select: none; transition: border-color .12s, background .12s;
+}
+.arch-role-src:hover { background: var(--bg3); border-color: color-mix(in srgb, var(--arch-accent, var(--accent)) 55%, var(--border)); }
+.arch-role-src:active { cursor: grabbing; }
+.arch-role-src-name { font-size: 12.5px; font-weight: 700; letter-spacing: .02em; }
+.arch-role-src-desc { font-size: 11px; color: var(--text2); line-height: 1.35; margin-top: 2px; }
+.arch-glyph { flex: none; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; color: var(--arch-accent, var(--text2)); }
+
+/* Aperçu des capacités : informatif, jamais glissable */
+.arch-cap-legend { display: flex; flex-direction: column; gap: 5px; }
+.arch-cap-legend-row { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--text2); }
+.arch-cap-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--arch-accent, var(--text2)); flex: none; }
+.arch-cap-legend-row strong { color: var(--text); font-weight: 600; }
+.arch-cap-scope { margin-left: auto; font-size: 10px; letter-spacing: .04em; text-transform: uppercase; color: var(--text3, var(--text2)); }
+
+/* Zones réseau de la toile */
+.arch-zone { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg2); margin-bottom: 14px; }
+.arch-zone[data-zone="edge"] { border-color: color-mix(in srgb, var(--accent) 38%, var(--border)); }
+.arch-zone-head {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  padding: 10px 13px; border-bottom: 1px solid var(--border);
+}
+.arch-zone-title { font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+.arch-zone[data-zone="edge"] .arch-zone-title { color: var(--accent); }
+.arch-zone-hint { font-size: 11.5px; color: var(--text2); line-height: 1.4; flex: 1 1 220px; min-width: 0; }
+.arch-zone-count { font-size: 11px; color: var(--text2); font-variant-numeric: tabular-nums; }
+.arch-zone-body { padding: 12px 13px; display: grid; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: 12px; }
+.arch-zone-empty {
+  padding: 18px 14px; border: 1px dashed var(--border); border-radius: var(--radius);
+  color: var(--text2); font-size: 12px; line-height: 1.45; background: var(--bg);
+}
+
+/* Hôte = châssis */
+.arch-host { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg); min-width: 0; display: flex; flex-direction: column; }
+.arch-host.selected { border-color: var(--text2); box-shadow: 0 0 0 1px var(--text2) inset; }
+.arch-host.drop-active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.arch-host-head { display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-bottom: 1px solid var(--border); background: var(--bg2); }
+.arch-host-glyph { flex: none; color: var(--text2); display: flex; }
+.arch-host-name {
+  flex: 1; min-width: 0; font-size: 13px; font-weight: 700; letter-spacing: .01em;
+  border: 1px solid transparent; border-radius: var(--radius); padding: 4px 6px;
+  background: transparent; color: var(--text); font-family: inherit;
+}
+.arch-host-name:hover { border-color: var(--border); background: var(--bg); }
+.arch-host-name:focus { outline: none; border-color: var(--accent); background: var(--bg); }
+.arch-host-meta { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.arch-host-zonetag {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 600;
+  letter-spacing: .04em; text-transform: uppercase; padding: 3px 7px; border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--bg); color: var(--text2); cursor: pointer; white-space: nowrap;
+}
+.arch-host-zonetag[data-on="1"] { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--bg)); }
+.arch-host-region {
+  flex: 1 1 90px; min-width: 0; font-size: 11.5px; padding: 4px 7px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg2); color: var(--text); font-family: inherit;
+}
+.arch-host-region:focus { outline: none; border-color: var(--accent); }
+.arch-host-slot { flex: 1; padding: 10px; display: flex; flex-direction: column; gap: 8px; min-height: 74px; }
+.arch-host-drop {
+  border: 1px dashed var(--border); border-radius: var(--radius); padding: 14px 10px;
+  font-size: 11.5px; color: var(--text2); text-align: center; line-height: 1.45; background: var(--bg2);
+}
+.arch-host-foot { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--border); flex-wrap: wrap; }
+.arch-addrole {
+  font-size: 11px; font-weight: 600; padding: 4px 8px; border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--bg2); color: var(--text2); font-family: inherit;
+}
+.arch-addrole:hover { color: var(--arch-accent, var(--text)); border-color: color-mix(in srgb, var(--arch-accent, var(--accent)) 55%, var(--border)); }
+.arch-host-del { margin-left: auto; }
+
+/* Rôle = module posé sur l'hôte */
+.arch-role {
+  display: flex; gap: 9px; align-items: flex-start; padding: 9px 10px;
+  border: 1px solid var(--border); border-left: 3px solid var(--arch-accent, var(--border));
+  border-radius: var(--radius); background: var(--bg2); cursor: grab; user-select: none; min-width: 0;
+}
+.arch-role:hover { background: var(--bg3); }
+.arch-role.selected {
+  border-color: var(--arch-accent, var(--accent));
+  background: color-mix(in srgb, var(--arch-accent, var(--accent)) 10%, var(--bg2));
+}
+.arch-role-main { flex: 1; min-width: 0; }
+.arch-role-id { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; min-width: 0; }
+.arch-role-kind {
+  font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--arch-accent, var(--text2));
+}
+.arch-role-name { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.arch-role-state { font-size: 10px; color: var(--text2); letter-spacing: .03em; }
+.arch-role-caps { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.arch-role-nocap { font-size: 10.5px; color: var(--text2); margin-top: 6px; font-style: italic; }
+.arch-role-del { flex: none; color: var(--text2); background: none; border: none; padding: 2px 3px; line-height: 1; }
+.arch-role-del:hover { color: var(--red); }
+
+/* Capacité = pastille portée par un rôle */
+.arch-chip {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 600;
+  letter-spacing: .02em; padding: 2px 6px; border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--arch-accent, var(--border)) 40%, var(--border));
+  background: color-mix(in srgb, var(--arch-accent, var(--bg3)) 12%, var(--bg));
+  color: var(--arch-accent, var(--text2));
+}
+.arch-chip[data-kind="state"] { border-style: dashed; background: var(--bg); color: var(--text2); }
+
+/* Inspecteur */
+.arch-insp-head { padding: 11px 13px; border-bottom: 1px solid var(--border); background: var(--bg); border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+.arch-insp-level { font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--arch-accent, var(--text2)); }
+.arch-insp-name { font-size: 15px; font-weight: 700; margin-top: 2px; letter-spacing: -.01em; word-break: break-word; }
+.arch-insp-note { font-size: 11.5px; color: var(--text2); line-height: 1.45; margin-top: 4px; }
+.arch-insp-body { padding: 12px 13px; display: flex; flex-direction: column; gap: 14px; }
+.arch-insp-empty { padding: 18px 14px; font-size: 12px; color: var(--text2); line-height: 1.5; }
+.arch-group-title { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--text2); margin-bottom: 8px; }
+.arch-field { display: block; margin-bottom: 9px; }
+.arch-field-label { display: block; font-size: 11px; color: var(--text2); margin-bottom: 4px; }
+.arch-input, .arch-select {
+  width: 100%; font-size: 12px; padding: 6px 8px; font-family: inherit;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text);
+}
+.arch-input:focus, .arch-select:focus { outline: none; border-color: var(--accent); }
+
+/* Ligne capacité : case + libellé + explication */
+.arch-cap {
+  display: flex; gap: 9px; align-items: flex-start; padding: 8px 9px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); cursor: pointer;
+}
+.arch-cap + .arch-cap { margin-top: 6px; }
+.arch-cap:hover { border-color: color-mix(in srgb, var(--arch-accent, var(--accent)) 50%, var(--border)); }
+.arch-cap[data-on="1"] {
+  border-color: color-mix(in srgb, var(--arch-accent, var(--accent)) 55%, var(--border));
+  background: color-mix(in srgb, var(--arch-accent, var(--accent)) 8%, var(--bg));
+}
+.arch-cap input { margin-top: 2px; accent-color: var(--arch-accent, var(--accent)); flex: none; }
+.arch-cap-label { font-size: 12.5px; font-weight: 600; }
+.arch-cap-desc { font-size: 11px; color: var(--text2); line-height: 1.4; margin-top: 2px; }
+.arch-cap-extra { padding: 9px 9px 2px 27px; }
+
+/* Barre de validation / actions */
+.arch-actionbar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 11px 14px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg2);
+}
+.arch-summary { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11.5px; color: var(--text2); min-width: 0; }
+.arch-summary b { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
+.arch-actionbar-btns { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+.arch-msg { font-size: 12px; line-height: 1.45; padding: 9px 12px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg2); color: var(--text2); }
+.arch-msg[data-tone="error"] { border-color: color-mix(in srgb, var(--red) 40%, var(--border)); color: var(--red); background: color-mix(in srgb, var(--red) 7%, var(--bg2)); }
+.arch-msg[data-tone="warn"] { border-color: color-mix(in srgb, var(--yellow) 40%, var(--border)); color: var(--yellow); background: color-mix(in srgb, var(--yellow) 7%, var(--bg2)); }
+.arch-msg[data-tone="info"] { border-color: color-mix(in srgb, var(--accent) 34%, var(--border)); color: var(--text2); background: color-mix(in srgb, var(--accent) 6%, var(--bg2)); }
+
+@media (max-width: 1180px) {
+  .arch-layout { grid-template-columns: 190px minmax(0, 1fr); }
+  .arch-layout > .arch-rail-right { grid-column: 1 / -1; position: static; }
+  .arch-rail-right .arch-panel { max-width: 100%; }
+}
+@media (max-width: 760px) {
+  .arch-layout { grid-template-columns: 1fr; }
+  .arch-rail { position: static; }
+  .arch-zone-body { grid-template-columns: 1fr; }
+  .arch-legend-step + .arch-legend-step { border-left: none; border-top: 1px solid var(--border); }
+  .arch-actionbar-btns { margin-left: 0; width: 100%; }
+  .arch-actionbar-btns .btn { flex: 1; justify-content: center; }
+}

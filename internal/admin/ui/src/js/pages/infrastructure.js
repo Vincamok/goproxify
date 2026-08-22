@@ -168,18 +168,13 @@ function _wizCoreOptsFromExisting(core) {
 }
 
 
-/** Entrée unique : toile Architecture. */
+/** Entrée unique : page Composer la topologie. */
 function openInfraWizard() {
   if (typeof openArchWizard === 'function') {
     openArchWizard();
     return;
   }
   toast(t('common.error') || 'Error', 'error');
-}
-
-function closeInfraWizard() {
-  const el = document.getElementById('infra-wizard-overlay');
-  if (el) el.remove();
 }
 
 
