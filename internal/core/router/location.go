@@ -11,16 +11,39 @@ import (
 
 var locationRegexCache sync.Map // pattern -> *regexp.Regexp
 
-func matchLocationRegex(pattern, path string) bool {
+func getLocationRegex(pattern string) (*regexp.Regexp, bool) {
 	if v, ok := locationRegexCache.Load(pattern); ok {
-		return v.(*regexp.Regexp).MatchString(path)
+		return v.(*regexp.Regexp), true
 	}
 	re, err := regexp.Compile(pattern)
 	if err != nil {
-		return false
+		return nil, false
 	}
 	actual, _ := locationRegexCache.LoadOrStore(pattern, re)
-	return actual.(*regexp.Regexp).MatchString(path)
+	return actual.(*regexp.Regexp), true
+}
+
+func matchLocationRegex(pattern, path string) bool {
+	re, ok := getLocationRegex(pattern)
+	if !ok {
+		return false
+	}
+	return re.MatchString(path)
+}
+
+// ApplyPathRewrite applies a regex replacement template to path.
+// Template uses $1, $2 … for capture groups (nginx-style).
+// Returns the original path if the pattern does not match or is invalid.
+func ApplyPathRewrite(path, pattern, template string) string {
+	re, ok := getLocationRegex(pattern)
+	if !ok {
+		return path
+	}
+	result := re.ReplaceAllString(path, template)
+	if result == "" {
+		return path
+	}
+	return result
 }
 
 // MatchLocation retourne la Location la plus spécifique pour le chemin donné,
@@ -110,6 +133,12 @@ func MergeLocation(route *Route, loc *Location) *Route {
 	merged.StripPrefix = ""
 	if loc.StripPrefix && loc.Path != "" && loc.PathType != "regex" {
 		merged.StripPrefix = loc.Path
+	}
+	merged.PathRewrite = ""
+	merged.PathRewritePattern = ""
+	if loc.PathType == "regex" && loc.PathRewrite != "" {
+		merged.PathRewrite = loc.PathRewrite
+		merged.PathRewritePattern = loc.Path
 	}
 	return &merged
 }

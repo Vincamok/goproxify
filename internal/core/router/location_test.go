@@ -91,6 +91,41 @@ func TestStripPathPrefix(t *testing.T) {
 	}
 }
 
+func TestApplyPathRewrite(t *testing.T) {
+	cases := []struct {
+		path, pattern, tmpl, want string
+	}{
+		{"/old/foo/bar", `^/old/(.*)$`, "/new/$1", "/new/foo/bar"},
+		{"/api/v1/users", `^/api/(v\d+)/(.*)$`, "/backend/$2?version=$1", "/backend/users?version=v1"},
+		{"/no-match", `^/api/(.*)$`, "/new/$1", "/no-match"},
+		{"/a/b", `^/a/(.+)$`, "/$1", "/b"},
+	}
+	for _, c := range cases {
+		got := ApplyPathRewrite(c.path, c.pattern, c.tmpl)
+		if got != c.want {
+			t.Errorf("ApplyPathRewrite(%q,%q,%q)=%q want %q", c.path, c.pattern, c.tmpl, got, c.want)
+		}
+	}
+}
+
+func TestMergeLocation_PathRewrite(t *testing.T) {
+	route := &Route{ID: "r1"}
+	loc := &Location{Path: `^/old/(.*)$`, PathType: "regex", PathRewrite: "/new/$1"}
+	merged := MergeLocation(route, loc)
+	if merged.PathRewrite != "/new/$1" {
+		t.Fatalf("PathRewrite = %q", merged.PathRewrite)
+	}
+	if merged.PathRewritePattern != `^/old/(.*)$` {
+		t.Fatalf("PathRewritePattern = %q", merged.PathRewritePattern)
+	}
+	// non-regex location must not set PathRewrite
+	loc2 := &Location{Path: "/prefix", PathType: "prefix", PathRewrite: "/new/$1"}
+	merged2 := MergeLocation(route, loc2)
+	if merged2.PathRewrite != "" {
+		t.Fatalf("expected empty PathRewrite for prefix loc, got %q", merged2.PathRewrite)
+	}
+}
+
 func TestMergeLocation_StripPrefix(t *testing.T) {
 	route := &Route{ID: "r1", StripPrefix: "/stale"}
 	loc := &Location{Path: "/admin", StripPrefix: true}

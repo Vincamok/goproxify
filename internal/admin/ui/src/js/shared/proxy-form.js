@@ -649,11 +649,17 @@ window.openProxyModal = async function(id, initialTab) {
             </div>
             <div id="p-locations-list" style="display:flex;flex-direction:column;gap:4px;">
               ${(cfg.locations||[]).map((loc,i)=>`
-              <div id="ploc-${i}" class="p-loc-row" style="display:grid;grid-template-columns:1.4fr 0.7fr 2.5fr 28px;gap:4px 6px;align-items:center;">
-                <input id="p-loc-path-${i}" class="input p-loc-path" placeholder="/api" value="${esc(loc.path||'')}" style="margin:0;">
-                <select id="p-loc-pathtype-${i}" class="input p-loc-pathtype" style="margin:0;">${['prefix','exact','regex'].map(t=>`<option${(loc.path_type||'prefix')===t?' selected':''}>${t}</option>`).join('')}</select>
-                <input id="p-loc-dest-${i}" class="input p-loc-dest" placeholder="http://backend:8080" value="${esc(backendURL((loc.backends&&loc.backends[0])||''))}" style="margin:0;">
-                <button type="button" class="btn-icon" title="Supprimer" onclick="this.closest('.p-loc-row').remove()" style="opacity:.55;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg></button>
+              <div id="ploc-${i}" class="p-loc-row" style="display:flex;flex-direction:column;gap:3px;">
+                <div style="display:grid;grid-template-columns:1.4fr 0.7fr 2.5fr 28px;gap:4px 6px;align-items:center;">
+                  <input id="p-loc-path-${i}" class="input p-loc-path" placeholder="/api" value="${esc(loc.path||'')}" style="margin:0;">
+                  <select id="p-loc-pathtype-${i}" class="input p-loc-pathtype" style="margin:0;" onchange="toggleLocRewrite(this)">${['prefix','exact','regex'].map(t=>`<option${(loc.path_type||'prefix')===t?' selected':''}>${t}</option>`).join('')}</select>
+                  <input id="p-loc-dest-${i}" class="input p-loc-dest" placeholder="http://backend:8080" value="${esc(backendURL((loc.backends&&loc.backends[0])||''))}" style="margin:0;">
+                  <button type="button" class="btn-icon" title="Supprimer" onclick="this.closest('.p-loc-row').remove()" style="opacity:.55;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg></button>
+                </div>
+                <div class="p-loc-rewrite-row" style="display:${(loc.path_type||'prefix')==='regex'?'grid':'none'};grid-template-columns:80px 1fr;gap:6px;align-items:center;padding-left:2px;">
+                  <span style="font-size:10.5px;color:var(--text3);white-space:nowrap;">Réécriture</span>
+                  <input class="input p-loc-rewrite" placeholder="/new/$1" value="${esc(loc.path_rewrite||'')}" style="margin:0;font-family:monospace;font-size:12px;">
+                </div>
               </div>`).join('')}
             </div>
             <button class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="addLocationRow()">+ Location</button>
@@ -995,6 +1001,14 @@ window.updateSSOForm = function() {
 };
 
 let locationCounter = 200;
+
+window.toggleLocRewrite = function(select) {
+  const row = select.closest('.p-loc-row');
+  if (!row) return;
+  const rewriteRow = row.querySelector('.p-loc-rewrite-row');
+  if (!rewriteRow) return;
+  rewriteRow.style.display = select.value === 'regex' ? 'grid' : 'none';
+};
 window.addLocationRow = function() {
   const i = locationCounter++;
   const list = document.getElementById('p-locations-list');
@@ -1002,14 +1016,20 @@ window.addLocationRow = function() {
   const div = document.createElement('div');
   div.id = 'ploc-' + i;
   div.className = 'p-loc-row';
-  div.style.cssText = 'display:grid;grid-template-columns:1.4fr 0.7fr 2.5fr 28px;gap:4px 6px;align-items:center;';
+  div.style.cssText = 'display:flex;flex-direction:column;gap:3px;';
   div.innerHTML = `
-    <input id="p-loc-path-${i}" class="input p-loc-path" placeholder="/api" style="margin:0;">
-    <select id="p-loc-pathtype-${i}" class="input p-loc-pathtype" style="margin:0;">
-      ${['prefix','exact','regex'].map(t=>`<option>${t}</option>`).join('')}
-    </select>
-    <input id="p-loc-dest-${i}" class="input p-loc-dest" placeholder="http://backend:8080" style="margin:0;">
-    <button type="button" class="btn-icon" title="Supprimer" onclick="this.closest('.p-loc-row').remove()" style="opacity:.55;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg></button>`;
+    <div style="display:grid;grid-template-columns:1.4fr 0.7fr 2.5fr 28px;gap:4px 6px;align-items:center;">
+      <input id="p-loc-path-${i}" class="input p-loc-path" placeholder="/api" style="margin:0;">
+      <select id="p-loc-pathtype-${i}" class="input p-loc-pathtype" style="margin:0;" onchange="toggleLocRewrite(this)">
+        ${['prefix','exact','regex'].map(t=>`<option>${t}</option>`).join('')}
+      </select>
+      <input id="p-loc-dest-${i}" class="input p-loc-dest" placeholder="http://backend:8080" style="margin:0;">
+      <button type="button" class="btn-icon" title="Supprimer" onclick="this.closest('.p-loc-row').remove()" style="opacity:.55;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg></button>
+    </div>
+    <div class="p-loc-rewrite-row" style="display:none;grid-template-columns:80px 1fr;gap:6px;align-items:center;padding-left:2px;">
+      <span style="font-size:10.5px;color:var(--text3);white-space:nowrap;">Réécriture</span>
+      <input class="input p-loc-rewrite" placeholder="/new/$1" style="margin:0;font-family:monospace;font-size:12px;">
+    </div>`;
   list.appendChild(div);
   div.querySelector('.p-loc-path')?.focus();
 };
@@ -1191,6 +1211,10 @@ window.saveProxy = async function(id) {
     if (pathType !== 'regex' && !path.startsWith('/')) path = '/' + path;
     const entry = { path, path_type: pathType };
     if (dest) entry.backends = [{ url: dest }];
+    if (pathType === 'regex') {
+      const rewrite = row.querySelector('.p-loc-rewrite')?.value.trim() || '';
+      if (rewrite) entry.path_rewrite = rewrite;
+    }
     return entry;
   }).filter(Boolean);
 

@@ -542,6 +542,10 @@ func (h *Handler) reverseProxyFor(b *router.Backend, target *url.URL) *httputil.
 				req.URL.Path = router.StripPathPrefix(req.URL.Path, prefix)
 				req.URL.RawPath = ""
 			}
+			if h.route.PathRewrite != "" && h.route.PathRewritePattern != "" {
+				req.URL.Path = router.ApplyPathRewrite(req.URL.Path, h.route.PathRewritePattern, h.route.PathRewrite)
+				req.URL.RawPath = ""
+			}
 			if preserveHost != nil && !*preserveHost {
 				req.Host = urlHost
 			}

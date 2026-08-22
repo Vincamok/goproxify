@@ -71,6 +71,12 @@ type Route struct {
 	Locations  []Location       `json:"locations,omitempty"`
 	// StripPrefix is applied at proxy time (usually copied from the matched Location).
 	StripPrefix string `json:"strip_prefix,omitempty"`
+	// PathRewrite is a replacement template applied after a regex Location match.
+	// Use $1, $2 … to reference capture groups from the matched Location regex.
+	PathRewrite        string `json:"path_rewrite,omitempty"`
+	// PathRewritePattern holds the source regex pattern when PathRewrite is set.
+	// It is populated by MergeLocation and not persisted to JSON.
+	PathRewritePattern string `json:"-"`
 
 	// Observabilité par route
 	Logging    *RouteLoggingConfig `json:"logging,omitempty"`
@@ -351,6 +357,8 @@ type Location struct {
 	PathType string `json:"path_type,omitempty"` // prefix (défaut) | exact | regex
 	// StripPrefix retire Path du chemin avant de proxifier (nginx proxy_pass avec slash final).
 	StripPrefix bool `json:"strip_prefix,omitempty"`
+	// PathRewrite est un template de réécriture pour les locations regex (ex: /new/$1).
+	PathRewrite string `json:"path_rewrite,omitempty"`
 
 	// Backend override — vide = hérite des backends de la route
 	Backends []Backend `json:"backends,omitempty"`
