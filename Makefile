@@ -30,14 +30,13 @@ DOCKER_ARGS := \
 	--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 	--build-arg BUILD_TIME=$(BUILD_TIME)
 
-# Défaut = registry Harness privé. Pour GHCR public :
-#   make push-all REGISTRY=ghcr.io/vincamok/goproxify
+# Défaut = GHCR public. Registry labo : make push-all REGISTRY=…
 REGISTRY := ghcr.io/vincamok/goproxify
 
 .PHONY: all build build-dev up up-build down restart \
         docker-admin docker-core docker-agent docker-landing docker-all \
         push-admin push-core push-agent push-landing push-all \
-        test test-prebuild lint clean version sync-versions prepublish-host
+        test test-prebuild lint clean version sync-versions
 
 # -----------------------------------------------------------------------------
 # Stack Docker Compose
@@ -165,10 +164,6 @@ test-prebuild:
 
 lint:
 	golangci-lint run ./...
-
-# Checklist publication (hôte de build) — voir docs/audits/publication/host-runbook.md
-prepublish-host:
-	./ci/prepublish-host.sh $${STEP:-all}
 
 # -----------------------------------------------------------------------------
 # Nettoyage
