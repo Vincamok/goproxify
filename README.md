@@ -27,6 +27,7 @@ Images officielles : `ghcr.io/vincamok/goproxify/{admin,core,agent}` — quickst
                         │  ADMIN  (Control Plane)          │
                         │  UI Web · API REST · MCP · :9443 │
                         │  SQLite · ACME · Alerting        │
+                        │  Proxies : fichiers YAML Core    │
                         │  reconstructible depuis les Cores│
                         └──────────┬───────────────────────┘
                                    │ WS persistant Admin→Core
@@ -52,8 +53,8 @@ Images officielles : `ghcr.io/vincamok/goproxify/{admin,core,agent}` — quickst
 
 | Composant | Rôle | Persistance | Ports exposés |
 |-----------|------|-------------|---------------|
-| **Core** | Data Plane — routage, TLS, L4 · hub WS plan de contrôle | RAM + cache local chiffré | `:80`, `:443` (TCP+UDP), `:8000` (interne + WS) |
-| **Admin** | Control Plane — UI, API, alerting | SQLite | `:9443` |
+| **Core** | Data Plane — routage, TLS, L4 · hub WS plan de contrôle | RAM + cache local chiffré · **proxies YAML** (`proxies/*.yaml`) | `:80`, `:443` (TCP+UDP), `:8000` (interne + WS) |
+| **Admin** | Control Plane — UI, API, alerting | SQLite (config, users, tokens) | `:9443` |
 | **Agent** | Discovery Docker & métriques | Volatile | `:9191` (Prometheus) — **aucun port entrant WS** |
 
 ---
@@ -309,8 +310,8 @@ Voir `.env.example` pour la liste complète.
 | Protocoles | HTTP/1.1, HTTP/2, HTTP/3 QUIC (quic-go), TCP/UDP L4 |
 | **Plan de contrôle** | **WebSocket persistant `nhooyr.io/websocket` — Admin→Core(WS), Agent→Core(WS)** |
 | TLS | Terminaison SSL + Passthrough SNI, ACME DNS-01 wildcard |
-| Persistance Admin | SQLite CGO-free (`modernc.org/sqlite`) — option Raft HA |
-| Persistance Core | Cache local AES-256-GCM (routes + certs) |
+| Persistance Admin | SQLite CGO-free (`modernc.org/sqlite`) — config, users, tokens — option Raft HA |
+| Persistance Core | Proxies : fichiers **YAML** (`proxies/*.yaml`, `proxies-revisions/*.yaml`) · Cache local AES-256-GCM (certs) |
 | Configuration | Variables d'environnement `GPX_*` + JSON optionnel |
 | Discovery | Docker Engine API via socket Unix (lecture seule) |
 | Métriques | Prometheus `/metrics`, OpenTelemetry (OTLP) |

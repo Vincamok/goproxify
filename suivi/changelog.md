@@ -7,6 +7,16 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ## [Unreleased]
 
+### Modifié — Proxies YAML uniquement (suppression SQLite comme source de proxies)
+
+- `GPX_PROXY_STORE` supprimé : les proxies sont **toujours** stockés en fichiers YAML sur le Core (`proxies/*.yaml`, `proxies-revisions/*.yaml`)
+- `FilesEnabled()` retourne `true` en dur ; `StoreMode`, `ModeSQLite`, `ModeFiles` supprimés
+- `loadFromSQLite` retiré de `coreproxy/load.go` ; Admin lit les proxies via l'API Core
+- `PushRoutes` ne pousse plus de routes WS (`full_sync` sans clé `routes`) — le Core lit ses propres fichiers YAML
+- Tests MCP et vulnscan migrent de lectures SQLite directes vers un faux serveur Core `httptest`
+- `WriteProd` supprime automatiquement le `.json` legacy après écriture `.yaml`
+- Panneau YAML de l'éditeur proxy repositionné dans la zone de contenu (corrige décalage visuel)
+
 ### Corrigé — Labels Docker multi-hôtes / chemins d’URL
 
 - `goproxify.host` CSV : un seul proxy (premier hostname + aliases) au lieu d’une route par entrée — les pages hors `/` fonctionnent sur tous les domaines

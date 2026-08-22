@@ -49,7 +49,7 @@ Le Core est le **hub de connexion unique** — seul lui a besoin d'un port acces
 
 ### Administration (Control Plane)
 
-**Responsabilité :** Orchestrateur central. Source de vérité persistante (SQLite).
+**Responsabilité :** Orchestrateur central. Persistance Admin (config, utilisateurs, tokens) en SQLite ; proxies en **fichiers YAML** sur le Core (`proxies/*.yaml`).
 
 **Points clés :**
 - Détecte l'absence de SQLite au premier lancement → écran d'initialisation obligatoire
