@@ -128,10 +128,10 @@ func (h *BackendHealth) Snapshot() map[string]string {
 }
 
 // quarantineDuration retourne la durée de quarantaine adaptée au type d'erreur.
-// Les erreurs transitoires (connexion réinitialisée, EOF) obtiennent 500ms —
-// suffisant pour éviter le re-sélection dans la boucle de failover de la même
-// requête, sans bloquer les requêtes suivantes (ex. favicon + page chargés
-// simultanément). Les vraies pannes (connexion refusée) obtiennent 15s.
+// Retourne 0 pour les erreurs transitoires (keep-alive expiré, ECONNRESET, EOF) :
+// le backend n'est pas en panne et une quarantaine cross-requête bloquerait les
+// requêtes concurrentes du navigateur (favicon, redirect post-logout…).
+// Retourne 15s pour les vraies pannes (ECONNREFUSED).
 func quarantineDuration(err error) time.Duration {
 	if err == nil {
 		return 15 * time.Second
@@ -141,23 +141,20 @@ func quarantineDuration(err error) time.Duration {
 	if errors.As(err, &ue) {
 		err = ue.Err
 	}
-	// Erreur réseau temporaire ou connexion réinitialisée/fermée par le pair
 	var ne *net.OpError
 	if errors.As(err, &ne) {
 		if ne.Temporary() {
-			return 500 * time.Millisecond
+			return 0
 		}
 		if errors.Is(ne.Err, syscall.ECONNRESET) || errors.Is(ne.Err, syscall.EPIPE) {
-			return 500 * time.Millisecond
+			return 0
 		}
-		// ECONNREFUSED → vraie panne
 		if errors.Is(ne.Err, syscall.ECONNREFUSED) {
 			return 15 * time.Second
 		}
 	}
-	// EOF / connexion fermée proprement côté serveur (keep-alive expiré)
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-		return 500 * time.Millisecond
+		return 0
 	}
 	return 15 * time.Second
 }

@@ -353,9 +353,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		// Échec dial/proxy : quarantaine courte pour les erreurs transitoires (EOF, reset),
-		// longue pour les vraies pannes (connexion refusée).
-		h.health.MarkDown(backend.URL, quarantineDuration(transportErr))
+		// Échec dial/proxy : quarantaine uniquement pour les vraies pannes.
+		// Les erreurs transitoires (EOF, ECONNRESET) ne quarantinent pas le backend
+		// pour ne pas bloquer les requêtes concurrentes du navigateur.
+		if ttl := quarantineDuration(transportErr); ttl > 0 {
+			h.health.MarkDown(backend.URL, ttl)
+		}
 		if responded {
 			return
 		}
