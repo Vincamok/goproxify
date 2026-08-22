@@ -419,8 +419,42 @@ td.mono{font-family:monospace;font-size:12px}
 .sec-bans-status{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:2px 7px;border-radius:99px}
 .sec-bans-status.on{background:color-mix(in srgb,var(--green) 18%,transparent);color:var(--green)}
 .sec-bans-status.off{background:color-mix(in srgb,var(--text3) 18%,transparent);color:var(--text3)}
+/* IPS provider selector */
+.ips-selector{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:14px}
+.ips-option{
+  display:flex;flex-direction:column;align-items:flex-start;gap:6px;
+  padding:12px 14px;border-radius:8px;cursor:pointer;
+  border:1.5px solid var(--border);background:var(--bg3);
+  transition:border-color .15s,background .15s;
+  text-align:left;width:100%;
+}
+.ips-option:hover{border-color:color-mix(in srgb,var(--accent) 50%,var(--border));background:color-mix(in srgb,var(--accent) 5%,var(--bg3))}
+.ips-option.is-active{
+  border-color:var(--accent);
+  background:color-mix(in srgb,var(--accent) 10%,var(--bg3));
+}
+.ips-option-top{display:flex;align-items:center;gap:8px;width:100%}
+.ips-option-radio{
+  width:14px;height:14px;border-radius:50%;border:2px solid var(--border);
+  flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  transition:border-color .15s;
+}
+.ips-option.is-active .ips-option-radio{border-color:var(--accent)}
+.ips-option.is-active .ips-option-radio::after{
+  content:'';width:6px;height:6px;border-radius:50%;background:var(--accent);display:block;
+}
+.ips-option-name{font-size:12.5px;font-weight:600;color:var(--text)}
+.ips-option-desc{font-size:11px;color:var(--text3);line-height:1.4;margin-left:22px}
+.ips-config-panel{
+  border-top:1px solid var(--border);padding-top:14px;margin-top:2px;
+}
+.ips-config-panel-head{
+  display:flex;align-items:center;gap:8px;margin-bottom:12px;
+}
+.ips-config-panel-name{font-size:13px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:6px}
 @media (max-width:720px){
   .sec-bans-engine-fields{grid-template-columns:1fr 1fr}
+  .ips-selector{grid-template-columns:1fr}
 }
 @media (max-width:480px){
   .sec-bans-engine-fields{grid-template-columns:1fr}

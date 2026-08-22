@@ -395,29 +395,45 @@ function secProxyCountLabel(n, total) {
 }
 
 function ipsProviderBanner(provider, f2bCfg, csCfg) {
+  const svgWrench = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>`;
+  const svgShield = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>`;
+  const svgOff = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>`;
+
   const options = [
-    { value: 'none',     label: t('security.ips.none'),     icon: '' },
-    { value: 'fail2ban', label: t('security.fail2ban_native'), icon: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:4px"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>' },
-    { value: 'crowdsec', label: t('security.crowdsec'),       icon: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:4px"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>' },
+    { value: 'none',     icon: svgOff,    label: t('security.ips.none'),        desc: t('security.ips.none_desc') },
+    { value: 'fail2ban', icon: svgWrench, label: t('security.fail2ban_native'), desc: t('security.ips.f2b_desc') },
+    { value: 'crowdsec', icon: svgShield, label: t('security.crowdsec'),         desc: t('security.ips.cs_desc') },
   ];
-  const configPanel = provider === 'fail2ban'
-    ? `<div class="sec-bans-engine" style="max-width:480px"><div class="sec-bans-engine-head"><span class="sec-bans-engine-name">${options[1].icon}${options[1].label}</span></div>${f2bPanel(f2bCfg)}</div>`
-    : provider === 'crowdsec'
-    ? `<div class="sec-bans-engine" style="max-width:480px"><div class="sec-bans-engine-head"><span class="sec-bans-engine-name">${options[2].icon}${options[2].label}</span></div>${crowdSecPanel(csCfg)}</div>`
-    : '';
+
+  const configPanel = provider === 'fail2ban' ? `
+    <div class="ips-config-panel">
+      <div class="ips-config-panel-head">
+        <span class="ips-config-panel-name">${svgWrench}${t('security.fail2ban_native')}</span>
+      </div>
+      ${f2bPanel(f2bCfg)}
+    </div>` : provider === 'crowdsec' ? `
+    <div class="ips-config-panel">
+      <div class="ips-config-panel-head">
+        <span class="ips-config-panel-name">${svgShield}${t('security.crowdsec')}</span>
+      </div>
+      ${crowdSecPanel(csCfg)}
+    </div>` : '';
+
   return `<div class="sec-bans-config">
     <div class="sec-bans-config-head">
       <div>
         <div class="sec-bans-config-title">${t('security.bans_config_title')}</div>
-        <div class="sec-bans-config-sub">${t('security.bans_config_sub')}</div>
+        <div class="sec-bans-config-sub">${t('security.ips.selector_sub')}</div>
       </div>
     </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:${provider==='none'?'0':'16px'}">
-      ${options.map(o => `<button
-        class="btn btn-sm${provider===o.value?' btn-primary':''}"
-        onclick="selectIPSProvider('${o.value}')"
-        style="display:flex;align-items:center;gap:4px"
-      >${o.icon}${o.label}</button>`).join('')}
+    <div class="ips-selector">
+      ${options.map(o => `<button class="ips-option${provider===o.value?' is-active':''}" onclick="selectIPSProvider('${o.value}')">
+        <div class="ips-option-top">
+          <div class="ips-option-radio"></div>
+          <span class="ips-option-name">${o.icon} ${o.label}</span>
+        </div>
+        <div class="ips-option-desc">${o.desc}</div>
+      </button>`).join('')}
     </div>
     <div id="ips-provider-panel">${configPanel}</div>
   </div>`;
