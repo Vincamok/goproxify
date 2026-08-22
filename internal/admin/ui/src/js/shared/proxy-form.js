@@ -680,6 +680,28 @@ window.openProxyModal = async function(id, initialTab) {
             </div>
             <button class="btn btn-secondary btn-sm" onclick="addConditionRow()">+ Condition</button>
           </div>
+
+          <!-- Proxy Redirect -->
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;">
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:4px;">Réécriture Location — proxy_redirect</div>
+            <div style="font-size:11px;color:var(--text3);margin-bottom:10px;">Réécrit le header <code>Location</code> des redirections 3xx venant du backend. Ex : remplacer <code>http://backend:8080/</code> par <code>https://app.example.fr/</code>.</div>
+            <div style="display:grid;grid-template-columns:24px 1fr 1fr 28px;gap:4px 6px;align-items:center;margin-bottom:4px;">
+              <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);">Rx</span>
+              <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);">De (from)</span>
+              <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);">Vers (to)</span>
+              <span></span>
+            </div>
+            <div id="p-redirects-list" style="display:flex;flex-direction:column;gap:4px;">
+              ${(cfg.proxy_redirects||[]).map((r,i)=>`
+              <div class="p-redirect-row" style="display:grid;grid-template-columns:24px 1fr 1fr 28px;gap:4px 6px;align-items:center;">
+                <input type="checkbox" class="p-rd-regex" title="Regex" ${r.regex?'checked':''}>
+                <input class="input p-rd-from" placeholder="http://backend:8080/" value="${esc(r.from||'')}" style="margin:0;font-family:monospace;font-size:12px;">
+                <input class="input p-rd-to" placeholder="https://app.example.fr/" value="${esc(r.to||'')}" style="margin:0;font-family:monospace;font-size:12px;">
+                <button type="button" class="btn-icon" title="Supprimer" onclick="this.closest('.p-redirect-row').remove()" style="opacity:.55;">×</button>
+              </div>`).join('')}
+            </div>
+            <button class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="addRedirectRow()">+ Règle</button>
+          </div>
         </div>
 
         <!-- Panel TLS (vide, fusionné dans Général) -->
@@ -1034,6 +1056,23 @@ window.addLocationRow = function() {
   div.querySelector('.p-loc-path')?.focus();
 };
 
+let redirectCounter = 300;
+window.addRedirectRow = function() {
+  const i = redirectCounter++;
+  const list = document.getElementById('p-redirects-list');
+  if (!list) return;
+  const div = document.createElement('div');
+  div.className = 'p-redirect-row';
+  div.style.cssText = 'display:grid;grid-template-columns:24px 1fr 1fr 28px;gap:4px 6px;align-items:center;';
+  div.innerHTML = `
+    <input type="checkbox" class="p-rd-regex" title="Regex">
+    <input class="input p-rd-from" placeholder="http://backend:8080/" style="margin:0;font-family:monospace;font-size:12px;">
+    <input class="input p-rd-to" placeholder="https://app.example.fr/" style="margin:0;font-family:monospace;font-size:12px;">
+    <button type="button" class="btn-icon" title="Supprimer" onclick="this.closest('.p-redirect-row').remove()" style="opacity:.55;">×</button>`;
+  list.appendChild(div);
+  div.querySelector('.p-rd-from')?.focus();
+};
+
 let conditionCounter = 100;
 window.addConditionRow = function() {
   const i = conditionCounter++;
@@ -1218,6 +1257,16 @@ window.saveProxy = async function(id) {
     return entry;
   }).filter(Boolean);
 
+  // Proxy redirects
+  const proxy_redirects = Array.from(document.querySelectorAll('#p-redirects-list .p-redirect-row')).map(row => {
+    const from = row.querySelector('.p-rd-from')?.value.trim() || '';
+    const to = row.querySelector('.p-rd-to')?.value.trim() || '';
+    if (!from || !to) return null;
+    const entry = { from, to };
+    if (row.querySelector('.p-rd-regex')?.checked) entry.regex = true;
+    return entry;
+  }).filter(Boolean);
+
   // Health check
   const hcPath = document.getElementById('p-hc-path')?.value.trim();
   const health_check = hcPath ? {
@@ -1386,6 +1435,7 @@ window.saveProxy = async function(id) {
     ...(canary ? { canary } : {}),
     ...(shadow ? { shadow } : {}),
     ...(conditions.length ? { conditions } : {}),
+    ...(proxy_redirects.length ? { proxy_redirects } : {}),
     ...(circuit_breaker ? { circuit_breaker } : {}),
     ...(retry_policy ? { retry_policy } : {}),
     ...(headers ? { headers } : {}),

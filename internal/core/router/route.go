@@ -78,6 +78,11 @@ type Route struct {
 	// It is populated by MergeLocation and not persisted to JSON.
 	PathRewritePattern string `json:"-"`
 
+	// ProxyRedirects réécrit le header Location/Refresh des réponses de redirection
+	// venant du backend (équivalent nginx proxy_redirect).
+	// Chaque règle remplace la première correspondance ; les règles sont évaluées en ordre.
+	ProxyRedirects []ProxyRedirect `json:"proxy_redirects,omitempty"`
+
 	// Observabilité par route
 	Logging    *RouteLoggingConfig `json:"logging,omitempty"`
 
@@ -155,6 +160,15 @@ type RateLimitConfig struct {
 type IPFilterConfig struct {
 	Mode  string   `json:"mode"`   // allow | deny
 	CIDRs []string `json:"cidrs"`
+}
+
+// ProxyRedirect décrit une règle de réécriture du header Location dans les
+// réponses 3xx du backend. Équivalent nginx `proxy_redirect <from> <to>`.
+// Si Regex est vrai, From est une expression régulière (avec captures $1…).
+type ProxyRedirect struct {
+	From  string `json:"from"`
+	To    string `json:"to"`
+	Regex bool   `json:"regex,omitempty"`
 }
 
 type HeadersConfig struct {

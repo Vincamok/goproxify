@@ -558,6 +558,16 @@ func (h *Handler) reverseProxyFor(b *router.Backend, target *url.URL) *httputil.
 		Transport:  transport,
 		BufferPool: bufferPoolFor(h.route.BufferSize),
 		ModifyResponse: func(resp *http.Response) error {
+			if resp.StatusCode >= 300 && resp.StatusCode < 400 && len(h.route.ProxyRedirects) > 0 {
+				for _, hdr := range []string{"Location", "Refresh"} {
+					if v := resp.Header.Get(hdr); v != "" {
+						if rewritten := applyProxyRedirects(v, h.route.ProxyRedirects); rewritten != v {
+							resp.Header.Set(hdr, rewritten)
+							break
+						}
+					}
+				}
+			}
 			if resp.StatusCode < 400 || h.route.ErrorPages == nil {
 				return nil
 			}
@@ -681,6 +691,27 @@ func scheme(r *http.Request) string {
 		return "https"
 	}
 	return "http"
+}
+
+// applyProxyRedirects réécrit une valeur de header Location/Refresh selon les règles
+// proxy_redirect de la route. Retourne la valeur originale si aucune règle ne correspond.
+func applyProxyRedirects(value string, rules []router.ProxyRedirect) string {
+	for _, r := range rules {
+		if r.Regex {
+			re, err := regexp.Compile(r.From)
+			if err != nil {
+				continue
+			}
+			if re.MatchString(value) {
+				return re.ReplaceAllString(value, r.To)
+			}
+		} else {
+			if strings.HasPrefix(value, r.From) {
+				return r.To + value[len(r.From):]
+			}
+		}
+	}
+	return value
 }
 
 // applyForwardedHeaders injecte (ou retire) les en-têtes X-Forwarded-* / X-Real-IP
