@@ -37,6 +37,7 @@ type Route struct {
 
 	// Sécurité
 	RateLimit           *RateLimitConfig           `json:"rate_limit,omitempty"`
+	LimitConn           *LimitConnConfig           `json:"limit_conn,omitempty"`
 	IPFilter            *IPFilterConfig            `json:"ip_filter,omitempty"`
 	GeoIP               *GeoIPConfig               `json:"geo_ip,omitempty"`
 	Headers             *HeadersConfig             `json:"headers,omitempty"`
@@ -82,6 +83,10 @@ type Route struct {
 	// venant du backend (équivalent nginx proxy_redirect).
 	// Chaque règle remplace la première correspondance ; les règles sont évaluées en ordre.
 	ProxyRedirects []ProxyRedirect `json:"proxy_redirects,omitempty"`
+
+	// SubFilters réécrit le corps des réponses texte du backend
+	// (équivalent nginx sub_filter). Appliqué uniquement sur Content-Type text/* et application/json.
+	SubFilters []SubFilter `json:"sub_filters,omitempty"`
 
 	// CookieDomain remplace l'attribut Domain= dans les Set-Cookie du backend
 	// (équivalent nginx proxy_cookie_domain <backend_domain> <replace>).
@@ -165,9 +170,23 @@ type RateLimitConfig struct {
 	Burst             int     `json:"burst"`
 }
 
+// LimitConnConfig limite le nombre de connexions simultanées par IP
+// (équivalent nginx limit_conn).
+type LimitConnConfig struct {
+	MaxPerIP int `json:"max_per_ip"` // 0 = désactivé
+}
+
 type IPFilterConfig struct {
 	Mode  string   `json:"mode"`   // allow | deny
 	CIDRs []string `json:"cidrs"`
+}
+
+// SubFilter décrit une règle de remplacement dans le corps des réponses texte.
+// Si Regex est vrai, From est une expression régulière (avec captures $1…).
+type SubFilter struct {
+	From  string `json:"from"`
+	To    string `json:"to"`
+	Regex bool   `json:"regex,omitempty"`
 }
 
 // CookieRewrite décrit une règle de remplacement d'attribut dans Set-Cookie.

@@ -748,6 +748,7 @@ func (s *Server) handlerForRoute(route *router.Route, locPath string) http.Handl
 	h = geoIPMW(h)
 	h = middleware.IPFilter(route.IPFilter)(h)
 	h = middleware.RateLimit(route.RateLimit)(h)
+	h = middleware.LimitConn(route.LimitConn)(h)
 	h = middleware.BotProtection(route.Bot)(h)
 	if route.WAF != nil && route.WAF.Enabled {
 		h = s.wafEngine.Middleware(route.WAF, h)

@@ -729,6 +729,28 @@ window.openProxyModal = async function(id, initialTab) {
             </div>
             <button class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="addCookieRewriteRow()">+ Règle</button>
           </div>
+
+          <!-- sub_filter — réécriture du body -->
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;">
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:4px;">Réécriture du corps — sub_filter</div>
+            <div style="font-size:11px;color:var(--text3);margin-bottom:10px;">Remplace des chaînes ou regex dans le body des réponses <code>text/*</code> et <code>application/json</code>. Gzip décompressé automatiquement.</div>
+            <div style="display:grid;grid-template-columns:24px 1fr 1fr 28px;gap:4px 6px;align-items:center;margin-bottom:4px;">
+              <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);">Rx</span>
+              <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);">Rechercher</span>
+              <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);">Remplacer par</span>
+              <span></span>
+            </div>
+            <div id="p-subfilters-list" style="display:flex;flex-direction:column;gap:4px;">
+              ${(cfg.sub_filters||[]).map((f,i)=>`
+              <div class="p-sf-row" style="display:grid;grid-template-columns:24px 1fr 1fr 28px;gap:4px 6px;align-items:center;">
+                <input type="checkbox" class="p-sf-regex" title="Regex" ${f.regex?'checked':''}>
+                <input class="input p-sf-from" value="${esc(f.from||'')}" style="margin:0;font-family:monospace;font-size:12px;">
+                <input class="input p-sf-to" value="${esc(f.to||'')}" style="margin:0;font-family:monospace;font-size:12px;">
+                <button type="button" class="btn-icon" title="Supprimer" onclick="this.closest('.p-sf-row').remove()" style="opacity:.55;">×</button>
+              </div>`).join('')}
+            </div>
+            <button class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="addSubFilterRow()">+ Règle</button>
+          </div>
         </div>
 
         <!-- Panel TLS (vide, fusionné dans Général) -->
@@ -929,6 +951,14 @@ window.openProxyModal = async function(id, initialTab) {
             </div>
           </div>
           <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:6px;">Connexions simultanées — limit_conn</div>
+            <div style="font-size:11px;color:var(--text3);margin-bottom:10px;">Limite le nombre de connexions actives par IP. Dépasse = 503. 0 = désactivé.</div>
+            <div class="field" style="max-width:160px;margin:0;">
+              <label class="field-label" style="font-size:11px">Max connexions / IP</label>
+              <input id="p-limit-conn" class="input" type="number" min="0" placeholder="0" value="${cfg.limit_conn?.max_per_ip || ''}">
+            </div>
+          </div>
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
             <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:12px;">Journalisation par route</div>
             <div style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap;">
               <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding-bottom:2px;">
@@ -1081,6 +1111,22 @@ window.addLocationRow = function() {
     </div>`;
   list.appendChild(div);
   div.querySelector('.p-loc-path')?.focus();
+};
+
+let subFilterCounter = 500;
+window.addSubFilterRow = function() {
+  const list = document.getElementById('p-subfilters-list');
+  if (!list) return;
+  const div = document.createElement('div');
+  div.className = 'p-sf-row';
+  div.style.cssText = 'display:grid;grid-template-columns:24px 1fr 1fr 28px;gap:4px 6px;align-items:center;';
+  div.innerHTML = `
+    <input type="checkbox" class="p-sf-regex" title="Regex">
+    <input class="input p-sf-from" placeholder="http://backend" style="margin:0;font-family:monospace;font-size:12px;">
+    <input class="input p-sf-to" placeholder="https://app.example.fr" style="margin:0;font-family:monospace;font-size:12px;">
+    <button type="button" class="btn-icon" title="Supprimer" onclick="this.closest('.p-sf-row').remove()" style="opacity:.55;">×</button>`;
+  list.appendChild(div);
+  div.querySelector('.p-sf-from')?.focus();
 };
 
 let cookieRewriteCounter = 400;
@@ -1303,6 +1349,19 @@ window.saveProxy = async function(id) {
     return entry;
   }).filter(Boolean);
 
+  // Sub filters
+  const sub_filters = Array.from(document.querySelectorAll('#p-subfilters-list .p-sf-row')).map(row => {
+    const from = row.querySelector('.p-sf-from')?.value || '';
+    const to = row.querySelector('.p-sf-to')?.value || '';
+    if (!from) return null;
+    const entry = { from, to };
+    if (row.querySelector('.p-sf-regex')?.checked) entry.regex = true;
+    return entry;
+  }).filter(Boolean);
+
+  // limit_conn
+  const limitConnMax = parseInt(document.getElementById('p-limit-conn')?.value || '0');
+
   // Cookie domain/path rewrites
   const cookie_domains = [], cookie_paths = [];
   document.querySelectorAll('#p-cookie-rewrites-list .p-cookie-row').forEach(row => {
@@ -1496,6 +1555,8 @@ window.saveProxy = async function(id) {
     ...(proxy_redirects.length ? { proxy_redirects } : {}),
     ...(cookie_domains.length ? { cookie_domains } : {}),
     ...(cookie_paths.length ? { cookie_paths } : {}),
+    ...(sub_filters.length ? { sub_filters } : {}),
+    ...(limitConnMax > 0 ? { limit_conn: { max_per_ip: limitConnMax } } : {}),
     ...(circuit_breaker ? { circuit_breaker } : {}),
     ...(retry_policy ? { retry_policy } : {}),
     ...(headers ? { headers } : {}),

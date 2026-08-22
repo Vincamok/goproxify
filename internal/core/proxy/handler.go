@@ -6,6 +6,7 @@ package proxy
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -561,6 +562,11 @@ func (h *Handler) reverseProxyFor(b *router.Backend, target *url.URL) *httputil.
 			if len(h.route.CookieDomains) > 0 || len(h.route.CookiePaths) > 0 {
 				rewriteSetCookieHeaders(resp, h.route.CookieDomains, h.route.CookiePaths)
 			}
+			if len(h.route.SubFilters) > 0 {
+				if err := applySubFilters(resp, h.route.SubFilters); err != nil {
+					return err
+				}
+			}
 			if resp.StatusCode >= 300 && resp.StatusCode < 400 && len(h.route.ProxyRedirects) > 0 {
 				for _, hdr := range []string{"Location", "Refresh"} {
 					if v := resp.Header.Get(hdr); v != "" {
@@ -694,6 +700,49 @@ func scheme(r *http.Request) string {
 		return "https"
 	}
 	return "http"
+}
+
+// applySubFilters remplace des chaînes ou regex dans le body texte d'une réponse.
+// Décompresse gzip si nécessaire, puis supprime Content-Encoding et met à jour Content-Length.
+// Ne traite que les réponses dont le Content-Type commence par "text/" ou "application/json".
+func applySubFilters(resp *http.Response, filters []router.SubFilter) error {
+	ct := resp.Header.Get("Content-Type")
+	if !strings.HasPrefix(ct, "text/") && !strings.HasPrefix(ct, "application/json") {
+		return nil
+	}
+	body := resp.Body
+	if resp.Header.Get("Content-Encoding") == "gzip" {
+		gz, err := gzip.NewReader(body)
+		if err != nil {
+			return nil // ignore — ne pas casser la réponse
+		}
+		defer gz.Close()
+		body = gz
+		resp.Header.Del("Content-Encoding")
+	}
+	raw, err := io.ReadAll(body)
+	resp.Body.Close()
+	if err != nil {
+		resp.Body = io.NopCloser(bytes.NewReader(raw))
+		resp.ContentLength = int64(len(raw))
+		return nil
+	}
+	result := string(raw)
+	for _, f := range filters {
+		if f.Regex {
+			re, err := regexp.Compile(f.From)
+			if err != nil {
+				continue
+			}
+			result = re.ReplaceAllString(result, f.To)
+		} else {
+			result = strings.ReplaceAll(result, f.From, f.To)
+		}
+	}
+	b := []byte(result)
+	resp.Body = io.NopCloser(bytes.NewReader(b))
+	resp.ContentLength = int64(len(b))
+	return nil
 }
 
 // rewriteSetCookieHeaders réécrit les attributs Domain= et Path= dans tous les
