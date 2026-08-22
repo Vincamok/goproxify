@@ -417,7 +417,10 @@ function ipsProviderBanner(provider, f2bCfg, csCfg) {
         <span class="ips-config-panel-name">${svgShield}${t('security.crowdsec')}</span>
       </div>
       ${crowdSecPanel(csCfg)}
-    </div>` : '';
+    </div>` : `
+    <div class="ips-config-panel">
+      <button class="btn btn-primary btn-sm" onclick="selectIPSProvider('none')">${t('common.save')}</button>
+    </div>`;
 
   return `<div class="sec-bans-config">
     <div class="sec-bans-config-head">
@@ -427,7 +430,7 @@ function ipsProviderBanner(provider, f2bCfg, csCfg) {
       </div>
     </div>
     <div class="ips-selector">
-      ${options.map(o => `<button class="ips-option${provider===o.value?' is-active':''}" onclick="selectIPSProvider('${o.value}')">
+      ${options.map(o => `<button class="ips-option${provider===o.value?' is-active':''}" onclick="ipsSelectLocal('${o.value}')">
         <div class="ips-option-top">
           <div class="ips-option-radio"></div>
           <span class="ips-option-name">${o.icon} ${o.label}</span>
@@ -928,10 +931,6 @@ function timelineHTML(events) {
 function f2bPanel(cfg) {
   if (!cfg) return '<p style="color:var(--text2);font-size:12px;margin:0">' + t('common.not_available') + '</p>';
   return `<form onsubmit="saveF2BConfig(event)">
-    <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:12.5px">
-      <input type="checkbox" id="f2b-enabled" ${cfg.enabled?'checked':''}>
-      <span>${t('security.f2b.enable')}</span>
-    </label>
     <div class="sec-bans-engine-fields">
       <div class="field" style="margin:0">
         <label class="field-label">${t('security.f2b.window')}</label>
@@ -961,10 +960,6 @@ function f2bPanel(cfg) {
 function crowdSecPanel(cfg) {
   if (!cfg) return '<p style="color:var(--text2);font-size:12px;margin:0">' + t('common.not_available') + '</p>';
   return `<form onsubmit="saveCrowdSecConfig(event)">
-    <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:12.5px">
-      <input type="checkbox" id="cs-enabled" ${cfg.enabled?'checked':''}>
-      <span>${t('security.cs.enable')}</span>
-    </label>
     <div class="field">
       <label class="field-label">${t('security.cs.lapi_url')}</label>
       <input id="cs-url" class="input" value="${esc(cfg.api_url||'http://localhost:8080')}" placeholder="http://localhost:8080">
@@ -1104,7 +1099,7 @@ window.saveF2BConfig = async function(e) {
   e.preventDefault();
   const whitelist = (document.getElementById('f2b-whitelist')?.value||'').split('\n').map(s=>s.trim()).filter(Boolean);
   const cfg = {
-    enabled: document.getElementById('f2b-enabled')?.checked || false,
+    enabled: true,
     window_sec: parseInt(document.getElementById('f2b-window')?.value)||300,
     max_errors: parseInt(document.getElementById('f2b-max')?.value)||20,
     ban_duration_sec: (() => { const v = parseInt(document.getElementById('f2b-dur')?.value, 10); return Number.isFinite(v) && v >= 0 ? v : 0; })(),
@@ -1112,8 +1107,11 @@ window.saveF2BConfig = async function(e) {
     whitelist,
   };
   try {
-    await api('PUT', '/security/fail2ban', cfg);
-    toast(t('security.f2b.saved'), 'success');
+    await Promise.all([
+      api('PUT', '/security/ips-provider', { provider: 'fail2ban' }),
+      api('PUT', '/security/fail2ban', cfg),
+    ]);
+    toast(t('security.ips.saved'), 'success');
     reloadCurrentSecurityPage();
   } catch(err) { toast(err.message, 'error'); }
 };
@@ -1121,13 +1119,16 @@ window.saveF2BConfig = async function(e) {
 window.saveCrowdSecConfig = async function(e) {
   e.preventDefault();
   const cfg = {
-    enabled: document.getElementById('cs-enabled')?.checked || false,
+    enabled: true,
     api_url: document.getElementById('cs-url')?.value.trim() || 'http://localhost:8080',
     api_key: document.getElementById('cs-key')?.value || '',
   };
   try {
-    await api('PUT', '/security/crowdsec', cfg);
-    toast(t('security.cs.saved'), 'success');
+    await Promise.all([
+      api('PUT', '/security/ips-provider', { provider: 'crowdsec' }),
+      api('PUT', '/security/crowdsec', cfg),
+    ]);
+    toast(t('security.ips.saved'), 'success');
     reloadCurrentSecurityPage();
   } catch(err) { toast(err.message, 'error'); }
 };
@@ -1139,6 +1140,26 @@ window.selectIPSProvider = async function(provider) {
     toast(t('security.ips.saved'), 'success');
     reloadCurrentSecurityPage();
   } catch(err) { toast(err.message, 'error'); }
+};
+
+window.ipsSelectLocal = function(provider) {
+  // Met à jour l'UI localement sans appel API : active la carte, montre le bon panneau
+  document.querySelectorAll('.ips-option').forEach(el => {
+    el.classList.toggle('is-active', el.getAttribute('onclick')?.includes(`'${provider}'`));
+  });
+  const panel = document.getElementById('ips-provider-panel');
+  if (!panel) return;
+  const f2bCfg = window._f2bCfg || {};
+  const csCfg = window._csCfg || {};
+  const svgWrench = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>`;
+  const svgShield = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>`;
+  if (provider === 'fail2ban') {
+    panel.innerHTML = `<div class="ips-config-panel"><div class="ips-config-panel-head"><span class="ips-config-panel-name">${svgWrench}${t('security.fail2ban_native')}</span></div>${f2bPanel(f2bCfg)}</div>`;
+  } else if (provider === 'crowdsec') {
+    panel.innerHTML = `<div class="ips-config-panel"><div class="ips-config-panel-head"><span class="ips-config-panel-name">${svgShield}${t('security.crowdsec')}</span></div>${crowdSecPanel(csCfg)}</div>`;
+  } else {
+    panel.innerHTML = `<div class="ips-config-panel"><button class="btn btn-primary btn-sm" onclick="selectIPSProvider('none')">${t('common.save')}</button></div>`;
+  }
 };
 
 window.triggerVulnscan = async function() {
