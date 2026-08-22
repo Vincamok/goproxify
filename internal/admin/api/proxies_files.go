@@ -313,9 +313,8 @@ func (h *MigrateProxiesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 	}
 	_ = admindb.WriteAudit(h.DB, actor, "migrate", "proxies", "to-core")
 	jsonOK(w, map[string]any{
-		"migrated":     results,
+		"migrated":      results,
 		"purged_sqlite": purged,
-		"mode_hint":    "export GPX_PROXY_STORE=files",
 	})
 }
 
