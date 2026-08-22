@@ -269,8 +269,9 @@ async function renderSecurityBans(ctx) {
     if (isAdmin) {
       fetches.push(api('GET', '/security/fail2ban').catch(() => null));
       fetches.push(api('GET', '/security/crowdsec').catch(() => null));
+      fetches.push(api('GET', '/security/ips-provider').catch(() => null));
     }
-    const [bansRaw, threats, f2bCfg, csCfg] = await Promise.all(fetches);
+    const [bansRaw, threats, f2bCfg, csCfg, ipsProvider] = await Promise.all(fetches);
     const bans = filterSecBans(bansRaw || [], coreCtx);
 
     window._secBans = bans;
@@ -279,11 +280,12 @@ async function renderSecurityBans(ctx) {
     if (isAdmin) {
       window._f2bCfg = f2bCfg || {};
       window._csCfg = csCfg || {};
+      window._ipsProvider = ipsProvider?.provider || 'none';
     }
 
     content.innerHTML = `
       ${securityCoreBanner(coreCtx)}
-      ${isAdmin ? bansConfigBanner(f2bCfg, csCfg) : ''}
+      ${isAdmin ? ipsProviderBanner(ipsProvider?.provider || 'none', f2bCfg, csCfg) : ''}
       <div class="sec-bans-list-stack">
         <div class="card blueprint">
           <div class="card-header">
@@ -392,34 +394,32 @@ function secProxyCountLabel(n, total) {
   return total != null && n !== total ? `${suffix} / ${total}` : suffix;
 }
 
-function bansConfigBanner(f2bCfg, csCfg) {
-  const f2bOn = !!f2bCfg?.enabled;
-  const csOn = !!csCfg?.enabled;
+function ipsProviderBanner(provider, f2bCfg, csCfg) {
+  const options = [
+    { value: 'none',     label: t('security.ips.none'),     icon: '' },
+    { value: 'fail2ban', label: t('security.fail2ban_native'), icon: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:4px"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>' },
+    { value: 'crowdsec', label: t('security.crowdsec'),       icon: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:4px"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>' },
+  ];
+  const configPanel = provider === 'fail2ban'
+    ? `<div class="sec-bans-engine" style="max-width:480px"><div class="sec-bans-engine-head"><span class="sec-bans-engine-name">${options[1].icon}${options[1].label}</span></div>${f2bPanel(f2bCfg)}</div>`
+    : provider === 'crowdsec'
+    ? `<div class="sec-bans-engine" style="max-width:480px"><div class="sec-bans-engine-head"><span class="sec-bans-engine-name">${options[2].icon}${options[2].label}</span></div>${crowdSecPanel(csCfg)}</div>`
+    : '';
   return `<div class="sec-bans-config">
     <div class="sec-bans-config-head">
       <div>
         <div class="sec-bans-config-title">${t('security.bans_config_title')}</div>
         <div class="sec-bans-config-sub">${t('security.bans_config_sub')}</div>
       </div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;">
-        <span class="sec-bans-status ${f2bOn?'on':'off'}">Fail2Ban · ${f2bOn?t('common.enabled'):t('common.disabled')}</span>
-        <span class="sec-bans-status ${csOn?'on':'off'}">CrowdSec · ${csOn?t('common.enabled'):t('common.disabled')}</span>
-      </div>
     </div>
-    <div class="sec-bans-config-grid">
-      <div class="sec-bans-engine">
-        <div class="sec-bans-engine-head">
-          <span class="sec-bans-engine-name"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>${t('security.fail2ban_native')}</span>
-        </div>
-        ${f2bPanel(f2bCfg)}
-      </div>
-      <div class="sec-bans-engine">
-        <div class="sec-bans-engine-head">
-          <span class="sec-bans-engine-name"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>${t('security.crowdsec')}</span>
-        </div>
-        ${crowdSecPanel(csCfg)}
-      </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:${provider==='none'?'0':'16px'}">
+      ${options.map(o => `<button
+        class="btn btn-sm${provider===o.value?' btn-primary':''}"
+        onclick="selectIPSProvider('${o.value}')"
+        style="display:flex;align-items:center;gap:4px"
+      >${o.icon}${o.label}</button>`).join('')}
     </div>
+    <div id="ips-provider-panel">${configPanel}</div>
   </div>`;
 }
 
@@ -1112,6 +1112,15 @@ window.saveCrowdSecConfig = async function(e) {
   try {
     await api('PUT', '/security/crowdsec', cfg);
     toast(t('security.cs.saved'), 'success');
+    reloadCurrentSecurityPage();
+  } catch(err) { toast(err.message, 'error'); }
+};
+
+window.selectIPSProvider = async function(provider) {
+  try {
+    await api('PUT', '/security/ips-provider', { provider });
+    window._ipsProvider = provider;
+    toast(t('security.ips.saved'), 'success');
     reloadCurrentSecurityPage();
   } catch(err) { toast(err.message, 'error'); }
 };

@@ -82,6 +82,11 @@ func (h *SecurityHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.getCrowdSecConfig(w, r)
 	case r.Method == http.MethodPut && sub == "crowdsec":
 		h.putCrowdSecConfig(w, r)
+	// IPS provider switch (mutual exclusivity)
+	case r.Method == http.MethodGet && sub == "ips-provider":
+		h.getIPSProvider(w, r)
+	case r.Method == http.MethodPut && sub == "ips-provider":
+		h.putIPSProvider(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -534,6 +539,62 @@ func (h *SecurityHandler) putCrowdSecConfig(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	go h.CrowdSec.SyncNow(context.Background())
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ── IPS Provider ─────────────────────────────────────────────────────────────
+
+// getIPSProvider retourne le fournisseur IPS actif : "none", "fail2ban" ou "crowdsec".
+func (h *SecurityHandler) getIPSProvider(w http.ResponseWriter, r *http.Request) {
+	provider := "none"
+	if h.Fail2Ban != nil && h.Fail2Ban.GetConfig().Enabled {
+		provider = "fail2ban"
+	} else if h.CrowdSec != nil && h.CrowdSec.GetConfig().Enabled {
+		provider = "crowdsec"
+	}
+	jsonOK(w, map[string]string{"provider": provider})
+}
+
+// putIPSProvider active le fournisseur choisi et désactive l'autre.
+func (h *SecurityHandler) putIPSProvider(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Provider string `json:"provider"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, r, http.StatusBadRequest, "api.err.json")
+		return
+	}
+	switch req.Provider {
+	case "none", "fail2ban", "crowdsec":
+	default:
+		writeErr(w, r, http.StatusBadRequest, "api.err.json")
+		return
+	}
+
+	wantF2B := req.Provider == "fail2ban"
+	wantCS := req.Provider == "crowdsec"
+
+	if h.Fail2Ban != nil {
+		cfg := h.Fail2Ban.GetConfig()
+		if cfg.Enabled != wantF2B {
+			cfg.Enabled = wantF2B
+			if err := h.Fail2Ban.SaveConfig(cfg); err != nil {
+				secJSONErr(w, err, http.StatusInternalServerError)
+				return
+			}
+		}
+	}
+	if h.CrowdSec != nil {
+		cfg := h.CrowdSec.GetConfig()
+		if cfg.Enabled != wantCS {
+			cfg.Enabled = wantCS
+			if err := h.CrowdSec.SaveConfig(cfg); err != nil {
+				secJSONErr(w, err, http.StatusInternalServerError)
+				return
+			}
+			go h.CrowdSec.SyncNow(context.Background())
+		}
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
