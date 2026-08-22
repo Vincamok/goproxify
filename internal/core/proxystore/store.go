@@ -138,7 +138,14 @@ func (s *Store) WriteProd(env *Envelope) error {
 		return err
 	}
 	path := s.ProdPath(cp.Host, cp.ID)
-	return atomicWriteJSON(path, &cp)
+	if err := atomicWriteJSON(path, &cp); err != nil {
+		return err
+	}
+	// Remove legacy .json file if we just wrote .yaml (avoids duplicates in listDir).
+	if strings.HasSuffix(path, ".yaml") {
+		_ = os.Remove(strings.TrimSuffix(path, ".yaml") + ".json")
+	}
+	return nil
 }
 
 // WriteRevision writes a pipeline revision envelope.
@@ -419,6 +426,56 @@ func marshalEnvelope(path string, env *Envelope) ([]byte, error) {
 		return nil, fmt.Errorf("proxystore: marshal yaml: %w", err)
 	}
 	return data, nil
+}
+
+// MigrateResult reports the outcome of a single file migration.
+type MigrateResult struct {
+	JSON string // source .json path
+	YAML string // destination .yaml path
+	Err  error
+}
+
+// MigrateJSONToYAML converts all .json files in proxies/ and proxies-revisions/
+// to .yaml and removes the originals. Already-.yaml files are skipped.
+// Returns one MigrateResult per .json file found.
+func (s *Store) MigrateJSONToYAML() []MigrateResult {
+	var results []MigrateResult
+	for _, dir := range []string{s.ProdDir(), s.RevisionsDir()} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			results = append(results, MigrateResult{Err: fmt.Errorf("proxystore: list %s: %w", dir, err)})
+			continue
+		}
+		for _, e := range entries {
+			name := e.Name()
+			if e.IsDir() || !strings.HasSuffix(name, ".json") {
+				continue
+			}
+			jsonPath := filepath.Join(dir, name)
+			yamlPath := strings.TrimSuffix(jsonPath, ".json") + ".yaml"
+			res := MigrateResult{JSON: jsonPath, YAML: yamlPath}
+
+			env, err := readEnvelope(jsonPath)
+			if err != nil {
+				res.Err = err
+				results = append(results, res)
+				continue
+			}
+			if err := atomicWriteJSON(yamlPath, env); err != nil {
+				res.Err = err
+				results = append(results, res)
+				continue
+			}
+			if err := os.Remove(jsonPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				res.Err = fmt.Errorf("proxystore: remove %s: %w", jsonPath, err)
+			}
+			results = append(results, res)
+		}
+	}
+	return results
 }
 
 func atomicWriteJSON(path string, env *Envelope) error {
