@@ -103,6 +103,7 @@ async function renderTraficPage(ctx) {
       const t = String(cfg.type || p.type || '').toLowerCase();
       if (t) return t;
       if (cfg.listen_port || p.listen_port) return 'tcp';
+      if (cfg.tls_enabled || cfg.tls_passthrough) return 'https';
       return 'http';
     };
     const isStreamP = (p) => { const t = getType(p); return t === 'tcp' || t === 'udp' || t === 'both'; };
