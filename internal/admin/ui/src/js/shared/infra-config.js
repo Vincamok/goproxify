@@ -189,19 +189,18 @@ function _renderConfigUI(opts, optsExtra, uid, adminOpts) {
 // ── Constructeurs d'options ────────────────────────────────────────────────
 
 function _buildCoreOpts(d) {
+  const cat      = window._gpxCatalog;
   const name     = (d.wc_name || 'core-1').trim();
   const restart  = d.wc_restart || 'unless-stopped';
   const logLevel = d.wc_log || 'info';
   const cluster  = !!d.wc_cluster;
-  const image    = 'ghcr.io/vincamok/goproxify/core:preview';
-  const netBlock = `\nnetworks:\n  goproxify_net:\n    driver: bridge`;
-  const portal = !!d.wc_portal;
-  const nodeID = (d.wc_cluster_node_id || name).trim();
-  const group  = (d.wc_cluster_group || 'ha-1').trim();
-  const peers  = (d.wc_cluster_peers || '').trim();
+  const portal   = !!d.wc_portal;
+  const nodeID   = (d.wc_cluster_node_id || name).trim();
+  const group    = (d.wc_cluster_group || 'ha-1').trim();
+  const peers    = (d.wc_cluster_peers || '').trim();
   const envVars = [
     { k:'GPX_IDENTITY_CORE_NODE_NAME', v: name },
-    { k:'GPX_PAIRING_SECRET',           v: _wiz.pairingSecret || '' },
+    { k:'GPX_PAIRING_SECRET',          v: _wiz.pairingSecret || '' },
     { k:'GPX_ENGINE_LOG_LEVEL',        v: logLevel },
     cluster ? { k:'GPX_CLUSTER_ENABLED',    v: 'true' } : null,
     cluster ? { k:'GPX_CLUSTER_RAFT_PORT',  v: '8002' } : null,
@@ -212,25 +211,29 @@ function _buildCoreOpts(d) {
     cluster && d.wc_raft_leader && !peers ? { k:'GPX_CLUSTER_RAFT_LEADER', v: d.wc_raft_leader } : null,
     portal ? { k:'GPX_PORTAL_ENABLED', v: 'true' } : null,
   ].filter(Boolean);
-  const ports = ['80:80','443:443'];
-  if (d.wc_http3) ports.push('443:443/udp');
-  ports.push('8000:8000');
-  if (cluster) ports.push('8002:8002');
-  if (portal) { ports.push('2222:2222'); ports.push('8444:8444'); }
+  const image    = cat ? cat.image('core') : 'ghcr.io/vincamok/goproxify/core:preview';
+  const netBlock = cat ? cat.netBlock()    : '\nnetworks:\n  goproxify_net:\n    driver: bridge';
+  const ports    = cat ? cat.portStrings('core', { http3: d.wc_http3, cluster, portal }) : (function(){
+    const p = ['80:80','443:443'];
+    if (d.wc_http3) p.push('443:443/udp');
+    p.push('8000:8000');
+    if (cluster) p.push('8002:8002');
+    if (portal)  { p.push('2222:2222'); p.push('8444:8444'); }
+    return p;
+  })();
   _wiz.coreSvcName = name;
   return { name, svcName: name, image, envVars, ports, volumes:[`${name}_data:/etc/goproxify`], netBlock, restart, command: 'core' };
 }
 
 function _buildAgentOpts(d) {
-  const isFull  = _wiz.scenario === 'full';
-  const name    = (d.wa_name || 'agent-1').trim();
-  const restart = d.wa_restart || (isFull ? d.wc_restart : 'unless-stopped') || 'unless-stopped';
+  const cat      = window._gpxCatalog;
+  const isFull   = _wiz.scenario === 'full';
+  const name     = (d.wa_name || 'agent-1').trim();
+  const restart  = d.wa_restart || (isFull ? d.wc_restart : 'unless-stopped') || 'unless-stopped';
   const coreName = isFull ? (d.wc_name || 'goproxify-core') : null;
-  const coreURL = d.wa_core_url || (coreName ? `http://${coreName}:8000` : 'http://goproxify-core:8000');
-  const image   = 'ghcr.io/vincamok/goproxify/agent:preview';
-  const netBlock = `\nnetworks:\n  goproxify_net:\n    driver: bridge`;
+  const coreURL  = d.wa_core_url || (coreName ? `http://${coreName}:8000` : 'http://goproxify-core:8000');
   const coreContainer = d.wa_core_container_name || coreName || '';
-  const runtime = d.wa_runtime || (d.wa_podman ? 'podman' : (d.wa_docker !== false ? 'docker' : ''));
+  const runtime  = d.wa_runtime || (d.wa_podman ? 'podman' : (d.wa_docker !== false ? 'docker' : ''));
   const useContainerRuntime = runtime === 'docker' || runtime === 'podman';
   const sockHost = runtime === 'podman' ? '/run/podman/podman.sock' : '/var/run/docker.sock';
   const envVars = [
@@ -240,34 +243,37 @@ function _buildAgentOpts(d) {
     d.wa_region ? { k:'GPX_IDENTITY_REGION',  v: d.wa_region } : null,
     useContainerRuntime ? { k:'GPX_DOCKER_RUNTIME', v: runtime } : null,
     useContainerRuntime && coreContainer ? { k:'GPX_NETWORK_MANAGEMENT_CORE_CONTAINER_NAME', v: coreContainer } : null,
-    d.wa_k8s       ? { k:'GPX_KUBERNETES_ENABLED',     v: 'true' }              : null,
-    d.wa_portainer ? { k:'GPX_PORTAINER_ENABLED',      v: 'true' }              : null,
+    d.wa_k8s       ? { k:'GPX_KUBERNETES_ENABLED',     v: 'true' } : null,
+    d.wa_portainer ? { k:'GPX_PORTAINER_ENABLED',      v: 'true' } : null,
     d.wa_portainer&&d.wa_portainer_url ? { k:'GPX_PORTAINER_URL',     v: d.wa_portainer_url } : null,
     d.wa_portainer&&d.wa_portainer_key ? { k:'GPX_PORTAINER_API_KEY', v: d.wa_portainer_key } : null,
-    d.wa_log_fwd   ? { k:'GPX_LOG_FORWARDING_ENABLED', v: 'true' }              : null,
-    d.wa_autoscale ? { k:'GPX_AUTOSCALE_ENABLED',      v: 'true' }              : null,
+    d.wa_log_fwd   ? { k:'GPX_LOG_FORWARDING_ENABLED', v: 'true' } : null,
+    d.wa_autoscale ? { k:'GPX_AUTOSCALE_ENABLED',      v: 'true' } : null,
   ].filter(Boolean);
-  const volumes = [];
+  const image    = cat ? cat.image('agent') : 'ghcr.io/vincamok/goproxify/agent:preview';
+  const netBlock = cat ? cat.netBlock()     : '\nnetworks:\n  goproxify_net:\n    driver: bridge';
+  const volumes  = [];
   if (useContainerRuntime) volumes.push(`${sockHost}:${sockHost}:ro`);
   volumes.push(`${name}_data:/etc/goproxify`);
   return { name, svcName: name, image, envVars, ports: [], volumes, netBlock, restart, command: 'agent' };
 }
 
 function _buildAdminOpts(d) {
+  const cat      = window._gpxCatalog;
   const name     = 'goproxify-admin';
-  const restart  = 'unless-stopped';
-  const image    = 'ghcr.io/vincamok/goproxify/admin:preview';
-  const netBlock = `\nnetworks:\n  goproxify_net:\n    driver: bridge`;
   const coreName = (d.wa_core_name || _wiz.coreSvcName || 'goproxify-core').trim();
   const envVars  = [
-    { k: 'GPX_SECURITY_JWT_SECRET',      v: d.wa_jwt_secret || '' },
-    { k: 'GPX_PAIRING_SECRET',           v: _wiz.pairingSecret || '' },
-    { k: 'GPX_FIRST_ADMIN_EMAIL',        v: d.wa_admin_email || 'admin@example.com' },
-    { k: 'GPX_FIRST_ADMIN_PASSWORD',     v: d.wa_admin_password || 'CHANGE_ME' },
-    { k: 'GPX_IDENTITY_CORE_NODE_NAME',  v: coreName },
-    { k: 'GPX_SERVER_API_PORT',          v: '9443' },
+    { k: 'GPX_SECURITY_JWT_SECRET',     v: d.wa_jwt_secret || '' },
+    { k: 'GPX_PAIRING_SECRET',          v: _wiz.pairingSecret || '' },
+    { k: 'GPX_FIRST_ADMIN_EMAIL',       v: d.wa_admin_email || 'admin@example.com' },
+    { k: 'GPX_FIRST_ADMIN_PASSWORD',    v: d.wa_admin_password || 'CHANGE_ME' },
+    { k: 'GPX_IDENTITY_CORE_NODE_NAME', v: coreName },
+    { k: 'GPX_SERVER_API_PORT',         v: '9443' },
   ];
-  return { name, svcName: name, image, envVars, ports: ['9443:9443'], volumes: [`${name}_data:/etc/goproxify`], netBlock, restart, command: 'admin' };
+  const image    = cat ? cat.image('admin') : 'ghcr.io/vincamok/goproxify/admin:preview';
+  const netBlock = cat ? cat.netBlock()     : '\nnetworks:\n  goproxify_net:\n    driver: bridge';
+  const ports    = cat ? cat.portStrings('admin') : ['9443:9443'];
+  return { name, svcName: name, image, envVars, ports, volumes: [`${name}_data:/etc/goproxify`], netBlock, restart: 'unless-stopped', command: 'admin' };
 }
 
 function _cfgComposeSvcAdmin(opts, mode) {
