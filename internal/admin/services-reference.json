@@ -1,0 +1,163 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$comment": "GoProxify — référence des services, variables d'environnement et intercommunications. Fichier de référence humaine, pas de validation runtime.",
+  "version": "1",
+
+  "services": {
+    "core": {
+      "description": "Reverse-proxy central, plan de contrôle, point d'entrée du trafic utilisateur.",
+      "image": "ghcr.io/vincamok/goproxify/core:preview",
+      "command": ["core"],
+      "ports": [
+        { "host": 80,   "container": 80,   "protocol": "tcp",      "description": "Trafic HTTP entrant (redirection HTTPS ou ACME challenge)" },
+        { "host": 443,  "container": 443,  "protocol": "tcp",      "description": "Trafic HTTPS entrant" },
+        { "host": 443,  "container": 443,  "protocol": "udp",      "description": "HTTP/3 (QUIC)" },
+        { "host": 8000, "container": 8000, "protocol": "tcp",      "description": "API interne (plan de contrôle) — agents et admin s'y connectent. NE PAS exposer publiquement." }
+      ],
+      "volumes": [
+        { "name": "goproxify_core_data", "mountpoint": "/etc/goproxify", "description": "Configuration persistante (proxies, certificats, état)" }
+      ],
+      "networks": ["goproxify_net"],
+      "depends_on": ["goproxify-admin"],
+      "env": [
+        { "key": "GPX_PAIRING_SECRET",          "required": true,  "secret": true,  "description": "Secret de couplage partagé avec admin et agents. Hex 32 octets (64 caractères).", "example": "a1b2c3..." },
+        { "key": "GPX_IDENTITY_CORE_NODE_NAME", "required": false, "secret": false, "default": "goproxify-core", "description": "Nom du nœud Core, tel qu'il apparaît dans l'Admin." },
+        { "key": "TZ",                          "required": false, "secret": false, "default": "UTC", "example": "Europe/Paris", "description": "Fuseau horaire pour les logs." }
+      ]
+    },
+
+    "agent": {
+      "description": "Exécuteur local sur chaque hôte Docker/Podman. Pilote les conteneurs mandatés par le Core.",
+      "image": "ghcr.io/vincamok/goproxify/agent:preview",
+      "command": ["agent"],
+      "ports": [],
+      "volumes": [
+        { "host": "/var/run/docker.sock", "mountpoint": "/var/run/docker.sock", "readonly": true, "description": "Accès au daemon Docker de l'hôte" },
+        { "name": "goproxify_agent_data", "mountpoint": "/etc/goproxify", "description": "Cache d'état local de l'agent" }
+      ],
+      "networks": ["goproxify_net"],
+      "depends_on": ["goproxify-core"],
+      "env": [
+        { "key": "GPX_PAIRING_SECRET",              "required": true,  "secret": true,  "description": "Même valeur que le Core. Authentifie l'agent lors du couplage initial.", "example": "a1b2c3..." },
+        { "key": "GPX_CONTROL_PLANE_CORE_ENDPOINT", "required": true,  "secret": false, "description": "URL HTTP du Core (plan de contrôle, port 8000).", "example": "http://goproxify-core:8000", "note": "Utiliser l'adresse réseau interne si sur le même hôte, ou l'IP/domaine distant sinon." },
+        { "key": "GPX_IDENTITY_AGENT_NODE_NAME",    "required": true,  "secret": false, "default": "(vide — erreur silencieuse)", "description": "Nom du nœud Agent dans l'Admin. OBLIGATOIRE : sans lui, le heartbeat HTTP est ignoré et l'agent n'apparaît jamais dans l'Admin.", "example": "goproxify-agent" },
+        { "key": "TZ",                              "required": false, "secret": false, "default": "UTC", "example": "Europe/Paris", "description": "Fuseau horaire pour les logs." }
+      ]
+    },
+
+    "admin": {
+      "description": "Interface d'administration web. Gère les proxies, les nœuds, les utilisateurs. Communique avec le Core via son API interne.",
+      "image": "ghcr.io/vincamok/goproxify/admin:preview",
+      "command": ["admin"],
+      "ports": [
+        { "host": 9443, "container": 9443, "protocol": "tcp", "description": "Interface HTTPS de l'Admin." }
+      ],
+      "volumes": [
+        { "name": "goproxify_admin_data", "mountpoint": "/etc/goproxify", "description": "Données admin (utilisateurs, sessions, config)" }
+      ],
+      "networks": ["goproxify_net"],
+      "depends_on": [],
+      "env": [
+        { "key": "GPX_SECURITY_JWT_SECRET",     "required": true,  "secret": true,  "description": "Secret JWT pour les sessions admin. Hex 32 octets (64 caractères).", "example": "d4e5f6..." },
+        { "key": "GPX_PAIRING_SECRET",          "required": true,  "secret": true,  "description": "Même valeur que le Core. Autorise l'Admin à s'authentifier auprès du Core.", "example": "a1b2c3..." },
+        { "key": "GPX_FIRST_ADMIN_EMAIL",       "required": true,  "secret": false, "description": "Email du premier compte administrateur (créé au premier démarrage).", "example": "admin@example.com" },
+        { "key": "GPX_FIRST_ADMIN_PASSWORD",    "required": true,  "secret": true,  "description": "Mot de passe du premier compte admin (min. 12 caractères). Changez-le après le premier login.", "example": "MonMotDePasse!42" },
+        { "key": "GPX_IDENTITY_CORE_NODE_NAME", "required": true,  "secret": false, "default": "goproxify-core", "description": "Nom du nœud Core auquel l'Admin se connecte. Doit correspondre à GPX_IDENTITY_CORE_NODE_NAME du Core.", "example": "goproxify-core" },
+        { "key": "GPX_SERVER_API_PORT",         "required": false, "secret": false, "default": "9443", "description": "Port d'écoute de l'Admin." },
+        { "key": "TZ",                          "required": false, "secret": false, "default": "UTC", "example": "Europe/Paris", "description": "Fuseau horaire pour les logs." }
+      ]
+    }
+  },
+
+  "networks": {
+    "goproxify_net": {
+      "driver": "bridge",
+      "description": "Réseau Docker partagé par tous les services GoProxify sur le même hôte.",
+      "note": "Le nom utilise un underscore (_) et non un tiret (-). Docker Compose crée le réseau avec le nom exact si 'name:' est spécifié."
+    }
+  },
+
+  "intercommunications": [
+    {
+      "from": "agent",
+      "to": "core",
+      "protocol": "HTTP",
+      "port": 8000,
+      "path": "/internal/v1/agent/heartbeat",
+      "method": "POST",
+      "description": "Heartbeat toutes les 30 s. Enregistre l'agent comme nœud actif. Requiert GPX_IDENTITY_AGENT_NODE_NAME non vide.",
+      "auth": "Bearer (pairing token)",
+      "fallback": "WebSocket (prioritaire si connecté)"
+    },
+    {
+      "from": "agent",
+      "to": "core",
+      "protocol": "WebSocket",
+      "port": 8000,
+      "path": "/internal/v1/ws/agent",
+      "description": "Canal temps réel bidirectionnel. Heartbeat, événements lifecycle, ordres du Core. Prioritaire sur HTTP.",
+      "auth": "Bearer (pairing token)"
+    },
+    {
+      "from": "agent",
+      "to": "core",
+      "protocol": "HTTP",
+      "port": 8000,
+      "path": "/internal/v1/agent/events",
+      "method": "POST",
+      "description": "Événements lifecycle (démarrage conteneur, santé, erreur). Fallback HTTP si WS inactif.",
+      "auth": "Bearer (pairing token)"
+    },
+    {
+      "from": "admin",
+      "to": "core",
+      "protocol": "HTTP",
+      "port": 8000,
+      "path": "/internal/v1/*",
+      "description": "API admin : lecture des nœuds, proxies, logs, configuration. L'Admin est le seul client humain du plan de contrôle.",
+      "auth": "Bearer (pairing token)"
+    },
+    {
+      "from": "core",
+      "to": "internet",
+      "protocol": "HTTP/HTTPS",
+      "port": "80/443",
+      "description": "Reverse-proxy vers les services des agents. Trafic utilisateur entrant.",
+      "auth": "aucune (côté réception)"
+    },
+    {
+      "from": "browser",
+      "to": "admin",
+      "protocol": "HTTPS",
+      "port": 9443,
+      "description": "Interface d'administration. JWT session.",
+      "auth": "JWT"
+    },
+    {
+      "from": "core",
+      "to": "agent",
+      "protocol": "interne WS",
+      "description": "Ordres : déployer/arrêter des conteneurs, récupérer statut. Aucun port entrant sur l'agent — toujours initié par l'agent vers le Core.",
+      "note": "L'agent ouvre la connexion ; le Core ne contacte jamais l'agent directement."
+    }
+  ],
+
+  "secrets_generation": {
+    "description": "Les secrets sont générés dans le navigateur et ne transitent jamais par un serveur GoProxify.",
+    "GPX_PAIRING_SECRET": { "algo": "random bytes", "length": 32, "format": "hex64", "shared_by": ["core", "agent", "admin"] },
+    "GPX_SECURITY_JWT_SECRET": { "algo": "random bytes", "length": 32, "format": "hex64", "shared_by": ["admin"] }
+  },
+
+  "deployment_topologies": {
+    "single_host": {
+      "description": "Tout sur le même hôte. Communication via réseau Docker interne.",
+      "services": ["admin", "core", "agent"],
+      "core_endpoint_for_agent": "http://goproxify-core:8000"
+    },
+    "multi_host_remote_agent": {
+      "description": "Core + Admin sur un hôte, Agent(s) sur d'autres hôtes.",
+      "core_endpoint_for_agent": "http://<ip-ou-domaine-du-core>:8000",
+      "note": "Le port 8000 du Core doit être accessible depuis les hôtes agents. Ne pas exposer publiquement — restreindre par pare-feu."
+    }
+  }
+}
