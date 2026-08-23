@@ -214,7 +214,7 @@ function _archHydrateFromExisting(nodes, declared) {
       access: false, portainer: false, k8s: false, docker: false, podman: false,
       autoscale: false, domains: '', acme: false, acmeEmail: '', dnsProvider: 'none',
       reachable: '', portainerUrl: '', portainerKey: '', targetCoreId: '', placement: '',
-      existing: true, status: 'declared',
+      existing: true, status: 'online',
     });
   }
 
