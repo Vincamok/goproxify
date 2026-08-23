@@ -62,8 +62,8 @@ func (s *Store) EnsureDirs() error {
 	return nil
 }
 
-// SanitizeHost turns a hostname into a safe filename stem (without .json).
-// Empty host (TCP/UDP) falls back to id-based naming via ProdFilename.
+// SanitizeHost turns a hostname into a safe filename stem (without extension).
+// Empty host (TCP/UDP) falls back to id-based naming via ProdFilenameTyped.
 func SanitizeHost(host string) string {
 	h := strings.ToLower(strings.TrimSpace(host))
 	h = hostSafeRe.ReplaceAllString(h, "_")
@@ -74,11 +74,36 @@ func SanitizeHost(host string) string {
 	return h
 }
 
-// ProdFilename returns the basename for a production proxy file.
+func routeTypeFromConfig(cfg json.RawMessage) string {
+	var peek struct {
+		Type string `json:"type"`
+	}
+	_ = json.Unmarshal(cfg, &peek)
+	return strings.ToLower(strings.TrimSpace(peek.Type))
+}
+
+func isL4Type(typ string) bool {
+	return typ == "tcp" || typ == "udp"
+}
+
+// ProdFilename returns the basename for a production proxy file (HTTP by host).
+// Prefer ProdFilenameTyped when the route type is known (TCP/UDP).
 func ProdFilename(host, id string) string {
+	return ProdFilenameTyped(host, id, "")
+}
+
+// ProdFilenameTyped returns the on-disk basename.
+// HTTP(S): <sanitized-host>.yaml — host uniquely identifies the route.
+// TCP/UDP: stream_<id>.yaml — same display name for TCP+UDP must not share a file
+// (host-only naming caused the second protocol to overwrite the first after JSON→YAML).
+func ProdFilenameTyped(host, id, typ string) string {
+	typ = strings.ToLower(strings.TrimSpace(typ))
+	if isL4Type(typ) {
+		return "stream_" + sanitizeID(id) + ".yaml"
+	}
 	stem := SanitizeHost(host)
 	if stem == "" {
-		stem = "tcp_" + sanitizeID(id)
+		return "proxy_" + sanitizeID(id) + ".yaml"
 	}
 	return stem + ".yaml"
 }
@@ -109,9 +134,17 @@ func sanitizeID(id string) string {
 	return out
 }
 
-// ProdPath returns the absolute path for a production envelope.
+// ProdPath returns the absolute path for a production envelope (HTTP host naming).
 func (s *Store) ProdPath(host, id string) string {
 	return filepath.Join(s.ProdDir(), ProdFilename(host, id))
+}
+
+// ProdPathFor returns the absolute path using host + config type (L4 → stream_<id>).
+func (s *Store) ProdPathFor(env *Envelope) string {
+	if env == nil {
+		return ""
+	}
+	return filepath.Join(s.ProdDir(), ProdFilenameTyped(env.Host, env.ID, routeTypeFromConfig(env.Config)))
 }
 
 // RevisionPath returns the absolute path for a revision envelope.
@@ -137,13 +170,24 @@ func (s *Store) WriteProd(env *Envelope) error {
 	if err := s.EnsureDirs(); err != nil {
 		return err
 	}
-	path := s.ProdPath(cp.Host, cp.ID)
+	path := s.ProdPathFor(&cp)
 	if err := atomicWriteJSON(path, &cp); err != nil {
 		return err
 	}
-	// Remove legacy .json file if we just wrote .yaml (avoids duplicates in listDir).
+	// Remove legacy .json sibling and obsolete host-keyed file for L4 streams.
 	if strings.HasSuffix(path, ".yaml") {
 		_ = os.Remove(strings.TrimSuffix(path, ".yaml") + ".json")
+	}
+	if isL4Type(routeTypeFromConfig(cp.Config)) {
+		if stem := SanitizeHost(cp.Host); stem != "" {
+			legacy := filepath.Join(s.ProdDir(), stem+".yaml")
+			if legacy != path {
+				if old, err := readEnvelope(legacy); err == nil && old.ID == cp.ID {
+					_ = os.Remove(legacy)
+					_ = os.Remove(strings.TrimSuffix(legacy, ".yaml") + ".json")
+				}
+			}
+		}
 	}
 	return nil
 }
@@ -226,7 +270,7 @@ func (s *Store) ListRevisions(proxyID string) ([]*Envelope, error) {
 	return out, nil
 }
 
-// DeleteProd removes the production file for host+id.
+// DeleteProd removes the production file for host+id (HTTP host naming).
 func (s *Store) DeleteProd(host, id string) error {
 	return removeFile(s.ProdPath(host, id))
 }
@@ -237,7 +281,18 @@ func (s *Store) DeleteProdByID(id string) error {
 	if err != nil {
 		return err
 	}
-	return s.DeleteProd(env.Host, env.ID)
+	err1 := removeFile(s.ProdPathFor(env))
+	err2 := removeFile(s.ProdPath(env.Host, env.ID)) // legacy host-keyed name
+	if err1 != nil && !errors.Is(err1, ErrNotFound) {
+		return err1
+	}
+	if err2 != nil && !errors.Is(err2, ErrNotFound) {
+		return err2
+	}
+	if errors.Is(err1, ErrNotFound) && errors.Is(err2, ErrNotFound) {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // DeleteRevision removes a revision file.

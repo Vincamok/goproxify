@@ -2113,7 +2113,7 @@ window.saveStreamProxy = async function() {
     }
     toast(protos.length > 1 ? `${protos.length} flux créés` : 'Flux créé', 'success');
     closeModal();
-    refreshProxies();
+    await refreshProxies();
   } catch(e) { toast(e.message || 'Erreur', 'error'); }
 };
 

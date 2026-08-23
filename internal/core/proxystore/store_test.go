@@ -133,8 +133,17 @@ func TestProdFilename(t *testing.T) {
 	if got := ProdFilename("app.example.fr", "uuid"); got != "app.example.fr.yaml" {
 		t.Fatalf("got %q", got)
 	}
-	if got := ProdFilename("", "abc-123"); got != "tcp_abc-123.yaml" {
+	if got := ProdFilename("", "abc-123"); got != "proxy_abc-123.yaml" {
+		t.Fatalf("empty host got %q", got)
+	}
+	if got := ProdFilenameTyped("Minecraft", "id-tcp", "tcp"); got != "stream_id-tcp.yaml" {
 		t.Fatalf("tcp got %q", got)
+	}
+	if got := ProdFilenameTyped("Minecraft", "id-udp", "udp"); got != "stream_id-udp.yaml" {
+		t.Fatalf("udp got %q", got)
+	}
+	if ProdFilenameTyped("Minecraft", "id-tcp", "tcp") == ProdFilenameTyped("Minecraft", "id-udp", "udp") {
+		t.Fatal("TCP and UDP with same host must not share a filename")
 	}
 }
 
@@ -417,6 +426,11 @@ func TestTCPStreamRoundTrip(t *testing.T) {
 	if err := st.WriteProd(env); err != nil {
 		t.Fatal("WriteProd:", err)
 	}
+	// L4 files are keyed by id, not host (avoids TCP/UDP overwrite).
+	wantName := "stream_tcp-stream-1.yaml"
+	if _, err := os.Stat(filepath.Join(dir, ProdDirName, wantName)); err != nil {
+		t.Fatalf("expected file %s: %v", wantName, err)
+	}
 	got, err := st.ReadProdByID("tcp-stream-1")
 	if err != nil {
 		t.Fatal("ReadProdByID:", err)
@@ -440,5 +454,45 @@ func TestTCPStreamRoundTrip(t *testing.T) {
 	b, _ := backends[0].(map[string]any)
 	if b["url"] != "10.0.0.1:6379" {
 		t.Errorf("backends[0].url: want 10.0.0.1:6379, got %v", b["url"])
+	}
+}
+
+func TestTCPAndUDPSameHostBothPersist(t *testing.T) {
+	dir := t.TempDir()
+	st := New(dir)
+	now := time.Now().UTC()
+	write := func(id, typ string, port int) {
+		t.Helper()
+		cfg, _ := json.Marshal(map[string]any{
+			"type": typ, "host": "Minecraft", "listen_port": port,
+			"id": id, "backends": []map[string]any{{"url": "10.0.0.1:25565"}},
+		})
+		env := &Envelope{
+			SchemaVersion: SchemaVersionV1,
+			ID:            id,
+			Host:          "Minecraft",
+			Enabled:       true,
+			UpdatedAt:     now,
+			Config:        json.RawMessage(cfg),
+		}
+		if err := st.WriteProd(env); err != nil {
+			t.Fatalf("WriteProd %s: %v", id, err)
+		}
+	}
+	write("id-tcp", "tcp", 25565)
+	write("id-udp", "udp", 25565)
+	list, err := st.ListProd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("ListProd len=%d want 2 (TCP+UDP must not share one host.yaml)", len(list))
+	}
+	ids := map[string]bool{}
+	for _, e := range list {
+		ids[e.ID] = true
+	}
+	if !ids["id-tcp"] || !ids["id-udp"] {
+		t.Fatalf("missing streams: %v", ids)
 	}
 }

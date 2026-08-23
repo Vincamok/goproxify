@@ -866,14 +866,14 @@ async function renderTraficPage(ctx) {
       const protos = [...(useTCP ? ['tcp'] : []), ...(useUDP ? ['udp'] : [])];
       try {
         for (const proto of protos) {
+          // Nom d'affichage partagé OK : fichiers Core = stream_<uuid>.yaml (pas host.yaml).
           const host = name || (proto + '_' + port);
           const config = { type: proto, host, listen_port: port, backends: [{ url: target }] };
-          const created = await api('POST', '/proxies', { config, enabled: true });
-          if (created) { allP.unshift(created); streamItems.unshift(created); }
+          await api('POST', '/proxies', { config, enabled: true });
         }
         document.getElementById('trafic-modal-container').innerHTML = '';
-        renderPage();
         toast(protos.length > 1 ? t('trafic.streams_created', { n: protos.length }) : t('trafic.stream_created'), 'success');
+        await refreshProxies();
       } catch(e) { toast(e.message || t('trafic.create_error'), 'error'); }
     };
 
