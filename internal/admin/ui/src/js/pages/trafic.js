@@ -47,17 +47,24 @@ async function renderTraficPage(ctx) {
       ? `/proxies?core=${encodeURIComponent(coreRef)}`
       : '/proxies';
     const [allProxies, nodesRes, domainsRes, tokensRes, healthRes] = await Promise.all([
-      api('GET', proxiesPath).catch(() => []),
+      api('GET', proxiesPath).catch((e) => {
+        toast((e && e.message) ? e.message : t('trafic.load_error'), 'error');
+        return null;
+      }),
       isAdmin ? api('GET', '/nodes').catch(() => []) : Promise.resolve([]),
       isAdmin ? api('GET', '/domains').catch(() => []) : Promise.resolve([]),
       isAdmin ? api('GET', '/tokens?role=core').catch(() => []) : Promise.resolve([]),
       api('GET', '/backends/health').catch(() => ({ backends: {} })),
     ]);
+    if (allProxies === null) {
+      content.innerHTML = '<p style="color:var(--red)">' + esc(t('trafic.load_error') || 'Impossible de charger les proxies') + '</p>';
+      return;
+    }
     window._backendHealth = (healthRes && healthRes.backends) || {};
 
     const cores = (nodesRes || []).filter(n => n.role === 'core');
     window._coreNodes = cores;
-    window._traficAll = allProxies || [];
+    window._traficAll = Array.isArray(allProxies) ? allProxies : [];
     const allP = window._traficAll;
 
     // Droits Core (token scopes + délégation) — pour n'afficher que les Cores qui reçoivent vraiment la route.

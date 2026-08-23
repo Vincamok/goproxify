@@ -47,20 +47,27 @@ func (h *ProxiesHandler) listFiles(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	listOK := 0
+	var lastListErr error
 	for _, t := range targets {
 		if filterByCore && t.ID != coreRef && t.NodeName != coreRef {
 			continue
 		}
 		res, err := client.List(r.Context(), t)
 		if err != nil {
+			lastListErr = err
 			h.Log.Warn("proxies/files: list core", "core", t.NodeName, "err", err)
 			continue
 		}
+		listOK++
 		for _, env := range res.Production {
 			row := envelopeToRow(env)
 			var route router.Route
 			_ = json.Unmarshal(row.Config, &route)
 			route.ID = row.ID
+			if route.Host == "" {
+				route.Host = row.Name
+			}
 			if !rbac.CanReadProxy(r.Context(), h.DB, userID, &route) {
 				continue
 			}
@@ -69,6 +76,11 @@ func (h *ProxiesHandler) listFiles(w http.ResponseWriter, r *http.Request) {
 			}
 			byID[row.ID] = row
 		}
+	}
+	if listOK == 0 && lastListErr != nil {
+		h.Log.Error("proxies/files: aucun Core n'a répondu au list", "err", lastListErr)
+		h.writeCoreErr(w, r, lastListErr)
+		return
 	}
 
 	result := make([]proxyRow, 0, len(byID))

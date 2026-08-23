@@ -396,6 +396,11 @@ func canReadProxyWithGrants(role string, grants []Grant, route *router.Route) bo
 	if IsSuperAdminRole(role) {
 		return true
 	}
+	// Streams L4 (tcp/udp) : host = label libre, pas un domaine DNS — les grants
+	// « domain » ne matchent jamais. Les admins doivent quand même les voir.
+	if IsAdminRole(role) && routeIsL4(route) {
+		return true
+	}
 	if IsAdminRole(role) && len(grants) == 0 {
 		return true
 	}
@@ -424,11 +429,26 @@ func canWriteProxyWithGrants(role string, grants []Grant, route *router.Route) b
 	if IsSuperAdminRole(role) {
 		return true
 	}
+	if IsAdminRole(role) && routeIsL4(route) {
+		return true
+	}
 	if IsAdminRole(role) && len(grants) == 0 {
 		return true
 	}
 	write := WriteGrants(grants)
 	return len(write) > 0 && MatchRoute(GrantsAsScopes(write), route)
+}
+
+// routeIsL4 detects TCP/UDP streams (host is a free label, not a DNS domain).
+func routeIsL4(route *router.Route) bool {
+	if route == nil {
+		return false
+	}
+	switch strings.ToLower(string(route.Type)) {
+	case "tcp", "udp":
+		return true
+	}
+	return route.ListenPort > 0
 }
 
 // CanDeleteProxy retourne true si l'utilisateur peut supprimer ce proxy.
