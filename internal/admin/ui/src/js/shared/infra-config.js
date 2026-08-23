@@ -4,6 +4,10 @@
 
 // ── Config UI partagé : onglets docker-compose / Portainer / CLI + toggle inline ──
 
+// State and opts stored per uid so multiple config UIs can coexist on the same page.
+window._cfgStates = {};
+window._cfgOptsMap = {};
+// Legacy single-instance compat (infra modal uses no uid)
 window._cfgState = { tab: 'compose', inline: false };
 
 function _cfgPre(id, text) {
@@ -70,73 +74,101 @@ function _cfgCliText(opts) {
     + `  --network goproxify-net \\\n  ${image}`;
 }
 
-function _cfgContentHTML(opts) {
-  const { tab, inline } = window._cfgState;
-  if (tab === 'cli') return _cfgLabel('Commande Docker') + _cfgPre('cfg-cli', _cfgCliText(opts));
+function _cfgContentHTML(opts, uid) {
+  const state = window._cfgStates[uid] || window._cfgState;
+  const { tab, inline } = state;
+  const p = uid ? uid + '-' : '';
+  if (tab === 'cli') return _cfgLabel('Commande Docker') + _cfgPre(p + 'cfg-cli', _cfgCliText(opts));
   const mode = inline ? 'inline' : (tab === 'portainer' ? 'portainer_vars' : 'env_file');
   const compose = _cfgComposeText(opts, mode);
   const envFileName = tab === 'portainer' ? 'stack.env — Variables à saisir dans Portainer' : '.env';
-  return _cfgLabel('docker-compose.yml') + _cfgPre('cfg-compose', compose)
-    + (!inline ? _cfgLabel(envFileName) + _cfgPre('cfg-env', _cfgEnvFileText(opts)) : '');
+  return _cfgLabel('docker-compose.yml') + _cfgPre(p + 'cfg-compose', compose)
+    + (!inline ? _cfgLabel(envFileName) + _cfgPre(p + 'cfg-env', _cfgEnvFileText(opts)) : '');
 }
 
-function _cfgContentHTMLFull(coreOpts, agentOpts) {
-  const { tab, inline } = window._cfgState;
+function _cfgContentHTMLFull(coreOpts, agentOpts, uid) {
+  const state = window._cfgStates[uid] || window._cfgState;
+  const { tab, inline } = state;
+  const p = uid ? uid + '-' : '';
   if (tab === 'cli') {
-    return _cfgLabel('Core — Commande Docker') + _cfgPre('cfg-cli-core', _cfgCliText(coreOpts))
-      + _cfgLabel('Agent — Commande Docker') + _cfgPre('cfg-cli-agent', _cfgCliText(agentOpts));
+    return _cfgLabel('Core — Commande Docker') + _cfgPre(p + 'cfg-cli-core', _cfgCliText(coreOpts))
+      + _cfgLabel('Agent — Commande Docker') + _cfgPre(p + 'cfg-cli-agent', _cfgCliText(agentOpts));
   }
   const mode = inline ? 'inline' : (tab === 'portainer' ? 'portainer_vars' : 'env_file');
   const compose = _cfgComposeTextFull(coreOpts, agentOpts, mode);
   const envFileName = tab === 'portainer' ? 'stack.env — Variables à saisir dans Portainer' : '.env';
-  return _cfgLabel('docker-compose.yml') + _cfgPre('cfg-compose', compose)
-    + (!inline ? _cfgLabel(envFileName) + _cfgPre('cfg-env', _cfgEnvFileTextFull(coreOpts, agentOpts)) : '');
+  return _cfgLabel('docker-compose.yml') + _cfgPre(p + 'cfg-compose', compose)
+    + (!inline ? _cfgLabel(envFileName) + _cfgPre(p + 'cfg-env', _cfgEnvFileTextFull(coreOpts, agentOpts)) : '');
 }
 
-function _cfgRender() {
-  const area = document.getElementById('cfg-content-area');
+function _cfgRender(uid) {
+  const p = uid ? uid + '-' : '';
+  const state = uid ? (window._cfgStates[uid] || (window._cfgStates[uid] = { tab: 'compose', inline: false })) : window._cfgState;
+  const optsEntry = uid ? (window._cfgOptsMap[uid] || {}) : { opts: window._cfgOpts, extra: window._cfgOptsFull };
+  const area = document.getElementById(p + 'cfg-content-area');
   if (!area) return;
-  area.innerHTML = window._cfgOptsFull
-    ? _cfgContentHTMLFull(window._cfgOpts, window._cfgOptsFull)
-    : _cfgContentHTML(window._cfgOpts);
+  area.innerHTML = optsEntry.extra
+    ? _cfgContentHTMLFull(optsEntry.opts, optsEntry.extra, uid)
+    : _cfgContentHTML(optsEntry.opts, uid);
   ['compose','portainer','cli'].forEach(t => {
-    const btn = document.getElementById('cfg-tab-' + t);
+    const btn = document.getElementById(p + 'cfg-tab-' + t);
     if (!btn) return;
-    const active = t === window._cfgState.tab;
+    const active = t === state.tab;
     btn.style.borderBottom = active ? '2px solid var(--accent)' : '2px solid transparent';
     btn.style.fontWeight = active ? '700' : '400';
     btn.style.color = active ? 'var(--accent)' : 'var(--text2)';
   });
-  const tog = document.getElementById('cfg-toggle-row');
-  if (tog) tog.style.display = window._cfgState.tab === 'cli' ? 'none' : 'flex';
+  const tog = document.getElementById(p + 'cfg-toggle-row');
+  if (tog) tog.style.display = state.tab === 'cli' ? 'none' : 'flex';
 }
 
-window._cfgTab = function(tab) { window._cfgState.tab = tab; _cfgRender(); };
-window._cfgToggle = function() {
-  const cb = document.getElementById('cfg-inline-cb');
-  window._cfgState.inline = cb ? cb.checked : false;
-  _cfgRender();
+window._cfgTab = function(tab, uid) {
+  if (uid) {
+    if (!window._cfgStates[uid]) window._cfgStates[uid] = { tab: 'compose', inline: false };
+    window._cfgStates[uid].tab = tab;
+  } else {
+    window._cfgState.tab = tab;
+  }
+  _cfgRender(uid);
+};
+window._cfgToggle = function(uid) {
+  const p = uid ? uid + '-' : '';
+  const cb = document.getElementById(p + 'cfg-inline-cb');
+  if (uid) {
+    if (!window._cfgStates[uid]) window._cfgStates[uid] = { tab: 'compose', inline: false };
+    window._cfgStates[uid].inline = cb ? cb.checked : false;
+  } else {
+    window._cfgState.inline = cb ? cb.checked : false;
+  }
+  _cfgRender(uid);
 };
 
-function _renderConfigUI(opts, optsExtra) {
-  window._cfgOpts = opts;
-  window._cfgOptsFull = optsExtra || null;
-  if (!window._cfgState) window._cfgState = { tab: 'compose', inline: false };
+function _renderConfigUI(opts, optsExtra, uid) {
+  const p = uid ? uid + '-' : '';
+  if (uid) {
+    if (!window._cfgStates[uid]) window._cfgStates[uid] = { tab: 'compose', inline: false };
+    window._cfgOptsMap[uid] = { opts, extra: optsExtra || null };
+  } else {
+    window._cfgOpts = opts;
+    window._cfgOptsFull = optsExtra || null;
+    if (!window._cfgState) window._cfgState = { tab: 'compose', inline: false };
+  }
+  const state = uid ? window._cfgStates[uid] : window._cfgState;
   const tabBtn = (id, lbl) =>
-    `<button id="cfg-tab-${id}" onclick="_cfgTab('${id}')" style="padding:8px 14px;background:none;border:none;border-bottom:2px solid ${window._cfgState.tab===id?'var(--accent)':'transparent'};cursor:pointer;font-size:12px;font-weight:${window._cfgState.tab===id?700:400};color:${window._cfgState.tab===id?'var(--accent)':'var(--text2)'};">${lbl}</button>`;
+    `<button id="${p}cfg-tab-${id}" onclick="_cfgTab('${id}'${uid ? ",'" + uid + "'" : ''})" style="padding:8px 14px;background:none;border:none;border-bottom:2px solid ${state.tab===id?'var(--accent)':'transparent'};cursor:pointer;font-size:12px;font-weight:${state.tab===id?700:400};color:${state.tab===id?'var(--accent)':'var(--text2)'};">${lbl}</button>`;
   return `<div>
     <div style="display:flex;border-bottom:1px solid var(--border);margin-bottom:14px;">
       ${tabBtn('compose','docker-compose')}
       ${tabBtn('portainer','Portainer Stack')}
       ${tabBtn('cli','CLI')}
     </div>
-    <div id="cfg-toggle-row" style="display:${window._cfgState.tab==='cli'?'none':'flex'};align-items:center;gap:8px;margin-bottom:12px;">
+    <div id="${p}cfg-toggle-row" style="display:${state.tab==='cli'?'none':'flex'};align-items:center;gap:8px;margin-bottom:12px;">
       <label style="display:flex;align-items:center;gap:7px;font-size:12px;cursor:pointer;color:var(--text1);">
-        <input type="checkbox" id="cfg-inline-cb" ${window._cfgState.inline?'checked':''} onchange="_cfgToggle()" style="accent-color:var(--accent);width:14px;height:14px;">
+        <input type="checkbox" id="${p}cfg-inline-cb" ${state.inline?'checked':''} onchange="_cfgToggle(${uid ? "'" + uid + "'" : ''})" style="accent-color:var(--accent);width:14px;height:14px;">
         Inliner les valeurs <span style="color:var(--text2);">(sans fichier .env)</span>
       </label>
     </div>
-    <div id="cfg-content-area">${optsExtra ? _cfgContentHTMLFull(opts, optsExtra) : _cfgContentHTML(opts)}</div>
+    <div id="${p}cfg-content-area">${optsExtra ? _cfgContentHTMLFull(opts, optsExtra, uid) : _cfgContentHTML(opts, uid)}</div>
   </div>`;
 }
 

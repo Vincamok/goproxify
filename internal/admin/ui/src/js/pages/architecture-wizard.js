@@ -1150,10 +1150,11 @@ function _archBuildPacks() {
       }
     }
 
+    const packUid = host.id;
     let html = '';
-    if (coreOpts && agentOpts) html = _renderConfigUI(coreOpts, agentOpts);
-    else if (coreOpts) html = _renderConfigUI(coreOpts);
-    else if (agentOpts) html = _renderConfigUI(agentOpts);
+    if (coreOpts && agentOpts) html = _renderConfigUI(coreOpts, agentOpts, packUid);
+    else if (coreOpts) html = _renderConfigUI(coreOpts, null, packUid);
+    else if (agentOpts) html = _renderConfigUI(agentOpts, null, packUid);
 
     if (admins.length) {
       const acmeCores = _arch.hosts.flatMap(h => h.services.filter(s => s.type === 'core' && s.acme));
