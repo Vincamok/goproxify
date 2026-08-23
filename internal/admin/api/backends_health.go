@@ -31,10 +31,13 @@ func (h *BackendsHealthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 }
 
 func (h *BackendsHealthHandler) fetchFromCores(ctx context.Context) map[string]string {
+	// ORDER BY created_at DESC + dedup par node_name : on ne garde que le token le plus récent
+	// par Core (celui que pushAdminToken a envoyé à Core via TypeAdminToken).
 	rows, err := h.DB.QueryContext(ctx,
 		`SELECT node_name, node_endpoint, token FROM tokens
 		 WHERE role='core' AND revoked=0 AND node_endpoint != ''
-		   AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)`)
+		   AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+		 ORDER BY created_at DESC`)
 	if err != nil {
 		if h.Log != nil {
 			h.Log.Warn("backends-health: query tokens", "err", err)
@@ -46,12 +49,17 @@ func (h *BackendsHealthHandler) fetchFromCores(ctx context.Context) map[string]s
 	type coreCred struct {
 		name, endpoint, token string
 	}
+	seen := make(map[string]bool)
 	var cores []coreCred
 	for rows.Next() {
 		var c coreCred
 		if err := rows.Scan(&c.name, &c.endpoint, &c.token); err != nil {
 			continue
 		}
+		if seen[c.name] {
+			continue // garder uniquement le token le plus récent par Core
+		}
+		seen[c.name] = true
 		cores = append(cores, c)
 	}
 

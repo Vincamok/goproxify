@@ -19,11 +19,12 @@ import (
 // Si ws est non-nil et actif, le heartbeat est envoyé via WS ; sinon, fallback HTTP
 // (POST /internal/v1/agent/heartbeat) pour que le Core enregistre toujours l'Agent
 // dans son nodeStore — sinon l'Admin le laisse en « Non connecté » / declared.
-func heartbeatLoop(ctx context.Context, coreEndpoint, authToken, nodeName, version, internalEndpoint string, containerRuntimes []string, ws *wsclient.Client, tokenUpdate <-chan string, log *slog.Logger) {
+func heartbeatLoop(ctx context.Context, coreEndpoint, authToken, nodeName, version, internalEndpoint string, containerRuntimes []string, ws *wsclient.Client, tokenUpdate <-chan string, repairFn func() string, log *slog.Logger) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	send := func() {
+	var send func()
+	send = func() {
 		var cpuPct, memPct float64
 		if prev, err := telemetry.ReadCPUStat(); err == nil {
 			time.Sleep(200 * time.Millisecond)
@@ -69,6 +70,16 @@ func heartbeatLoop(ctx context.Context, coreEndpoint, authToken, nodeName, versi
 			return
 		}
 		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusUnauthorized {
+			log.Warn("heartbeat: token révoqué — re-appairage", "status", resp.StatusCode)
+			if repairFn != nil {
+				if t := repairFn(); t != "" {
+					authToken = t
+					send() // réessai immédiat avec le nouveau token
+				}
+			}
+			return
+		}
 		if resp.StatusCode >= 400 {
 			log.Warn("heartbeat: Core a refusé", "status", resp.StatusCode)
 		}

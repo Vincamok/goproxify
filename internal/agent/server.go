@@ -550,6 +550,18 @@ func (a *Agent) Start(ctx context.Context) error {
 		runtimes,
 		a.wsClient,
 		a.tokenUpdate,
+		func() string {
+			t, err := a.pairWithCore(ctx)
+			if err != nil {
+				t, err = a.pairWithAdmin(ctx)
+			}
+			if err != nil {
+				a.log.Warn("heartbeat: re-appairage impossible", "err", err)
+				return ""
+			}
+			a.discovery.SetToken(t)
+			return t
+		},
 		a.log,
 	)
 
