@@ -359,3 +359,86 @@ func TestMigrateJSONToYAML(t *testing.T) {
 		t.Fatalf("got id=%q host=%q", got.ID, got.Host)
 	}
 }
+
+func TestListProdSkipsCorruptFile(t *testing.T) {
+	dir := t.TempDir()
+	st := New(dir)
+	if err := st.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	// Write one valid proxy.
+	now := time.Now().UTC()
+	valid := &Envelope{
+		SchemaVersion: SchemaVersionV1,
+		ID:            "ok-1",
+		Host:          "ok.example.fr",
+		Enabled:       true,
+		UpdatedAt:     now,
+		Config:        sampleConfig("ok-1", "ok.example.fr"),
+	}
+	if err := st.WriteProd(valid); err != nil {
+		t.Fatal(err)
+	}
+	// Plant a corrupt YAML file alongside the valid one.
+	corrupt := filepath.Join(st.ProdDir(), "broken.yaml")
+	if err := os.WriteFile(corrupt, []byte(":\n  - !!invalid"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// ListProd must still return the valid proxy despite the corrupt neighbour.
+	list, err := st.ListProd()
+	if err != nil {
+		t.Fatalf("ListProd should not fail on corrupt file, got: %v", err)
+	}
+	if len(list) != 1 || list[0].ID != "ok-1" {
+		t.Fatalf("expected 1 valid proxy, got %d", len(list))
+	}
+}
+
+func TestTCPStreamRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	st := New(dir)
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	cfg, _ := json.Marshal(map[string]any{
+		"type":        "tcp",
+		"host":        "redis_cache",
+		"listen_port": 6379,
+		"id":          "tcp-stream-1",
+		"updated_at":  now.Format(time.RFC3339Nano),
+		"backends":    []map[string]any{{"url": "10.0.0.1:6379"}},
+	})
+	env := &Envelope{
+		SchemaVersion: SchemaVersionV1,
+		ID:            "tcp-stream-1",
+		Host:          "redis_cache",
+		Enabled:       true,
+		UpdatedAt:     now,
+		Config:        json.RawMessage(cfg),
+	}
+	if err := st.WriteProd(env); err != nil {
+		t.Fatal("WriteProd:", err)
+	}
+	got, err := st.ReadProdByID("tcp-stream-1")
+	if err != nil {
+		t.Fatal("ReadProdByID:", err)
+	}
+	var cfgOut map[string]any
+	if err := json.Unmarshal(got.Config, &cfgOut); err != nil {
+		t.Fatal("unmarshal:", err)
+	}
+	if cfgOut["type"] != "tcp" {
+		t.Errorf("type: want tcp, got %v", cfgOut["type"])
+	}
+	// listen_port survives YAML round-trip as a number.
+	port, _ := cfgOut["listen_port"].(float64)
+	if int(port) != 6379 {
+		t.Errorf("listen_port: want 6379, got %v", cfgOut["listen_port"])
+	}
+	backends, _ := cfgOut["backends"].([]any)
+	if len(backends) != 1 {
+		t.Fatalf("backends len=%d", len(backends))
+	}
+	b, _ := backends[0].(map[string]any)
+	if b["url"] != "10.0.0.1:6379" {
+		t.Errorf("backends[0].url: want 10.0.0.1:6379, got %v", b["url"])
+	}
+}
