@@ -272,15 +272,12 @@ func New(cfg *config.CoreConfig) (*Server, error) {
 			s.wsHub.BroadcastToAdmins(msg)
 		}
 	})
+	// Ne pas révoquer le join token à la connexion WS : il sert aussi de Bearer HTTP
+	// pour le heartbeat de secours (quand le WS est temporairement déconnecté).
+	// La révocation interviendrait et empêcherait le fallback HTTP de fonctionner,
+	// ce qui ferait passer le nœud en "Inactif" après 90 s.
 	s.wsHub.SetJoinTokenUsedCallback(func(joinToken string) {
-		if s.tokenStore == nil {
-			return
-		}
-		if err := s.tokenStore.RevokeByRaw(joinToken); err != nil {
-			s.log.Debug("ws/agent: révocation JOIN_TOKEN locale", "err", err)
-		} else {
-			s.log.Info("ws/agent: JOIN_TOKEN consommé et révoqué dans le store local")
-		}
+		s.log.Info("ws/agent: JOIN_TOKEN utilisé pour connexion WS (conservé pour heartbeat HTTP)")
 	})
 
 	// Cluster Raft (optionnel)
