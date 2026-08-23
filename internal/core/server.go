@@ -446,10 +446,28 @@ func (s *Server) loadFromAdminOrCache(ctx context.Context) error {
 	return nil
 }
 
+// backendURLsFromRoutes extrait toutes les URLs backends uniques d'un ensemble de routes.
+func backendURLsFromRoutes(routes []*router.Route) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	for _, r := range routes {
+		for _, b := range r.Backends {
+			if b.URL != "" {
+				if _, ok := seen[b.URL]; !ok {
+					seen[b.URL] = struct{}{}
+					out = append(out, b.URL)
+				}
+			}
+		}
+	}
+	return out
+}
+
 // applySnapshot charge toutes les ressources d'un snapshot en mémoire.
 func (s *Server) applySnapshot(snap *corecache.Snapshot) {
 	if snap.Routes != nil {
 		s.table.Replace(snap.Routes) //nolint:errcheck
+		s.health.StartChecks(backendURLsFromRoutes(snap.Routes), 30*time.Second)
 	}
 	for _, c := range snap.Certs {
 		if err := s.certStore.StorePEM(c.Name, c.CertPEM, c.KeyPEM); err != nil {
@@ -1061,6 +1079,7 @@ func (s *Server) handlePushRoutes(w http.ResponseWriter, r *http.Request) {
 	s.ensurePortalPublicRoute()
 	purged := s.purgeRoutesShadowedByPassthrough()
 	metrics.Core.RouteCount.Set(float64(s.table.Len()))
+	s.health.StartChecks(backendURLsFromRoutes(routes), 30*time.Second)
 	s.saveCache()
 	s.log.Info("routes remplacées", "count", len(routes), "purged_conflicts", purged)
 	w.WriteHeader(http.StatusNoContent)

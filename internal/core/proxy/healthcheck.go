@@ -17,16 +17,18 @@ import (
 
 // BackendHealth suit l'état de santé d'un backend par URL.
 type BackendHealth struct {
-	mu      sync.RWMutex
-	healthy map[string]bool
+	mu        sync.RWMutex
+	healthy   map[string]bool
 	downUntil map[string]time.Time // quarantine courte après échec de dial/proxy
-	log     *slog.Logger
+	watched   map[string]struct{}  // URLs avec un goroutine de check actif
+	log       *slog.Logger
 }
 
 func NewBackendHealth(log *slog.Logger) *BackendHealth {
 	return &BackendHealth{
 		healthy:   make(map[string]bool),
 		downUntil: make(map[string]time.Time),
+		watched:   make(map[string]struct{}),
 		log:       log,
 	}
 }
@@ -159,9 +161,22 @@ func quarantineDuration(err error) time.Duration {
 	return 15 * time.Second
 }
 
-// StartChecks lance les health checks pour une liste d'URLs.
+// StartChecks lance les health checks actifs pour les URLs qui n'ont pas encore
+// de goroutine dédiée. Idempotent : appeler plusieurs fois est sans effet.
 func (h *BackendHealth) StartChecks(urls []string, interval time.Duration) {
+	h.mu.Lock()
+	var toStart []string
 	for _, u := range urls {
+		if u == "" {
+			continue
+		}
+		if _, ok := h.watched[u]; !ok {
+			h.watched[u] = struct{}{}
+			toStart = append(toStart, u)
+		}
+	}
+	h.mu.Unlock()
+	for _, u := range toStart {
 		go h.loop(u, interval)
 	}
 }
