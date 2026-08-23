@@ -94,6 +94,10 @@ func (h *ProxiesHandler) list(w http.ResponseWriter, r *http.Request) {
 
 	userID := auth.UserIDFromContext(r.Context())
 
+	// Charger rôle + grants une seule fois pour éviter N+1 requêtes DB.
+	userRole := rbac.UserRole(r.Context(), h.DB, userID)
+	userGrants, _ := rbac.UserEffectiveGrants(r.Context(), h.DB, userID)
+
 	// Filtre optionnel par périmètre token Core (?core=uuid|node_name).
 	coreRef := r.URL.Query().Get("core")
 	var coreAccess rbac.CoreAccess
@@ -119,7 +123,7 @@ func (h *ProxiesHandler) list(w http.ResponseWriter, r *http.Request) {
 		var route router.Route
 		_ = json.Unmarshal([]byte(cfgJSON), &route)
 		route.ID = p.ID
-		if !rbac.CanReadProxy(r.Context(), h.DB, userID, &route) {
+		if !rbac.CanReadProxyWithGrants(userRole, userGrants, &route) {
 			continue
 		}
 		if filterByCore && !rbac.RouteAllowedByToken(coreAccess.Role, coreAccess.Scopes, &route) {
@@ -152,7 +156,9 @@ func (h *ProxiesHandler) create(w http.ResponseWriter, r *http.Request) {
 	route.UpdatedAt = time.Now()
 
 	userID := auth.UserIDFromContext(r.Context())
-	if !rbac.CanWriteProxy(r.Context(), h.DB, userID, &route) {
+	userRole := rbac.UserRole(r.Context(), h.DB, userID)
+	userGrants, _ := rbac.UserEffectiveGrants(r.Context(), h.DB, userID)
+	if !rbac.CanWriteProxyWithGrants(userRole, userGrants, &route) {
 		writeErr(w, r, http.StatusForbidden, "api.err.out_of_scope_domain")
 		return
 	}
@@ -207,9 +213,11 @@ func (h *ProxiesHandler) get(w http.ResponseWriter, r *http.Request, id string) 
 		return
 	}
 	userID := auth.UserIDFromContext(r.Context())
+	userRole := rbac.UserRole(r.Context(), h.DB, userID)
+	userGrants, _ := rbac.UserEffectiveGrants(r.Context(), h.DB, userID)
 	var routeForRBAC router.Route
 	_ = json.Unmarshal(p.Config, &routeForRBAC)
-	if !rbac.CanReadProxy(r.Context(), h.DB, userID, &routeForRBAC) {
+	if !rbac.CanReadProxyWithGrants(userRole, userGrants, &routeForRBAC) {
 		writeErr(w, r, http.StatusNotFound, "api.err.proxy_not_found")
 		return
 	}
@@ -229,7 +237,9 @@ func (h *ProxiesHandler) update(w http.ResponseWriter, r *http.Request, id strin
 	route.UpdatedAt = time.Now()
 
 	userID := auth.UserIDFromContext(r.Context())
-	if !rbac.CanWriteProxy(r.Context(), h.DB, userID, &route) {
+	userRole := rbac.UserRole(r.Context(), h.DB, userID)
+	userGrants, _ := rbac.UserEffectiveGrants(r.Context(), h.DB, userID)
+	if !rbac.CanWriteProxyWithGrants(userRole, userGrants, &route) {
 		writeErr(w, r, http.StatusForbidden, "api.err.out_of_scope")
 		return
 	}
@@ -323,9 +333,11 @@ func (h *ProxiesHandler) delete(w http.ResponseWriter, r *http.Request, id strin
 		return
 	}
 	userID := auth.UserIDFromContext(r.Context())
+	userRole := rbac.UserRole(r.Context(), h.DB, userID)
+	userGrants, _ := rbac.UserEffectiveGrants(r.Context(), h.DB, userID)
 	var existingRoute router.Route
 	_ = json.Unmarshal(existing.Config, &existingRoute)
-	if !rbac.CanDeleteProxy(r.Context(), h.DB, userID, &existingRoute) {
+	if !rbac.CanDeleteProxyWithGrants(userRole, userGrants, &existingRoute) {
 		writeErr(w, r, http.StatusForbidden, "api.err.delete_admin")
 		return
 	}

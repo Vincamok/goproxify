@@ -383,6 +383,19 @@ func CanReadProxy(ctx context.Context, db *sql.DB, userID string, route *router.
 	if err != nil {
 		return false
 	}
+	return canReadProxyWithGrants(role, grants, route)
+}
+
+// CanReadProxyWithGrants est identique à CanReadProxy mais évite une requête DB quand
+// le rôle et les grants sont déjà chargés (utiliser dans les boucles list).
+func CanReadProxyWithGrants(role string, grants []Grant, route *router.Route) bool {
+	return canReadProxyWithGrants(role, grants, route)
+}
+
+func canReadProxyWithGrants(role string, grants []Grant, route *router.Route) bool {
+	if IsSuperAdminRole(role) {
+		return true
+	}
 	if IsAdminRole(role) && len(grants) == 0 {
 		return true
 	}
@@ -398,6 +411,18 @@ func CanWriteProxy(ctx context.Context, db *sql.DB, userID string, route *router
 	grants, err := UserEffectiveGrants(ctx, db, userID)
 	if err != nil {
 		return false
+	}
+	return canWriteProxyWithGrants(role, grants, route)
+}
+
+// CanWriteProxyWithGrants est identique à CanWriteProxy sans requête DB supplémentaire.
+func CanWriteProxyWithGrants(role string, grants []Grant, route *router.Route) bool {
+	return canWriteProxyWithGrants(role, grants, route)
+}
+
+func canWriteProxyWithGrants(role string, grants []Grant, route *router.Route) bool {
+	if IsSuperAdminRole(role) {
+		return true
 	}
 	if IsAdminRole(role) && len(grants) == 0 {
 		return true
@@ -420,11 +445,45 @@ func CanDeleteProxy(ctx context.Context, db *sql.DB, userID string, route *route
 	if err != nil {
 		return false
 	}
+	return canDeleteProxyWithGrants(role, grants, route)
+}
+
+// CanDeleteProxyWithGrants est identique à CanDeleteProxy sans requête DB supplémentaire.
+func CanDeleteProxyWithGrants(role string, grants []Grant, route *router.Route) bool {
+	return canDeleteProxyWithGrants(role, grants, route)
+}
+
+func canDeleteProxyWithGrants(role string, grants []Grant, route *router.Route) bool {
+	if IsSuperAdminRole(role) {
+		return true
+	}
+	if !IsAdminRole(role) {
+		return false
+	}
 	if len(grants) == 0 {
 		return true
 	}
-	// Admin scopé : peut supprimer dans son périmètre de lecture (v1).
 	return MatchRoute(GrantsAsScopes(grants), route)
+}
+
+// CanReadDomain retourne true si l'utilisateur peut voir ce domaine.
+// Admins globaux voient tout ; users scopés voient les domaines couverts par leurs grants de type "domain".
+func CanReadDomainWithGrants(role string, grants []Grant, domain string) bool {
+	if IsSuperAdminRole(role) {
+		return true
+	}
+	if IsAdminRole(role) && len(grants) == 0 {
+		return true
+	}
+	for _, g := range grants {
+		if g.Type == "domain" && hostMatchesDomainScope(g.Value, domain) {
+			return true
+		}
+		if g.Type == "core" {
+			return true
+		}
+	}
+	return false
 }
 
 // UserScopedCoreGlobs retourne les globs de Cores accessibles via scope type "core".

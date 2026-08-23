@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
 )
 
@@ -182,6 +183,10 @@ func (h *DomainsHandler) list(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
+	userID := adminauth.UserIDFromContext(r.Context())
+	userRole := rbac.UserRole(r.Context(), h.DB, userID)
+	userGrants, _ := rbac.UserEffectiveGrants(r.Context(), h.DB, userID)
+
 	result := make([]domainRow, 0)
 	for rows.Next() {
 		var d domainRow
@@ -190,6 +195,9 @@ func (h *DomainsHandler) list(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&d.ID, &d.Domain, &d.CoreID, &d.DNSProvider, &credJSON,
 			&d.CertMethod, &d.DelegatedToCoreID, &d.DelegatedEndpoint, &d.DelegationMode,
 			&exp, &d.CreatedAt, &d.UpdatedAt); err != nil {
+			continue
+		}
+		if !rbac.CanReadDomainWithGrants(userRole, userGrants, d.Domain) {
 			continue
 		}
 		if exp.Valid {
