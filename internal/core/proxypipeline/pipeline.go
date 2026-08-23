@@ -173,6 +173,8 @@ func (p *Pipeline) Reject(id, rev, reason string) (*proxystore.Envelope, error) 
 }
 
 func (p *Pipeline) collectPeers(excludeID, excludeRev string) []*proxystore.Envelope {
+	// Uniquement la production : les révisions « validated » orphelines (dry-run OK
+	// puis promote abandonné / UI) bloquaient listen_port sans apparaître dans la liste Admin.
 	peers := make([]*proxystore.Envelope, 0)
 	if prods, err := p.store.ListProd(); err == nil {
 		for _, e := range prods {
@@ -182,17 +184,7 @@ func (p *Pipeline) collectPeers(excludeID, excludeRev string) []*proxystore.Enve
 			peers = append(peers, e)
 		}
 	}
-	if revs, err := p.store.ListRevisions(""); err == nil {
-		for _, e := range revs {
-			if e.ID == excludeID && e.Revision == excludeRev {
-				continue
-			}
-			if e.Status != proxystore.StatusValidated {
-				continue
-			}
-			peers = append(peers, e)
-		}
-	}
+	_ = excludeRev
 	return peers
 }
 
