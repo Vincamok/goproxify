@@ -170,19 +170,28 @@ func Apply(db *sql.DB, b *Backup, sel ImportSelection) ImportResult {
 		}
 	}
 
-	// Users (sans mot de passe — on ne restaure pas les hashes)
+	// Users (sans mot de passe — on ne restaure jamais les hashes, on ne les écrase pas non plus)
 	if sel.ImportUsers {
 		for _, u := range b.Users {
 			id := u.ID
 			if id == "" {
 				id = uuid.New().String()
 			}
-			hash, _ := auth.HashPassword(uuid.New().String()) // mot de passe aléatoire, à réinitialiser
-			verb := `INSERT OR IGNORE`
+			hash, _ := auth.HashPassword(uuid.New().String()) // mot de passe aléatoire pour les nouveaux comptes
 			if overwrite {
-				verb = `INSERT OR REPLACE`
+				// Mettre à jour email et rôle sans toucher au mot de passe de l'utilisateur existant.
+				_, err := db.Exec(
+					`INSERT INTO users (id, email, password_hash, role) VALUES (?,?,?,?)
+					 ON CONFLICT(email) DO UPDATE SET role=excluded.role WHERE id != excluded.id OR role != excluded.role`,
+					id, u.Email, hash, u.Role)
+				if err == nil {
+					res.Users++
+				} else {
+					res.Skipped++
+				}
+				continue
 			}
-			_, err := db.Exec(verb+` INTO users (id, email, password_hash, role) VALUES (?,?,?,?)`,
+			_, err := db.Exec(`INSERT OR IGNORE INTO users (id, email, password_hash, role) VALUES (?,?,?,?)`,
 				id, u.Email, hash, u.Role)
 			if err == nil {
 				res.Users++
