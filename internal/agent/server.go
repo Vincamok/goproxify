@@ -46,6 +46,7 @@ type Agent struct {
 	wsClient          *wsclient.Client // client WS persistant Agent→Core (nil si pas de JoinToken)
 	dockerClient      *agentdocker.Client
 	shellHub          *shellHub
+	tokenUpdate       chan string // notifie heartbeatLoop d'un nouveau token (retryPairing)
 }
 
 // New crée un Agent à partir de la config.
@@ -384,6 +385,24 @@ func (a *Agent) retryPairing(ctx context.Context) {
 			}
 			a.discovery.SetToken(token)
 			go a.discovery.ScanAll(ctx)
+			// Propager le token au heartbeatLoop (qui tourne avec authToken="")
+			select {
+			case a.tokenUpdate <- token:
+			default:
+			}
+			// Créer le client WS maintenant que le token est disponible
+			if a.wsClient == nil {
+				a.wsClient = wsclient.NewClient(
+					a.cfg.Identity.NodeName,
+					a.cfg.Identity.NodeName,
+					buildinfo.Agent,
+					a.cfg.ControlPlane.CoreEndpoint,
+					token,
+					"",
+					a.handleWSCommand,
+					a.log,
+				)
+			}
 			a.log.Info("agent: appairage réussi — scan initial relancé")
 			return
 		}
@@ -518,6 +537,9 @@ func (a *Agent) Start(ctx context.Context) error {
 		go a.emitEvent(containerID, eventType, detail)
 	})
 
+	// Canal de mise à jour du token pour retryPairing → heartbeatLoop
+	a.tokenUpdate = make(chan string, 1)
+
 	// Heartbeat vers Core (WS si connecté, HTTP sinon)
 	go heartbeatLoop(ctx,
 		a.cfg.ControlPlane.CoreEndpoint,
@@ -527,6 +549,7 @@ func (a *Agent) Start(ctx context.Context) error {
 		internalEndpoint,
 		runtimes,
 		a.wsClient,
+		a.tokenUpdate,
 		a.log,
 	)
 
