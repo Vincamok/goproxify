@@ -130,6 +130,18 @@ window.openDockerLabelsModal = async function(opts = {}) {
             <div class="form-hint">${t('dockerlbl.port_hint')}</div>
           </div>
 
+          <div class="field" style="margin-top:12px" id="lbl-backend-group">
+            <label class="field-label">${t('dockerlbl.backend')}</label>
+            <input id="lbl-backend" class="input" placeholder="http://10.0.0.5:3000" oninput="genLabels()">
+            <div class="form-hint">${t('dockerlbl.backend_hint')}</div>
+          </div>
+
+          <div class="field" style="margin-top:12px" id="lbl-ip-group">
+            <label class="field-label">${t('dockerlbl.ip_override')}</label>
+            <input id="lbl-ip" class="input" placeholder="10.0.0.5" oninput="genLabels()">
+            <div class="form-hint">${t('dockerlbl.ip_override_hint')}</div>
+          </div>
+
           <div class="lbl-options" id="lbl-route-toggles" style="margin-top:12px">
             <div class="lbl-option">
               <span><span class="lbl-option-title">TLS</span><span class="lbl-option-hint">${t('dockerlbl.tls_hint')}</span></span>
@@ -308,6 +320,27 @@ window.openDockerLabelsModal = async function(opts = {}) {
               <label class="toggle"><input type="checkbox" id="lbl-prune" onchange="genLabels()"><span class="toggle-slider"></span></label>
             </div>
           </div>
+          <div class="field" id="lbl-rollback-group" style="display:none;margin-top:10px">
+            <label class="field-label">${t('dockerlbl.rollback_timeout')}</label>
+            <input id="lbl-rollback" class="input" placeholder="60s" oninput="genLabels()">
+            <div class="form-hint">${t('dockerlbl.rollback_timeout_hint')}</div>
+          </div>
+
+          <div class="lbl-sec-card" style="margin-top:16px">
+            <div class="lbl-sec-card-title">${t('dockerlbl.healthcheck_title')}</div>
+            <div class="form-row" style="gap:12px;margin-top:8px">
+              <div class="field" style="margin:0;flex:1">
+                <label class="field-label" style="font-size:11px">${t('dockerlbl.hc_restart_max')}</label>
+                <input id="lbl-hc-restart" class="input" type="number" min="0" placeholder="3" oninput="genLabels()">
+                <div class="form-hint">${t('dockerlbl.hc_restart_max_hint')}</div>
+              </div>
+              <div class="field" style="margin:0;flex:1">
+                <label class="field-label" style="font-size:11px">${t('dockerlbl.hc_recreate_timeout')}</label>
+                <input id="lbl-hc-recreate" class="input" placeholder="30s" oninput="genLabels()">
+                <div class="form-hint">${t('dockerlbl.hc_recreate_timeout_hint')}</div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div id="ltab-preview" class="lbl-mtab-panel" style="display:none">
@@ -422,6 +455,8 @@ function mapProxyToLabelPrefill(p) {
   const hdr = cfg.headers || {};
   const logging = cfg.logging;
   const logsOn = !!(logging && logging.format !== 'off' && logging.access_log !== false);
+  const hcRestart = cfg.healthcheck?.restart_max ?? cfg.health_check?.restart_max ?? null;
+  const hcRecreate = cfg.healthcheck?.recreate_timeout ?? cfg.health_check?.recreate_timeout ?? null;
   let wafMode = '';
   if (waf?.enabled) wafMode = (waf.mode === 'detect' ? 'detect' : 'block');
   const hostList = [cfg.host || p.host, ...(Array.isArray(cfg.aliases) ? cfg.aliases : [])]
@@ -458,6 +493,11 @@ function mapProxyToLabelPrefill(p) {
     hsts: !!hdr.hsts,
     hideServer: !!hdr.hide_server,
     xfo: hdr.x_frame_options || '',
+    backend: cfg.backend_url || '',
+    ip: cfg.ip || '',
+    rollback: cfg.update?.rollback_timeout || '',
+    hcRestartMax: hcRestart != null ? String(hcRestart) : '',
+    hcRecreateTimeout: hcRecreate || '',
   };
 }
 
@@ -489,9 +529,14 @@ function applyLabelPrefill(pre) {
   setChk('lbl-waf-enabled', !!pre.waf);
   setVal('lbl-waf', pre.waf || 'block');
   setChk('lbl-bot', pre.bot);
+  setVal('lbl-backend', pre.backend || '');
+  setVal('lbl-ip', pre.ip || '');
   setChk('lbl-canary', pre.canary);
   setVal('lbl-canary-weight', String(pre.canaryWeight || 10));
   setChk('lbl-shadow', pre.shadow);
+  setVal('lbl-rollback', pre.rollback || '');
+  setVal('lbl-hc-restart', pre.hcRestartMax || '');
+  setVal('lbl-hc-recreate', pre.hcRecreateTimeout || '');
 
   const authEl = document.getElementById('lbl-auth');
   if (authEl && pre.auth) {
@@ -567,8 +612,10 @@ function _lblSyncConditional() {
   const update = document.getElementById('lbl-update')?.value;
   const cronGroup = document.getElementById('lbl-cron-group');
   const pruneGroup = document.getElementById('lbl-prune-group');
+  const rollbackGroup = document.getElementById('lbl-rollback-group');
   if (cronGroup) cronGroup.style.display = update === 'scheduled' ? '' : 'none';
   if (pruneGroup) pruneGroup.style.display = update ? '' : 'none';
+  if (rollbackGroup) rollbackGroup.style.display = update ? '' : 'none';
 }
 
 function _syncLabelFormatUI() {
@@ -650,9 +697,14 @@ window.genLabels = function() {
   const canaryWeight = parseInt(document.getElementById('lbl-canary-weight')?.value) || 10;
   const shadow = document.getElementById('lbl-shadow')?.checked;
   const port  = document.getElementById('lbl-port')?.value || '3000';
+  const backend = (document.getElementById('lbl-backend')?.value || '').trim();
+  const ip    = (document.getElementById('lbl-ip')?.value || '').trim();
   const update = document.getElementById('lbl-update')?.value;
   const cron  = document.getElementById('lbl-cron')?.value;
   const prune = document.getElementById('lbl-prune')?.checked;
+  const rollback = (document.getElementById('lbl-rollback')?.value || '').trim();
+  const hcRestart = (document.getElementById('lbl-hc-restart')?.value || '').trim();
+  const hcRecreate = (document.getElementById('lbl-hc-recreate')?.value || '').trim();
 
   const isL4 = type === 'tcp' || type === 'udp';
   const svcName = (hosts[0] || 'app').split('.')[0].replace(/[^a-z0-9]/gi, '').toLowerCase() || 'app';
@@ -700,6 +752,8 @@ spec:
     if (https) labels.push(`goproxify.https=true`);
     if (passthrough) labels.push(`goproxify.passthrough=true`);
   }
+  if (backend) labels.push(`goproxify.backend=${backend}`);
+  if (ip) labels.push(`goproxify.ip=${ip}`);
   if (logs) labels.push(`goproxify.logs=true`);
   if (rlOn && rps > 0) {
     labels.push(burst > 0 ? `goproxify.rate_limit=${rps}/s:${burst}` : `goproxify.rate_limit=${rps}/s`);
@@ -725,6 +779,9 @@ spec:
   if (update === 'true') labels.push('goproxify.update.auto=true');
   if (update === 'scheduled' && cron) labels.push(`goproxify.update.schedule=${cron}`);
   if (update && prune) labels.push('goproxify.update.prune=true');
+  if (update && rollback) labels.push(`goproxify.update.rollback_timeout=${rollback}`);
+  if (hcRestart) labels.push(`goproxify.healthcheck.restart_max=${hcRestart}`);
+  if (hcRecreate) labels.push(`goproxify.healthcheck.recreate_timeout=${hcRecreate}`);
 
   document.getElementById('lbl-output').textContent = labels.join('\n');
   const compose = `services:\n  ${svcName}:\n    image: your-image:latest\n    labels:\n${labels.map(l => '      - "' + l + '"').join('\n')}`;
