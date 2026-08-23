@@ -601,6 +601,9 @@ func (a *Agent) detectedRuntimes() []string {
 			runtimes = append(runtimes, "docker")
 		}
 	}
+	if a.portainerDisc != nil {
+		runtimes = append(runtimes, "portainer")
+	}
 	if a.k8sDiscovery != nil {
 		runtimes = append(runtimes, "kubernetes")
 	}

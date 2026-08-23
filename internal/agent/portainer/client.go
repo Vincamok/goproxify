@@ -86,6 +86,7 @@ type Container struct {
 	NetworkSettings struct {
 		Networks map[string]struct {
 			NetworkID string `json:"NetworkID"`
+			IPAddress string `json:"IPAddress"`
 		} `json:"Networks"`
 	} `json:"NetworkSettings"`
 }

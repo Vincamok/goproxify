@@ -78,16 +78,17 @@ func (d *Discovery) scan(ctx context.Context) {
 			continue
 		}
 		for _, c := range containers {
-			firstNet := ""
-			for name := range c.NetworkSettings.Networks {
+			firstNet, firstIP := "", ""
+			for name, net := range c.NetworkSettings.Networks {
 				firstNet = name
+				firstIP = net.IPAddress
 				break
 			}
 			firstName := ""
 			if len(c.Names) > 0 {
 				firstName = c.Names[0]
 			}
-			specs := docker.ParseLabelsMulti(c.ID, firstName, c.Image, firstNet, c.Labels, nil, "")
+			specs := docker.ParseLabelsMulti(c.ID, firstName, c.Image, firstNet, c.Labels, nil, firstIP)
 			if len(specs) == 0 {
 				continue
 			}
