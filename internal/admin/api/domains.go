@@ -233,6 +233,13 @@ func (h *DomainsHandler) get(w http.ResponseWriter, r *http.Request, id string) 
 		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
 		return
 	}
+	userID := adminauth.UserIDFromContext(r.Context())
+	userRole := rbac.UserRole(r.Context(), h.DB, userID)
+	userGrants, _ := rbac.UserEffectiveGrants(r.Context(), h.DB, userID)
+	if !rbac.CanReadDomainWithGrants(userRole, userGrants, d.Domain) {
+		writeErr(w, r, http.StatusNotFound, "api.err.domain_not_found")
+		return
+	}
 	if exp.Valid {
 		d.CertExpiresAt = &exp.Time
 	}

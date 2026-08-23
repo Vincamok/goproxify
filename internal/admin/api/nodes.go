@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/vincamok/goproxify/internal/admin/alerting"
 	"github.com/vincamok/goproxify/internal/admin/auth"
+	"github.com/vincamok/goproxify/internal/admin/rbac"
 )
 
 // NodesHandler gère la liste des nœuds et le déclenchement des mises à jour.
@@ -58,6 +59,16 @@ func (h *NodesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	action := ""
 	if len(parts) == 2 {
 		action = parts[1]
+	}
+
+	// Les opérations d'écriture sur les nœuds sont réservées aux admins.
+	isWrite := r.Method != http.MethodGet
+	if isWrite {
+		userID := auth.UserIDFromContext(r.Context())
+		if !rbac.IsAdmin(r.Context(), h.DB, userID) {
+			http.Error(w, "accès réservé aux administrateurs", http.StatusForbidden)
+			return
+		}
 	}
 
 	switch {

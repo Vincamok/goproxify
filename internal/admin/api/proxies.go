@@ -295,6 +295,27 @@ func (h *ProxiesHandler) patch(w http.ResponseWriter, r *http.Request, id string
 		http.Error(w, "corps JSON invalide : champ enabled requis", http.StatusBadRequest)
 		return
 	}
+
+	existing, err := h.loadProxy(r, id)
+	if err == sql.ErrNoRows {
+		writeErr(w, r, http.StatusNotFound, "api.err.proxy_not_found")
+		return
+	}
+	if err != nil {
+		h.Log.Error("proxies: patch load", "err", err)
+		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
+		return
+	}
+	userID := auth.UserIDFromContext(r.Context())
+	userRole := rbac.UserRole(r.Context(), h.DB, userID)
+	userGrants, _ := rbac.UserEffectiveGrants(r.Context(), h.DB, userID)
+	var existingRoute router.Route
+	_ = json.Unmarshal(existing.Config, &existingRoute)
+	if !rbac.CanWriteProxyWithGrants(userRole, userGrants, &existingRoute) {
+		writeErr(w, r, http.StatusForbidden, "api.err.out_of_scope")
+		return
+	}
+
 	res, err := h.DB.ExecContext(r.Context(),
 		`UPDATE proxies SET enabled=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
 		boolToInt(*body.Enabled), id,

@@ -195,10 +195,16 @@ type ingressTLS struct {
 }
 
 // watchAll surveille Services et Ingress en parallèle.
+// Si l'un des watchers se termine (erreur ou ctx annulé), l'autre est annulé aussi.
 func (d *Discovery) watchAll(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	errCh := make(chan error, 2)
 	go func() { errCh <- d.watchServices(ctx) }()
 	go func() { errCh <- d.watchIngresses(ctx) }()
+
+	// La première erreur annule l'autre goroutine via cancel().
 	err := <-errCh
 	return err
 }
