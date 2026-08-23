@@ -10,6 +10,7 @@ const _arch = {
   loading: false,
   packs: [], // { hostId, hostName, html, flows, bootstrapUrl }
   pairingSecret: '',
+  jwtSecret: '',
   coreList: [],
   declaredNodes: [],
   onlineCoreEndpoint: '',
@@ -200,6 +201,23 @@ function _archHydrateFromExisting(nodes, declared) {
     host.services.push(svc);
   }
 
+  // Auto-place Admin on the first internet-facing Core host (or first Core host).
+  // Admin is always co-deployed with Core and never reported by the heartbeat.
+  if (hosts.length && !hosts.some(h => h.services.some(s => s.type === 'admin'))) {
+    const adminHost = hosts.find(h => h.internet && h.services.some(s => s.type === 'core'))
+      || hosts.find(h => h.services.some(s => s.type === 'core'))
+      || hosts[0];
+    adminHost.services.unshift({
+      id: _archUid('admin'),
+      type: 'admin',
+      name: 'goproxify-admin',
+      access: false, portainer: false, k8s: false, docker: false, podman: false,
+      autoscale: false, domains: '', acme: false, acmeEmail: '', dnsProvider: 'none',
+      reachable: '', portainerUrl: '', portainerKey: '', targetCoreId: '', placement: '',
+      existing: true, status: 'declared',
+    });
+  }
+
   return { hosts: hosts.length ? hosts : [_archEmptyHost(1)], haGroupIds, existingCount: list.length };
 }
 
@@ -291,6 +309,11 @@ function _archLoad() {
   ]).then(([sec, nodes, tokens, declared]) => {
     _arch.pairingSecret = sec?.secret || '';
     _wiz.pairingSecret = _arch.pairingSecret;
+    if (!_arch.jwtSecret) {
+      const arr = new Uint8Array(32);
+      (typeof crypto !== 'undefined' && crypto.getRandomValues) ? crypto.getRandomValues(arr) : arr.forEach((_,i,a) => a[i] = Math.floor(Math.random()*256));
+      _arch.jwtSecret = Array.from(arr).map(b => b.toString(16).padStart(2,'0')).join('');
+    }
     _arch.coreList = typeof _wizLoadCoreList === 'function' ? _wizLoadCoreList(nodes, tokens) : [];
     _arch.declaredNodes = Array.isArray(declared) ? declared : [];
     _wiz.declaredNodes = _arch.declaredNodes;
@@ -1151,17 +1174,29 @@ function _archBuildPacks() {
     }
 
     const packUid = host.id;
-    let html = '';
-    if (coreOpts && agentOpts) html = _renderConfigUI(coreOpts, agentOpts, packUid);
-    else if (coreOpts) html = _renderConfigUI(coreOpts, null, packUid);
-    else if (agentOpts) html = _renderConfigUI(agentOpts, null, packUid);
 
+    // Build Admin opts when Admin is co-located on this host
+    let adminOpts = null;
+    if (admins.length && coreOpts) {
+      adminOpts = _buildAdminOpts({
+        wa_core_name: coreOpts.name,
+        wa_jwt_secret: _arch.jwtSecret,
+        wa_admin_email: (admins[0].acmeEmail || '').trim() || 'admin@example.com',
+        wa_admin_password: 'CHANGE_ME',
+      });
+    }
+
+    let html = '';
+    if (coreOpts && agentOpts) html = _renderConfigUI(coreOpts, agentOpts, packUid, adminOpts);
+    else if (coreOpts) html = _renderConfigUI(coreOpts, null, packUid, adminOpts);
+    else if (agentOpts) html = _renderConfigUI(agentOpts, null, packUid, null);
+
+    // ACME hint stays as annotation after the compose tabs
     if (admins.length) {
       const acmeCores = _arch.hosts.flatMap(h => h.services.filter(s => s.type === 'core' && s.acme));
-      let hint = `<p style="font-size:13px;color:var(--text2);${html ? 'margin-top:12px;' : ''}">${t('arch.admin_hint')}</p>`;
       if (acmeCores.length) {
         const c = acmeCores[0];
-        hint += `<div style="font-size:12px;color:var(--text2);margin-top:8px;line-height:1.45;padding:10px;border-radius:8px;background:var(--bg);border:1px solid var(--border);">
+        const hint = `<div style="font-size:12px;color:var(--text2);margin-top:10px;line-height:1.45;padding:10px;border-radius:8px;background:var(--bg);border:1px solid var(--border);">
           <strong>${t('arch.acme.admin_title')}</strong><br>
           <code>GPX_ACME_ENABLED=true</code>
           ${c.acmeEmail ? `<br><code>GPX_ACME_EMAIL=${esc(c.acmeEmail)}</code>` : ''}
@@ -1169,11 +1204,11 @@ function _archBuildPacks() {
           <br><span style="opacity:.85;">${t('arch.acme.admin_token_hint')}</span>
           ${c.domains ? `<br><span style="opacity:.85;">${t('arch.acme.domains_later', { domains: c.domains })}</span>` : ''}
         </div>`;
+        html = (html || '') + hint;
       }
-      html = (html || '') + hint;
     }
 
-    // Annoter pack Core avec domaines pour le handoff
+    // Annotate Core pack with domains for handoff
     if (coreOpts && cores[0] && (cores[0].domains || cores[0].acme)) {
       const note = [];
       if (cores[0].domains) note.push(t('arch.acme.domains_later', { domains: cores[0].domains }));
@@ -1186,10 +1221,18 @@ function _archBuildPacks() {
     const bootstrapUrl = `${origin}/bootstrap/${token}`; // remplacé à la création ticket
 
     let composeText = '', envText = '', cliText = '';
-    if (coreOpts && agentOpts) {
+    if (coreOpts && agentOpts && adminOpts) {
+      composeText = _cfgComposeTextFullAdmin(coreOpts, agentOpts, adminOpts, 'env_file');
+      envText = _cfgEnvFileTextFull(coreOpts, agentOpts) + '\n' + adminOpts.envVars.map(({k,v}) => `${k}=${v}`).join('\n');
+      cliText = _cfgCliText(coreOpts) + '\n\n' + _cfgCliText(agentOpts) + '\n\n' + _cfgCliText(adminOpts);
+    } else if (coreOpts && agentOpts) {
       composeText = _cfgComposeTextFull(coreOpts, agentOpts, 'env_file');
       envText = _cfgEnvFileTextFull(coreOpts, agentOpts);
       cliText = _cfgCliText(coreOpts) + '\n\n' + _cfgCliText(agentOpts);
+    } else if (coreOpts && adminOpts) {
+      composeText = _cfgComposeTextAdmin(coreOpts, adminOpts, 'env_file');
+      envText = [...coreOpts.envVars, ...adminOpts.envVars].map(({k,v}) => `${k}=${v}`).join('\n');
+      cliText = _cfgCliText(coreOpts) + '\n\n' + _cfgCliText(adminOpts);
     } else if (coreOpts) {
       composeText = _cfgComposeText(coreOpts, 'env_file');
       envText = _cfgEnvFileText(coreOpts);

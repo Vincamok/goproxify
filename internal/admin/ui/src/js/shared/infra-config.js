@@ -74,42 +74,54 @@ function _cfgCliText(opts) {
     + `  --network goproxify-net \\\n  ${image}`;
 }
 
-function _cfgContentHTML(opts, uid) {
+function _cfgContentHTML(opts, uid, adminOpts) {
   const state = window._cfgStates[uid] || window._cfgState;
   const { tab, inline } = state;
   const p = uid ? uid + '-' : '';
-  if (tab === 'cli') return _cfgLabel('Commande Docker') + _cfgPre(p + 'cfg-cli', _cfgCliText(opts));
+  if (tab === 'cli') {
+    return _cfgLabel('Commande Docker') + _cfgPre(p + 'cfg-cli', _cfgCliText(opts))
+      + (adminOpts ? _cfgLabel('Admin — Commande Docker') + _cfgPre(p + 'cfg-cli-admin', _cfgCliText(adminOpts)) : '');
+  }
   const mode = inline ? 'inline' : (tab === 'portainer' ? 'portainer_vars' : 'env_file');
-  const compose = _cfgComposeText(opts, mode);
+  const compose = adminOpts ? _cfgComposeTextAdmin(opts, adminOpts, mode) : _cfgComposeText(opts, mode);
   const envFileName = tab === 'portainer' ? 'stack.env — Variables à saisir dans Portainer' : '.env';
+  const envText = adminOpts
+    ? [...opts.envVars, ...adminOpts.envVars].map(({k,v}) => `${k}=${v}`).join('\n')
+    : _cfgEnvFileText(opts);
   return _cfgLabel('docker-compose.yml') + _cfgPre(p + 'cfg-compose', compose)
-    + (!inline ? _cfgLabel(envFileName) + _cfgPre(p + 'cfg-env', _cfgEnvFileText(opts)) : '');
+    + (!inline ? _cfgLabel(envFileName) + _cfgPre(p + 'cfg-env', envText) : '');
 }
 
-function _cfgContentHTMLFull(coreOpts, agentOpts, uid) {
+function _cfgContentHTMLFull(coreOpts, agentOpts, uid, adminOpts) {
   const state = window._cfgStates[uid] || window._cfgState;
   const { tab, inline } = state;
   const p = uid ? uid + '-' : '';
   if (tab === 'cli') {
     return _cfgLabel('Core — Commande Docker') + _cfgPre(p + 'cfg-cli-core', _cfgCliText(coreOpts))
-      + _cfgLabel('Agent — Commande Docker') + _cfgPre(p + 'cfg-cli-agent', _cfgCliText(agentOpts));
+      + _cfgLabel('Agent — Commande Docker') + _cfgPre(p + 'cfg-cli-agent', _cfgCliText(agentOpts))
+      + (adminOpts ? _cfgLabel('Admin — Commande Docker') + _cfgPre(p + 'cfg-cli-admin', _cfgCliText(adminOpts)) : '');
   }
   const mode = inline ? 'inline' : (tab === 'portainer' ? 'portainer_vars' : 'env_file');
-  const compose = _cfgComposeTextFull(coreOpts, agentOpts, mode);
+  const compose = adminOpts
+    ? _cfgComposeTextFullAdmin(coreOpts, agentOpts, adminOpts, mode)
+    : _cfgComposeTextFull(coreOpts, agentOpts, mode);
   const envFileName = tab === 'portainer' ? 'stack.env — Variables à saisir dans Portainer' : '.env';
+  const envText = adminOpts
+    ? _cfgEnvFileTextFull(coreOpts, agentOpts) + '\n' + adminOpts.envVars.map(({k,v}) => `${k}=${v}`).join('\n')
+    : _cfgEnvFileTextFull(coreOpts, agentOpts);
   return _cfgLabel('docker-compose.yml') + _cfgPre(p + 'cfg-compose', compose)
-    + (!inline ? _cfgLabel(envFileName) + _cfgPre(p + 'cfg-env', _cfgEnvFileTextFull(coreOpts, agentOpts)) : '');
+    + (!inline ? _cfgLabel(envFileName) + _cfgPre(p + 'cfg-env', envText) : '');
 }
 
 function _cfgRender(uid) {
   const p = uid ? uid + '-' : '';
   const state = uid ? (window._cfgStates[uid] || (window._cfgStates[uid] = { tab: 'compose', inline: false })) : window._cfgState;
-  const optsEntry = uid ? (window._cfgOptsMap[uid] || {}) : { opts: window._cfgOpts, extra: window._cfgOptsFull };
+  const optsEntry = uid ? (window._cfgOptsMap[uid] || {}) : { opts: window._cfgOpts, extra: window._cfgOptsFull, admin: window._cfgOptsAdmin };
   const area = document.getElementById(p + 'cfg-content-area');
   if (!area) return;
   area.innerHTML = optsEntry.extra
-    ? _cfgContentHTMLFull(optsEntry.opts, optsEntry.extra, uid)
-    : _cfgContentHTML(optsEntry.opts, uid);
+    ? _cfgContentHTMLFull(optsEntry.opts, optsEntry.extra, uid, optsEntry.admin)
+    : _cfgContentHTML(optsEntry.opts, uid, optsEntry.admin);
   ['compose','portainer','cli'].forEach(t => {
     const btn = document.getElementById(p + 'cfg-tab-' + t);
     if (!btn) return;
@@ -143,14 +155,15 @@ window._cfgToggle = function(uid) {
   _cfgRender(uid);
 };
 
-function _renderConfigUI(opts, optsExtra, uid) {
+function _renderConfigUI(opts, optsExtra, uid, adminOpts) {
   const p = uid ? uid + '-' : '';
   if (uid) {
     if (!window._cfgStates[uid]) window._cfgStates[uid] = { tab: 'compose', inline: false };
-    window._cfgOptsMap[uid] = { opts, extra: optsExtra || null };
+    window._cfgOptsMap[uid] = { opts, extra: optsExtra || null, admin: adminOpts || null };
   } else {
     window._cfgOpts = opts;
     window._cfgOptsFull = optsExtra || null;
+    window._cfgOptsAdmin = adminOpts || null;
     if (!window._cfgState) window._cfgState = { tab: 'compose', inline: false };
   }
   const state = uid ? window._cfgStates[uid] : window._cfgState;
@@ -168,7 +181,7 @@ function _renderConfigUI(opts, optsExtra, uid) {
         Inliner les valeurs <span style="color:var(--text2);">(sans fichier .env)</span>
       </label>
     </div>
-    <div id="${p}cfg-content-area">${optsExtra ? _cfgContentHTMLFull(opts, optsExtra, uid) : _cfgContentHTML(opts, uid)}</div>
+    <div id="${p}cfg-content-area">${optsExtra ? _cfgContentHTMLFull(opts, optsExtra, uid, adminOpts) : _cfgContentHTML(opts, uid, adminOpts)}</div>
   </div>`;
 }
 
@@ -237,4 +250,55 @@ function _buildAgentOpts(d) {
   if (useContainerRuntime) volumes.push(`${sockHost}:${sockHost}:ro`);
   volumes.push(`${name}_data:/etc/goproxify`);
   return { name, svcName: name, image, envVars, ports: [], volumes, netBlock, restart };
+}
+
+function _buildAdminOpts(d) {
+  const name     = 'goproxify-admin';
+  const restart  = 'unless-stopped';
+  const image    = 'ghcr.io/vincamok/goproxify/admin:preview';
+  const netBlock = `\nnetworks:\n  goproxify-net:\n    driver: bridge`;
+  const coreName = (d.wa_core_name || _wiz.coreSvcName || 'goproxify-core').trim();
+  const envVars  = [
+    { k: 'GPX_SECURITY_JWT_SECRET',      v: d.wa_jwt_secret || '' },
+    { k: 'GPX_PAIRING_SECRET',           v: _wiz.pairingSecret || '' },
+    { k: 'GPX_FIRST_ADMIN_EMAIL',        v: d.wa_admin_email || 'admin@example.com' },
+    { k: 'GPX_FIRST_ADMIN_PASSWORD',     v: d.wa_admin_password || 'CHANGE_ME' },
+    { k: 'GPX_IDENTITY_CORE_NODE_NAME',  v: coreName },
+  ];
+  return { name, svcName: name, image, envVars, ports: ['9443:9443'], volumes: [`${name}_data:/etc/goproxify`], netBlock, restart, command: 'admin' };
+}
+
+function _cfgComposeSvcAdmin(opts, mode) {
+  const { name, image, envVars, ports, volumes, restart, svcName, command } = opts;
+  const svc = svcName || name;
+  let envSection;
+  if (mode === 'env_file')           envSection = `    env_file:\n      - .env`;
+  else if (mode === 'portainer_vars') envSection = `    environment:` + envVars.map(({k}) => `\n      - ${k}=\${${k}}`).join('');
+  else                               envSection = `    environment:` + envVars.map(({k,v}) => `\n      - ${k}=${v}`).join('');
+  const portSection = ports.length ? `    ports:\n` + ports.map(p => `      - "${p}"`).join('\n') + '\n' : '';
+  const volLines = volumes.map(v => `      - ${v}`).join('\n');
+  const volSection = volumes.length ? `    volumes:\n${volLines}\n` : '';
+  const cmdSection = command ? `    command: ["${command}"]\n` : '';
+  return `  ${svc}:\n    image: ${image}\n    container_name: ${name}\n    restart: ${restart}\n${cmdSection}${portSection}${envSection}\n${volSection}    networks:\n      - goproxify-net`;
+}
+
+function _cfgComposeTextAdmin(coreOpts, adminOpts, mode) {
+  const coreSvc  = _cfgComposeSvc(coreOpts, mode);
+  const adminSvc = _cfgComposeSvcAdmin(adminOpts, mode);
+  const coreVol  = `  ${coreOpts.name}_data:`;
+  const adminVol = `  ${adminOpts.name}_data:`;
+  return `services:\n${coreSvc}\n\n${adminSvc}\n\nvolumes:\n${coreVol}\n${adminVol}\n${coreOpts.netBlock}`;
+}
+
+function _cfgComposeTextFullAdmin(coreOpts, agentOpts, adminOpts, mode) {
+  const coreSvc  = _cfgComposeSvc(coreOpts, mode);
+  const agentSvc = _cfgComposeSvc(agentOpts, mode).replace(
+    '    networks:\n      - goproxify-net',
+    `    depends_on:\n      - ${coreOpts.svcName||coreOpts.name}\n    networks:\n      - goproxify-net`
+  );
+  const adminSvc = _cfgComposeSvcAdmin(adminOpts, mode);
+  const coreVol  = `  ${coreOpts.name}_data:`;
+  const agentVol = agentOpts.volumes.filter(v=>!v.includes('docker.sock') && !v.includes('podman.sock')).map(v=>`  ${v.split(':')[0]}:`).join('\n');
+  const adminVol = `  ${adminOpts.name}_data:`;
+  return `services:\n${coreSvc}\n\n${agentSvc}\n\n${adminSvc}\n\nvolumes:\n${coreVol}\n${agentVol}\n${adminVol}\n${coreOpts.netBlock}`;
 }
