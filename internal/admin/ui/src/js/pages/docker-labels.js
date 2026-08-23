@@ -82,6 +82,7 @@ window.openDockerLabelsModal = async function(opts = {}) {
   const icoSnip = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`;
   const icoTraffic = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>`;
   const icoUp = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>`;
+  const icoAdv = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 010 14.14M4.93 4.93a10 10 0 000 14.14"/></svg>`;
   const icoPrev = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
 
   const body = `
@@ -91,6 +92,7 @@ window.openDockerLabelsModal = async function(opts = {}) {
         ${_lblTabBtn('sec', t('dockerlbl.tab.security'), icoSec)}
         ${_lblTabBtn('snip', t('dockerlbl.tab.snippets'), icoSnip)}
         ${_lblTabBtn('traffic', t('dockerlbl.tab.traffic'), icoTraffic)}
+        ${_lblTabBtn('adv', t('dockerlbl.tab.advanced'), icoAdv)}
         ${_lblTabBtn('update', t('dockerlbl.tab.update'), icoUp)}
         ${_lblTabBtn('preview', t('dockerlbl.tab.preview'), icoPrev)}
       </aside>
@@ -301,6 +303,166 @@ window.openDockerLabelsModal = async function(opts = {}) {
           </div>
         </div>
 
+        <div id="ltab-adv" class="lbl-mtab-panel" style="display:none">
+
+          ${_lblSecCard(t('dockerlbl.adv.http_behavior'), `
+            <div class="lbl-options" style="margin:0 0 10px">
+              <div class="lbl-option">
+                <span><span class="lbl-option-title">${t('dockerlbl.adv.preserve_host')}</span><span class="lbl-option-hint">${t('dockerlbl.adv.preserve_host_hint')}</span></span>
+                <label class="toggle"><input type="checkbox" id="lbl-preserve-host" onchange="genLabels()"><span class="toggle-slider"></span></label>
+              </div>
+              <div class="lbl-option">
+                <span><span class="lbl-option-title">${t('dockerlbl.adv.websocket')}</span><span class="lbl-option-hint">${t('dockerlbl.adv.websocket_hint')}</span></span>
+                <label class="toggle"><input type="checkbox" id="lbl-websocket" onchange="genLabels()"><span class="toggle-slider"></span></label>
+              </div>
+              <div class="lbl-option">
+                <span><span class="lbl-option-title">${t('dockerlbl.adv.request_id')}</span><span class="lbl-option-hint">${t('dockerlbl.adv.request_id_hint')}</span></span>
+                <label class="toggle"><input type="checkbox" id="lbl-request-id" onchange="genLabels()"><span class="toggle-slider"></span></label>
+              </div>
+            </div>
+            <div class="field" style="margin:0">
+              <label class="field-label" style="font-size:11px">${t('dockerlbl.adv.http_version')}</label>
+              <select id="lbl-http-version" class="input" onchange="genLabels()">
+                <option value="">${t('dockerlbl.off')}</option>
+                <option value="1.1">HTTP/1.1</option>
+                <option value="2">HTTP/2</option>
+              </select>
+            </div>
+          `)}
+
+          ${_lblSecCard(t('dockerlbl.adv.url_rewrite'), `
+            <div class="form-row" style="gap:10px">
+              <div class="field" style="margin:0;flex:1">
+                <label class="field-label" style="font-size:11px">${t('dockerlbl.adv.strip_prefix')}</label>
+                <input id="lbl-strip-prefix" class="input" placeholder="/api" oninput="genLabels()">
+                <div class="form-hint">${t('dockerlbl.adv.strip_prefix_hint')}</div>
+              </div>
+              <div class="field" style="margin:0;flex:1">
+                <label class="field-label" style="font-size:11px">${t('dockerlbl.adv.path_rewrite')}</label>
+                <input id="lbl-path-rewrite" class="input" placeholder="/api→/v2/api" oninput="genLabels()">
+                <div class="form-hint">${t('dockerlbl.adv.path_rewrite_hint')}</div>
+              </div>
+            </div>
+          `)}
+
+          ${_lblSecCard(t('dockerlbl.adv.timeouts'), `
+            <div class="form-row" style="gap:10px;flex-wrap:wrap">
+              <div class="field" style="margin:0;flex:1;min-width:120px">
+                <label class="field-label" style="font-size:11px">${t('dockerlbl.adv.connect_timeout')}</label>
+                <input id="lbl-connect-timeout" class="input" placeholder="5s" oninput="genLabels()">
+              </div>
+              <div class="field" style="margin:0;flex:1;min-width:120px">
+                <label class="field-label" style="font-size:11px">${t('dockerlbl.adv.response_timeout')}</label>
+                <input id="lbl-response-timeout" class="input" placeholder="30s" oninput="genLabels()">
+              </div>
+              <div class="field" style="margin:0;flex:1;min-width:120px">
+                <label class="field-label" style="font-size:11px">${t('dockerlbl.adv.send_timeout')}</label>
+                <input id="lbl-send-timeout" class="input" placeholder="10s" oninput="genLabels()">
+              </div>
+              <div class="field" style="margin:0;flex:1;min-width:120px">
+                <label class="field-label" style="font-size:11px">${t('dockerlbl.adv.max_body_size')}</label>
+                <input id="lbl-max-body-size" class="input" placeholder="10m" oninput="genLabels()">
+                <div class="form-hint">${t('dockerlbl.adv.max_body_size_hint')}</div>
+              </div>
+            </div>
+          `)}
+
+          ${_lblSecCard(t('dockerlbl.adv.lb'), `
+            <div class="form-row" style="gap:10px;flex-wrap:wrap;margin-bottom:10px">
+              <div class="field" style="margin:0;flex:1;min-width:140px">
+                <label class="field-label" style="font-size:11px">${t('dockerlbl.adv.lb_algo')}</label>
+                <select id="lbl-lb" class="input" onchange="genLabels()">
+                  <option value="">${t('dockerlbl.off')}</option>
+                  <option value="round_robin">Round Robin</option>
+                  <option value="weighted">Weighted</option>
+                  <option value="adaptive">Adaptive</option>
+                </select>
+              </div>
+              <div class="field" style="margin:0;flex:1;min-width:140px">
+                <label class="field-label" style="font-size:11px">${t('dockerlbl.adv.sticky_cookie')}</label>
+                <input id="lbl-sticky-cookie" class="input" placeholder="GPXSID" oninput="genLabels()">
+              </div>
+              <div class="field" style="margin:0;flex:1;min-width:120px">
+                <label class="field-label" style="font-size:11px">${t('dockerlbl.adv.limit_conn')}</label>
+                <input id="lbl-limit-conn" class="input" type="number" min="0" placeholder="50" oninput="genLabels()">
+              </div>
+            </div>
+            <div class="form-row" style="gap:10px;flex-wrap:wrap">
+              <div class="field" style="margin:0;flex:1;min-width:140px">
+                <label class="field-label" style="font-size:11px">${t('dockerlbl.adv.retry')}</label>
+                <input id="lbl-retry" class="input" placeholder="3:500ms" oninput="genLabels()">
+                <div class="form-hint">${t('dockerlbl.adv.retry_hint')}</div>
+              </div>
+              <div class="field" style="margin:0;flex:1;min-width:140px">
+                <label class="field-label" style="font-size:11px">${t('dockerlbl.adv.circuit_breaker')}</label>
+                <input id="lbl-circuit-breaker" class="input" placeholder="5:30s" oninput="genLabels()">
+                <div class="form-hint">${t('dockerlbl.adv.circuit_breaker_hint')}</div>
+              </div>
+            </div>
+          `)}
+
+          ${_lblSecCard(t('dockerlbl.adv.headers'), `
+            <div class="field" style="margin:0 0 8px">
+              <label class="field-label" style="font-size:11px">${t('dockerlbl.adv.headers_add')}</label>
+              <input id="lbl-headers-add" class="input" placeholder="X-Foo:bar,X-Env:prod" oninput="genLabels()">
+              <div class="form-hint">${t('dockerlbl.adv.headers_add_hint')}</div>
+            </div>
+            <div class="field" style="margin:0">
+              <label class="field-label" style="font-size:11px">${t('dockerlbl.adv.headers_remove')}</label>
+              <input id="lbl-headers-remove" class="input" placeholder="X-Powered-By,Server" oninput="genLabels()">
+              <div class="form-hint">${t('dockerlbl.adv.headers_remove_hint')}</div>
+            </div>
+          `)}
+
+          ${_lblSecCard(t('dockerlbl.adv.auth_advanced'), `
+            <div class="form-row" style="gap:10px;flex-wrap:wrap">
+              <div class="field" style="margin:0;flex:1;min-width:140px">
+                <label class="field-label" style="font-size:11px">JWT</label>
+                <input id="lbl-jwt" class="input" placeholder="${t('dockerlbl.adv.jwt_placeholder')}" oninput="genLabels()">
+                <div class="form-hint">${t('dockerlbl.adv.jwt_hint')}</div>
+              </div>
+              <div class="field" style="margin:0;flex:1;min-width:140px">
+                <label class="field-label" style="font-size:11px">mTLS</label>
+                <input id="lbl-mtls" class="input" placeholder="${t('dockerlbl.adv.mtls_placeholder')}" oninput="genLabels()">
+                <div class="form-hint">${t('dockerlbl.adv.mtls_hint')}</div>
+              </div>
+            </div>
+          `)}
+
+          ${_lblSecCard(t('dockerlbl.adv.cache'), `
+            <div class="field" style="margin:0">
+              <label class="field-label" style="font-size:11px">${t('dockerlbl.adv.cache_ttl')}</label>
+              <input id="lbl-cache" class="input" placeholder="60s" oninput="genLabels()">
+              <div class="form-hint">${t('dockerlbl.adv.cache_hint')}</div>
+            </div>
+          `)}
+
+          ${_lblSecCard(t('dockerlbl.adv.logs_adv'), `
+            <div class="form-row" style="gap:10px;flex-wrap:wrap">
+              <div class="field" style="margin:0;flex:1;min-width:140px">
+                <label class="field-label" style="font-size:11px">${t('dockerlbl.adv.log_format')}</label>
+                <select id="lbl-log-format" class="input" onchange="genLabels()">
+                  <option value="">${t('dockerlbl.off')}</option>
+                  <option value="combined">Combined</option>
+                  <option value="json">JSON</option>
+                  <option value="minimal">Minimal</option>
+                </select>
+              </div>
+              <div class="field" style="margin:0;flex:1;min-width:140px">
+                <label class="field-label" style="font-size:11px">${t('dockerlbl.adv.log_level')}</label>
+                <select id="lbl-log-level" class="input" onchange="genLabels()">
+                  <option value="">${t('dockerlbl.off')}</option>
+                  <option value="debug">Debug</option>
+                  <option value="info">Info</option>
+                  <option value="warn">Warn</option>
+                  <option value="error">Error</option>
+                </select>
+              </div>
+            </div>
+          `)}
+
+        </div>
+
         <div id="ltab-update" class="lbl-mtab-panel" style="display:none">
           <div class="field" id="lbl-update-group">
             <label class="field-label">${t('dockerlbl.auto_update')}</label>
@@ -376,7 +538,7 @@ window.openDockerLabelsModal = async function(opts = {}) {
 };
 
 window.switchLblTab = function(tab) {
-  ['route', 'sec', 'snip', 'traffic', 'update', 'preview'].forEach(k => {
+  ['route', 'sec', 'snip', 'traffic', 'adv', 'update', 'preview'].forEach(k => {
     const panel = document.getElementById('ltab-' + k);
     if (panel) panel.style.display = k === tab ? 'flex' : 'none';
   });
@@ -498,6 +660,28 @@ function mapProxyToLabelPrefill(p) {
     rollback: cfg.update?.rollback_timeout || '',
     hcRestartMax: hcRestart != null ? String(hcRestart) : '',
     hcRecreateTimeout: hcRecreate || '',
+    preserveHost: !!cfg.preserve_host,
+    websocket: !!cfg.websocket,
+    requestId: !!cfg.request_id,
+    httpVersion: cfg.http_version || '',
+    stripPrefix: cfg.strip_prefix || '',
+    pathRewrite: cfg.path_rewrite || '',
+    connectTimeout: cfg.connect_timeout || cfg.timeouts?.connect || '',
+    responseTimeout: cfg.response_timeout || cfg.timeouts?.response || '',
+    sendTimeout: cfg.send_timeout || cfg.timeouts?.send || '',
+    maxBodySize: cfg.max_body_size ? String(cfg.max_body_size) : '',
+    lb: cfg.lb || cfg.load_balancing?.algorithm || '',
+    stickyCookie: cfg.sticky_cookie || '',
+    limitConn: cfg.limit_conn?.max ? String(cfg.limit_conn.max) : '',
+    retry: cfg.retry?.attempts ? (cfg.retry.initial_wait ? `${cfg.retry.attempts}:${cfg.retry.initial_wait}` : String(cfg.retry.attempts)) : '',
+    circuitBreaker: cfg.circuit_breaker?.threshold ? (cfg.circuit_breaker.timeout ? `${cfg.circuit_breaker.threshold}:${cfg.circuit_breaker.timeout}` : String(cfg.circuit_breaker.threshold)) : '',
+    headersAdd: cfg.headers_add ? Object.entries(cfg.headers_add).map(([k,v]) => `${k}:${v}`).join(',') : '',
+    headersRemove: Array.isArray(cfg.headers_remove) ? cfg.headers_remove.join(',') : '',
+    jwt: cfg.jwt?.secret || '',
+    mtls: cfg.mtls?.cert_name || '',
+    cache: cfg.cache?.valid_rules?.[0]?.ttl || (cfg.cache?.enabled ? 'true' : ''),
+    logFormat: logging?.format || '',
+    logLevel: logging?.level || '',
   };
 }
 
@@ -537,6 +721,28 @@ function applyLabelPrefill(pre) {
   setVal('lbl-rollback', pre.rollback || '');
   setVal('lbl-hc-restart', pre.hcRestartMax || '');
   setVal('lbl-hc-recreate', pre.hcRecreateTimeout || '');
+  setChk('lbl-preserve-host', pre.preserveHost);
+  setChk('lbl-websocket', pre.websocket);
+  setChk('lbl-request-id', pre.requestId);
+  setVal('lbl-http-version', pre.httpVersion || '');
+  setVal('lbl-strip-prefix', pre.stripPrefix || '');
+  setVal('lbl-path-rewrite', pre.pathRewrite || '');
+  setVal('lbl-connect-timeout', pre.connectTimeout || '');
+  setVal('lbl-response-timeout', pre.responseTimeout || '');
+  setVal('lbl-send-timeout', pre.sendTimeout || '');
+  setVal('lbl-max-body-size', pre.maxBodySize || '');
+  setVal('lbl-lb', pre.lb || '');
+  setVal('lbl-sticky-cookie', pre.stickyCookie || '');
+  setVal('lbl-limit-conn', pre.limitConn || '');
+  setVal('lbl-retry', pre.retry || '');
+  setVal('lbl-circuit-breaker', pre.circuitBreaker || '');
+  setVal('lbl-headers-add', pre.headersAdd || '');
+  setVal('lbl-headers-remove', pre.headersRemove || '');
+  setVal('lbl-jwt', pre.jwt || '');
+  setVal('lbl-mtls', pre.mtls || '');
+  setVal('lbl-cache', pre.cache || '');
+  setVal('lbl-log-format', pre.logFormat || '');
+  setVal('lbl-log-level', pre.logLevel || '');
 
   const authEl = document.getElementById('lbl-auth');
   if (authEl && pre.auth) {
@@ -705,6 +911,28 @@ window.genLabels = function() {
   const rollback = (document.getElementById('lbl-rollback')?.value || '').trim();
   const hcRestart = (document.getElementById('lbl-hc-restart')?.value || '').trim();
   const hcRecreate = (document.getElementById('lbl-hc-recreate')?.value || '').trim();
+  const preserveHost = document.getElementById('lbl-preserve-host')?.checked;
+  const websocket = document.getElementById('lbl-websocket')?.checked;
+  const requestId = document.getElementById('lbl-request-id')?.checked;
+  const httpVersion = document.getElementById('lbl-http-version')?.value || '';
+  const stripPrefix = (document.getElementById('lbl-strip-prefix')?.value || '').trim();
+  const pathRewrite = (document.getElementById('lbl-path-rewrite')?.value || '').trim();
+  const connectTimeout = (document.getElementById('lbl-connect-timeout')?.value || '').trim();
+  const responseTimeout = (document.getElementById('lbl-response-timeout')?.value || '').trim();
+  const sendTimeout = (document.getElementById('lbl-send-timeout')?.value || '').trim();
+  const maxBodySize = (document.getElementById('lbl-max-body-size')?.value || '').trim();
+  const lb = document.getElementById('lbl-lb')?.value || '';
+  const stickyCookie = (document.getElementById('lbl-sticky-cookie')?.value || '').trim();
+  const limitConn = (document.getElementById('lbl-limit-conn')?.value || '').trim();
+  const retry = (document.getElementById('lbl-retry')?.value || '').trim();
+  const circuitBreaker = (document.getElementById('lbl-circuit-breaker')?.value || '').trim();
+  const headersAdd = (document.getElementById('lbl-headers-add')?.value || '').trim();
+  const headersRemove = (document.getElementById('lbl-headers-remove')?.value || '').trim();
+  const jwt = (document.getElementById('lbl-jwt')?.value || '').trim();
+  const mtls = (document.getElementById('lbl-mtls')?.value || '').trim();
+  const cache = (document.getElementById('lbl-cache')?.value || '').trim();
+  const logFormat = document.getElementById('lbl-log-format')?.value || '';
+  const logLevel = document.getElementById('lbl-log-level')?.value || '';
 
   const isL4 = type === 'tcp' || type === 'udp';
   const svcName = (hosts[0] || 'app').split('.')[0].replace(/[^a-z0-9]/gi, '').toLowerCase() || 'app';
@@ -782,6 +1010,28 @@ spec:
   if (update && rollback) labels.push(`goproxify.update.rollback_timeout=${rollback}`);
   if (hcRestart) labels.push(`goproxify.healthcheck.restart_max=${hcRestart}`);
   if (hcRecreate) labels.push(`goproxify.healthcheck.recreate_timeout=${hcRecreate}`);
+  if (preserveHost) labels.push('goproxify.preserve_host=true');
+  if (websocket) labels.push('goproxify.websocket=true');
+  if (requestId) labels.push('goproxify.request_id=true');
+  if (httpVersion) labels.push(`goproxify.http_version=${httpVersion}`);
+  if (stripPrefix) labels.push(`goproxify.strip_prefix=${stripPrefix}`);
+  if (pathRewrite) labels.push(`goproxify.path_rewrite=${pathRewrite}`);
+  if (connectTimeout) labels.push(`goproxify.timeout.connect=${connectTimeout}`);
+  if (responseTimeout) labels.push(`goproxify.timeout.response=${responseTimeout}`);
+  if (sendTimeout) labels.push(`goproxify.timeout.send=${sendTimeout}`);
+  if (maxBodySize) labels.push(`goproxify.max_body_size=${maxBodySize}`);
+  if (lb) labels.push(`goproxify.lb=${lb}`);
+  if (stickyCookie) labels.push(`goproxify.sticky_cookie=${stickyCookie}`);
+  if (limitConn) labels.push(`goproxify.limit_conn=${limitConn}`);
+  if (retry) labels.push(`goproxify.retry=${retry}`);
+  if (circuitBreaker) labels.push(`goproxify.circuit_breaker=${circuitBreaker}`);
+  if (headersAdd) labels.push(`goproxify.headers.add=${headersAdd}`);
+  if (headersRemove) labels.push(`goproxify.headers.remove=${headersRemove}`);
+  if (jwt) labels.push(`goproxify.jwt=${jwt}`);
+  if (mtls) labels.push(`goproxify.mtls=${mtls}`);
+  if (cache) labels.push(`goproxify.cache=${cache}`);
+  if (logFormat) labels.push(`goproxify.logs.format=${logFormat}`);
+  if (logLevel) labels.push(`goproxify.logs.level=${logLevel}`);
 
   document.getElementById('lbl-output').textContent = labels.join('\n');
   const compose = `services:\n  ${svcName}:\n    image: your-image:latest\n    labels:\n${labels.map(l => '      - "' + l + '"').join('\n')}`;

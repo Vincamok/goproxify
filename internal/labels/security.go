@@ -7,6 +7,7 @@ package labels
 import (
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/vincamok/goproxify/internal/core/router"
 )
@@ -165,6 +166,99 @@ func ParseBot(s string) *router.BotConfig {
 		return &router.BotConfig{Enabled: true}
 	}
 	return nil
+}
+
+// ParseRetry interprète "3" ou "3:500ms" → RetryConfig.
+func ParseRetry(s string) *router.RetryConfig {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	parts := strings.SplitN(s, ":", 2)
+	attempts, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil || attempts <= 0 {
+		return nil
+	}
+	cfg := &router.RetryConfig{Attempts: attempts}
+	if len(parts) == 2 {
+		if d, err := time.ParseDuration(strings.TrimSpace(parts[1])); err == nil {
+			cfg.InitialWait = d
+		}
+	}
+	return cfg
+}
+
+// ParseCircuitBreaker interprète "5:30s" → CBConfig.
+func ParseCircuitBreaker(s string) *router.CBConfig {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	parts := strings.SplitN(s, ":", 2)
+	threshold, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil || threshold <= 0 {
+		return nil
+	}
+	cfg := &router.CBConfig{Threshold: threshold}
+	if len(parts) == 2 {
+		if d, err := time.ParseDuration(strings.TrimSpace(parts[1])); err == nil {
+			cfg.Timeout = d
+		}
+	}
+	return cfg
+}
+
+// ParseCache interprète "true" ou un TTL (ex: "60s", "10m") → CacheConfig.
+func ParseCache(s string) *router.CacheConfig {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "false" {
+		return nil
+	}
+	cfg := &router.CacheConfig{Enabled: true}
+	if s != "true" {
+		cfg.ValidRules = []router.CacheValidRule{{TTL: s}}
+	}
+	return cfg
+}
+
+// ParseSize convertit un suffixe humain (10m, 1g) en octets int64.
+// Valeurs sans suffixe traitées comme des octets.
+func ParseSize(s string) int64 {
+	s = strings.TrimSpace(strings.ToLower(s))
+	if s == "" {
+		return 0
+	}
+	multipliers := map[byte]int64{'k': 1 << 10, 'm': 1 << 20, 'g': 1 << 30}
+	if len(s) > 1 {
+		if m, ok := multipliers[s[len(s)-1]]; ok {
+			n, err := strconv.ParseInt(s[:len(s)-1], 10, 64)
+			if err == nil {
+				return n * m
+			}
+		}
+	}
+	n, _ := strconv.ParseInt(s, 10, 64)
+	return n
+}
+
+// ParseHeaderList interprète "X-Foo:bar,X-Baz:qux" → map[string]string.
+func ParseHeaderList(s string) map[string]string {
+	out := map[string]string{}
+	for _, part := range splitCSV(s) {
+		k, v, ok := strings.Cut(part, ":")
+		if ok {
+			out[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// ParseHeaderRemoveList interprète "X-Powered-By,Server" → []string.
+func ParseHeaderRemoveList(s string) []string {
+	return splitCSV(s)
 }
 
 func splitCSV(s string) []string {

@@ -1592,6 +1592,39 @@ type agentContainerPayload struct {
 	AuthProviderID string          `json:"auth_provider_id"`
 	WAF            json.RawMessage `json:"waf"`
 	Bot            json.RawMessage `json:"bot"`
+	LimitConn      json.RawMessage `json:"limit_conn"`
+	JWT            json.RawMessage `json:"jwt"`
+	MTLS           json.RawMessage `json:"mtls"`
+
+	// Comportement HTTP
+	PreserveHost *bool  `json:"preserve_host"`
+	Websocket    *bool  `json:"websocket"`
+	RequestID    *bool  `json:"request_id"`
+	HTTPVersion  string `json:"http_version"`
+
+	// Réécriture d'URL
+	StripPrefix string `json:"strip_prefix"`
+	PathRewrite string `json:"path_rewrite"`
+
+	// Timeouts & limites
+	ConnectTimeout  string `json:"connect_timeout"`
+	ResponseTimeout string `json:"response_timeout"`
+	SendTimeout     string `json:"send_timeout"`
+	MaxBodySize     int64  `json:"max_body_size"`
+
+	// Load balancing & résilience
+	LBOverride     string          `json:"lb"`
+	StickyCookie   string          `json:"sticky_cookie"`
+	Retry          json.RawMessage `json:"retry"`
+	CircuitBreaker json.RawMessage `json:"circuit_breaker"`
+
+	// En-têtes
+	HeadersAdd    map[string]string `json:"headers_add"`
+	HeadersRemove []string          `json:"headers_remove"`
+
+	// Cache & logs
+	Cache   json.RawMessage `json:"cache"`
+	Logging json.RawMessage `json:"logging"`
 }
 
 func (s *Server) handleAgentContainerStart(w http.ResponseWriter, r *http.Request) {
@@ -1843,6 +1876,122 @@ func applyDiscoveryHostExtras(rt *router.Route, p *agentContainerPayload) {
 	}
 	if p.Paths != nil {
 		rt.Locations = locationsFromLabelPaths(p.Paths)
+	}
+
+	// Comportement HTTP
+	if p.PreserveHost != nil {
+		rt.PreserveHost = p.PreserveHost
+	}
+	if p.Websocket != nil {
+		rt.Websocket = p.Websocket
+	}
+	if p.RequestID != nil {
+		rt.RequestID = p.RequestID
+	}
+	if p.HTTPVersion != "" {
+		rt.HttpVersion = p.HTTPVersion
+	}
+
+	// Réécriture d'URL
+	if p.StripPrefix != "" {
+		rt.StripPrefix = p.StripPrefix
+	}
+	if p.PathRewrite != "" {
+		rt.PathRewrite = p.PathRewrite
+	}
+
+	// Timeouts & limites
+	if p.ConnectTimeout != "" {
+		if d, err := time.ParseDuration(p.ConnectTimeout); err == nil {
+			rt.ConnectTimeout = d
+		}
+	}
+	if p.ResponseTimeout != "" {
+		if d, err := time.ParseDuration(p.ResponseTimeout); err == nil {
+			rt.ResponseTimeout = d
+		}
+	}
+	if p.SendTimeout != "" {
+		if d, err := time.ParseDuration(p.SendTimeout); err == nil {
+			rt.SendTimeout = d
+		}
+	}
+	if p.MaxBodySize > 0 {
+		rt.MaxBodySize = p.MaxBodySize
+	}
+
+	// Load balancing & résilience
+	if p.LBOverride != "" {
+		rt.LB = router.LBAlgorithm(p.LBOverride)
+	}
+	if p.StickyCookie != "" {
+		rt.StickyCookie = p.StickyCookie
+	}
+	if len(p.Retry) > 0 && string(p.Retry) != "null" {
+		var rc router.RetryConfig
+		if json.Unmarshal(p.Retry, &rc) == nil {
+			rt.Retry = &rc
+		}
+	}
+	if len(p.CircuitBreaker) > 0 && string(p.CircuitBreaker) != "null" {
+		var cb router.CBConfig
+		if json.Unmarshal(p.CircuitBreaker, &cb) == nil {
+			rt.CircuitBreaker = &cb
+		}
+	}
+	if len(p.LimitConn) > 0 && string(p.LimitConn) != "null" {
+		var lc router.LimitConnConfig
+		if json.Unmarshal(p.LimitConn, &lc) == nil {
+			rt.LimitConn = &lc
+		}
+	}
+
+	// En-têtes
+	if len(p.HeadersAdd) > 0 || len(p.HeadersRemove) > 0 {
+		if rt.HeadersManipulation == nil {
+			rt.HeadersManipulation = &router.HeadersManipulationConfig{}
+		}
+		if len(p.HeadersAdd) > 0 {
+			if rt.HeadersManipulation.RequestSetHeader == nil {
+				rt.HeadersManipulation.RequestSetHeader = map[string]string{}
+			}
+			for k, v := range p.HeadersAdd {
+				rt.HeadersManipulation.RequestSetHeader[k] = v
+			}
+		}
+		if len(p.HeadersRemove) > 0 {
+			rt.HeadersManipulation.RequestHideHeader = p.HeadersRemove
+		}
+	}
+
+	// JWT & mTLS
+	if len(p.JWT) > 0 && string(p.JWT) != "null" {
+		var jc router.JWTConfig
+		if json.Unmarshal(p.JWT, &jc) == nil {
+			rt.JWT = &jc
+		}
+	}
+	if len(p.MTLS) > 0 && string(p.MTLS) != "null" {
+		var mc router.MTLSConfig
+		if json.Unmarshal(p.MTLS, &mc) == nil {
+			rt.MTLS = &mc
+		}
+	}
+
+	// Cache
+	if len(p.Cache) > 0 && string(p.Cache) != "null" {
+		var cc router.CacheConfig
+		if json.Unmarshal(p.Cache, &cc) == nil {
+			rt.Cache = &cc
+		}
+	}
+
+	// Logs
+	if len(p.Logging) > 0 && string(p.Logging) != "null" {
+		var lc router.RouteLoggingConfig
+		if json.Unmarshal(p.Logging, &lc) == nil {
+			rt.Logging = &lc
+		}
 	}
 }
 

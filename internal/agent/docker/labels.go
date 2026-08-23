@@ -41,6 +41,44 @@ const (
 	LabelCanary          = "goproxify.canary"                 // "true" = backend canary
 	LabelCanaryWeight    = "goproxify.canary.weight"          // % du trafic (défaut: 10)
 	LabelShadow          = "goproxify.shadow"                 // "true" = backend shadow mirror
+
+	// Comportement HTTP
+	LabelPreserveHost = "goproxify.preserve_host" // "true" transmet le Host original au backend
+	LabelWebsocket    = "goproxify.websocket"      // "true" active le support WebSocket
+	LabelHTTPVersion  = "goproxify.http_version"   // "1.1" | "2" (version HTTP vers backend)
+	LabelRequestID    = "goproxify.request_id"     // "true" injecte X-Request-ID
+
+	// Réécriture d'URL
+	LabelStripPrefix  = "goproxify.strip_prefix"  // préfixe à retirer avant de transmettre
+	LabelPathRewrite  = "goproxify.path_rewrite"  // réécriture de chemin ex: /api → /v2/api
+
+	// Timeouts & limites
+	LabelConnectTimeout  = "goproxify.timeout.connect"   // ex: "5s"
+	LabelResponseTimeout = "goproxify.timeout.response"  // ex: "30s"
+	LabelSendTimeout     = "goproxify.timeout.send"      // ex: "10s"
+	LabelMaxBodySize     = "goproxify.max_body_size"      // en octets ou suffixe ex: "10m"
+
+	// Load balancing & résilience
+	LabelLB            = "goproxify.lb"              // round_robin | weighted | adaptive
+	LabelStickyCookie  = "goproxify.sticky_cookie"   // nom du cookie de session sticky
+	LabelRetry         = "goproxify.retry"            // "3" ou "3:500ms"
+	LabelCircuitBreaker = "goproxify.circuit_breaker" // "5:30s" (seuil erreurs:délai ouverture)
+	LabelLimitConn     = "goproxify.limit_conn"       // "50" connexions simultanées max
+
+	// En-têtes
+	LabelAddHeaders    = "goproxify.headers.add"    // "X-Foo:bar,X-Baz:qux"
+	LabelRemoveHeaders = "goproxify.headers.remove" // "X-Powered-By,Server"
+
+	// Authentification
+	LabelJWT  = "goproxify.jwt"  // secret ou "true" pour valider via le fournisseur configuré
+	LabelMTLS = "goproxify.mtls" // nom du certificat client à vérifier
+
+	// Cache
+	LabelCache = "goproxify.cache" // "60s" ou "true" pour les valeurs par défaut
+
+	// Logs
+	LabelLogFormat = "goproxify.logs.format" // combined | json | minimal
+	LabelLogLevel  = "goproxify.logs.level"  // debug | info | warn | error
 )
 
 // Rôles de discovery pour Canary / Shadow.
@@ -78,11 +116,47 @@ type ProxySpec struct {
 	Bot            string // "true"
 
 	LogForwarding bool
+	LogFormat     string // combined | json | minimal
+	LogLevel      string // debug | info | warn | error
 	UpdateAuto    bool
 	UpdatePrune   bool
 
 	HealthRestartMax       int
 	HealthRecreateTimeout  string
+
+	// Comportement HTTP
+	PreserveHost bool
+	Websocket    bool
+	HTTPVersion  string // "1.1" | "2"
+	RequestID    bool
+
+	// Réécriture d'URL
+	StripPrefix string
+	PathRewrite string
+
+	// Timeouts & limites
+	ConnectTimeout  string
+	ResponseTimeout string
+	SendTimeout     string
+	MaxBodySize     string
+
+	// Load balancing & résilience
+	LB            string // round_robin | weighted | adaptive
+	StickyCookie  string
+	Retry         string // "3" ou "3:500ms"
+	CircuitBreaker string // "5:30s"
+	LimitConn     int
+
+	// En-têtes
+	AddHeaders    string // "X-Foo:bar,X-Baz:qux"
+	RemoveHeaders string // "X-Powered-By,Server"
+
+	// Authentification avancée
+	JWT  string
+	MTLS string
+
+	// Cache
+	Cache string
 
 	// Role : normal | canary | shadow (dérivé des labels canary/shadow).
 	Role         string
@@ -184,11 +258,40 @@ func ParseLabelsMulti(containerID, containerName, image, networkID string, label
 		Bot:            labels[LabelBot],
 
 		LogForwarding: boolLabel(labels, LabelLogs),
+		LogFormat:     stringLabel(labels, LabelLogFormat, ""),
+		LogLevel:      stringLabel(labels, LabelLogLevel, ""),
 		UpdateAuto:    boolLabel(labels, LabelUpdateAuto),
 		UpdatePrune:   boolLabel(labels, LabelUpdatePrune),
 
 		HealthRestartMax:      intLabel(labels, LabelHealthRestart, 3),
 		HealthRecreateTimeout: stringLabel(labels, LabelHealthRecreate, "30s"),
+
+		PreserveHost: boolLabel(labels, LabelPreserveHost),
+		Websocket:    boolLabel(labels, LabelWebsocket),
+		HTTPVersion:  stringLabel(labels, LabelHTTPVersion, ""),
+		RequestID:    boolLabel(labels, LabelRequestID),
+
+		StripPrefix: stringLabel(labels, LabelStripPrefix, ""),
+		PathRewrite: stringLabel(labels, LabelPathRewrite, ""),
+
+		ConnectTimeout:  stringLabel(labels, LabelConnectTimeout, ""),
+		ResponseTimeout: stringLabel(labels, LabelResponseTimeout, ""),
+		SendTimeout:     stringLabel(labels, LabelSendTimeout, ""),
+		MaxBodySize:     stringLabel(labels, LabelMaxBodySize, ""),
+
+		LB:             stringLabel(labels, LabelLB, ""),
+		StickyCookie:   stringLabel(labels, LabelStickyCookie, ""),
+		Retry:          stringLabel(labels, LabelRetry, ""),
+		CircuitBreaker: stringLabel(labels, LabelCircuitBreaker, ""),
+		LimitConn:      intLabel(labels, LabelLimitConn, 0),
+
+		AddHeaders:    stringLabel(labels, LabelAddHeaders, ""),
+		RemoveHeaders: stringLabel(labels, LabelRemoveHeaders, ""),
+
+		JWT:  stringLabel(labels, LabelJWT, ""),
+		MTLS: stringLabel(labels, LabelMTLS, ""),
+
+		Cache: stringLabel(labels, LabelCache, ""),
 
 		Role:         role,
 		CanaryWeight: canaryWeight,
