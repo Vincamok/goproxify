@@ -4,12 +4,14 @@
 package proxy
 
 import (
+	"crypto/tls"
 	"errors"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -181,24 +183,84 @@ func (h *BackendHealth) StartChecks(urls []string, interval time.Duration) {
 	}
 }
 
-func (h *BackendHealth) loop(url string, interval time.Duration) {
-	client := &http.Client{Timeout: 5 * time.Second}
+func (h *BackendHealth) loop(target string, interval time.Duration) {
 	for {
-		resp, err := client.Get(url + "/health")
-		ok := err == nil && resp.StatusCode < 500
-		if resp != nil {
-			resp.Body.Close()
-		}
+		ok := probe(target)
 		h.mu.Lock()
-		prev := h.healthy[url]
-		h.healthy[url] = ok
+		prev, known := h.healthy[target]
+		h.healthy[target] = ok
 		if ok {
-			delete(h.downUntil, url)
+			delete(h.downUntil, target)
 		}
 		h.mu.Unlock()
-		if prev != ok && h.log != nil {
-			h.log.Info("backend health change", "url", url, "healthy", ok)
+		if (!known || prev != ok) && h.log != nil {
+			h.log.Info("backend health change", "url", target, "healthy", ok)
 		}
 		time.Sleep(interval)
 	}
+}
+
+const probeTimeout = 5 * time.Second
+
+// probeClient ne vérifie pas le certificat backend : la sonde teste la vivacité,
+// pas l'authenticité. Un backend HTTPS auto-signé (route TLSSkipVerify) resterait
+// sinon marqué down alors que le proxy lui parle sans problème.
+var probeClient = &http.Client{
+	Timeout: probeTimeout,
+	Transport: &http.Transport{
+		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+		DisableKeepAlives: true,
+	},
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
+
+// probe teste la vivacité d'un backend.
+//
+// Le endpoint /health est une convention, pas un contrat : la majorité des
+// backends ne l'implémentent pas. Toute réponse HTTP complète prouve donc que le
+// backend sert du trafic — seuls 502/503/504, par lesquels un backend signale
+// explicitement son indisponibilité, comptent comme down. Un /health absent
+// (404) ou une route catch-all qui répond 500 ne doit pas le sortir du pool.
+//
+// Les backends L4 (« host:port » sans schéma) et ceux qui ne répondent pas en
+// HTTP sont testés par un dial TCP : le port accepte des connexions ou non.
+func probe(target string) bool {
+	u, err := url.Parse(target)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return tcpReachable(target)
+	}
+	resp, err := probeClient.Get(strings.TrimSuffix(target, "/") + "/health")
+	if err != nil {
+		return tcpReachable(hostPort(u))
+	}
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10)) //nolint:errcheck
+	resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return false
+	}
+	return true
+}
+
+func tcpReachable(addr string) bool {
+	if addr == "" {
+		return false
+	}
+	conn, err := net.DialTimeout("tcp", addr, probeTimeout)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
+// hostPort retourne l'adresse dialable d'une URL, en complétant le port implicite.
+func hostPort(u *url.URL) string {
+	if u.Port() != "" {
+		return u.Host
+	}
+	if u.Scheme == "https" {
+		return net.JoinHostPort(u.Hostname(), "443")
+	}
+	return net.JoinHostPort(u.Hostname(), "80")
 }

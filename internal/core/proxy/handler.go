@@ -333,12 +333,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for i, backend := range candidates {
-		if !h.health.IsHealthy(backend.URL) {
-			continue
+	attempts := make([]*router.Backend, 0, len(candidates))
+	for _, b := range candidates {
+		if h.health.IsHealthy(b.URL) {
+			attempts = append(attempts, b)
 		}
-		// Dernière chance d'écrire l'erreur : plus aucun candidat sain après celui-ci
-		writeOnError := !h.hasHealthyAfter(candidates, i)
+	}
+	// Fail-open : la sonde de santé est un signal, pas un verrou. Si elle déclare
+	// tout le pool down on tente quand même — le trafic réel fait autorité, et
+	// une sonde qui se trompe ne doit pas transformer un backend joignable en 502.
+	if len(attempts) == 0 {
+		attempts = candidates
+		h.log.Warn("aucun backend sain, tentative quand même", "host", h.route.Host, "backends", len(candidates))
+	}
+
+	for i, backend := range attempts {
+		// Dernière chance d'écrire l'erreur : plus aucun candidat après celui-ci
+		writeOnError := i == len(attempts)-1
 		ok, responded, transportErr := h.do(w, r, backend, i, writeOnError)
 		if ok {
 			h.health.MarkUp(backend.URL)
@@ -363,7 +374,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if responded {
 			return
 		}
-		if h.route.Retry != nil && i < len(candidates)-1 {
+		if h.route.Retry != nil && i < len(attempts)-1 {
 			wait := h.route.Retry.InitialWait * time.Duration(math.Pow(2, float64(i)))
 			if wait > h.route.Retry.MaxWait {
 				wait = h.route.Retry.MaxWait
@@ -399,15 +410,6 @@ func (h *Handler) failoverCandidates(r *http.Request) []*router.Backend {
 		seen[b.URL] = true
 	}
 	return out
-}
-
-func (h *Handler) hasHealthyAfter(cands []*router.Backend, idx int) bool {
-	for i := idx + 1; i < len(cands); i++ {
-		if h.health.IsHealthy(cands[i].URL) {
-			return true
-		}
-	}
-	return false
 }
 
 // isCanary retourne true si la requête doit être routée vers le backend canary.
