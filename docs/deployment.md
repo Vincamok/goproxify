@@ -522,17 +522,18 @@ curl -I http://localhost/
 
 ### L'Agent n'apparaît pas dans l'Admin
 
-Cause la plus fréquente : `GPX_IDENTITY_AGENT_NODE_NAME` absent ou vide.
+Cause la plus fréquente : `GPX_PAIRING_SECRET` différent entre l'Agent et le Core.
 
 ```bash
-# Vérifier la variable
-docker exec goproxify-agent env | grep GPX_IDENTITY_AGENT_NODE_NAME
+# Comparer — les deux valeurs doivent être identiques
+docker exec goproxify-core  env | grep GPX_PAIRING_SECRET
+docker exec goproxify-agent env | grep GPX_PAIRING_SECRET
 
-# Voir les logs de l'agent
-docker logs goproxify-agent | grep -i heartbeat
+# Logs de l'agent — chercher status=401
+docker logs goproxify-agent | grep -i "401\|heartbeat\|refused"
 ```
 
-Sans ce nom, le heartbeat HTTP retourne silencieusement sans rien envoyer (voir `internal/agent/heartbeat.go:46`).
+> `GPX_IDENTITY_AGENT_NODE_NAME` est **optionnel** : sans lui, un ID stable est auto-généré au premier démarrage et persisté dans le volume (`/etc/goproxify/agent-node-id`). Si le volume est absent ou recréé, l'agent change d'identité et apparaît comme un nouveau nœud.
 
 ### Le Core reste en `declared` (jamais `online`)
 

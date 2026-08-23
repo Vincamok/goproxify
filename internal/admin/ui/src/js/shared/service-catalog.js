@@ -61,8 +61,8 @@ window._gpxCatalog = (function() {
         { host: '/run/podman/podman.sock', container: '/run/podman/podman.sock', readonly: true, runtime: 'podman' },
       ],
       env: [
-        { key: 'GPX_IDENTITY_AGENT_NODE_NAME',          required: true,  secret: false,
-          description: "Nom du nœud Agent dans l'Admin. OBLIGATOIRE — sans lui le heartbeat HTTP est ignoré silencieusement." },
+        { key: 'GPX_IDENTITY_AGENT_NODE_NAME',          required: false, secret: false, default: 'agent-<hex8> (persisté dans le volume)',
+          description: "Nom lisible du nœud Agent dans l'Admin. Optionnel : sans lui un ID stable est auto-généré au premier démarrage et persisté dans /etc/goproxify/agent-node-id. Recommandé pour nommer l'agent lisiblement ou garantir la stabilité si le volume est recréé." },
         { key: 'GPX_CONTROL_PLANE_CORE_ENDPOINT',       required: true,  secret: false, default: 'http://goproxify-core:8000',
           description: "URL HTTP du plan de contrôle du Core (port 8000). Réseau interne si même hôte, IP/domaine sinon." },
         { key: 'GPX_PAIRING_SECRET',                    required: true,  secret: true,
