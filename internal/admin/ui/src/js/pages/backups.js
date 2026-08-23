@@ -438,7 +438,7 @@ pages.backups = async function() {
     if (restoreState.step === 'select' && restoreState.summary) {
       const s = restoreState.summary;
       const entities = [
-        ['proxies',  t('import.entity.proxies'),  s.proxy_count  || 0],
+        ['proxies',  t('trafic.proxies'),          (s.proxies?.length) || 0],
         ['users',    t('import.entity.users'),    s.user_count   || 0],
         ['tokens',   t('import.entity.tokens'),   s.token_count  || 0],
         ['snippets', t('import.entity.snippets'), s.snippet_count|| 0],
@@ -462,13 +462,13 @@ pages.backups = async function() {
           <div class="field" style="margin-bottom:16px">
             <label class="field-label">${t('import.conflict')}</label>
             <select id="bk-imp-conflict" class="input" style="max-width:220px">
-              <option value="skip">${t('import.conflict.skip')}</option>
-              <option value="overwrite">${t('import.conflict.overwrite')}</option>
+              <option value="skip">${t('trafic.skip_keep')}</option>
+              <option value="overwrite">${t('trafic.overwrite')}</option>
             </select>
           </div>
           <div style="display:flex;gap:8px;align-items:center;">
             <button class="btn btn-secondary btn-sm" onclick="window._bkRestoreReset()">${t('common.cancel')}</button>
-            <button class="btn btn-primary btn-sm" id="bk-imp-apply">${t('import.apply')}</button>
+            <button class="btn btn-primary btn-sm" id="bk-imp-apply">${t('import.apply_selection')}</button>
           </div>
         </div>`;
     }
@@ -529,16 +529,22 @@ pages.backups = async function() {
         applyBtn.disabled = true;
         const getCheck = id => document.getElementById('bk-imp-' + id)?.checked ?? false;
         const conflict = document.getElementById('bk-imp-conflict')?.value || 'skip';
+        // proxy_ids vide = importer tous ; [''] = ID invalide → importer aucun
+        const proxyIds = getCheck('proxies') ? [] : [''];
         const selection = {
-          proxies: getCheck('proxies'), users: getCheck('users'), tokens: getCheck('tokens'),
-          snippets: getCheck('snippets'), channels: getCheck('channels'), rules: getCheck('rules'),
-          conflict_mode: conflict,
+          proxy_ids:             proxyIds,
+          import_users:          getCheck('users'),
+          import_tokens:         getCheck('tokens'),
+          import_snippets:       getCheck('snippets'),
+          import_alert_channels: getCheck('channels'),
+          import_alert_rules:    getCheck('rules'),
+          on_conflict:           conflict,
         };
         try {
           const res = await fetch('/api/v1/import/backup/apply', {
             method: 'POST',
             headers: { 'Authorization': 'Bearer ' + state.token, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ data: restoreState.fileData, selection }),
+            body: JSON.stringify({ data: JSON.parse(restoreState.fileData), selection }),
           });
           if (!res.ok) throw new Error(await res.text());
           restoreState.result = await res.json();
