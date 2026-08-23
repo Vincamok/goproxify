@@ -230,6 +230,23 @@ function _archSvcCaps(svc) {
   });
 }
 
+function _archMarkPendingDeploy(name) {
+  try {
+    const s = JSON.parse(localStorage.getItem('gpx_pending_deploy') || '{}');
+    s[name] = { savedAt: new Date().toISOString() };
+    localStorage.setItem('gpx_pending_deploy', JSON.stringify(s));
+  } catch {}
+}
+
+window.archMarkDeployed = function(name) {
+  try {
+    const s = JSON.parse(localStorage.getItem('gpx_pending_deploy') || '{}');
+    delete s[name];
+    localStorage.setItem('gpx_pending_deploy', JSON.stringify(s));
+  } catch {}
+  navigate('infrastructure');
+};
+
 function openArchWizard() {
   _arch.step = 'canvas';
   _arch.hosts = [_archEmptyHost(1)];
@@ -641,8 +658,10 @@ function _archInspectRole(svc) {
           `_archSetRuntime('${svc.id}','podman',this.checked)`) +
         _archCapRow(!!svc.portainer, t('arch.svc.portainer'), t('arch.cap.portainer_desc'),
           `_archSetOpt('${svc.id}','portainer',this.checked)`,
-          _archField('URL', `<input class="arch-input" value="${esc(svc.portainerUrl || '')}" placeholder="https://portainer:9443" onchange="_archSetField('${svc.id}','portainerUrl',this.value)">`) +
-          _archField(t('arch.opt.portainer_key'), `<input class="arch-input" type="password" value="${esc(svc.portainerKey || '')}" placeholder="ptr_…" onchange="_archSetField('${svc.id}','portainerKey',this.value)">`)
+          _archField('URL' + (svc.portainer && !svc.portainerUrl ? ' <span style="color:var(--red);font-size:10px;font-weight:700;vertical-align:middle;">*</span>' : ''),
+            `<input class="arch-input" style="${svc.portainer && !svc.portainerUrl ? 'border-color:var(--red);' : ''}" value="${esc(svc.portainerUrl || '')}" placeholder="https://portainer:9443" onchange="_archSetField('${svc.id}','portainerUrl',this.value)">`) +
+          _archField(t('arch.opt.portainer_key') + (svc.portainer && !svc.portainerKey ? ' <span style="color:var(--red);font-size:10px;font-weight:700;vertical-align:middle;">*</span>' : ''),
+            `<input class="arch-input" type="password" style="${svc.portainer && !svc.portainerKey ? 'border-color:var(--red);' : ''}" value="${esc(svc.portainerKey || '')}" placeholder="ptr_…" onchange="_archSetField('${svc.id}','portainerKey',this.value)">`)
         ) +
         _archCapRow(!!svc.k8s, t('arch.svc.k8s'), t('arch.cap.k8s_desc'),
           `_archSetOpt('${svc.id}','k8s',this.checked)`)
@@ -926,6 +945,8 @@ function _archValidate() {
     if (!hasCoreHere && !cores.length && !_arch.onlineCoreEndpoint) {
       return t('arch.err.agent_needs_core');
     }
+    if (svc.portainer && !svc.portainerUrl) return t('arch.err.portainer_url', { name: svc.name });
+    if (svc.portainer && !svc.portainerKey) return t('arch.err.portainer_key', { name: svc.name });
   }
   return '';
 }
@@ -1229,6 +1250,7 @@ async function _archPersistDeclared() {
           environment: '',
           config: cfg,
         });
+        _archMarkPendingDeploy(r.opts.name);
       } catch (e) {
         console.warn('declared-nodes save failed:', e.message);
       }

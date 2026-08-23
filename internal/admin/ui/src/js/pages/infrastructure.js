@@ -267,6 +267,7 @@ function infraCoreCard(n, idx) {
       </div>
       <div style="flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
         ${statusBadge(online, declared)}
+        ${_infraPendingDeploy(name) ? `<span class="tag" style="font-size:10px;background:rgba(249,115,22,.15);color:var(--orange,#f97316);border:1px solid rgba(249,115,22,.35);padding:2px 6px;border-radius:4px;">${t('infra.redeploy_required')}</span>` : ''}
         <span style="font-size:10px;opacity:.45;font-family:monospace;">v${esc(n.version || '—')}</span>
       </div>
     </div>
@@ -321,6 +322,7 @@ function infraAgentCard(n) {
       </div>
       <div style="flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
         ${statusBadge(online, declared)}
+        ${_infraPendingDeploy(name) ? `<span class="tag" style="font-size:10px;background:rgba(249,115,22,.15);color:var(--orange,#f97316);border:1px solid rgba(249,115,22,.35);padding:2px 6px;border-radius:4px;">${t('infra.redeploy_required')}</span>` : ''}
         <span style="font-size:10px;opacity:.45;font-family:monospace;">v${esc(n.version || '—')}</span>
       </div>
     </div>
@@ -488,6 +490,13 @@ async function agentEvents(nodeName, displayName) {
     `<button class="btn btn-primary" onclick="closeModal()">${t('common.close')}</button>`);
 }
 
+function _infraPendingDeploy(name) {
+  try {
+    const s = JSON.parse(localStorage.getItem('gpx_pending_deploy') || '{}');
+    return !!s[name];
+  } catch { return false; }
+}
+
 async function deleteDeclaredNode(id) {
   if (!confirm(t('infra.confirm.delete_declared'))) return;
   try {
@@ -588,8 +597,12 @@ async function showDeclaredNodeConfig(id) {
       return;
     }
 
+    const pendingDeploy = _infraPendingDeploy(node.name);
+    const deployBtn = pendingDeploy
+      ? `<button class="btn btn-secondary" onclick="archMarkDeployed('${esc(node.name)}')">${t('infra.mark_deployed')}</button>`
+      : '';
     modal(t('infra.config_title', { name: esc(node.name) }), bodyHTML,
-      `<button class="btn btn-primary" onclick="closeModal()">${t('common.close')}</button>`, true);
+      `${deployBtn}<button class="btn btn-primary" onclick="closeModal()">${t('common.close')}</button>`, true);
   } catch(e) {
     modal(t('infra.error'), `<p style="margin:0;font-size:13.5px;opacity:.8;">${t('infra.config_load_fail', { msg: esc(e.message) })}</p>`,
       '<button class="btn btn-primary" onclick="closeModal()">' + t('common.close') + '</button>');

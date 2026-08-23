@@ -85,13 +85,7 @@ async function checkNeedOnboarding() {
 }
 
 pages.onboarding = async function() {
-  document.getElementById('topbar-actions').innerHTML =
-    `<button class="btn btn-secondary btn-sm" onclick="stopCorePolling();navigate('dashboard')">${t('onboarding.skip_wizard')}</button>`;
-  try {
-    const nodes = await api('GET', '/nodes');
-    onb.pendingNodes = (nodes || []).filter(n => n.status === 'pending');
-  } catch { onb.pendingNodes = []; }
-  renderWizardStep();
+  openArchWizard();
 };
 
 function renderWizardStep() {
