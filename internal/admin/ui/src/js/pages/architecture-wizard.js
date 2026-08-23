@@ -177,12 +177,14 @@ function _archHydrateFromExisting(nodes, declared) {
     const coreKey = _archResolveCoreKey(target, cores)
       || _archResolveCoreKey(a.target_core || '', cores);
     let host;
-    // Colocated seulement si déclaré ainsi, ou URL docker-interne (http://core-name:8000).
-    // Les agents live ont target_core = nom du Core sans être sur le même hôte.
-    const colocate = (placement === 'colocated' && coreKey)
-      || (placement !== 'remote' && coreKey && _archLooksColocatedTarget(cfg.target_core || '', coreKey));
-    if (colocate && hostByKey.has('core:' + coreKey)) {
-      host = hostByKey.get('core:' + coreKey);
+    // Cas single-stack Docker Compose : 1 Core + 1 Agent sans placement déclaré → même hôte.
+    const onlyCoreKey = cores.length === 1 ? (cores[0].node_name || cores[0].id || '').trim() : '';
+    const effectiveCoreKey = coreKey || (cores.length === 1 && agents.length === 1 && !placement ? onlyCoreKey : '');
+    const colocate = (placement === 'colocated' && effectiveCoreKey)
+      || (placement !== 'remote' && effectiveCoreKey && _archLooksColocatedTarget(cfg.target_core || '', effectiveCoreKey))
+      || (cores.length === 1 && agents.length === 1 && !placement && !!effectiveCoreKey);
+    if (colocate && hostByKey.has('core:' + effectiveCoreKey)) {
+      host = hostByKey.get('core:' + effectiveCoreKey);
       if ((d && d.region) || a.region) {
         if (!host.region) host.region = (d && d.region) || a.region || '';
       }
@@ -195,7 +197,7 @@ function _archHydrateFromExisting(nodes, declared) {
       });
     }
     const svc = _archSvcFromExisting('agent', a, cfg);
-    if (coreKey && coreSvcByName.has(coreKey)) svc.targetCoreId = coreSvcByName.get(coreKey).id;
+    if (effectiveCoreKey && coreSvcByName.has(effectiveCoreKey)) svc.targetCoreId = coreSvcByName.get(effectiveCoreKey).id;
     if (colocate) svc.placement = 'colocated';
     else if (!svc.placement) svc.placement = 'remote';
     host.services.push(svc);
