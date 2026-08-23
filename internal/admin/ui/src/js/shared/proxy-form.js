@@ -2017,7 +2017,7 @@ window.saveProxy = async function(id) {
 };
 
 
-function _buildStreamModalHtml(cfg, enabled) {
+function _buildStreamModalHtml(cfg, enabled, editing) {
   const proto = cfg.type || 'tcp';
   const backends = (cfg.backends||[]).length ? cfg.backends : [{}];
   const backendsHtml = backends.map((b, i) => `
@@ -2041,7 +2041,7 @@ function _buildStreamModalHtml(cfg, enabled) {
           <div class="seg" style="margin-top:2px;">
             <label class="seg-opt"><input type="radio" name="sp-proto" value="tcp" ${proto==='tcp'?'checked':''}>TCP</label>
             <label class="seg-opt"><input type="radio" name="sp-proto" value="udp" ${proto==='udp'?'checked':''}>UDP</label>
-            <label class="seg-opt"><input type="radio" name="sp-proto" value="both" ${proto==='both'?'checked':''}>Les deux</label>
+            ${!editing ? `<label class="seg-opt"><input type="radio" name="sp-proto" value="both" ${proto==='both'?'checked':''}>Les deux</label>` : ''}
           </div>
         </div>
       </div>
@@ -2069,7 +2069,7 @@ window._addStreamBackend = function() {
 };
 
 window.openStreamProxyModal = function() {
-  const bodyHtml = _buildStreamModalHtml({}, true);
+  const bodyHtml = _buildStreamModalHtml({}, true, false);
   const footerHtml = `
     <button class="btn btn-secondary" onclick="closeModal()">Annuler</button>
     <button class="btn btn-primary" onclick="saveStreamProxy()">Créer le flux</button>`;
@@ -2081,7 +2081,7 @@ window.openStreamEditModal = async function(id) {
   let existing;
   try { existing = await api('GET', `/proxies/${encodeURIComponent(id)}`); } catch(e) { toast(e.message,'error'); return; }
   const cfg = typeof existing.config === 'string' ? tryJSON2(existing.config) : (existing.config || {});
-  const bodyHtml = _buildStreamModalHtml(cfg, existing.enabled !== false);
+  const bodyHtml = _buildStreamModalHtml(cfg, existing.enabled !== false, true);
   const footerHtml = `
     <button class="btn btn-sm" style="background:var(--red);color:#fff;border:none;border-radius:var(--radius);padding:0 12px;height:30px;font-size:12px;cursor:pointer;margin-right:auto"
       onclick="confirm_('Supprimer ce flux ?',async()=>{try{await api('DELETE','/proxies/${esc(id)}');closeModal();toast('Flux supprimé','success');refreshProxies();}catch(e){toast(e.message,'error');}})">Supprimer</button>
@@ -2105,10 +2105,13 @@ window.saveStreamProxy = async function() {
   const { name, port, proto, enabled, backends } = _collectStreamForm();
   if (!port || port < 1 || port > 65535) { toast("Port d'écoute invalide", 'error'); return; }
   if (!backends.length) { toast('Au moins un backend requis', 'error'); return; }
-  const config = { type: proto, host: name || (proto + '_' + port), listen_port: port, backends };
+  const protos = proto === 'both' ? ['tcp', 'udp'] : [proto];
   try {
-    await api('POST', '/proxies', { config, enabled });
-    toast('Flux créé', 'success');
+    for (const p of protos) {
+      const config = { type: p, host: name || (p + '_' + port), listen_port: port, backends };
+      await api('POST', '/proxies', { config, enabled });
+    }
+    toast(protos.length > 1 ? `${protos.length} flux créés` : 'Flux créé', 'success');
     closeModal();
     refreshProxies();
   } catch(e) { toast(e.message || 'Erreur', 'error'); }
