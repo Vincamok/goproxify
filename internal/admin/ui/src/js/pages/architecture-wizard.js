@@ -88,7 +88,6 @@ function _archSvcFromExisting(role, node, cfg) {
     k8s: !!cfg.k8s,
     docker: role === 'agent' ? docker : false,
     podman: role === 'agent' ? podman : false,
-    autoscale: !!cfg.autoscale,
     domains: cfg.domains || '',
     acme: !!cfg.acme,
     acmeEmail: cfg.acme_email || '',
@@ -214,7 +213,7 @@ function _archHydrateFromExisting(nodes, declared) {
       type: 'admin',
       name: 'goproxify-admin',
       access: false, portainer: false, k8s: false, docker: false, podman: false,
-      autoscale: false, domains: '', acme: false, acmeEmail: '', dnsProvider: 'none',
+      domains: '', acme: false, acmeEmail: '', dnsProvider: 'none',
       reachable: '', portainerUrl: '', portainerKey: '', targetCoreId: '', placement: '',
       existing: true, status: 'online',
     });
@@ -240,7 +239,6 @@ const _ARCH_CAPS = [
   { id: 'podman',    role: 'agent', label: 'arch.svc.podman',    desc: 'arch.cap.podman_desc',    chip: 'Podman' },
   { id: 'portainer', role: 'agent', label: 'arch.svc.portainer', desc: 'arch.cap.portainer_desc', chip: 'Portainer' },
   { id: 'k8s',       role: 'agent', label: 'arch.svc.k8s',       desc: 'arch.cap.k8s_desc',       chip: 'K8s' },
-  { id: 'autoscale', role: 'agent', label: 'arch.svc.autoscale', desc: 'arch.cap.autoscale_desc', chip: 'Autoscale' },
 ];
 
 const _ARCH_ICONS = {
@@ -709,11 +707,7 @@ function _archInspectRole(svc) {
         _archCapRow(!!svc.k8s, t('arch.svc.k8s'), t('arch.cap.k8s_desc'),
           `_archSetOpt('${svc.id}','k8s',this.checked)`)
       )}
-      ${_archGroup(t('arch.group.automation'),
-        _archCapRow(!!svc.autoscale, t('arch.svc.autoscale'), t('arch.cap.autoscale_desc'),
-          `_archSetOpt('${svc.id}','autoscale',this.checked)`,
-          `<div class="arch-cap-desc">${t('arch.opt.autoscale_hint')}</div>`)
-      )}`;
+      `;
   } else {
     const tlsCores = _arch.hosts.flatMap(h => (h.services || []).filter(s => s.type === 'core' && s.acme));
     body = `
@@ -874,7 +868,6 @@ function _archAddService(hostId, type) {
     k8s: false,
     docker: type === 'agent',
     podman: false,
-    autoscale: false,
     domains: '',
     acme: false,
     acmeEmail: '',
@@ -1159,7 +1152,6 @@ function _archBuildPacks() {
         wa_portainer: !!a.portainer,
         wa_portainer_url: a.portainerUrl || '',
         wa_portainer_key: a.portainerKey || '',
-        wa_autoscale: !!a.autoscale,
         wa_placement: localCore ? 'colocated' : 'remote',
       });
       if (localCore && coreOpts) {
@@ -1294,7 +1286,6 @@ async function _archPersistDeclared() {
           portainer: !!(r.svc && r.svc.portainer),
           portainer_url: (r.svc && r.svc.portainerUrl) || '',
           portainer_key: (r.svc && r.svc.portainerKey) || '',
-          autoscale: !!(r.svc && r.svc.autoscale),
           domains: (r.svc && r.svc.domains) || '',
           acme: !!(r.svc && r.svc.acme),
           acme_email: (r.svc && r.svc.acmeEmail) || '',

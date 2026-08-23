@@ -251,7 +251,6 @@ function _buildAgentOpts(d) {
     d.wa_portainer&&d.wa_portainer_url ? { k:'GPX_PORTAINER_URL',     v: d.wa_portainer_url } : null,
     d.wa_portainer&&d.wa_portainer_key ? { k:'GPX_PORTAINER_API_KEY', v: d.wa_portainer_key } : null,
     d.wa_log_fwd   ? { k:'GPX_LOG_FORWARDING_ENABLED', v: 'true' } : null,
-    d.wa_autoscale ? { k:'GPX_AUTOSCALE_ENABLED',      v: 'true' } : null,
   ].filter(Boolean);
   const image    = cat ? cat.image('agent') : 'ghcr.io/vincamok/goproxify/agent:preview';
   const netBlock = cat ? cat.netBlock()     : '\nnetworks:\n  goproxify_net:\n    driver: bridge';
