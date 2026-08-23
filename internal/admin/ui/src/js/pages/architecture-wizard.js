@@ -108,13 +108,14 @@ function _archHydrateFromExisting(nodes, declared) {
     (n.role === 'core' || n.role === 'agent') && n.status !== 'pending'
   );
   // Deduplicate: when a node appears as both live (online/offline) and declared, keep live.
+  // Live nodes use node_name; declared nodes use name — check both fields.
+  const _nodeKey = n => (n.node_name || n.name || n.display_name || n.id || '').trim();
   const liveKeys = new Set(
-    rawList.filter(n => n.status !== 'declared')
-      .map(n => n.role + ':' + (n.node_name || n.display_name || n.id || '').trim())
+    rawList.filter(n => n.status !== 'declared').map(n => n.role + ':' + _nodeKey(n))
   );
   const list = rawList.filter(n => {
     if (n.status !== 'declared') return true;
-    return !liveKeys.has(n.role + ':' + (n.node_name || n.display_name || n.id || '').trim());
+    return !liveKeys.has(n.role + ':' + _nodeKey(n));
   });
   if (!list.length) return { hosts: [_archEmptyHost(1)], haGroupIds: [], existingCount: 0 };
 
@@ -150,7 +151,7 @@ function _archHydrateFromExisting(nodes, declared) {
   };
 
   for (const c of cores) {
-    const cName = (c.node_name || c.id || '').trim();
+    const cName = (c.node_name || c.name || c.id || '').trim();
     if (!cName) continue;
     const d = declByName[cName] || declByName[c.display_name];
     const cfg = _archParseCfg(d && d.config);
@@ -166,7 +167,7 @@ function _archHydrateFromExisting(nodes, declared) {
   }
 
   for (const a of agents) {
-    const aName = (a.node_name || a.id || '').trim();
+    const aName = (a.node_name || a.name || a.id || '').trim();
     if (!aName) continue;
     const d = declByName[aName] || declByName[a.display_name];
     const cfg = _archParseCfg(d && d.config);
