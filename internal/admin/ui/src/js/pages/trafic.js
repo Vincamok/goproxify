@@ -25,19 +25,10 @@ async function renderTraficPage(ctx) {
   if (!window._tf)              window._tf = { status: '', type: '', source: '' };
 
   try {
-    // Résoudre l'UUID token (évite nodes.id aléatoire / doublons node_name).
+    // node_name suffit pour ?core= (ResolveCoreAccess accepte uuid ou node_name).
     let coreRef = '';
     if (!isAdmin && core) {
-      const tokens = await api('GET', '/tokens?role=core').catch(() => []);
-      const match = (tokens || []).filter(t => !t.revoked && (
-        t.id === core.id || t.node_name === core.node_name || t.node_name === core.id
-      ));
-      // Préférer id exact, sinon token avec endpoint, sinon le premier (liste déjà triée).
-      const best = match.find(t => t.id === core.id)
-        || match.find(t => t.node_endpoint)
-        || match[0]
-        || null;
-      coreRef = best?.id || core.node_name || core.id || '';
+      coreRef = core.node_name || core.id || '';
     }
     if (!isAdmin && !coreRef) {
       content.innerHTML = '<p style="color:var(--text2)">' + t('trafic.no_core') + '</p>';
@@ -46,7 +37,7 @@ async function renderTraficPage(ctx) {
     const proxiesPath = (!isAdmin && coreRef)
       ? `/proxies?core=${encodeURIComponent(coreRef)}`
       : '/proxies';
-    const [allProxies, nodesRes, domainsRes, tokensRes, healthRes] = await Promise.all([
+    const [allProxies, nodesRes, domainsRes, tokensRes] = await Promise.all([
       api('GET', proxiesPath).catch((e) => {
         toast((e && e.message) ? e.message : t('trafic.load_error'), 'error');
         return null;
@@ -54,13 +45,12 @@ async function renderTraficPage(ctx) {
       isAdmin ? api('GET', '/nodes').catch(() => []) : Promise.resolve([]),
       isAdmin ? api('GET', '/domains').catch(() => []) : Promise.resolve([]),
       isAdmin ? api('GET', '/tokens?role=core').catch(() => []) : Promise.resolve([]),
-      api('GET', '/backends/health').catch(() => ({ backends: {} })),
     ]);
     if (allProxies === null) {
       content.innerHTML = '<p style="color:var(--red)">' + esc(t('trafic.load_error') || 'Impossible de charger les proxies') + '</p>';
       return;
     }
-    window._backendHealth = (healthRes && healthRes.backends) || {};
+    window._backendHealth = {};
 
     const cores = (nodesRes || []).filter(n => n.role === 'core');
     window._coreNodes = cores;
@@ -1168,6 +1158,11 @@ async function renderTraficPage(ctx) {
 
     renderPage();
     window.loadContainers();
+
+    api('GET', '/backends/health').catch(() => ({ backends: {} })).then((healthRes) => {
+      window._backendHealth = (healthRes && healthRes.backends) || {};
+      if (typeof window.renderPage === 'function') window.renderPage();
+    });
 
   } catch(e) { content.innerHTML = `<p style="color:var(--red)">${esc(e.message)}</p>`; }
 }

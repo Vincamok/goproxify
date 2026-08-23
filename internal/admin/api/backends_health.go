@@ -10,7 +10,10 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 )
+
+var backendsHealthClient = &http.Client{Timeout: 5 * time.Second}
 
 // BackendsHealthHandler agrège l'état santé des backends depuis tous les Cores actifs
 // via GET /internal/v1/backends/health.
@@ -91,7 +94,7 @@ func (h *BackendsHealthHandler) fetchFromCore(ctx context.Context, coreEndpoint,
 		return nil
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := backendsHealthClient.Do(req)
 	if err != nil {
 		warn("backends-health: Core injoignable", "core", coreName, "endpoint", coreEndpoint, "err", err)
 		return nil

@@ -49,6 +49,8 @@ func (h *ProxiesHandler) listFiles(w http.ResponseWriter, r *http.Request) {
 
 	listOK := 0
 	var lastListErr error
+	userRole := rbac.UserRole(r.Context(), h.DB, userID)
+	userGrants, _ := rbac.UserEffectiveGrants(r.Context(), h.DB, userID)
 	for _, t := range targets {
 		if filterByCore && t.ID != coreRef && t.NodeName != coreRef {
 			continue
@@ -68,7 +70,7 @@ func (h *ProxiesHandler) listFiles(w http.ResponseWriter, r *http.Request) {
 			if route.Host == "" {
 				route.Host = row.Name
 			}
-			if !rbac.CanReadProxy(r.Context(), h.DB, userID, &route) {
+			if !rbac.CanReadProxyWithGrants(userRole, userGrants, &route) {
 				continue
 			}
 			if filterByCore && !rbac.RouteAllowedByToken(coreAccess.Role, coreAccess.Scopes, &route) {
