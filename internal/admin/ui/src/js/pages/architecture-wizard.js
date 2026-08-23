@@ -56,6 +56,14 @@ function _archLooksColocatedTarget(target, coreName) {
   return !/^\d+\.\d+\.\d+\.\d+$/.test(host) && !host.includes('.');
 }
 
+function _archHostFromEndpoint(ep) {
+  if (!ep) return '';
+  try {
+    const u = new URL(ep);
+    return u.hostname || '';
+  } catch { return ''; }
+}
+
 function _archSvcFromExisting(role, node, cfg) {
   const name = (node.display_name || node.node_name || node.name || role).trim();
   const runtimes = node.container_runtimes || [];
@@ -84,7 +92,7 @@ function _archSvcFromExisting(role, node, cfg) {
     acme: !!cfg.acme,
     acmeEmail: cfg.acme_email || '',
     dnsProvider: cfg.dns_provider || 'none',
-    reachable: (cfg.reachable_host || '').trim(),
+    reachable: (cfg.reachable_host || '').trim() || (role === 'core' ? _archHostFromEndpoint(node.endpoint || node.node_endpoint || '') : ''),
     portainerUrl: cfg.portainer_url || '',
     portainerKey: cfg.portainer_key || '',
     targetCoreId: '',
@@ -96,9 +104,18 @@ function _archSvcFromExisting(role, node, cfg) {
 
 /** Reprend Cores/Agents live + déclarés sur la toile (hôtes + options). */
 function _archHydrateFromExisting(nodes, declared) {
-  const list = (Array.isArray(nodes) ? nodes : []).filter(n =>
+  const rawList = (Array.isArray(nodes) ? nodes : []).filter(n =>
     (n.role === 'core' || n.role === 'agent') && n.status !== 'pending'
   );
+  // Deduplicate: when a node appears as both live (online/offline) and declared, keep live.
+  const liveKeys = new Set(
+    rawList.filter(n => n.status !== 'declared')
+      .map(n => n.role + ':' + (n.node_name || n.display_name || n.id || '').trim())
+  );
+  const list = rawList.filter(n => {
+    if (n.status !== 'declared') return true;
+    return !liveKeys.has(n.role + ':' + (n.node_name || n.display_name || n.id || '').trim());
+  });
   if (!list.length) return { hosts: [_archEmptyHost(1)], haGroupIds: [], existingCount: 0 };
 
   const declByName = {};
@@ -1136,9 +1153,10 @@ function _archBuildPacks() {
     if (coreOpts && agentOpts) html = _renderConfigUI(coreOpts, agentOpts);
     else if (coreOpts) html = _renderConfigUI(coreOpts);
     else if (agentOpts) html = _renderConfigUI(agentOpts);
-    else if (admins.length) {
+
+    if (admins.length) {
       const acmeCores = _arch.hosts.flatMap(h => h.services.filter(s => s.type === 'core' && s.acme));
-      let hint = `<p style="font-size:13px;color:var(--text2);">${t('arch.admin_hint')}</p>`;
+      let hint = `<p style="font-size:13px;color:var(--text2);${html ? 'margin-top:12px;' : ''}">${t('arch.admin_hint')}</p>`;
       if (acmeCores.length) {
         const c = acmeCores[0];
         hint += `<div style="font-size:12px;color:var(--text2);margin-top:8px;line-height:1.45;padding:10px;border-radius:8px;background:var(--bg);border:1px solid var(--border);">
@@ -1150,7 +1168,7 @@ function _archBuildPacks() {
           ${c.domains ? `<br><span style="opacity:.85;">${t('arch.acme.domains_later', { domains: c.domains })}</span>` : ''}
         </div>`;
       }
-      html = hint;
+      html = (html || '') + hint;
     }
 
     // Annoter pack Core avec domaines pour le handoff
