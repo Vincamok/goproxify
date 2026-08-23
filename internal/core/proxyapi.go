@@ -31,10 +31,9 @@ func (s *Server) handleListFileProxies(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	revs, err := s.proxyStore.ListRevisions("")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	revs, _ := s.proxyStore.ListRevisions("")
+	if revs == nil {
+		revs = []*proxystore.Envelope{}
 	}
 	writeJSON(w, map[string]any{
 		"production": prods,

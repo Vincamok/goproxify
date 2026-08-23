@@ -271,7 +271,9 @@ func (s *Store) listDir(dir string, requireProdStatus bool) ([]*Envelope, error)
 		}
 		env, err := readEnvelope(filepath.Join(dir, name))
 		if err != nil {
-			return nil, err
+			// Skip unparseable files to avoid one corrupt file breaking the entire listing.
+			fmt.Fprintf(os.Stderr, "proxystore: skip %s: %v\n", name, err)
+			continue
 		}
 		if requireProdStatus && env.Status != StatusProduction {
 			// Still include but normalize? Prefer returning as-is for visibility.
