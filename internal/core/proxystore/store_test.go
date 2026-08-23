@@ -136,10 +136,10 @@ func TestProdFilename(t *testing.T) {
 	if got := ProdFilename("", "abc-123"); got != "proxy_abc-123.yaml" {
 		t.Fatalf("empty host got %q", got)
 	}
-	if got := ProdFilenameTyped("Minecraft", "id-tcp", "tcp"); got != "stream_id-tcp.yaml" {
+	if got := ProdFilenameTyped("Minecraft", "id-tcp", "tcp"); got != "minecraft_tcp.yaml" {
 		t.Fatalf("tcp got %q", got)
 	}
-	if got := ProdFilenameTyped("Minecraft", "id-udp", "udp"); got != "stream_id-udp.yaml" {
+	if got := ProdFilenameTyped("Minecraft", "id-udp", "udp"); got != "minecraft_udp.yaml" {
 		t.Fatalf("udp got %q", got)
 	}
 	if ProdFilenameTyped("Minecraft", "id-tcp", "tcp") == ProdFilenameTyped("Minecraft", "id-udp", "udp") {
@@ -426,8 +426,7 @@ func TestTCPStreamRoundTrip(t *testing.T) {
 	if err := st.WriteProd(env); err != nil {
 		t.Fatal("WriteProd:", err)
 	}
-	// L4 files are keyed by id, not host (avoids TCP/UDP overwrite).
-	wantName := "stream_tcp-stream-1.yaml"
+	wantName := "redis_cache_tcp.yaml"
 	if _, err := os.Stat(filepath.Join(dir, ProdDirName, wantName)); err != nil {
 		t.Fatalf("expected file %s: %v", wantName, err)
 	}
@@ -494,5 +493,11 @@ func TestTCPAndUDPSameHostBothPersist(t *testing.T) {
 	}
 	if !ids["id-tcp"] || !ids["id-udp"] {
 		t.Fatalf("missing streams: %v", ids)
+	}
+	if _, err := os.Stat(filepath.Join(st.ProdDir(), "minecraft_tcp.yaml")); err != nil {
+		t.Fatalf("minecraft_tcp.yaml: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(st.ProdDir(), "minecraft_udp.yaml")); err != nil {
+		t.Fatalf("minecraft_udp.yaml: %v", err)
 	}
 }

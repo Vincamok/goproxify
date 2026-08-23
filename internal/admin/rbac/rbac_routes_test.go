@@ -76,3 +76,31 @@ func TestRouteAllowedByToken_CoreScope_Tout(t *testing.T) {
 		t.Fatal("scope core doit autoriser toutes les routes")
 	}
 }
+
+func TestRouteAllowedByToken_AdminDomainScopes_L4Visible(t *testing.T) {
+	scopes := []Scope{{Type: "domain", Value: "*.dankdown.fr"}}
+	stream := &router.Route{ID: "s1", Host: "Minecraft", Type: router.RouteTCP, ListenPort: 25565}
+	httpRoute := &router.Route{ID: "h1", Host: "other.example.fr", Type: router.RouteHTTP}
+	if !RouteAllowedByToken("admin", scopes, stream) {
+		t.Fatal("admin + scopes domain doit voir les streams L4")
+	}
+	if !RouteAllowedByToken("viewer", scopes, stream) {
+		t.Fatal("L4 n'est pas filtré par scopes domain (viewer inclus)")
+	}
+	if RouteAllowedByToken("admin", scopes, httpRoute) {
+		t.Fatal("admin + scopes domain ne doit pas voir un HTTP hors scope")
+	}
+}
+
+func TestFilterRoutesByScopes_AdminDomain_IncludesL4(t *testing.T) {
+	scopes := []Scope{{Type: "domain", Value: "*.dankdown.fr"}}
+	routes := []router.Route{
+		{ID: "1", Host: "api.dankdown.fr", Type: router.RouteHTTP},
+		{ID: "2", Host: "Minecraft", Type: router.RouteTCP, ListenPort: 25565},
+		{ID: "3", Host: "other.example.fr", Type: router.RouteHTTP},
+	}
+	got := FilterRoutesByScopes("admin", scopes, routes)
+	if len(got) != 2 {
+		t.Fatalf("attendu HTTP in-scope + L4, got %#v", got)
+	}
+}

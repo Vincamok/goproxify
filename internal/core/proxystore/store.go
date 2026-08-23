@@ -94,12 +94,15 @@ func ProdFilename(host, id string) string {
 
 // ProdFilenameTyped returns the on-disk basename.
 // HTTP(S): <sanitized-host>.yaml — host uniquely identifies the route.
-// TCP/UDP: stream_<id>.yaml — same display name for TCP+UDP must not share a file
-// (host-only naming caused the second protocol to overwrite the first after JSON→YAML).
+// TCP/UDP: <sanitized-host>_<type>.yaml — label partagé OK (ex. minecraft_tcp + minecraft_udp).
 func ProdFilenameTyped(host, id, typ string) string {
 	typ = strings.ToLower(strings.TrimSpace(typ))
 	if isL4Type(typ) {
-		return "stream_" + sanitizeID(id) + ".yaml"
+		stem := SanitizeHost(host)
+		if stem == "" {
+			return "stream_" + sanitizeID(id) + ".yaml"
+		}
+		return stem + "_" + typ + ".yaml"
 	}
 	stem := SanitizeHost(host)
 	if stem == "" {
@@ -139,7 +142,7 @@ func (s *Store) ProdPath(host, id string) string {
 	return filepath.Join(s.ProdDir(), ProdFilename(host, id))
 }
 
-// ProdPathFor returns the absolute path using host + config type (L4 → stream_<id>).
+// ProdPathFor returns the absolute path using host + config type (L4 → <host>_<type>).
 func (s *Store) ProdPathFor(env *Envelope) string {
 	if env == nil {
 		return ""
@@ -174,19 +177,10 @@ func (s *Store) WriteProd(env *Envelope) error {
 	if err := atomicWriteJSON(path, &cp); err != nil {
 		return err
 	}
-	// Remove legacy .json sibling and obsolete host-keyed file for L4 streams.
-	if strings.HasSuffix(path, ".yaml") {
-		_ = os.Remove(strings.TrimSuffix(path, ".yaml") + ".json")
-	}
-	if isL4Type(routeTypeFromConfig(cp.Config)) {
-		if stem := SanitizeHost(cp.Host); stem != "" {
-			legacy := filepath.Join(s.ProdDir(), stem+".yaml")
-			if legacy != path {
-				if old, err := readEnvelope(legacy); err == nil && old.ID == cp.ID {
-					_ = os.Remove(legacy)
-					_ = os.Remove(strings.TrimSuffix(legacy, ".yaml") + ".json")
-				}
-			}
+	for _, legacy := range s.obsoleteProdPaths(&cp, path) {
+		if old, err := readEnvelope(legacy); err == nil && old.ID == cp.ID {
+			_ = removeFile(legacy)
+			_ = os.Remove(strings.TrimSuffix(legacy, ".yaml") + ".json")
 		}
 	}
 	return nil
@@ -282,14 +276,19 @@ func (s *Store) DeleteProdByID(id string) error {
 		return err
 	}
 	err1 := removeFile(s.ProdPathFor(env))
-	err2 := removeFile(s.ProdPath(env.Host, env.ID)) // legacy host-keyed name
+	var lastErr error
 	if err1 != nil && !errors.Is(err1, ErrNotFound) {
-		return err1
+		lastErr = err1
 	}
-	if err2 != nil && !errors.Is(err2, ErrNotFound) {
-		return err2
+	for _, legacy := range s.obsoleteProdPaths(env, s.ProdPathFor(env)) {
+		if err := removeFile(legacy); err != nil && !errors.Is(err, ErrNotFound) {
+			lastErr = err
+		}
 	}
-	if errors.Is(err1, ErrNotFound) && errors.Is(err2, ErrNotFound) {
+	if lastErr != nil {
+		return lastErr
+	}
+	if err1 != nil && errors.Is(err1, ErrNotFound) {
 		return ErrNotFound
 	}
 	return nil
@@ -300,7 +299,20 @@ func (s *Store) DeleteRevision(id, rev string) error {
 	return removeFile(s.RevisionPath(id, rev))
 }
 
-// RemoveProdIfHostChanged deletes the old prod file when host rename changes the filename.
+// RemoveProdIfRenamed deletes the previous prod file when host or L4 type changes the basename.
+func (s *Store) RemoveProdIfRenamed(old, new *Envelope) error {
+	if old == nil || new == nil || old.ID != new.ID {
+		return nil
+	}
+	oldPath := s.ProdPathFor(old)
+	newPath := s.ProdPathFor(new)
+	if oldPath == newPath {
+		return nil
+	}
+	return removeFile(oldPath)
+}
+
+// RemoveProdIfHostChanged deletes the old prod file when host rename changes the filename (HTTP).
 func (s *Store) RemoveProdIfHostChanged(oldHost, newHost, id string) error {
 	oldPath := s.ProdPath(oldHost, id)
 	newPath := s.ProdPath(newHost, id)
@@ -308,6 +320,27 @@ func (s *Store) RemoveProdIfHostChanged(oldHost, newHost, id string) error {
 		return nil
 	}
 	return removeFile(oldPath)
+}
+
+func (s *Store) obsoleteProdPaths(env *Envelope, except string) []string {
+	if env == nil {
+		return nil
+	}
+	typ := routeTypeFromConfig(env.Config)
+	var paths []string
+	add := func(p string) {
+		if p != "" && p != except {
+			paths = append(paths, p)
+		}
+	}
+	add(filepath.Join(s.ProdDir(), "stream_"+sanitizeID(env.ID)+".yaml"))
+	if stem := SanitizeHost(env.Host); stem != "" {
+		if isL4Type(typ) {
+			add(filepath.Join(s.ProdDir(), stem+".yaml"))
+		}
+		add(s.ProdPath(env.Host, env.ID))
+	}
+	return paths
 }
 
 func (s *Store) listDir(dir string, requireProdStatus bool) ([]*Envelope, error) {

@@ -123,10 +123,6 @@ func (p *Pipeline) Promote(id, rev string) (*proxystore.Envelope, error) {
 	}
 
 	old, _ := p.store.ReadProdByID(id)
-	oldHost := ""
-	if old != nil {
-		oldHost = old.Host
-	}
 
 	prod := *env
 	prod.Status = proxystore.StatusProduction
@@ -136,8 +132,8 @@ func (p *Pipeline) Promote(id, rev string) (*proxystore.Envelope, error) {
 	if err := p.store.WriteProd(&prod); err != nil {
 		return nil, err
 	}
-	if oldHost != "" && oldHost != prod.Host {
-		_ = p.store.RemoveProdIfHostChanged(oldHost, prod.Host, id)
+	if old != nil {
+		_ = p.store.RemoveProdIfRenamed(old, &prod)
 	}
 
 	// Mark revision as production (audit trail of what was promoted).

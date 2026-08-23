@@ -108,7 +108,13 @@ async function renderTraficPage(ctx) {
       if (typeof p.config === 'object') return p.config;
       return tryJSON(p.config) || {};
     };
-    const getType   = (p) => (getCfg(p).type || p.type || 'http').toLowerCase();
+    const getType   = (p) => {
+      const cfg = getCfg(p);
+      const t = String(cfg.type || p.type || '').toLowerCase();
+      if (t) return t;
+      if (cfg.listen_port || p.listen_port) return 'tcp';
+      return 'http';
+    };
     const isStreamP = (p) => { const t = getType(p); return t === 'tcp' || t === 'udp' || t === 'both'; };
     const isDockerP = (p) => (p.id||'').startsWith('docker:');
     const isK8sP    = (p) => (p.id||'').startsWith('k8s:');
@@ -187,6 +193,8 @@ async function renderTraficPage(ctx) {
     const routeAllowedByAccess = (acc, p, cfg) => {
       const role = acc.role || '';
       const scopes = acc.scopes || [];
+      const pType = String(cfg.type || p.type || '').toLowerCase();
+      if (pType === 'tcp' || pType === 'udp' || cfg.listen_port || p.listen_port) return true;
       if (role === 'superadmin' || (role === 'admin' && scopes.length === 0)) return true;
       if (!scopes.length) return false;
       const hosts = [cfg.host || p.host, ...(cfg.aliases || [])].filter(Boolean);
@@ -873,7 +881,7 @@ async function renderTraficPage(ctx) {
       const protos = [...(useTCP ? ['tcp'] : []), ...(useUDP ? ['udp'] : [])];
       try {
         for (const proto of protos) {
-          // Nom d'affichage partagé OK : fichiers Core = stream_<uuid>.yaml (pas host.yaml).
+          // Nom d'affichage partagé OK : fichiers Core = <label>_tcp.yaml / <label>_udp.yaml
           const host = name || (proto + '_' + port);
           const config = { type: proto, host, listen_port: port, backends: [{ url: target }] };
           await api('POST', '/proxies', { config, enabled: true });

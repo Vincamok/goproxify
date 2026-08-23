@@ -105,9 +105,13 @@ func MatchRoute(scopes []Scope, route *router.Route) bool {
 
 // RouteAllowedByToken indique si une route est dans le périmètre d'un token Core.
 // Même sémantique que FilterRoutesByScopes : admin sans scope → tout ; sinon match.
+// Streams L4 (tcp/udp) : pas de domaine DNS — hors périmètre token_scopes domain.
 func RouteAllowedByToken(role string, scopes []Scope, route *router.Route) bool {
 	if route == nil {
 		return false
+	}
+	if routeIsL4(route) {
+		return true
 	}
 	if IsSuperAdminRole(role) || (IsAdminRole(role) && len(scopes) == 0) {
 		return true
@@ -479,6 +483,9 @@ func canDeleteProxyWithGrants(role string, grants []Grant, route *router.Route) 
 	}
 	if !IsAdminRole(role) {
 		return false
+	}
+	if routeIsL4(route) {
+		return true
 	}
 	if len(grants) == 0 {
 		return true
