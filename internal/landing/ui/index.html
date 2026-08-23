@@ -1392,6 +1392,7 @@ services:
       - TZ=${TZ:-Europe/Paris}
       - GPX_PAIRING_SECRET=${GPX_PAIRING_SECRET}
       - GPX_CONTROL_PLANE_CORE_ENDPOINT=http://goproxify-core:8000
+      - GPX_IDENTITY_AGENT_NODE_NAME=${AGENT_NODE_NAME:-goproxify-agent}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - goproxify_agent_data:/etc/goproxify
@@ -1418,7 +1419,8 @@ GPX_FIRST_ADMIN_EMAIL=admin@example.com
 GPX_FIRST_ADMIN_PASSWORD=
 ADMIN_PORT=9443
 TZ=Europe/Paris
-CORE_NODE_NAME=goproxify-core</pre>
+CORE_NODE_NAME=goproxify-core
+AGENT_NODE_NAME=goproxify-agent</pre>
             </div>
           </div>
         </div>
@@ -1498,6 +1500,7 @@ services:
       - TZ=Europe/Paris
       - GPX_PAIRING_SECRET=<span class="v" data-pt-secret="pairing">CHANGE_ME_PAIRING_HEX32</span>
       - GPX_CONTROL_PLANE_CORE_ENDPOINT=http://goproxify-core:8000
+      - GPX_IDENTITY_AGENT_NODE_NAME=goproxify-agent
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - goproxify_agent_data:/etc/goproxify
@@ -2693,7 +2696,7 @@ agent:
         : '';
       var tail = kind === 'env'
         ? 'ADMIN_PORT=9443'
-        : 'ADMIN_PORT=9443\nTZ=Europe/Paris\nCORE_NODE_NAME=goproxify-core';
+        : 'ADMIN_PORT=9443\nTZ=Europe/Paris\nCORE_NODE_NAME=goproxify-core\nAGENT_NODE_NAME=goproxify-agent';
       preEnv.innerHTML =
         '<span class="c"># Generated in your browser — never sent to a server</span>\n' +
         extra +
