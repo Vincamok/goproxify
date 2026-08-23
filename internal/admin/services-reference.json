@@ -39,7 +39,8 @@
       "depends_on": ["goproxify-core"],
       "env": [
         { "key": "GPX_PAIRING_SECRET",              "required": true,  "secret": true,  "description": "Même valeur que le Core. Authentifie l'agent lors du couplage initial.", "example": "a1b2c3..." },
-        { "key": "GPX_CONTROL_PLANE_CORE_ENDPOINT", "required": true,  "secret": false, "description": "URL HTTP du Core (plan de contrôle, port 8000).", "example": "http://goproxify-core:8000", "note": "Utiliser l'adresse réseau interne si sur le même hôte, ou l'IP/domaine distant sinon." },
+        { "key": "GPX_CONTROL_PLANE_CORE_ENDPOINT",  "required": true,  "secret": false, "description": "URL HTTP du Core (plan de contrôle, port 8000).", "example": "http://goproxify-core:8000", "note": "Utiliser l'adresse réseau interne si sur le même hôte, ou l'IP/domaine distant sinon." },
+        { "key": "GPX_CONTROL_PLANE_ADMIN_ENDPOINT", "required": false, "secret": false, "description": "URL de l'Admin pour le fallback d'appairage. Si pairWithCore échoue (401, Core pas encore prêt), l'agent tente l'Admin. Recommandé en production.", "example": "http://goproxify-admin:9443" },
         { "key": "GPX_IDENTITY_AGENT_NODE_NAME",    "required": false, "secret": false, "default": "agent-<hex8> (généré et persisté dans /etc/goproxify/agent-node-id au premier démarrage)", "description": "Nom lisible du nœud Agent dans l'Admin. Optionnel : sans lui, un ID stable est auto-généré et persisté dans le volume. Recommandé pour nommer l'agent de façon lisible ou garantir la stabilité si le volume est absent/recréé.", "example": "goproxify-agent" },
         { "key": "TZ",                              "required": false, "secret": false, "default": "UTC", "example": "Europe/Paris", "description": "Fuseau horaire pour les logs." }
       ]

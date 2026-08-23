@@ -1392,6 +1392,7 @@ services:
       - TZ=${TZ:-Europe/Paris}
       - GPX_PAIRING_SECRET=${GPX_PAIRING_SECRET}
       - GPX_CONTROL_PLANE_CORE_ENDPOINT=http://goproxify-core:8000
+      - GPX_CONTROL_PLANE_ADMIN_ENDPOINT=http://goproxify-admin:9443
       - GPX_IDENTITY_AGENT_NODE_NAME=${AGENT_NODE_NAME:-goproxify-agent}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -1500,6 +1501,7 @@ services:
       - TZ=Europe/Paris
       - GPX_PAIRING_SECRET=<span class="v" data-pt-secret="pairing">CHANGE_ME_PAIRING_HEX32</span>
       - GPX_CONTROL_PLANE_CORE_ENDPOINT=http://goproxify-core:8000
+      - GPX_CONTROL_PLANE_ADMIN_ENDPOINT=http://goproxify-admin:9443
       - GPX_IDENTITY_AGENT_NODE_NAME=goproxify-agent
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -1610,6 +1612,7 @@ agent:
               <div><span class="comment"># Agent (optional)</span></div>
               <div><span class="prompt">$ </span><span class="cmd">GPX_PAIRING_SECRET=<span class="v" data-bin-secret="pairing">CHANGE_ME_PAIRING_HEX32</span> \</span></div>
               <div><span class="cmd">  GPX_CONTROL_PLANE_CORE_ENDPOINT=http://localhost:8000 \</span></div>
+              <div><span class="cmd">  GPX_CONTROL_PLANE_ADMIN_ENDPOINT=http://localhost:9443 \</span></div>
               <div><span class="cmd">  GPX_IDENTITY_AGENT_NODE_NAME=goproxify-agent \</span></div>
               <div><span class="cmd">  ./goproxify agent</span></div>
             </div>

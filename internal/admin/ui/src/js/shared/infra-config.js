@@ -236,10 +236,13 @@ function _buildAgentOpts(d) {
   const runtime  = d.wa_runtime || (d.wa_podman ? 'podman' : (d.wa_docker !== false ? 'docker' : ''));
   const useContainerRuntime = runtime === 'docker' || runtime === 'podman';
   const sockHost = runtime === 'podman' ? '/run/podman/podman.sock' : '/var/run/docker.sock';
+  const adminName = isFull ? (d.wa_admin_name || 'goproxify-admin') : null;
+  const adminURL  = d.wa_admin_url || (adminName ? `http://${adminName}:9443` : '');
   const envVars = [
-    { k:'GPX_IDENTITY_AGENT_NODE_NAME',       v: name },
-    { k:'GPX_CONTROL_PLANE_CORE_ENDPOINT',    v: coreURL },
-    { k:'GPX_PAIRING_SECRET',                 v: _wiz.pairingSecret || '' },
+    { k:'GPX_IDENTITY_AGENT_NODE_NAME',          v: name },
+    { k:'GPX_CONTROL_PLANE_CORE_ENDPOINT',       v: coreURL },
+    adminURL ? { k:'GPX_CONTROL_PLANE_ADMIN_ENDPOINT', v: adminURL } : null,
+    { k:'GPX_PAIRING_SECRET',                    v: _wiz.pairingSecret || '' },
     d.wa_region ? { k:'GPX_IDENTITY_REGION',  v: d.wa_region } : null,
     useContainerRuntime ? { k:'GPX_DOCKER_RUNTIME', v: runtime } : null,
     useContainerRuntime && coreContainer ? { k:'GPX_NETWORK_MANAGEMENT_CORE_CONTAINER_NAME', v: coreContainer } : null,

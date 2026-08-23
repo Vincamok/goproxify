@@ -162,6 +162,7 @@ services:
       - TZ=${TZ:-Europe/Paris}
       - GPX_PAIRING_SECRET=${GPX_PAIRING_SECRET}
       - GPX_CONTROL_PLANE_CORE_ENDPOINT=http://goproxify-core:8000
+      - GPX_CONTROL_PLANE_ADMIN_ENDPOINT=http://goproxify-admin:9443
       - GPX_IDENTITY_AGENT_NODE_NAME=${AGENT_NODE_NAME:-goproxify-agent}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -326,6 +327,7 @@ export GPX_FIRST_ADMIN_PASSWORD=MonMotDePasse42!
 export GPX_IDENTITY_CORE_NODE_NAME=goproxify-core
 export GPX_IDENTITY_AGENT_NODE_NAME=goproxify-agent
 export GPX_CONTROL_PLANE_CORE_ENDPOINT=http://localhost:8000
+export GPX_CONTROL_PLANE_ADMIN_ENDPOINT=http://localhost:9443
 ```
 
 ### 6.3 Démarrer les trois rôles (trois terminaux ou trois services systemd)
@@ -415,6 +417,7 @@ services:
     environment:
       - GPX_PAIRING_SECRET=<PAIRING_SECRET_DU_CORE>
       - GPX_CONTROL_PLANE_CORE_ENDPOINT=http://<IP_DU_CORE>:8000
+      - GPX_CONTROL_PLANE_ADMIN_ENDPOINT=http://<IP_DU_CORE>:9443
       - GPX_IDENTITY_AGENT_NODE_NAME=agent-prod-1
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
