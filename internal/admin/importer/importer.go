@@ -22,15 +22,16 @@ import (
 
 // Backup est le format natif de sauvegarde Goproxify (.gpx-admin-backup / .gpx-full-backup).
 type Backup struct {
-	Version       string                     `json:"version"`
-	CreatedAt     time.Time                  `json:"created_at"`
-	Proxies       []BackupProxy              `json:"proxies"`
-	Users         []BackupUser               `json:"users"`
-	Tokens        []BackupToken              `json:"tokens"`
-	Snippets      []BackupSnippet            `json:"snippets"`
-	AlertChannels []map[string]any           `json:"alert_channels"`
-	AlertRules    []map[string]any           `json:"alert_rules"`
-	Configs       map[string]json.RawMessage `json:"configs,omitempty"` // "admin" | "core" | "agent:<name>"
+	Version        string                     `json:"version"`
+	CreatedAt      time.Time                  `json:"created_at"`
+	Proxies        []BackupProxy              `json:"proxies"`
+	Users          []BackupUser               `json:"users"`
+	Tokens         []BackupToken              `json:"tokens"`
+	Snippets       []BackupSnippet            `json:"snippets"`
+	AlertChannels  []map[string]any           `json:"alert_channels"`
+	AlertRules     []map[string]any           `json:"alert_rules"`
+	DeclaredNodes  []map[string]any           `json:"declared_nodes,omitempty"`
+	Configs        map[string]json.RawMessage `json:"configs,omitempty"` // "admin" | "core" | "agent:<name>"
 }
 
 type BackupProxy struct {
@@ -64,14 +65,16 @@ type BackupSnippet struct {
 
 // BackupSummary est le résumé renvoyé lors du preview d'une sauvegarde.
 type BackupSummary struct {
-	Version       string        `json:"version"`
-	CreatedAt     time.Time     `json:"created_at"`
-	Proxies       []ProxySummary `json:"proxies"`
-	UserCount     int           `json:"user_count"`
-	TokenCount    int           `json:"token_count"`
-	SnippetCount  int           `json:"snippet_count"`
-	ChannelCount  int           `json:"channel_count"`
-	RuleCount     int           `json:"rule_count"`
+	Version            string         `json:"version"`
+	CreatedAt          time.Time      `json:"created_at"`
+	Proxies            []ProxySummary `json:"proxies"`
+	UserCount          int            `json:"user_count"`
+	TokenCount         int            `json:"token_count"`
+	SnippetCount       int            `json:"snippet_count"`
+	ChannelCount       int            `json:"channel_count"`
+	RuleCount          int            `json:"rule_count"`
+	DeclaredNodeCount  int            `json:"declared_node_count"`
+	HasConfigs         bool           `json:"has_configs"`
 }
 
 type ProxySummary struct {
@@ -113,13 +116,15 @@ func SummarizeBackup(data []byte) (*Backup, *BackupSummary, error) {
 		return nil, nil, err
 	}
 	sum := &BackupSummary{
-		Version:      b.Version,
-		CreatedAt:    b.CreatedAt,
-		UserCount:    len(b.Users),
-		TokenCount:   len(b.Tokens),
-		SnippetCount: len(b.Snippets),
-		ChannelCount: len(b.AlertChannels),
-		RuleCount:    len(b.AlertRules),
+		Version:           b.Version,
+		CreatedAt:         b.CreatedAt,
+		UserCount:         len(b.Users),
+		TokenCount:        len(b.Tokens),
+		SnippetCount:      len(b.Snippets),
+		ChannelCount:      len(b.AlertChannels),
+		RuleCount:         len(b.AlertRules),
+		DeclaredNodeCount: len(b.DeclaredNodes),
+		HasConfigs:        len(b.Configs) > 0,
 	}
 	for _, p := range b.Proxies {
 		sum.Proxies = append(sum.Proxies, ProxySummary{
@@ -318,6 +323,32 @@ func Apply(db *sql.DB, b *Backup, sel ImportSelection) ImportResult {
 		}
 	}
 
+	// Declared nodes — toujours restaurés (base de la topologie déclarée)
+	for _, n := range b.DeclaredNodes {
+		id, _ := n["id"].(string)
+		// Ne pas restaurer les nœuds synthétiques issus de config (préfixe "cfg:")
+		if strings.HasPrefix(id, "cfg:") {
+			continue
+		}
+		if id == "" {
+			id = uuid.New().String()
+		}
+		role, _ := n["role"].(string)
+		name, _ := n["name"].(string)
+		region, _ := n["region"].(string)
+		env, _ := n["environment"].(string)
+		cfgJ, _ := json.Marshal(n["config"])
+		verb := `INSERT OR IGNORE`
+		if overwrite {
+			verb = `INSERT OR REPLACE`
+		}
+		_, err := db.Exec(verb+` INTO declared_nodes (id, role, name, region, environment, config) VALUES (?,?,?,?,?,?)`,
+			id, role, name, region, env, string(cfgJ))
+		if err == nil {
+			_ = err // comptabilisé dans proxies pour ne pas casser l'API
+		}
+	}
+
 	return res
 }
 
@@ -411,6 +442,22 @@ func ExportBackup(db *sql.DB) (*Backup, error) {
 			b.AlertRules = append(b.AlertRules, map[string]any{
 				"id": id, "name": name, "scope": scopeMap, "triggers": triggersArr,
 				"channels": chansArr, "cooldown_sec": cooldown, "priority": priority, "enabled": enabled == 1,
+			})
+		}
+	}
+
+	// Declared nodes (topologie déclarée dans l'assistant infrastructure)
+	dnrows, _ := db.Query(`SELECT id, role, name, region, environment, config, created_at FROM declared_nodes ORDER BY created_at`)
+	if dnrows != nil {
+		defer dnrows.Close()
+		for dnrows.Next() {
+			var id, role, name, region, env, cfg, createdAt string
+			dnrows.Scan(&id, &role, &name, &region, &env, &cfg, &createdAt) //nolint:errcheck
+			var cfgMap map[string]any
+			json.Unmarshal([]byte(cfg), &cfgMap) //nolint:errcheck
+			b.DeclaredNodes = append(b.DeclaredNodes, map[string]any{
+				"id": id, "role": role, "name": name, "region": region,
+				"environment": env, "config": cfgMap, "created_at": createdAt,
 			})
 		}
 	}

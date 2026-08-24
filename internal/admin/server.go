@@ -209,7 +209,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	certsH := &api.CertsHandler{DB: s.db, Log: s.log, Manager: acmeMgr}
 	nodesH := &api.NodesHandler{DB: s.db, Log: s.log}
-	declaredNodesH := &api.DeclaredNodesHandler{DB: s.db, Log: s.log}
+	declaredNodesH := &api.DeclaredNodesHandler{DB: s.db, Log: s.log, CoreNodeName: s.cfg.Identity.CoreNodeName}
 	bootstrapH := &api.BootstrapHandler{
 		DB:  s.db,
 		Log: s.log,

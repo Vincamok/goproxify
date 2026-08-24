@@ -33,6 +33,10 @@ type AdminConfig struct {
 		} `mapstructure:"first_boot"`
 	} `mapstructure:"security"`
 
+	Identity struct {
+		CoreNodeName string `mapstructure:"core_node_name"` // nom du nœud Core principal (ex: goproxify-core)
+	} `mapstructure:"identity"`
+
 	HA struct {
 		Enabled  bool              `mapstructure:"enabled"`
 		NodeID   string            `mapstructure:"node_id"`

@@ -15,8 +15,9 @@ import (
 // DeclaredNodesHandler gère les nœuds déclarés via l'assistant Infrastructure.
 // Ces nœuds sont configurés mais pas encore connectés (status "declared").
 type DeclaredNodesHandler struct {
-	DB  *sql.DB
-	Log *slog.Logger
+	DB           *sql.DB
+	Log          *slog.Logger
+	CoreNodeName string // depuis admin.json identity.core_node_name ; sert de base déclarative
 }
 
 type declaredNode struct {
@@ -57,6 +58,7 @@ func (h *DeclaredNodesHandler) list(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	result := make([]declaredNode, 0)
+	inDB := map[string]bool{} // role:name déjà en DB
 	for rows.Next() {
 		var n declaredNode
 		var cfg string
@@ -65,7 +67,47 @@ func (h *DeclaredNodesHandler) list(w http.ResponseWriter, r *http.Request) {
 		}
 		n.Config = json.RawMessage(cfg)
 		result = append(result, n)
+		inDB[n.Role+":"+n.Name] = true
 	}
+	rows.Close()
+
+	// Compléter avec les nœuds dérivés des fichiers config (source de vérité déclarative).
+	// 1. Core principal déclaré dans admin.json (identity.core_node_name).
+	if h.CoreNodeName != "" && !inDB["core:"+h.CoreNodeName] {
+		result = append(result, declaredNode{
+			ID:     "cfg:core:" + h.CoreNodeName,
+			Role:   "core",
+			Name:   h.CoreNodeName,
+			Config: json.RawMessage(`{"source":"config"}`),
+		})
+	}
+	// 2. Nœuds enregistrés via tokens (cores + agents appairés).
+	trows, _ := h.DB.QueryContext(r.Context(),
+		`SELECT role, node_name, node_endpoint FROM tokens WHERE revoked=0 AND node_name!='' ORDER BY created_at`)
+	if trows != nil {
+		defer trows.Close()
+		for trows.Next() {
+			var role, name, endpoint string
+			if err := trows.Scan(&role, &name, &endpoint); err != nil {
+				continue
+			}
+			if role != "core" && role != "agent" {
+				continue
+			}
+			if inDB[role+":"+name] {
+				continue
+			}
+			cfgBytes, _ := json.Marshal(map[string]string{"endpoint": endpoint, "source": "token"})
+			result = append(result, declaredNode{
+				ID:     "cfg:" + role + ":" + name,
+				Role:   role,
+				Name:   name,
+				Config: json.RawMessage(cfgBytes),
+			})
+			inDB[role+":"+name] = true
+		}
+	}
+
 	jsonOK(w, result)
 }
 
