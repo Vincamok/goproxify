@@ -237,28 +237,40 @@ func (h *Hub) ServeAgent(w http.ResponseWriter, r *http.Request) {
 	} else if joinToken != "" {
 		// Premier démarrage : JOIN_TOKEN usage unique → état pending
 		if err := h.joinStore.Consume(joinToken); err != nil {
-			conn.Close(websocket.StatusPolicyViolation, "join token invalide ou déjà utilisé")
-			h.log.Warn("ws/agent: JOIN_TOKEN refusé", "agent", agentID, "err", err)
-			return
-		}
-		if h.onJoinTokenUsed != nil {
-			h.onJoinTokenUsed(joinToken)
-		}
-		h.pendingMu.Lock()
-		h.pendingAgents[agentID] = ac
-		h.pendingMu.Unlock()
+			// JOIN_TOKEN déjà consommé : l'Agent a peut-être été approuvé mais a perdu son HMAC local.
+			storedHMAC, _ := h.hmacStore.Get(agentID)
+			if storedHMAC == "" {
+				storedHMAC, _ = h.hmacStore.Get(regPayload.Name)
+			}
+			if storedHMAC == "" {
+				conn.Close(websocket.StatusPolicyViolation, "join token invalide ou déjà utilisé")
+				h.log.Warn("ws/agent: JOIN_TOKEN refusé", "agent", agentID, "err", err)
+				return
+			}
+			// Agent approuvé mais HMAC perdu côté agent — on restaure la session.
+			ac.hmac = storedHMAC
+			ac.approved = true
+			h.log.Info("ws/agent: JOIN_TOKEN déjà consommé, Agent approuvé — HMAC renvoyé", "agent", agentID)
+		} else {
+			if h.onJoinTokenUsed != nil {
+				h.onJoinTokenUsed(joinToken)
+			}
+			h.pendingMu.Lock()
+			h.pendingAgents[agentID] = ac
+			h.pendingMu.Unlock()
 
-		if h.onAgentPending != nil {
-			h.onAgentPending(agentID, regPayload.Name, regPayload.Version)
-		}
-		h.log.Info("ws/agent: Agent en attente d'approbation", "agent", agentID, "version", regPayload.Version)
+			if h.onAgentPending != nil {
+				h.onAgentPending(agentID, regPayload.Name, regPayload.Version)
+			}
+			h.log.Info("ws/agent: Agent en attente d'approbation", "agent", agentID, "version", regPayload.Version)
 
-		ac.mu.Lock()
-		already := ac.approved
-		ac.mu.Unlock()
-		if !already && h.consumePreApproval(agentID, regPayload.Name) {
-			if err := h.ApproveAgent(agentID); err != nil {
-				h.log.Warn("ws/agent: auto-approbation échouée", "agent", agentID, "err", err)
+			ac.mu.Lock()
+			already := ac.approved
+			ac.mu.Unlock()
+			if !already && h.consumePreApproval(agentID, regPayload.Name) {
+				if err := h.ApproveAgent(agentID); err != nil {
+					h.log.Warn("ws/agent: auto-approbation échouée", "agent", agentID, "err", err)
+				}
 			}
 		}
 	} else {
@@ -281,6 +293,15 @@ func (h *Hub) ServeAgent(w http.ResponseWriter, r *http.Request) {
 
 	// Démarrer la rotation HMAC si approuvé
 	if ac.approved {
+		// Si l'Agent s'est reconnecté via un JOIN_TOKEN déjà consommé (HMAC perdu),
+		// renvoyer le HMAC existant pour qu'il puisse le persister localement.
+		if joinToken != "" && agentHMAC == "" {
+			reapproveMsg, _ := NewMessage(ac.seq.Add(1), TypeApprove, ApprovePayload{
+				AgentID:   agentID,
+				AgentHMAC: ac.hmac,
+			})
+			_ = h.sendToAgent(ac, reapproveMsg)
+		}
 		go h.hmacRotateLoop(r.Context(), ac)
 	}
 
