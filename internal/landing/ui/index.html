@@ -1301,17 +1301,17 @@
               </div>
             </div>
             <pre id="fb-env"><span class="c"># Click the key icon to generate secrets in your browser</span>
-<span class="c"># Images (defaults = GHCR :preview)</span>
-<span class="c"># GOPROXIFY_ADMIN_TAG=preview</span>
-<span class="c"># GOPROXIFY_CORE_TAG=preview</span>
-<span class="c"># GOPROXIFY_AGENT_TAG=preview</span>
-<span class="c"># Required</span>
 GPX_JWT_SECRET=
 GPX_PAIRING_SECRET=
 GPX_FIRST_ADMIN_EMAIL=admin@example.com
 GPX_FIRST_ADMIN_PASSWORD=
 
-ADMIN_PORT=9443</pre>
+<span class="c"># Optional — defaults work out of the box; configure further in the Admin</span>
+<span class="c"># ADMIN_PORT=9443</span>
+<span class="c"># TZ=Europe/Paris</span>
+<span class="c"># GOPROXIFY_ADMIN_TAG=preview</span>
+<span class="c"># GOPROXIFY_CORE_TAG=preview</span>
+<span class="c"># GOPROXIFY_AGENT_TAG=preview</span></pre>
           </div>
         </div>
       </div>
@@ -1413,15 +1413,16 @@ services:
                 </div>
               </div>
               <pre id="fb-pt-stack-env"><span class="c"># Click the key icon to generate secrets in your browser</span>
-<span class="c"># Nothing is sent to any server</span>
 GPX_JWT_SECRET=
 GPX_PAIRING_SECRET=
 GPX_FIRST_ADMIN_EMAIL=admin@example.com
 GPX_FIRST_ADMIN_PASSWORD=
-ADMIN_PORT=9443
-TZ=Europe/Paris
-CORE_NODE_NAME=goproxify-core
-AGENT_NODE_NAME=goproxify-agent</pre>
+
+<span class="c"># Optional — defaults work out of the box; configure further in the Admin</span>
+<span class="c"># ADMIN_PORT=9443</span>
+<span class="c"># TZ=Europe/Paris</span>
+<span class="c"># CORE_NODE_NAME=goproxify-core</span>
+<span class="c"># AGENT_NODE_NAME=goproxify-agent</span></pre>
             </div>
           </div>
         </div>
@@ -1606,14 +1607,12 @@ agent:
               <div>&nbsp;</div>
               <div><span class="comment"># Core (data plane) — same pairing secret</span></div>
               <div><span class="prompt">$ </span><span class="cmd">GPX_PAIRING_SECRET=<span class="v" data-bin-secret="pairing">CHANGE_ME_PAIRING_HEX32</span> \</span></div>
-              <div><span class="cmd">  GPX_IDENTITY_CORE_NODE_NAME=goproxify-core \</span></div>
               <div><span class="cmd">  ./goproxify core</span></div>
               <div>&nbsp;</div>
               <div><span class="comment"># Agent (optional)</span></div>
               <div><span class="prompt">$ </span><span class="cmd">GPX_PAIRING_SECRET=<span class="v" data-bin-secret="pairing">CHANGE_ME_PAIRING_HEX32</span> \</span></div>
               <div><span class="cmd">  GPX_CONTROL_PLANE_CORE_ENDPOINT=http://localhost:8000 \</span></div>
               <div><span class="cmd">  GPX_CONTROL_PLANE_ADMIN_ENDPOINT=http://localhost:9443 \</span></div>
-              <div><span class="cmd">  GPX_IDENTITY_AGENT_NODE_NAME=goproxify-agent \</span></div>
               <div><span class="cmd">  ./goproxify agent</span></div>
             </div>
           </div>
@@ -2692,23 +2691,25 @@ agent:
       var preEnv = document.getElementById(kind === 'env' ? 'fb-env' : 'fb-pt-stack-env');
       if (!preEnv) return;
       btn = preEnv.closest('.file-block').querySelector('.file-block-icon');
-      var extra = kind === 'env'
-        ? '<span class="c"># Images (defaults = GHCR :preview)</span>\n' +
+      var optionalVars = kind === 'env'
+        ? '<span class="c"># ADMIN_PORT=9443</span>\n' +
+          '<span class="c"># TZ=Europe/Paris</span>\n' +
           '<span class="c"># GOPROXIFY_ADMIN_TAG=preview</span>\n' +
           '<span class="c"># GOPROXIFY_CORE_TAG=preview</span>\n' +
-          '<span class="c"># GOPROXIFY_AGENT_TAG=preview</span>\n'
-        : '';
-      var tail = kind === 'env'
-        ? 'ADMIN_PORT=9443'
-        : 'ADMIN_PORT=9443\nTZ=Europe/Paris\nCORE_NODE_NAME=goproxify-core\nAGENT_NODE_NAME=goproxify-agent';
+          '<span class="c"># GOPROXIFY_AGENT_TAG=preview</span>'
+        : '<span class="c"># ADMIN_PORT=9443</span>\n' +
+          '<span class="c"># TZ=Europe/Paris</span>\n' +
+          '<span class="c"># CORE_NODE_NAME=goproxify-core</span>\n' +
+          '<span class="c"># AGENT_NODE_NAME=goproxify-agent</span>';
       preEnv.innerHTML =
         '<span class="c"># Generated in your browser — never sent to a server</span>\n' +
-        extra +
         'GPX_JWT_SECRET=<span class="v">' + escHtml(jwt) + '</span>\n' +
         'GPX_PAIRING_SECRET=<span class="v">' + escHtml(pairing) + '</span>\n' +
         'GPX_FIRST_ADMIN_EMAIL=admin@example.com\n' +
         'GPX_FIRST_ADMIN_PASSWORD=<span class="v">' + escHtml(password) + '</span>\n' +
-        '\n' + tail;
+        '\n' +
+        '<span class="c"># Optional — defaults work out of the box; configure further in the Admin</span>\n' +
+        optionalVars;
     } else if (kind === 'inline') {
       var preInline = document.getElementById('fb-pt-compose-inline');
       if (!preInline) return;
