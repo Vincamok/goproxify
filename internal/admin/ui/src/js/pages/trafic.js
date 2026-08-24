@@ -101,9 +101,9 @@ async function renderTraficPage(ctx) {
     const getType   = (p) => {
       const cfg = getCfg(p);
       const t = String(cfg.type || p.type || '').toLowerCase();
+      if (cfg.tls_enabled || cfg.tls_passthrough) return t === 'tcp' || t === 'udp' || t === 'both' ? t : 'https';
       if (t) return t;
       if (cfg.listen_port || p.listen_port) return 'tcp';
-      if (cfg.tls_enabled || cfg.tls_passthrough) return 'https';
       return 'http';
     };
     const isStreamP = (p) => { const t = getType(p); return t === 'tcp' || t === 'udp' || t === 'both'; };
@@ -1160,10 +1160,15 @@ async function renderTraficPage(ctx) {
     renderPage();
     window.loadContainers();
 
-    api('GET', '/backends/health').catch(() => ({ backends: {} })).then((healthRes) => {
-      window._backendHealth = (healthRes && healthRes.backends) || {};
-      if (typeof window.renderPage === 'function') window.renderPage();
-    });
+    const refreshBackendHealth = () =>
+      api('GET', '/backends/health').catch(() => ({ backends: {} })).then((healthRes) => {
+        window._backendHealth = (healthRes && healthRes.backends) || {};
+        if (typeof window.renderPage === 'function') window.renderPage();
+      });
+
+    refreshBackendHealth();
+    if (window._backendHealthTimer) clearInterval(window._backendHealthTimer);
+    window._backendHealthTimer = setInterval(refreshBackendHealth, 30000);
 
   } catch(e) { content.innerHTML = `<p style="color:var(--red)">${esc(e.message)}</p>`; }
 }
