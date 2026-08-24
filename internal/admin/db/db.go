@@ -665,6 +665,23 @@ func migrateNodeTokenHashes(db *sql.DB) error {
 	return nil
 }
 
+// ListSettingsByPrefix retourne toutes les paires clé/valeur dont la clé commence par prefix.
+func ListSettingsByPrefix(db *sql.DB, prefix string) map[string]string {
+	rows, err := db.Query(`SELECT key, value FROM settings WHERE key LIKE ?`, prefix+"%")
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var k, v string
+		if rows.Scan(&k, &v) == nil {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 // SetSetting persiste un paramètre.
 func SetSetting(db *sql.DB, key, value string) error {
 	_, err := db.Exec(

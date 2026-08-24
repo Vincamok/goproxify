@@ -306,7 +306,9 @@ function _archLoad() {
     api('GET', '/nodes').catch(() => null),
     api('GET', '/tokens?role=core').catch(() => null),
     api('GET', '/declared-nodes').catch(() => null),
-  ]).then(([sec, nodes, tokens, declared]) => {
+    api('GET', '/portal/enabled').catch(() => null),
+  ]).then(([sec, nodes, tokens, declared, portalEnabled]) => {
+    const portalCores = portalEnabled?.cores || {};
     _arch.pairingSecret = sec?.secret || '';
     _wiz.pairingSecret = _arch.pairingSecret;
     if (!_arch.jwtSecret) {
@@ -325,6 +327,14 @@ function _archLoad() {
     _arch.hosts = hydrated.hosts;
     _arch.haGroupIds = hydrated.haGroupIds;
     _arch.existingCount = hydrated.existingCount || 0;
+    // Applique l'état portail Access depuis les settings Admin
+    for (const h of _arch.hosts) {
+      for (const s of h.services || []) {
+        if (s.type === 'core' && s.name in portalCores) {
+          s.access = !!portalCores[s.name];
+        }
+      }
+    }
     // Cores déclarés absents de /nodes → déjà dans nodes via status declared ; sync coreList
     for (const n of _arch.declaredNodes.filter(x => x.role === 'core')) {
       if (_arch.coreList.some(c => c.node_name === n.name)) continue;

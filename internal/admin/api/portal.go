@@ -61,6 +61,10 @@ func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleAudit(w, r)
 		return
 	}
+	if r.URL.Path == "/api/v1/portal/enabled" || r.URL.Path == "/api/v1/portal/enabled/" {
+		h.handleEnabled(w, r)
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		h.get(w, r)
@@ -172,6 +176,24 @@ func loadPortalConfig(db *sql.DB, coreName string) PortalConfig {
 	}
 	cfg.Users = listSyncedUsersForCore(db, coreName)
 	return cfg
+}
+
+// handleEnabled retourne {cores: {coreName: true/false}} pour tous les Cores configurés.
+func (h *PortalHandler) handleEnabled(w http.ResponseWriter, r *http.Request) {
+	all := admindb.ListSettingsByPrefix(h.DB, settingPortalConfigPrefix)
+	result := map[string]bool{}
+	prefix := settingPortalConfigPrefix
+	for key, raw := range all {
+		coreName := strings.TrimPrefix(key, prefix)
+		if coreName == "" {
+			continue
+		}
+		var cfg PortalConfig
+		if err := json.Unmarshal([]byte(raw), &cfg); err == nil {
+			result[coreName] = cfg.Enabled
+		}
+	}
+	jsonOK(w, map[string]any{"cores": result})
 }
 
 // LoadPortalConfigForCore expose la config pour le full_sync WS.
