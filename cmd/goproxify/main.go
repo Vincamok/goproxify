@@ -153,7 +153,13 @@ Pour l'aide d'une sous-commande :
 func runAdmin() {
 	args := parseFlags(os.Args[2:])
 
-	cfg, err := config.LoadAdmin(configPath("admin", args))
+	cfgPath := configPath("admin", args)
+	if err := config.BootstrapAdmin(cfgPath); err != nil {
+		fmt.Fprintf(os.Stderr, "bootstrap admin : %v\n", err)
+		os.Exit(1)
+	}
+
+	cfg, err := config.LoadAdmin(cfgPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "erreur config admin : %v\n", err)
 		os.Exit(1)
@@ -210,7 +216,12 @@ func runCore() {
 	}
 
 	args := parseFlags(os.Args[2:])
-	cfg, err := config.LoadCore(configPath("core", args))
+	cfgPath := configPath("core", args)
+	if err := config.BootstrapCore(cfgPath); err != nil {
+		fmt.Fprintf(os.Stderr, "bootstrap core : %v\n", err)
+		os.Exit(1)
+	}
+	cfg, err := config.LoadCore(cfgPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "erreur config core : %v\n", err)
 		os.Exit(1)
@@ -480,7 +491,12 @@ Workflow d'appairage WS :
 
 func runAgentService() {
 	args := parseFlags(os.Args[2:])
-	cfg, err := config.LoadAgent(configPath("agent", args))
+	cfgPath := configPath("agent", args)
+	if err := config.BootstrapAgent(cfgPath); err != nil {
+		fmt.Fprintf(os.Stderr, "bootstrap agent : %v\n", err)
+		os.Exit(1)
+	}
+	cfg, err := config.LoadAgent(cfgPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "erreur config agent : %v\n", err)
 		os.Exit(1)
