@@ -591,7 +591,7 @@ function _archCapRow(on, label, desc, onchange, extraHTML) {
   return `<label class="arch-cap" data-on="${on ? 1 : 0}">
       <input type="checkbox" ${on ? 'checked' : ''} onchange="${onchange}">
       <span style="min-width:0;">
-        <span class="arch-cap-label" style="display:block;">${esc(label)}</span>
+        <span class="arch-cap-label" style="display:block;">${label}</span>
         <span class="arch-cap-desc" style="display:block;">${esc(desc)}</span>
       </span>
     </label>${on && extraHTML ? `<div class="arch-cap-extra">${extraHTML}</div>` : ''}`;
