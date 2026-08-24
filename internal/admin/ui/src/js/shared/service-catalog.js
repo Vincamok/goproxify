@@ -1,5 +1,4 @@
 // Service catalog — source de vérité pour images, ports, variables d'env et topologie.
-// Synchronisé avec internal/admin/services-reference.json (source humaine).
 // Consommé par infra-config.js (_buildCoreOpts, _buildAgentOpts, _buildAdminOpts)
 // et par le wizard / les visualisations d'infrastructure.
 

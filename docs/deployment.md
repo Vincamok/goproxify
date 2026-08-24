@@ -62,8 +62,6 @@ Navigateur Admin
 
 **Secret de couplage (`GPX_PAIRING_SECRET`)** : les trois services partagent la même valeur. C'est le seul mécanisme d'authentification au démarrage. Générez-le aléatoirement, ne le réutilisez jamais entre environnements.
 
-Référence complète des variables et intercommunications : [`internal/admin/services-reference.json`](../internal/admin/services-reference.json).
-
 ---
 
 ## 3. Méthode A — Docker Compose (recommandé)
@@ -584,6 +582,5 @@ networks:
 
 - [Architecture](architecture.md) — détail des composants et flux internes
 - [CLI](cli.md) — toutes les commandes et options du binaire
-- [services-reference.json](../internal/admin/services-reference.json) — catalogue des variables d'env, ports et intercommunications
 - [FAQ](faq.md) — questions fréquentes
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — contribuer au projet
