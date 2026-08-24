@@ -1,0 +1,366 @@
+<title>GoProxify Flux</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+
+<style>
+/* Deliberate single-theme: infrastructure diagrams live dark */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #0C1219;
+  color: #CBD5E1;
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 20px 40px;
+  gap: 28px;
+}
+
+.page-header {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  align-self: flex-start;
+  max-width: 900px;
+  width: 100%;
+}
+
+.page-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #4B5E75;
+}
+
+.page-source {
+  font-size: 0.68rem;
+  color: #2C3E52;
+  font-style: italic;
+}
+
+.diagram-wrap {
+  width: 100%;
+  max-width: 900px;
+  overflow-x: auto;
+}
+
+svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* SVG node styles via inline class */
+.node-core   { fill: #0D2240; stroke: #2A5FAA; stroke-width: 1.5; }
+.node-admin  { fill: #1A0E38; stroke: #6D44C4; stroke-width: 1.5; }
+.node-agent  { fill: #071C12; stroke: #1A7A50; stroke-width: 1.5; }
+.node-ext    { fill: #111B26; stroke: #2C3E52; stroke-width: 1; stroke-dasharray: 4 3; }
+
+.label-core  { fill: #5B9AEE; font-weight: 600; }
+.label-admin { fill: #9B72E8; font-weight: 600; }
+.label-agent { fill: #2DD4A4; font-weight: 600; }
+.label-ext   { fill: #506070; }
+.label-sub   { fill: #3A4E63; font-size: 9px; }
+
+.arrow-core  { stroke: #2A5FAA; }
+.arrow-admin { stroke: #6D44C4; }
+.arrow-agent { stroke: #1A7A50; }
+.arrow-ext   { stroke: #2C3E52; }
+
+.flow-label  { fill: #3D566E; font-size: 9.5px; }
+.flow-proto  { fill: #4C9EFF; font-size: 8.5px; }
+.flow-port   { fill: #2A5FAA; font-size: 8px; }
+
+text { font-family: 'JetBrains Mono', monospace; }
+
+/* Legend table */
+.legend {
+  width: 100%;
+  max-width: 900px;
+  border-top: 1px solid #1A2535;
+  padding-top: 20px;
+}
+
+.legend-title {
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #2C3E52;
+  margin-bottom: 12px;
+}
+
+.legend-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.72rem;
+}
+
+.legend-table th {
+  text-align: left;
+  color: #2C3E52;
+  font-weight: 500;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 4px 10px 8px 0;
+  border-bottom: 1px solid #141F2E;
+  white-space: nowrap;
+}
+
+.legend-table td {
+  padding: 7px 10px 7px 0;
+  border-bottom: 1px solid #0F1A28;
+  vertical-align: top;
+  color: #4B5E75;
+  line-height: 1.45;
+}
+
+.legend-table tr:last-child td { border-bottom: none; }
+
+.td-from { color: #CBD5E1; white-space: nowrap; }
+.td-proto { font-style: italic; white-space: nowrap; }
+.td-auth { color: #3D566E; }
+
+.chip {
+  display: inline-block;
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-size: 0.65rem;
+  font-weight: 500;
+  margin-right: 3px;
+  white-space: nowrap;
+}
+.chip-core  { background: #0D2240; color: #4C9EFF; border: 1px solid #1E3F6E; }
+.chip-admin { background: #1A0E38; color: #9B72E8; border: 1px solid #4A2B8A; }
+.chip-agent { background: #071C12; color: #2DD4A4; border: 1px solid #144D35; }
+.chip-ext   { background: #111B26; color: #4B5E75; border: 1px solid #1E2D3E; }
+
+@media (max-width: 600px) {
+  .legend-table .td-desc { display: none; }
+}
+</style>
+
+<header class="page-header">
+  <span class="page-title">Intercommunications</span>
+  <span class="page-source">source : internal/admin/services-reference.json</span>
+</header>
+
+<div class="diagram-wrap">
+<svg viewBox="0 0 880 430" xmlns="http://www.w3.org/2000/svg" aria-label="Schéma des flux GoProxify">
+  <defs>
+    <!-- Arrowheads per component colour -->
+    <marker id="arr-core"  markerWidth="8" markerHeight="7" refX="7" refY="3.5" orient="auto">
+      <polygon points="0 0, 8 3.5, 0 7" fill="#2A5FAA"/>
+    </marker>
+    <marker id="arr-admin" markerWidth="8" markerHeight="7" refX="7" refY="3.5" orient="auto">
+      <polygon points="0 0, 8 3.5, 0 7" fill="#6D44C4"/>
+    </marker>
+    <marker id="arr-agent" markerWidth="8" markerHeight="7" refX="7" refY="3.5" orient="auto">
+      <polygon points="0 0, 8 3.5, 0 7" fill="#1A7A50"/>
+    </marker>
+    <marker id="arr-ext"   markerWidth="8" markerHeight="7" refX="7" refY="3.5" orient="auto">
+      <polygon points="0 0, 8 3.5, 0 7" fill="#2C3E52"/>
+    </marker>
+    <!-- Reverse arrowheads (for start of bidirectional) -->
+    <marker id="arr-core-r"  markerWidth="8" markerHeight="7" refX="1" refY="3.5" orient="auto-start-reverse">
+      <polygon points="0 3.5, 8 0, 8 7" fill="#2A5FAA" opacity="0.5"/>
+    </marker>
+    <marker id="arr-admin-r" markerWidth="8" markerHeight="7" refX="1" refY="3.5" orient="auto-start-reverse">
+      <polygon points="0 3.5, 8 0, 8 7" fill="#6D44C4" opacity="0.5"/>
+    </marker>
+    <marker id="arr-agent-r" markerWidth="8" markerHeight="7" refX="1" refY="3.5" orient="auto-start-reverse">
+      <polygon points="0 3.5, 8 0, 8 7" fill="#1A7A50" opacity="0.5"/>
+    </marker>
+  </defs>
+
+  <!-- ── EXTERNAL: Internet/Users ── -->
+  <g>
+    <rect class="node-ext" x="18" y="162" width="118" height="52" rx="5"/>
+    <text class="label-ext" x="77" y="183" text-anchor="middle" font-size="11">Internet</text>
+    <text class="label-sub" x="77" y="198" text-anchor="middle">utilisateurs</text>
+    <text class="label-sub" x="77" y="208" text-anchor="middle">/ trafic entrant</text>
+  </g>
+
+  <!-- ── CORE ── -->
+  <g>
+    <rect class="node-core" x="290" y="155" width="168" height="62" rx="5"/>
+    <text class="label-core" x="374" y="179" text-anchor="middle" font-size="13">Core</text>
+    <text class="label-sub" x="374" y="196" text-anchor="middle">:80 :443 :443/udp :8000</text>
+    <text class="label-sub" x="374" y="208" text-anchor="middle" fill="#1E3F6E">plan de contrôle · proxy</text>
+  </g>
+
+  <!-- ── ADMIN ── -->
+  <g>
+    <rect class="node-admin" x="608" y="48" width="168" height="62" rx="5"/>
+    <text class="label-admin" x="692" y="73" text-anchor="middle" font-size="13">Admin</text>
+    <text class="label-sub" x="692" y="90" text-anchor="middle">:9443</text>
+    <text class="label-sub" x="692" y="102" text-anchor="middle" fill="#2A1848">persistance · SQLite</text>
+  </g>
+
+  <!-- ── AGENT ── -->
+  <g>
+    <rect class="node-agent" x="290" y="330" width="168" height="62" rx="5"/>
+    <text class="label-agent" x="374" y="355" text-anchor="middle" font-size="13">Agent</text>
+    <text class="label-sub" x="374" y="372" text-anchor="middle">(par hôte Docker)</text>
+    <text class="label-sub" x="374" y="384" text-anchor="middle" fill="#0E3D25">aucun port entrant</text>
+  </g>
+
+  <!-- ── EXTERNAL: Browser ── -->
+  <g>
+    <rect class="node-ext" x="608" y="290" width="168" height="52" rx="5"/>
+    <text class="label-ext" x="692" y="311" text-anchor="middle" font-size="11">Browser</text>
+    <text class="label-sub" x="692" y="326" text-anchor="middle">interface admin</text>
+    <text class="label-sub" x="692" y="337" text-anchor="middle">/ exploitant</text>
+  </g>
+
+  <!-- ═══════════════════════════════
+       ARROWS
+  ═══════════════════════════════ -->
+
+  <!-- 1. Internet → Core (:80/:443) -->
+  <line class="arrow-ext" x1="136" y1="188" x2="288" y2="188"
+        stroke-width="1.5" marker-end="url(#arr-ext)"/>
+  <text class="flow-label" x="212" y="182" text-anchor="middle">HTTP/HTTPS</text>
+  <text class="flow-port"  x="212" y="193" text-anchor="middle" fill="#2C3E52">:80 / :443</text>
+
+  <!-- 2. Admin ↔ Core (WS bidirectionnel, Admin initie) -->
+  <!-- path from Admin left edge (608,79) to Core right edge (458,186) -->
+  <path class="arrow-admin"
+        d="M 608,79 C 540,79 520,186 458,186"
+        fill="none" stroke-width="2"
+        marker-end="url(#arr-admin)"
+        marker-start="url(#arr-admin-r)"/>
+  <text class="flow-label" x="530" y="114" text-anchor="middle">WebSocket :8000</text>
+  <text class="flow-label" x="530" y="126" text-anchor="middle" fill="#4A2B8A">Admin → Core</text>
+  <text class="flow-port"  x="530" y="138" text-anchor="middle" fill="#3A1E6E">HMAC-SHA256</text>
+  <!-- tiny bidir marker note -->
+  <text x="530" y="150" text-anchor="middle" font-size="8" fill="#2A1848" font-style="italic">push_routes · full_sync</text>
+
+  <!-- 3. Agent → Core (WS persistant, bidirectionnel — prioritaire) -->
+  <!-- vertical from Agent top (374,330) to Core bottom (374,217) -->
+  <line class="arrow-agent"
+        x1="374" y1="330" x2="374" y2="219"
+        stroke-width="2.5"
+        marker-end="url(#arr-agent)"
+        marker-start="url(#arr-agent-r)"/>
+  <text class="flow-label" x="320" y="278" text-anchor="middle" font-size="9">WebSocket</text>
+  <text class="flow-port"  x="320" y="289" text-anchor="middle" fill="#1A7A50">:8000</text>
+  <text x="320" y="301" text-anchor="middle" font-size="8" fill="#0E3D25" font-style="italic">JOIN_TOKEN → HMAC</text>
+  <!-- small arrow note on right side -->
+  <text class="flow-label" x="430" y="278" text-anchor="middle" font-size="8.5">heartbeat</text>
+  <text class="flow-label" x="430" y="289" text-anchor="middle" font-size="8.5">containers</text>
+  <text class="flow-label" x="430" y="300" text-anchor="middle" font-size="8.5">ordres ↕</text>
+
+  <!-- 4. Agent → Core (HTTP fallback — dashed) -->
+  <line class="arrow-agent"
+        x1="352" y1="330" x2="352" y2="219"
+        stroke-width="1" stroke-dasharray="5 4" opacity="0.45"
+        marker-end="url(#arr-agent)"/>
+  <text x="290" y="258" text-anchor="middle" font-size="7.5" fill="#0E3D25" font-style="italic">HTTP fallback</text>
+
+  <!-- 5. Browser → Admin (HTTPS :9443) -->
+  <line class="arrow-ext"
+        x1="692" y1="290" x2="692" y2="112"
+        stroke-width="1.5"
+        marker-end="url(#arr-ext)"/>
+  <text class="flow-label" x="730" y="200" text-anchor="middle" font-size="9">HTTPS</text>
+  <text class="flow-port"  x="730" y="212" text-anchor="middle" fill="#2C3E52">:9443</text>
+  <text x="730" y="224" text-anchor="middle" font-size="8" fill="#1E2D3E">JWT</text>
+
+  <!-- 6. Core → Internet (reverse proxy sortant vers upstreams) -->
+  <path class="arrow-core"
+        d="M 290,202 C 220,202 200,252 136,222"
+        fill="none" stroke-width="1.5" stroke-dasharray="6 3"
+        marker-end="url(#arr-core)" opacity="0.6"/>
+  <text x="210" y="240" text-anchor="middle" font-size="8.5" fill="#1E3F6E">proxy → upstreams</text>
+
+  <!-- ── LEGEND CONNECTOR LABELS IN DIAGRAM ── -->
+  <!-- Primary connection label near Core node -->
+  <text x="374" y="147" text-anchor="middle" font-size="8" fill="#1A3050">⬟ hub WebSocket central</text>
+
+  <!-- Port badge on Core -->
+  <rect x="442" y="158" width="50" height="14" rx="3" fill="#0A1825"/>
+  <text x="467" y="168" text-anchor="middle" font-size="7.5" fill="#2A5FAA">:8000 internal</text>
+
+</svg>
+</div>
+
+<!-- Legend from services-reference.json intercommunications -->
+<div class="legend">
+  <div class="legend-title">intercommunications · extrait services-reference.json</div>
+  <div style="overflow-x:auto;">
+    <table class="legend-table">
+      <thead>
+        <tr>
+          <th>from</th>
+          <th>to</th>
+          <th>protocol</th>
+          <th>port</th>
+          <th>auth</th>
+          <th class="td-desc">description</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="td-from"><span class="chip chip-agent">agent</span></td>
+          <td class="td-from"><span class="chip chip-core">core</span></td>
+          <td class="td-proto">WebSocket</td>
+          <td>8000</td>
+          <td class="td-auth">Bearer (pairing token)</td>
+          <td class="td-desc">Canal temps réel bidirectionnel. Heartbeat, événements lifecycle, ordres du Core. Prioritaire sur HTTP.</td>
+        </tr>
+        <tr>
+          <td class="td-from"><span class="chip chip-agent">agent</span></td>
+          <td class="td-from"><span class="chip chip-core">core</span></td>
+          <td class="td-proto">HTTP POST</td>
+          <td>8000</td>
+          <td class="td-auth">Bearer (pairing token)</td>
+          <td class="td-desc">Heartbeat /internal/v1/agent/heartbeat toutes les 30 s. Fallback si WS inactif.</td>
+        </tr>
+        <tr>
+          <td class="td-from"><span class="chip chip-agent">agent</span></td>
+          <td class="td-from"><span class="chip chip-core">core</span></td>
+          <td class="td-proto">HTTP POST</td>
+          <td>8000</td>
+          <td class="td-auth">Bearer (pairing token)</td>
+          <td class="td-desc">Événements lifecycle /internal/v1/agent/events. Fallback HTTP si WS inactif.</td>
+        </tr>
+        <tr>
+          <td class="td-from"><span class="chip chip-admin">admin</span></td>
+          <td class="td-from"><span class="chip chip-core">core</span></td>
+          <td class="td-proto">WebSocket</td>
+          <td>8000</td>
+          <td class="td-auth">HMAC-SHA256</td>
+          <td class="td-desc">push_routes, push_cert, full_sync. L'Admin est le seul client humain du plan de contrôle.</td>
+        </tr>
+        <tr>
+          <td class="td-from"><span class="chip chip-core">core</span></td>
+          <td class="td-from"><span class="chip chip-ext">internet</span></td>
+          <td class="td-proto">HTTP/HTTPS</td>
+          <td>80 / 443</td>
+          <td class="td-auth">—</td>
+          <td class="td-desc">Reverse-proxy vers les services des agents. Trafic utilisateur entrant.</td>
+        </tr>
+        <tr>
+          <td class="td-from"><span class="chip chip-ext">browser</span></td>
+          <td class="td-from"><span class="chip chip-admin">admin</span></td>
+          <td class="td-proto">HTTPS</td>
+          <td>9443</td>
+          <td class="td-auth">JWT</td>
+          <td class="td-desc">Interface d'administration. Exploitant humain.</td>
+        </tr>
+        <tr>
+          <td class="td-from"><span class="chip chip-core">core</span></td>
+          <td class="td-from"><span class="chip chip-agent">agent</span></td>
+          <td class="td-proto">WS interne</td>
+          <td>—</td>
+          <td class="td-auth">—</td>
+          <td class="td-desc">Ordres : déployer/arrêter conteneurs, récupérer statut. Via la connexion WS ouverte par l'agent — le Core ne contacte jamais l'agent directement.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
