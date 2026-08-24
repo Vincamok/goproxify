@@ -6,6 +6,7 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"log/slog"
 
+	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
 	"github.com/vincamok/goproxify/internal/admin/logs"
 )
@@ -177,31 +179,69 @@ func (h *LogsHandler) putSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 // deleteByIP supprime tous les logs d'une IP (droit à l'effacement RGPD).
+// Body JSON optionnel : {"reason": "demande RGPD article 17"}
 func (h *LogsHandler) deleteByIP(w http.ResponseWriter, r *http.Request, ip string) {
 	if ip == "" {
 		writeErr(w, r, http.StatusBadRequest, "api.err.missing_ip")
 		return
 	}
+	reason := parseDeletionReason(r)
+	actor := adminauth.UserIDFromContext(r.Context())
+
 	n, err := h.Store.DeleteByIP(ip)
 	if err != nil {
 		logsJSONErr(w, err, http.StatusInternalServerError)
 		return
 	}
+
+	detail := fmt.Sprintf("ip=%s deleted=%d reason=%q", ip, n, reason)
+	_ = admindb.WriteAudit(h.DB, actor, "rgpd_erasure_ip", "logs", detail)
+	h.Store.Write(logs.Entry{
+		Level:     "info",
+		Component: "admin",
+		Message:   fmt.Sprintf("RGPD effacement IP %s : %d entrées supprimées par %s — %s", ip, n, actor, reason),
+	})
+
 	jsonOK(w, map[string]any{"deleted": n, "ip": ip})
 }
 
 // deleteByUser supprime tous les logs d'un utilisateur (droit à l'effacement RGPD).
+// Body JSON optionnel : {"reason": "demande RGPD article 17"}
 func (h *LogsHandler) deleteByUser(w http.ResponseWriter, r *http.Request, userID string) {
 	if userID == "" {
 		writeErr(w, r, http.StatusBadRequest, "api.err.missing_user")
 		return
 	}
+	reason := parseDeletionReason(r)
+	actor := adminauth.UserIDFromContext(r.Context())
+
 	n, err := h.Store.DeleteByUserID(userID)
 	if err != nil {
 		logsJSONErr(w, err, http.StatusInternalServerError)
 		return
 	}
+
+	detail := fmt.Sprintf("user_id=%s deleted=%d reason=%q", userID, n, reason)
+	_ = admindb.WriteAudit(h.DB, actor, "rgpd_erasure_user", "logs", detail)
+	h.Store.Write(logs.Entry{
+		Level:     "info",
+		Component: "admin",
+		Message:   fmt.Sprintf("RGPD effacement utilisateur %s : %d entrées supprimées par %s — %s", userID, n, actor, reason),
+	})
+
 	jsonOK(w, map[string]any{"deleted": n, "user_id": userID})
+}
+
+// parseDeletionReason lit le champ "reason" du body JSON (optionnel).
+func parseDeletionReason(r *http.Request) string {
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	json.NewDecoder(r.Body).Decode(&body) //nolint:errcheck
+	if body.Reason == "" {
+		return "non précisé"
+	}
+	return body.Reason
 }
 
 func logsJSONErr(w http.ResponseWriter, err error, code int) {
