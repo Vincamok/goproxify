@@ -8,6 +8,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,16 +20,17 @@ import (
 	"github.com/vincamok/goproxify/internal/core/router"
 )
 
-// Backup est le format natif de sauvegarde Goproxify (.gpx-admin-backup).
+// Backup est le format natif de sauvegarde Goproxify (.gpx-admin-backup / .gpx-full-backup).
 type Backup struct {
-	Version       string           `json:"version"`
-	CreatedAt     time.Time        `json:"created_at"`
-	Proxies       []BackupProxy    `json:"proxies"`
-	Users         []BackupUser     `json:"users"`
-	Tokens        []BackupToken    `json:"tokens"`
-	Snippets      []BackupSnippet  `json:"snippets"`
-	AlertChannels []map[string]any `json:"alert_channels"`
-	AlertRules    []map[string]any `json:"alert_rules"`
+	Version       string                     `json:"version"`
+	CreatedAt     time.Time                  `json:"created_at"`
+	Proxies       []BackupProxy              `json:"proxies"`
+	Users         []BackupUser               `json:"users"`
+	Tokens        []BackupToken              `json:"tokens"`
+	Snippets      []BackupSnippet            `json:"snippets"`
+	AlertChannels []map[string]any           `json:"alert_channels"`
+	AlertRules    []map[string]any           `json:"alert_rules"`
+	Configs       map[string]json.RawMessage `json:"configs,omitempty"` // "admin" | "core" | "agent:<name>"
 }
 
 type BackupProxy struct {
@@ -86,7 +90,8 @@ type ImportSelection struct {
 	ImportSnippets bool     `json:"import_snippets"`
 	ImportChannels bool     `json:"import_alert_channels"`
 	ImportRules    bool     `json:"import_alert_rules"`
-	OnConflict     string   `json:"on_conflict"` // skip | overwrite
+	OnConflict     string   `json:"on_conflict"`    // skip | overwrite
+	RestoreConfigs bool     `json:"restore_configs"` // écrire les fichiers config sur disque
 }
 
 // ImportResult décrit ce qui a été importé.
@@ -411,6 +416,65 @@ func ExportBackup(db *sql.DB) (*Backup, error) {
 	}
 
 	return b, nil
+}
+
+// ExportConfigs lit les fichiers config JSON depuis le disque et les inclut dans le backup.
+// paths : map "admin"→chemin, "core"→chemin, "agent:<name>"→chemin
+func ExportConfigs(paths map[string]string) map[string]json.RawMessage {
+	if len(paths) == 0 {
+		return nil
+	}
+	out := make(map[string]json.RawMessage, len(paths))
+	for key, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var raw json.RawMessage = data
+		out[key] = raw
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// RestoreConfigs écrit les fichiers config JSON sur disque (restauration).
+// paths : même map que pour ExportConfigs.
+// Les clés absentes de configs sont ignorées ; les fichiers existants sont remplacés atomiquement.
+func RestoreConfigs(configs map[string]json.RawMessage, paths map[string]string) error {
+	for key, data := range configs {
+		path, ok := paths[key]
+		if !ok || path == "" {
+			continue
+		}
+		if err := atomicWriteFile(path, data); err != nil {
+			return fmt.Errorf("restore config %q → %s : %w", key, path, err)
+		}
+	}
+	return nil
+}
+
+func atomicWriteFile(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".restore-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	tmp.Close()
+	return os.Rename(tmpName, path)
 }
 
 // normalizeTLSMode s'assure que tls_mode est présent dans le JSON d'une route HTTPS.

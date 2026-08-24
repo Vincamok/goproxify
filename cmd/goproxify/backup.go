@@ -28,8 +28,8 @@ func runBackup() {
 		args := parseFlags(os.Args[3:])
 		target := flagValue(args, "-target", "all")
 		output := flagValue(args, "-output", ".")
-		if target != "admin" && target != "core" && target != "all" {
-			fmt.Fprintf(os.Stderr, "-target doit être 'admin', 'core' ou 'all' (reçu: %q)\n", target)
+		if target != "admin" && target != "core" && target != "all" && target != "full" {
+			fmt.Fprintf(os.Stderr, "-target doit être 'admin', 'core', 'all' ou 'full' (reçu: %q)\n", target)
 			os.Exit(1)
 		}
 		client, err := newAdminClient(args)
@@ -40,6 +40,16 @@ func runBackup() {
 		if err := os.MkdirAll(output, 0o755); err != nil {
 			fmt.Fprintf(os.Stderr, "output : %v\n", err)
 			os.Exit(1)
+		}
+		if target == "full" {
+			adminConfig := flagValue(args, "-config-admin", "")
+			coreConfig := flagValue(args, "-config-core", "")
+			agentConfig := flagValue(args, "-config-agent", "")
+			if err := backupCreateFull(client, output, adminConfig, coreConfig, agentConfig); err != nil {
+				fmt.Fprintf(os.Stderr, "backup full : %v\n", err)
+				os.Exit(1)
+			}
+			return
 		}
 		if target == "admin" || target == "all" {
 			if err := backupCreateAdmin(client, output); err != nil {
@@ -71,6 +81,17 @@ func runBackup() {
 			os.Exit(1)
 		}
 		if file != "" {
+			// Détecter si c'est un full backup (contient des configs)
+			if isFullBackup(file) {
+				adminConfig := flagValue(args, "-config-admin", "")
+				coreConfig := flagValue(args, "-config-core", "")
+				agentConfig := flagValue(args, "-config-agent", "")
+				if err := backupRestoreFull(client, file, yes, adminConfig, coreConfig, agentConfig); err != nil {
+					fmt.Fprintf(os.Stderr, "backup restore : %v\n", err)
+					os.Exit(1)
+				}
+				return
+			}
 			if err := backupRestoreFile(client, file, yes); err != nil {
 				fmt.Fprintf(os.Stderr, "backup restore : %v\n", err)
 				os.Exit(1)
@@ -129,14 +150,19 @@ Sous-commandes :
   restore  Restaure depuis un fichier ou un snapshot stocké
   list     Liste les snapshots Admin
 
-goproxify backup create [-target admin|core|all] [-output <dir>] [-admin-url …] [-token …]
+goproxify backup create [-target admin|core|all|full] [-output <dir>] [-admin-url …] [-token …]
   -target  admin : snapshot SQLite Admin (.gpx-admin-backup JSON)
            core  : export table de routage (.gpx-core-backup JSON)
            all   : les deux (défaut)
-  -output  Répertoire de destination (défaut: .)
+           full  : DB + fichiers config JSON (.gpx-full-backup JSON)
+  -output           Répertoire de destination (défaut: .)
+  -config-admin     Chemin admin.json (full uniquement, défaut: auto-détecté)
+  -config-core      Chemin core.json  (full uniquement)
+  -config-agent     Chemin agent.json (full uniquement)
 
-goproxify backup restore -file <chemin> [-yes]
-  Restaure un fichier .gpx-admin-backup via l'API import (preview + apply).
+goproxify backup restore -file <chemin> [-yes] [-config-admin …] [-config-core …] [-config-agent …]
+  Restaure un .gpx-admin-backup ou .gpx-full-backup.
+  Pour un full backup, -config-admin/-config-core/-config-agent indiquent où écrire les configs.
 
 goproxify backup restore -id <snapshot-id> [-yes]
   Restaure un snapshot déjà stocké côté Admin.
@@ -239,6 +265,203 @@ func backupRestoreFile(client *adminClient, file string, yes bool) error {
 	}
 	fmt.Printf("Restauration OK : %v\n", result)
 	return nil
+}
+
+// ─── Full backup (DB + configs) ───────────────────────────────────────────────
+
+// fullBackup est le format .gpx-full-backup : DB + fichiers config JSON.
+type fullBackup struct {
+	Version   string                     `json:"version"`
+	CreatedAt time.Time                  `json:"created_at"`
+	DB        json.RawMessage            `json:"db"`      // contenu .gpx-admin-backup
+	Configs   map[string]json.RawMessage `json:"configs"` // "admin", "core", "agent:<name>"
+}
+
+func backupCreateFull(client *adminClient, output, adminCfg, coreCfg, agentCfg string) error {
+	// 1. Export DB via API
+	dbData, _, _, err := client.DoRaw("GET", "/api/v1/import/export", nil, "")
+	if err != nil {
+		return fmt.Errorf("export DB : %w", err)
+	}
+
+	// 2. Lire les fichiers config locaux
+	configs := make(map[string]json.RawMessage)
+	readConfig := func(key, path, defaultPath string) {
+		p := path
+		if p == "" {
+			p = defaultPath
+		}
+		if p == "" {
+			return
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			fmt.Printf("  avertissement : impossible de lire %s (%s) : %v\n", key, p, err)
+			return
+		}
+		configs[key] = json.RawMessage(data)
+		fmt.Printf("  config %s : %s\n", key, p)
+	}
+	readConfig("admin", adminCfg, defaultConfigPath("admin"))
+	readConfig("core", coreCfg, defaultConfigPath("core"))
+	if agentCfg != "" {
+		readConfig("agent", agentCfg, "")
+	}
+
+	fb := fullBackup{
+		Version:   "1",
+		CreatedAt: time.Now().UTC(),
+		DB:        json.RawMessage(dbData),
+		Configs:   configs,
+	}
+	data, err := json.MarshalIndent(fb, "", "  ")
+	if err != nil {
+		return err
+	}
+	ts := time.Now().Format("20060102-150405")
+	fname := filepath.Join(output, "goproxify-full-"+ts+".gpx-full-backup")
+	if err := os.WriteFile(fname, data, 0o600); err != nil {
+		return err
+	}
+	fmt.Printf("Full backup écrit : %s (%s)\n", fname, formatBytes(int64(len(data))))
+	return nil
+}
+
+func isFullBackup(file string) bool {
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return false
+	}
+	var probe struct {
+		DB      json.RawMessage            `json:"db"`
+		Configs map[string]json.RawMessage `json:"configs"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return false
+	}
+	return len(probe.DB) > 0
+}
+
+func backupRestoreFull(client *adminClient, file string, yes bool, adminCfg, coreCfg, agentCfg string) error {
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return err
+	}
+	var fb fullBackup
+	if err := json.Unmarshal(data, &fb); err != nil {
+		return fmt.Errorf("parse full backup : %w", err)
+	}
+
+	// Preview DB
+	sumRaw, _, _, err := client.DoRaw("POST", "/api/v1/import/backup/preview", fb.DB, "application/json")
+	if err != nil {
+		return fmt.Errorf("preview DB : %w", err)
+	}
+	var sum map[string]any
+	_ = json.Unmarshal(sumRaw, &sum)
+	fmt.Printf("Prévisualisation DB : %v\n", sum)
+
+	// Preview configs
+	if len(fb.Configs) > 0 {
+		fmt.Println("Configs incluses dans ce backup :")
+		for key := range fb.Configs {
+			fmt.Printf("  • %s\n", key)
+		}
+	}
+
+	if !yes && !confirm("Appliquer ce full backup (DB + configs) ?") {
+		fmt.Println("annulé")
+		return nil
+	}
+
+	// Restaurer DB
+	body := map[string]any{
+		"data": json.RawMessage(fb.DB),
+		"selection": map[string]any{
+			"import_users":          true,
+			"import_tokens":         true,
+			"import_snippets":       true,
+			"import_alert_channels": true,
+			"import_alert_rules":    true,
+			"on_conflict":           "overwrite",
+		},
+	}
+	var result map[string]any
+	if _, err := client.DoJSON("POST", "/api/v1/import/backup/apply", body, &result); err != nil {
+		return fmt.Errorf("restauration DB : %w", err)
+	}
+	fmt.Printf("DB restaurée : %v\n", result)
+
+	// Restaurer configs localement
+	if len(fb.Configs) == 0 {
+		return nil
+	}
+	paths := map[string]string{}
+	if p := coalesce(adminCfg, defaultConfigPath("admin")); p != "" {
+		paths["admin"] = p
+	}
+	if p := coalesce(coreCfg, defaultConfigPath("core")); p != "" {
+		paths["core"] = p
+	}
+	if agentCfg != "" {
+		paths["agent"] = agentCfg
+	}
+	for key, cfgData := range fb.Configs {
+		path, ok := paths[key]
+		if !ok || path == "" {
+			fmt.Printf("  config %s : chemin non fourni, ignoré\n", key)
+			continue
+		}
+		if err := atomicWriteFile(path, cfgData); err != nil {
+			fmt.Printf("  avertissement : impossible d'écrire %s → %s : %v\n", key, path, err)
+			continue
+		}
+		fmt.Printf("  config %s restaurée → %s\n", key, path)
+	}
+	return nil
+}
+
+func defaultConfigPath(component string) string {
+	// Chemins par défaut utilisés par bootstrap
+	base := "/etc/goproxify"
+	switch component {
+	case "admin":
+		return filepath.Join(base, "admin.json")
+	case "core":
+		return filepath.Join(base, "core.json")
+	case "agent":
+		return filepath.Join(base, "agent.json")
+	}
+	return ""
+}
+
+func coalesce(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+func atomicWriteFile(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".restore-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	tmp.Close()
+	return os.Rename(tmpName, path)
 }
 
 func confirm(prompt string) bool {
