@@ -656,16 +656,16 @@ function _archInspectRole(svc) {
     ).join('');
     body = `
       ${_archGroup(t('arch.group.identity'),
-        _archField(t('arch.role.name'), `<input class="arch-input" value="${esc(svc.name)}" onchange="_archSetField('${svc.id}','name',this.value);_archRender()">`) +
+        _archField(t('arch.role.name'), `<input class="arch-input" value="${esc(svc.name)}" onchange="_archSetField('${svc.id}','name',this.value);_archRender()">` + _archImpactBadge('restart', svc.existing)) +
         _archField(t('arch.opt.reachable'), `<input class="arch-input" value="${esc(svc.reachable || '')}" placeholder="core.example.com" onchange="_archSetField('${svc.id}','reachable',this.value)">`) +
         `<div class="arch-cap-desc">${t('arch.opt.region_from_host', { region: (host && host.region) || '—' })}</div>`
       )}
       ${_archGroup(t('arch.group.caps'),
-        _archCapRow(!!svc.access, t('arch.svc.access'), t('arch.cap.access_desc'),
+        _archCapRow(!!svc.access, t('arch.svc.access') + _archImpactBadge('redeploy', svc.existing), t('arch.cap.access_desc'),
           `_archSetOpt('${svc.id}','access',this.checked)`) +
-        _archCapRow(_arch.haGroupIds.includes(svc.id), t('arch.svc.ha'), t('arch.cap.ha_desc'),
+        _archCapRow(_arch.haGroupIds.includes(svc.id), t('arch.svc.ha') + _archImpactBadge('redeploy', svc.existing), t('arch.cap.ha_desc'),
           `_archSetHAMember('${svc.id}',this.checked)`) +
-        _archCapRow(!!(svc.domains || svc.acme), t('arch.svc.domains'), t('arch.cap.tls_desc'),
+        _archCapRow(!!(svc.domains || svc.acme), t('arch.svc.domains') + _archImpactBadge('restart', svc.existing), t('arch.cap.tls_desc'),
           `_archSetTLS('${svc.id}',this.checked)`,
           _archField(t('arch.opt.domains'), `<input class="arch-input" value="${esc(svc.domains || '')}" placeholder="app.example.fr, api.example.fr" onchange="_archSetField('${svc.id}','domains',this.value);_archRender()">`) +
           _archCapRow(!!svc.acme, t('arch.opt.acme'), t('arch.cap.acme_desc'),
@@ -683,7 +683,7 @@ function _archInspectRole(svc) {
     ).join('');
     body = `
       ${_archGroup(t('arch.group.identity'),
-        _archField(t('arch.role.name'), `<input class="arch-input" value="${esc(svc.name)}" onchange="_archSetField('${svc.id}','name',this.value);_archRender()">`) +
+        _archField(t('arch.role.name'), `<input class="arch-input" value="${esc(svc.name)}" onchange="_archSetField('${svc.id}','name',this.value);_archRender()">` + _archImpactBadge('restart', svc.existing)) +
         (cores.length > 1
           ? _archField(t('arch.opt.target_core'),
               `<select class="arch-select" onchange="_archSetField('${svc.id}','targetCoreId',this.value)">
@@ -693,18 +693,18 @@ function _archInspectRole(svc) {
         `<div class="arch-cap-desc">${t('arch.opt.region_from_host', { region: (host && host.region) || '—' })}</div>`
       )}
       ${_archGroup(t('arch.opt.discovery'),
-        _archCapRow(!!svc.docker, t('arch.svc.docker'), t('arch.cap.docker_desc'),
+        _archCapRow(!!svc.docker, t('arch.svc.docker') + _archImpactBadge('redeploy', svc.existing), t('arch.cap.docker_desc'),
           `_archSetRuntime('${svc.id}','docker',this.checked)`) +
-        _archCapRow(!!svc.podman, t('arch.svc.podman'), t('arch.cap.podman_desc'),
+        _archCapRow(!!svc.podman, t('arch.svc.podman') + _archImpactBadge('redeploy', svc.existing), t('arch.cap.podman_desc'),
           `_archSetRuntime('${svc.id}','podman',this.checked)`) +
-        _archCapRow(!!svc.portainer, t('arch.svc.portainer'), t('arch.cap.portainer_desc'),
+        _archCapRow(!!svc.portainer, t('arch.svc.portainer') + _archImpactBadge('restart', svc.existing), t('arch.cap.portainer_desc'),
           `_archSetOpt('${svc.id}','portainer',this.checked)`,
           _archField('URL' + (svc.portainer && !svc.portainerUrl ? ' <span style="color:var(--red);font-size:10px;font-weight:700;vertical-align:middle;">*</span>' : ''),
             `<input class="arch-input" style="${svc.portainer && !svc.portainerUrl ? 'border-color:var(--red);' : ''}" value="${esc(svc.portainerUrl || '')}" placeholder="https://portainer:9443" onchange="_archSetField('${svc.id}','portainerUrl',this.value)">`) +
           _archField(t('arch.opt.portainer_key') + (svc.portainer && !svc.portainerKey ? ' <span style="color:var(--red);font-size:10px;font-weight:700;vertical-align:middle;">*</span>' : ''),
             `<input class="arch-input" type="password" style="${svc.portainer && !svc.portainerKey ? 'border-color:var(--red);' : ''}" value="${esc(svc.portainerKey || '')}" placeholder="ptr_…" onchange="_archSetField('${svc.id}','portainerKey',this.value)">`)
         ) +
-        _archCapRow(!!svc.k8s, t('arch.svc.k8s'), t('arch.cap.k8s_desc'),
+        _archCapRow(!!svc.k8s, t('arch.svc.k8s') + _archImpactBadge('restart', svc.existing), t('arch.cap.k8s_desc'),
           `_archSetOpt('${svc.id}','k8s',this.checked)`)
       )}
       `;
@@ -911,6 +911,23 @@ function _archSelectHost(hostId) {
   _arch.selectedHostId = hostId;
   _arch.selectedSvcId = null;
   _archRender();
+}
+
+/**
+ * Badge d'impact pour les nœuds existants.
+ * level: 'restart' (docker compose restart) | 'redeploy' (docker compose up -d)
+ * Affiché uniquement si svc.existing est vrai.
+ */
+function _archImpactBadge(level, existing) {
+  if (!existing) return '';
+  const isRedeploy = level === 'redeploy';
+  const label = t(isRedeploy ? 'arch.impact.redeploy' : 'arch.impact.restart');
+  const hint  = t(isRedeploy ? 'arch.impact.redeploy_hint' : 'arch.impact.restart_hint');
+  const color = isRedeploy ? 'var(--orange, #f59e0b)' : 'var(--text2)';
+  const icon  = isRedeploy
+    ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9 9 0 0 0-6.36 2.64L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9 9 0 0 0 6.36-2.64L21 16"/><path d="M16 16h5v5"/></svg>'
+    : '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.5 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>';
+  return `<span title="${esc(hint)}" style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:600;color:${color};vertical-align:middle;margin-left:6px;cursor:help;white-space:nowrap;">${icon} ${esc(label)}</span>`;
 }
 
 /** Capacité « Domaines & TLS » : l'éteindre efface domaines + ACME. */
