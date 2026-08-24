@@ -321,14 +321,19 @@ func (s *Server) Start(ctx context.Context) error {
 	mon := monitor.New(s.db, s.log, s.alertingEngine, monitor.DefaultConfig())
 	mon.Start(ctx)
 
-	// Rétention des logs (lit logs.retention_days dans settings).
-	s.logStore.StartRetentionLoop(ctx, func() int {
-		v := admindb.GetSetting(s.db, "logs.retention_days", "30")
-		n := 30
-		if _, err := fmt.Sscanf(v, "%d", &n); err != nil {
-			n = 30
+	// Rétention des logs RGPD (lit logs.retention_access_days / logs.retention_system_days dans settings).
+	s.logStore.StartRetentionLoop(ctx, func() (accessDays, systemDays int) {
+		parseInt := func(key string, def int) int {
+			v := admindb.GetSetting(s.db, key, "")
+			if v == "" {
+				return def
+			}
+			n := def
+			fmt.Sscanf(v, "%d", &n) //nolint:errcheck
+			return n
 		}
-		return n
+		return parseInt("logs.retention_access_days", logs.DefaultRetentionAccessDays),
+			parseInt("logs.retention_system_days", logs.DefaultRetentionSystemDays)
 	})
 
 	if s.haManager != nil {

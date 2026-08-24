@@ -41,6 +41,11 @@ func (h *LogsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.getSettings(w, r)
 	case r.Method == http.MethodPut && path == "settings":
 		h.putSettings(w, r)
+	// RGPD : effacement par IP ou utilisateur
+	case r.Method == http.MethodDelete && strings.HasPrefix(path, "by-ip/"):
+		h.deleteByIP(w, r, strings.TrimPrefix(path, "by-ip/"))
+	case r.Method == http.MethodDelete && strings.HasPrefix(path, "by-user/"):
+		h.deleteByUser(w, r, strings.TrimPrefix(path, "by-user/"))
 	default:
 		http.NotFound(w, r)
 	}
@@ -125,27 +130,78 @@ func (h *LogsHandler) correlate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *LogsHandler) getSettings(w http.ResponseWriter, r *http.Request) {
-	retention, _ := strconv.Atoi(admindb.GetSetting(h.DB, "logs.retention_days", "30"))
-	if retention == 0 {
-		retention = 30
+	parseInt := func(key string, def int) int {
+		v := admindb.GetSetting(h.DB, key, "")
+		if v == "" {
+			return def
+		}
+		n := def
+		strconv.Atoi(v) //nolint:errcheck
+		if i, err := strconv.Atoi(v); err == nil {
+			n = i
+		}
+		return n
 	}
-	jsonOK(w, map[string]any{"retention_days": retention})
+	accessDays, systemDays := h.Store.RetentionInfo()
+	jsonOK(w, map[string]any{
+		"retention_access_days":  parseInt("logs.retention_access_days", accessDays),
+		"retention_system_days":  parseInt("logs.retention_system_days", systemDays),
+		"defaults": map[string]any{
+			"access_days": logs.DefaultRetentionAccessDays,
+			"system_days": logs.DefaultRetentionSystemDays,
+		},
+	})
 }
 
 func (h *LogsHandler) putSettings(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		RetentionDays int `json:"retention_days"`
+		RetentionAccessDays int `json:"retention_access_days"`
+		RetentionSystemDays int `json:"retention_system_days"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, r, http.StatusBadRequest, "api.err.json")
 		return
 	}
-	if body.RetentionDays < 0 {
+	if body.RetentionAccessDays < 0 || body.RetentionSystemDays < 0 {
 		writeErr(w, r, http.StatusBadRequest, "api.err.retention")
 		return
 	}
-	admindb.SetSetting(h.DB, "logs.retention_days", strconv.Itoa(body.RetentionDays)) //nolint:errcheck
+	if body.RetentionAccessDays > 0 {
+		admindb.SetSetting(h.DB, "logs.retention_access_days", strconv.Itoa(body.RetentionAccessDays)) //nolint:errcheck
+	}
+	if body.RetentionSystemDays > 0 {
+		admindb.SetSetting(h.DB, "logs.retention_system_days", strconv.Itoa(body.RetentionSystemDays)) //nolint:errcheck
+	}
+	h.Store.SetRetention(body.RetentionAccessDays, body.RetentionSystemDays)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteByIP supprime tous les logs d'une IP (droit à l'effacement RGPD).
+func (h *LogsHandler) deleteByIP(w http.ResponseWriter, r *http.Request, ip string) {
+	if ip == "" {
+		writeErr(w, r, http.StatusBadRequest, "api.err.missing_ip")
+		return
+	}
+	n, err := h.Store.DeleteByIP(ip)
+	if err != nil {
+		logsJSONErr(w, err, http.StatusInternalServerError)
+		return
+	}
+	jsonOK(w, map[string]any{"deleted": n, "ip": ip})
+}
+
+// deleteByUser supprime tous les logs d'un utilisateur (droit à l'effacement RGPD).
+func (h *LogsHandler) deleteByUser(w http.ResponseWriter, r *http.Request, userID string) {
+	if userID == "" {
+		writeErr(w, r, http.StatusBadRequest, "api.err.missing_user")
+		return
+	}
+	n, err := h.Store.DeleteByUserID(userID)
+	if err != nil {
+		logsJSONErr(w, err, http.StatusInternalServerError)
+		return
+	}
+	jsonOK(w, map[string]any{"deleted": n, "user_id": userID})
 }
 
 func logsJSONErr(w http.ResponseWriter, err error, code int) {

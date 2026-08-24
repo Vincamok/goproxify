@@ -17,22 +17,32 @@ import (
 	"time"
 )
 
+// Durées de rétention par défaut — modifiables via settings DB (clés logs.retention_access_days,
+// logs.retention_system_days, logs.retention_ban_days).
+const (
+	DefaultRetentionAccessDays  = 365 // logs HTTP (RGPD : 1 an max recommandé)
+	DefaultRetentionSystemDays  = 90  // logs système/agent
+	DefaultRetentionBanDays     = 730 // entrées de ban (2 ans)
+)
+
 // Entry représente une ligne de log.
 type Entry struct {
-	ID        int64     `json:"id"`
-	Ts        time.Time `json:"ts"`
-	Level     string    `json:"level"`
-	Component string    `json:"component"`
-	NodeName  string    `json:"node_name,omitempty"`
-	Domain    string    `json:"domain"`
-	Method    string    `json:"method"`
-	Path      string    `json:"path"`
-	Status    int       `json:"status"`
-	IP        string    `json:"ip"`
-	LatencyMs int64     `json:"latency_ms"`
-	Bytes     int64     `json:"bytes"`
-	Message   string    `json:"message"`
-	Referrer  string    `json:"referrer,omitempty"`
+	ID            int64     `json:"id"`
+	Ts            time.Time `json:"ts"`
+	Level         string    `json:"level"`
+	Component     string    `json:"component"`
+	NodeName      string    `json:"node_name,omitempty"`
+	Domain        string    `json:"domain"`
+	Method        string    `json:"method"`
+	Path          string    `json:"path"`
+	Status        int       `json:"status"`
+	IP            string    `json:"ip"`
+	LatencyMs     int64     `json:"latency_ms"`
+	Bytes         int64     `json:"bytes"`
+	Message       string    `json:"message"`
+	Referrer      string    `json:"referrer,omitempty"`
+	UserID        string    `json:"user_id,omitempty"`
+	RetainedUntil *time.Time `json:"retained_until,omitempty"`
 }
 
 // SearchParams filtre les entrées de log.
@@ -60,15 +70,45 @@ type Store struct {
 	mu          sync.RWMutex
 	subscribers map[int64]chan Entry
 	nextID      int64
+
+	// Durées de rétention actives (modifiables sans redémarrage).
+	retentionMu         sync.RWMutex
+	retentionAccessDays int
+	retentionSystemDays int
 }
 
-// New crée un Store et s'assure que la table logs existe.
+// New crée un Store avec les durées de rétention par défaut.
 func New(db *sql.DB) *Store {
-	s := &Store{
-		db:          db,
-		subscribers: make(map[int64]chan Entry),
+	return &Store{
+		db:                  db,
+		subscribers:         make(map[int64]chan Entry),
+		retentionAccessDays: DefaultRetentionAccessDays,
+		retentionSystemDays: DefaultRetentionSystemDays,
 	}
-	return s
+}
+
+// SetRetention met à jour les durées de rétention sans redémarrage.
+// accessDays : logs HTTP (status > 0) ; systemDays : logs système/agent.
+// Passer 0 pour laisser la valeur inchangée.
+func (s *Store) SetRetention(accessDays, systemDays int) {
+	s.retentionMu.Lock()
+	defer s.retentionMu.Unlock()
+	if accessDays > 0 {
+		s.retentionAccessDays = accessDays
+	}
+	if systemDays > 0 {
+		s.retentionSystemDays = systemDays
+	}
+}
+
+func (s *Store) retainedUntil(isAccess bool) time.Time {
+	s.retentionMu.RLock()
+	defer s.retentionMu.RUnlock()
+	days := s.retentionSystemDays
+	if isAccess {
+		days = s.retentionAccessDays
+	}
+	return time.Now().UTC().AddDate(0, 0, days)
 }
 
 // Write insère une entrée et la diffuse aux abonnés SSE.
@@ -76,12 +116,16 @@ func (s *Store) Write(e Entry) {
 	if e.Ts.IsZero() {
 		e.Ts = time.Now()
 	}
+	retained := s.retainedUntil(e.Status > 0)
+	e.RetainedUntil = &retained
+
 	res, err := s.db.Exec(
-		`INSERT INTO logs (ts, level, component, node_name, domain, method, path, status, ip, latency_ms, bytes, message, referrer)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO logs (ts, level, component, node_name, domain, method, path, status, ip, latency_ms, bytes, message, referrer, user_id, retained_until)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.Ts.UTC().Format(time.RFC3339Nano),
 		nvl(e.Level, "info"), nvl(e.Component, "admin"), e.NodeName,
 		e.Domain, e.Method, e.Path, e.Status, e.IP, e.LatencyMs, e.Bytes, e.Message, e.Referrer,
+		e.UserID, retained.Format(time.RFC3339),
 	)
 	if err == nil {
 		if id, err2 := res.LastInsertId(); err2 == nil {
@@ -386,17 +430,18 @@ func (s *Store) Correlate(domain string, at time.Time, windowSec int) []Entry {
 	return out
 }
 
-// StartRetentionLoop lance un nettoyage quotidien des logs anciens.
-func (s *Store) StartRetentionLoop(ctx context.Context, getRetentionDays func() int) {
+// StartRetentionLoop lance un nettoyage quotidien basé sur retained_until (RGPD).
+// onUpdate est appelé à chaque cycle pour récupérer les durées de rétention courantes
+// (accessDays, systemDays) depuis les settings — 0 = conserver la valeur actuelle.
+func (s *Store) StartRetentionLoop(ctx context.Context, onUpdate func() (accessDays, systemDays int)) {
 	go func() {
 		purge := func() {
-			days := getRetentionDays()
-			if days <= 0 {
-				return
+			if onUpdate != nil {
+				a, sys := onUpdate()
+				s.SetRetention(a, sys)
 			}
-			s.db.Exec( //nolint:errcheck
-				`DELETE FROM logs WHERE ts < datetime('now', ?)`,
-				fmt.Sprintf("-%d days", days))
+			// Supprime les entrées dont la date de rétention est dépassée.
+			s.db.Exec(`DELETE FROM logs WHERE retained_until IS NOT NULL AND retained_until < datetime('now')`) //nolint:errcheck
 		}
 		purge()
 		t := time.NewTicker(24 * time.Hour)
@@ -410,6 +455,33 @@ func (s *Store) StartRetentionLoop(ctx context.Context, getRetentionDays func() 
 			}
 		}
 	}()
+}
+
+// DeleteByIP supprime tous les logs d'une IP (droit à l'effacement RGPD).
+// Retourne le nombre de lignes supprimées.
+func (s *Store) DeleteByIP(ip string) (int64, error) {
+	res, err := s.db.Exec(`DELETE FROM logs WHERE ip = ?`, ip)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// DeleteByUserID supprime tous les logs d'un utilisateur (droit à l'effacement RGPD).
+// Retourne le nombre de lignes supprimées.
+func (s *Store) DeleteByUserID(userID string) (int64, error) {
+	res, err := s.db.Exec(`DELETE FROM logs WHERE user_id = ?`, userID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// RetentionInfo retourne les durées de rétention actives.
+func (s *Store) RetentionInfo() (accessDays, systemDays int) {
+	s.retentionMu.RLock()
+	defer s.retentionMu.RUnlock()
+	return s.retentionAccessDays, s.retentionSystemDays
 }
 
 func nvl(s, def string) string {

@@ -525,6 +525,13 @@ func migrate(db *sql.DB) error {
 		return fmt.Errorf("migration token_hash : %w", err)
 	}
 
+	// RGPD : rétention individuelle par ligne + effacement par IP ou utilisateur.
+	db.Exec(`ALTER TABLE logs ADD COLUMN user_id       TEXT NOT NULL DEFAULT ''`)          //nolint:errcheck
+	db.Exec(`ALTER TABLE logs ADD COLUMN retained_until DATETIME`)                         //nolint:errcheck
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_logs_retained ON logs (retained_until)`)       //nolint:errcheck
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_logs_ip       ON logs (ip)`)                   //nolint:errcheck
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_logs_user_id  ON logs (user_id)`)              //nolint:errcheck
+
 	// Bibliothèque de pages d'erreur (templates HTML + assets) — scope Admin V1.
 	for _, s := range []string{
 		`CREATE TABLE IF NOT EXISTS error_page_templates (
