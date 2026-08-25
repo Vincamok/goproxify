@@ -140,7 +140,30 @@ func parseClusterPeersCSV(raw string) map[string]string {
 
 // LoadAgent charge agent.json → AgentConfig.
 func LoadAgent(path string) (*AgentConfig, error) {
-	return Load[AgentConfig](path)
+	cfg, err := Load[AgentConfig](path)
+	if err != nil {
+		return nil, err
+	}
+	applyAgentEnvOverrides(cfg)
+	return cfg, nil
+}
+
+// applyAgentEnvOverrides applique les variables d'environnement critiques de l'Agent
+// qui doivent toujours prendre le dessus sur le JSON (comme GPX_PAIRING_SECRET pour Admin/Core).
+// Cela permet de changer l'endpoint du Core via compose sans supprimer agent.json du volume.
+func applyAgentEnvOverrides(cfg *AgentConfig) {
+	if cfg == nil {
+		return
+	}
+	if v := os.Getenv("GPX_CONTROL_PLANE_CORE_ENDPOINT"); v != "" {
+		cfg.ControlPlane.CoreEndpoint = v
+	}
+	if v := os.Getenv("GPX_CONTROL_PLANE_JOIN_TOKEN"); v != "" {
+		cfg.ControlPlane.JoinToken = v
+	}
+	if v := os.Getenv("GPX_IDENTITY_AGENT_NODE_NAME"); v != "" {
+		cfg.Identity.NodeName = v
+	}
 }
 
 // LoadLanding charge landing/config.json → LandingConfig.
