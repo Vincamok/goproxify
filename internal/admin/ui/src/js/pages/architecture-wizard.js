@@ -735,7 +735,7 @@ function _archInspectRole(svc) {
 
   const applyBtn = svc.type === 'core' && svc.status === 'online'
     ? `<button class="btn btn-primary btn-sm" style="align-self:flex-start;"
-        onclick="_archApplyPortal('${esc(svc.nodeName || svc.name)}')">${t('arch.role.apply')}</button>`
+        onclick="_archApplyPortal('${esc(svc.nodeName || svc.name)}',${!!svc.access})">${t('arch.role.apply')}</button>`
     : '';
 
   return `<div class="arch-panel" style="--arch-accent:${accent};">
@@ -928,10 +928,12 @@ function _archSelectSvc(id) {
   _archRender();
 }
 
-async function _archApplyPortal(coreName) {
+async function _archApplyPortal(coreName, enabled) {
   try {
-    await api('POST', '/portal/push?core=' + encodeURIComponent(coreName));
-    toast(t('arch.toast.portal_applied') || 'Config Access appliquée', 'success');
+    const q = '?core=' + encodeURIComponent(coreName);
+    const existing = await api('GET', '/portal' + q).catch(() => ({}));
+    await api('PUT', '/portal' + q, { ...existing, enabled: !!enabled });
+    toast(t('arch.toast.portal_applied'), 'success');
   } catch (e) {
     toast(t('common.error_msg', { msg: e.message }), 'error');
   }
