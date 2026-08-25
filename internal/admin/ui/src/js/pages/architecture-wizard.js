@@ -67,6 +67,7 @@ function _archHostFromEndpoint(ep) {
 
 function _archSvcFromExisting(role, node, cfg) {
   const name = (node.display_name || node.node_name || node.name || role).trim();
+  const nodeName = (node.node_name || node.name || '').trim();
   const runtimes = node.container_runtimes || [];
   const hasDocker = runtimes.some(r => String(r).toLowerCase().includes('docker'));
   const hasPodman = runtimes.some(r => String(r).toLowerCase().includes('podman'));
@@ -99,6 +100,7 @@ function _archSvcFromExisting(role, node, cfg) {
     placement: (cfg.placement || '').trim(),
     existing: true,
     status: node.status || 'declared',
+    nodeName,
   };
 }
 
@@ -330,8 +332,10 @@ function _archLoad() {
     // Applique l'état portail Access depuis les settings Admin
     for (const h of _arch.hosts) {
       for (const s of h.services || []) {
-        if (s.type === 'core' && s.name in portalCores) {
-          s.access = !!portalCores[s.name];
+        if (s.type === 'core') {
+          const key = (s.nodeName && s.nodeName in portalCores) ? s.nodeName
+                    : (s.name in portalCores) ? s.name : null;
+          if (key !== null) s.access = !!portalCores[key];
         }
       }
     }
@@ -731,7 +735,7 @@ function _archInspectRole(svc) {
 
   const applyBtn = svc.type === 'core' && svc.status === 'online'
     ? `<button class="btn btn-primary btn-sm" style="align-self:flex-start;"
-        onclick="_archApplyPortal('${esc(svc.name)}')">${t('arch.role.apply')}</button>`
+        onclick="_archApplyPortal('${esc(svc.nodeName || svc.name)}')">${t('arch.role.apply')}</button>`
     : '';
 
   return `<div class="arch-panel" style="--arch-accent:${accent};">
