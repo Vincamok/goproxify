@@ -935,7 +935,7 @@ func (s *Server) handlePair(w http.ResponseWriter, r *http.Request) {
 	// Sans cela, une DB Admin fraîche (volume recréé, restart) force l'opérateur à ré-accepter
 	// manuellement à chaque fois, même si le Core n'a pas changé.
 	// Agents déclarés via wizard architecture (auto_accept) : même traitement.
-	if configuredSecret != "" && (role == "core" || api.NodeAutoAccept(s.db, nodeName)) {
+	if configuredSecret != "" && (role == "core" || role == "agent" || api.NodeAutoAccept(s.db, nodeName)) {
 		tok := auth.GenerateToken(role, nodeName)
 		tokenID := uuid.New().String()
 		stored, hash := auth.PrepareNodeTokenForStore(tok)

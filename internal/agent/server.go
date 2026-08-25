@@ -498,13 +498,19 @@ func (a *Agent) Start(ctx context.Context) error {
 	}
 
 	// Client WS persistant Agent→Core
-	// Priorité : HMAC persisté > JOIN_TOKEN explicite > token d'appairage Core
+	// Priorité : HMAC persisté > JOIN_TOKEN explicite > token frais pairWithCore
 	savedHMAC := wsclient.LoadPersistedHMAC()
 	joinToken := a.cfg.ControlPlane.JoinToken
 	if joinToken == "" && savedHMAC == "" {
-		// Pas de HMAC ni de JOIN_TOKEN configuré : utiliser le token d'appairage
-		// obtenu via pairWithCore comme bootstrap WS (met l'agent en état "pending").
-		joinToken = token
+		// Les join tokens sont à usage unique dans le joinStore du Core.
+		// Un token persisté dans agent.token a peut-être déjà été consommé lors d'un
+		// démarrage précédent sans que l'Agent ait jamais été approuvé. On rappelle
+		// toujours pairWithCore pour obtenir un token frais garanti non-consommé.
+		if freshToken, err := a.pairWithCore(ctx); err == nil {
+			joinToken = freshToken
+		} else {
+			joinToken = token // fallback : token existant si pairWithCore échoue
+		}
 	}
 	if savedHMAC != "" || joinToken != "" {
 		a.wsClient = wsclient.NewClient(
