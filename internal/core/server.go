@@ -444,10 +444,15 @@ func (s *Server) loadFromAdminOrCache(ctx context.Context) error {
 }
 
 // backendURLsFromRoutes extrait toutes les URLs backends uniques d'un ensemble de routes.
+// Les routes UDP sont exclues : un dial TCP sur un port UDP échoue systématiquement,
+// ce qui rendrait tous les streams UDP "down" alors qu'ils fonctionnent.
 func backendURLsFromRoutes(routes []*router.Route) []string {
 	seen := make(map[string]struct{})
 	var out []string
 	for _, r := range routes {
+		if r.Type == router.RouteUDP {
+			continue
+		}
 		for _, b := range r.Backends {
 			if b.URL != "" {
 				if _, ok := seen[b.URL]; !ok {
