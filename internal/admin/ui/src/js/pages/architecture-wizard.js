@@ -729,6 +729,11 @@ function _archInspectRole(svc) {
       }</div>`)}`;
   }
 
+  const applyBtn = svc.type === 'core' && svc.status === 'online'
+    ? `<button class="btn btn-primary btn-sm" style="align-self:flex-start;"
+        onclick="_archApplyPortal('${esc(svc.name)}')">${t('arch.role.apply')}</button>`
+    : '';
+
   return `<div class="arch-panel" style="--arch-accent:${accent};">
     <div class="arch-insp-head">
       <div class="arch-insp-level">${t('arch.level.role')} · ${esc(t(_ARCH_ROLES[svc.type].label))}</div>
@@ -737,8 +742,11 @@ function _archInspectRole(svc) {
     </div>
     <div class="arch-insp-body">
       ${body}
-      <button class="btn btn-ghost btn-sm" style="color:var(--red);align-self:flex-start;"
-        onclick="_archRemoveSvc('${host ? host.id : ''}','${svc.id}')">${t('arch.role.remove')}</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        ${applyBtn}
+        <button class="btn btn-ghost btn-sm" style="color:var(--red);"
+          onclick="_archRemoveSvc('${host ? host.id : ''}','${svc.id}')">${t('arch.role.remove')}</button>
+      </div>
     </div>
   </div>`;
 }
@@ -914,6 +922,15 @@ function _archSelectSvc(id) {
   const host = _archFindHostOfSvc(id);
   _arch.selectedHostId = host ? host.id : null;
   _archRender();
+}
+
+async function _archApplyPortal(coreName) {
+  try {
+    await api('POST', '/portal/push?core=' + encodeURIComponent(coreName));
+    toast(t('arch.toast.portal_applied') || 'Config Access appliquée', 'success');
+  } catch (e) {
+    toast(t('common.error_msg', { msg: e.message }), 'error');
+  }
 }
 
 /** Clic sur le châssis : sélectionne l'hôte lui-même (pas un rôle). */
