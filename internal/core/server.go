@@ -2444,6 +2444,11 @@ func (s *Server) handleCorePair(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "erreur interne", http.StatusInternalServerError)
 		return
 	}
+	// L'Agent a prouvé son identité via GPX_PAIRING_SECRET : pré-approuver pour que
+	// la prochaine connexion WS avec ce token soit acceptée sans intervention humaine.
+	if err := s.wsHub.ApproveAgent(nodeName); err != nil {
+		s.log.Warn("core: pré-approbation WS échouée", "node", nodeName, "err", err)
+	}
 	s.log.Info("core: appairage agent accepté", "node", nodeName)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
