@@ -401,7 +401,7 @@ async function agentContainers(nodeName, displayName) {
     loadErr = e.message || t('prism.load_err');
   }
 
-  const srcLabel = { docker: 'Docker', k8s: 'Kubernetes' };
+  const srcLabel = { docker: 'Docker', k8s: 'Kubernetes', portainer: 'Portainer' };
   const rows = items.length
     ? items.map(c => {
         const backends = (c.backends || []).join(', ') || '—';

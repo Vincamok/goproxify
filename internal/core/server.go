@@ -2218,6 +2218,8 @@ func (s *Server) handleListAgentContainers(w http.ResponseWriter, r *http.Reques
 			src = "docker"
 		} else if strings.HasPrefix(rt.ID, "k8s:") {
 			src = "k8s"
+		} else if strings.HasPrefix(rt.ID, "portainer:") {
+			src = "portainer"
 		} else {
 			continue
 		}

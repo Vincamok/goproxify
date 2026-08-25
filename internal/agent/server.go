@@ -165,7 +165,7 @@ func New(cfg *config.AgentConfig) (*Agent, error) {
 		pc := agentportainer.NewClient(cfg.Portainer.URL, cfg.Portainer.APIKey)
 		portainerDisc = agentportainer.NewDiscovery(
 			pc,
-			cfg.ControlPlane.AdminEndpoint,
+			cfg.ControlPlane.CoreEndpoint,
 			cfg.ControlPlane.AuthToken,
 			cfg.Docker.LabelPrefix,
 			cfg.Identity.NodeName,
