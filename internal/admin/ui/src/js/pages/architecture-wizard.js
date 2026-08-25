@@ -309,7 +309,8 @@ function _archLoad() {
     api('GET', '/tokens?role=core').catch(() => null),
     api('GET', '/declared-nodes').catch(() => null),
     api('GET', '/portal/enabled').catch(() => null),
-  ]).then(([sec, nodes, tokens, declared, portalEnabled]) => {
+    api('GET', '/domains').catch(() => null),
+  ]).then(([sec, nodes, tokens, declared, portalEnabled, domains]) => {
     const portalCores = portalEnabled?.cores || {};
     _arch.pairingSecret = sec?.secret || '';
     _wiz.pairingSecret = _arch.pairingSecret;
@@ -336,6 +337,31 @@ function _archLoad() {
           const key = (s.nodeName && s.nodeName in portalCores) ? s.nodeName
                     : (s.name in portalCores) ? s.name : null;
           if (key !== null) s.access = !!portalCores[key];
+        }
+      }
+    }
+    // Prérempli les domaines des services Core depuis la table /domains.
+    // domain.core_id = UUID token → matché via _arch.coreList (qui a id + node_name).
+    if (Array.isArray(domains) && domains.length) {
+      const tokenByNodeName = new Map();
+      for (const tok of (Array.isArray(tokens) ? tokens : [])) {
+        if (tok.id && tok.node_name) tokenByNodeName.set(tok.id, tok.node_name);
+      }
+      const domainsByCoreName = new Map();
+      for (const d of domains) {
+        if (!d.domain || !d.core_id) continue;
+        const nodeName = tokenByNodeName.get(d.core_id) || d.core_id;
+        const list = domainsByCoreName.get(nodeName) || [];
+        list.push(d.domain);
+        domainsByCoreName.set(nodeName, list);
+      }
+      for (const h of _arch.hosts) {
+        for (const s of h.services || []) {
+          if (s.type !== 'core') continue;
+          if (s.domains) continue; // déjà rempli depuis declared-nodes
+          const coreName = s.name;
+          const list = domainsByCoreName.get(coreName);
+          if (list && list.length) s.domains = list.join(', ');
         }
       }
     }
