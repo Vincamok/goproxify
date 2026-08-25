@@ -286,18 +286,24 @@ window.archMarkDeployed = function(name) {
 };
 
 function openArchWizard() {
-  _arch.step = 'canvas';
+  let savedPacks = null;
+  try {
+    const raw = localStorage.getItem('gpx_last_packs');
+    if (raw) savedPacks = JSON.parse(raw);
+  } catch {}
+  _arch.step = savedPacks ? 'handoff' : 'canvas';
   _arch.hosts = [_archEmptyHost(1)];
   _arch.haGroupIds = [];
   _arch.selectedSvcId = null;
   _arch.selectedHostId = null;
-  _arch.packs = [];
+  _arch.packs = savedPacks || [];
   _arch.pairingSecret = '';
   _arch.coreList = [];
   _arch.declaredNodes = [];
   _arch.onlineCoreEndpoint = '';
   _arch.existingCount = 0;
-  _arch.loading = true;
+  _arch.loading = !savedPacks;
+  if (savedPacks) { navigate('architecture'); _archRender(); return; }
   _archLoad();
   navigate('architecture');
 }
@@ -706,7 +712,7 @@ function _archInspectRole(svc) {
     body = `
       ${_archGroup(t('arch.group.identity'),
         _archField(t('arch.role.name'), `<input class="arch-input" value="${esc(svc.name)}" onchange="_archSetField('${svc.id}','name',this.value);_archRender()">` + _archImpactBadge('restart', svc.existing)) +
-        _archField(t('arch.opt.reachable'), `<input class="arch-input" value="${esc(svc.reachable || '')}" placeholder="core.example.com" onchange="_archSetField('${svc.id}','reachable',this.value)">`) +
+        _archField(t('arch.opt.reachable'), `<input class="arch-input" value="${esc(svc.reachable || '')}" placeholder="core.example.com" onchange="_archSetField('${svc.id}','reachable',this.value);_archRender()">`) +
         `<div class="arch-cap-desc">${t('arch.opt.region_from_host', { region: (host && host.region) || '—' })}</div>`
       )}
       ${_archGroup(t('arch.group.caps'),
@@ -719,7 +725,7 @@ function _archInspectRole(svc) {
           _archField(t('arch.opt.domains'), `<input class="arch-input" value="${esc(svc.domains || '')}" placeholder="app.example.fr, api.example.fr" onchange="_archSetField('${svc.id}','domains',this.value);_archRender()">`) +
           _archCapRow(!!svc.acme, t('arch.opt.acme'), t('arch.cap.acme_desc'),
             `_archSetOpt('${svc.id}','acme',this.checked)`,
-            _archField(t('arch.opt.acme_email'), `<input class="arch-input" value="${esc(svc.acmeEmail || '')}" placeholder="admin@example.fr" onchange="_archSetField('${svc.id}','acmeEmail',this.value)">`) +
+            _archField(t('arch.opt.acme_email'), `<input class="arch-input" value="${esc(svc.acmeEmail || '')}" placeholder="admin@example.fr" onchange="_archSetField('${svc.id}','acmeEmail',this.value);_archRender()">`) +
             _archField(t('arch.opt.dns_provider'), `<select class="arch-select" onchange="_archSetField('${svc.id}','dnsProvider',this.value);_archRender()">${dnsOpts}</select>`) +
             `<div class="arch-cap-desc">${t('arch.opt.acme_admin_hint')}</div>`
           )
@@ -749,9 +755,9 @@ function _archInspectRole(svc) {
         _archCapRow(!!svc.portainer, t('arch.svc.portainer') + _archImpactBadge('restart', svc.existing), t('arch.cap.portainer_desc'),
           `_archSetOpt('${svc.id}','portainer',this.checked)`,
           _archField('URL' + (svc.portainer && !svc.portainerUrl ? ' <span style="color:var(--red);font-size:10px;font-weight:700;vertical-align:middle;">*</span>' : ''),
-            `<input class="arch-input" style="${svc.portainer && !svc.portainerUrl ? 'border-color:var(--red);' : ''}" value="${esc(svc.portainerUrl || '')}" placeholder="https://portainer:9443" onchange="_archSetField('${svc.id}','portainerUrl',this.value)">`) +
+            `<input class="arch-input" style="${svc.portainer && !svc.portainerUrl ? 'border-color:var(--red);' : ''}" value="${esc(svc.portainerUrl || '')}" placeholder="https://portainer:9443" onchange="_archSetField('${svc.id}','portainerUrl',this.value);_archRender()">`) +
           _archField(t('arch.opt.portainer_key') + (svc.portainer && !svc.portainerKey ? ' <span style="color:var(--red);font-size:10px;font-weight:700;vertical-align:middle;">*</span>' : ''),
-            `<input class="arch-input" type="password" style="${svc.portainer && !svc.portainerKey ? 'border-color:var(--red);' : ''}" value="${esc(svc.portainerKey || '')}" placeholder="ptr_…" onchange="_archSetField('${svc.id}','portainerKey',this.value)">`)
+            `<input class="arch-input" type="password" style="${svc.portainer && !svc.portainerKey ? 'border-color:var(--red);' : ''}" value="${esc(svc.portainerKey || '')}" placeholder="ptr_…" onchange="_archSetField('${svc.id}','portainerKey',this.value);_archRender()">`)
         ) +
         _archCapRow(!!svc.k8s, t('arch.svc.k8s') + _archImpactBadge('restart', svc.existing), t('arch.cap.k8s_desc'),
           `_archSetOpt('${svc.id}','k8s',this.checked)`)
@@ -1405,6 +1411,7 @@ async function _archGoHandoff() {
   _arch.packs = _archBuildPacks();
   await _archPersistDeclared();
   await _archCreateTickets();
+  try { localStorage.setItem('gpx_last_packs', JSON.stringify(_arch.packs)); } catch {}
   _arch.step = 'handoff';
   _archRender();
 }
@@ -1518,7 +1525,7 @@ function _archHandoffHTML() {
         <h2 style="font-family:var(--font-heading);font-size:20px;font-weight:700;margin:0;letter-spacing:-.01em;">${t('arch.handoff_title')}</h2>
         <p style="font-size:12.5px;color:var(--text2);margin-top:5px;max-width:52rem;line-height:1.5;">${t('arch.handoff_sub')}</p>
       </div>
-      <button class="btn btn-ghost btn-sm" onclick="_arch.step='canvas';_archRender()">${t('arch.back_canvas')}</button>
+      <button class="btn btn-ghost btn-sm" onclick="try{localStorage.removeItem('gpx_last_packs')}catch{};_arch.step='canvas';_archRender()">${t('arch.back_canvas')}</button>
     </div>
 
     ${inetBanner}
@@ -1542,8 +1549,8 @@ function _archHandoffHTML() {
     <div class="arch-actionbar">
       <div class="arch-summary"><span>${t('arch.handoff_packs', { n: _arch.packs.length })}</span></div>
       <div class="arch-actionbar-btns">
-        <button class="btn btn-ghost" onclick="_arch.step='canvas';_archRender()">${t('arch.back_canvas')}</button>
-        <button class="btn btn-primary" onclick="navigate('infrastructure')">${t('arch.done')}</button>
+        <button class="btn btn-ghost" onclick="try{localStorage.removeItem('gpx_last_packs')}catch{};_arch.step='canvas';_archRender()">${t('arch.back_canvas')}</button>
+        <button class="btn btn-primary" onclick="try{localStorage.removeItem('gpx_last_packs')}catch{}navigate('infrastructure')">${t('arch.done')}</button>
       </div>
     </div>
   </div>`;
