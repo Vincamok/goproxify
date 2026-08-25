@@ -671,7 +671,7 @@ function _archInspectRole(svc) {
         `<div class="arch-cap-desc">${t('arch.opt.region_from_host', { region: (host && host.region) || '—' })}</div>`
       )}
       ${_archGroup(t('arch.group.caps'),
-        _archCapRow(!!svc.access, t('arch.svc.access') + _archImpactBadge('redeploy', svc.existing), t('arch.cap.access_desc'),
+        _archCapRow(!!svc.access, t('arch.svc.access') + _archImpactBadge('restart', svc.existing && svc.status !== 'online'), t('arch.cap.access_desc'),
           `_archSetOpt('${svc.id}','access',this.checked)`) +
         _archCapRow(_arch.haGroupIds.includes(svc.id), t('arch.svc.ha') + _archImpactBadge('redeploy', svc.existing), t('arch.cap.ha_desc'),
           `_archSetHAMember('${svc.id}',this.checked)`) +
