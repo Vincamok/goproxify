@@ -164,6 +164,12 @@ func applyAgentEnvOverrides(cfg *AgentConfig) {
 	if v := os.Getenv("GPX_IDENTITY_AGENT_NODE_NAME"); v != "" {
 		cfg.Identity.NodeName = v
 	}
+	if v := os.Getenv("GPX_NETWORK_MANAGEMENT_CORE_CONTAINER_NAME"); v != "" {
+		cfg.NetworkManagement.CoreContainerName = v
+	}
+	if v := os.Getenv("GPX_DOCKER_RUNTIME"); v != "" {
+		cfg.Docker.Runtime = v
+	}
 }
 
 // LoadLanding charge landing/config.json → LandingConfig.
