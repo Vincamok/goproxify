@@ -533,7 +533,7 @@ function _archRoleCardHTML(host, svc) {
   const stateChips = state.map(s => `<span class="arch-chip" data-kind="state">${esc(s)}</span>`).join('');
 
   return `<div draggable="true" data-arch-svc="${svc.id}" ondragstart="_archDragStart(event)"
-    onclick="_archSelectSvc('${svc.id}')"
+    onclick="event.stopPropagation();_archSelectSvc('${svc.id}')"
     class="arch-role${sel ? ' selected' : ''}" style="--arch-accent:${accent};"
     title="${t('arch.drag_move_hint')}">
     <span class="arch-glyph">${_ARCH_ICONS[svc.type] || ''}</span>
