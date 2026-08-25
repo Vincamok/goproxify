@@ -719,7 +719,13 @@ function _archInspectRole(svc) {
         _archCapRow(!!svc.access, t('arch.svc.access') + _archImpactBadge('restart', svc.existing && svc.status !== 'online'), t('arch.cap.access_desc'),
           `_archSetOpt('${svc.id}','access',this.checked)`) +
         _archCapRow(_arch.haGroupIds.includes(svc.id), t('arch.svc.ha') + _archImpactBadge('redeploy', svc.existing), t('arch.cap.ha_desc'),
-          `_archSetHAMember('${svc.id}',this.checked)`) +
+          `_archSetHAMember('${svc.id}',this.checked)`,
+          (() => {
+            const peers = _arch.haGroupIds.filter(id => id !== svc.id).map(id => { const p = _archFindSvc(id); return p ? p.name : id; });
+            return peers.length
+              ? `<div class="arch-cap-desc">${esc(t('arch.ha.peers', { names: peers.join(', ') }))}</div>`
+              : `<div class="arch-cap-desc">${esc(t('arch.ha.peers_none'))}</div>`;
+          })()) +
         _archCapRow(!!(svc.domains || svc.acme), t('arch.svc.domains') + _archImpactBadge('restart', svc.existing), t('arch.cap.tls_desc'),
           `_archSetTLS('${svc.id}',this.checked)`,
           _archField(t('arch.opt.domains'), `<input class="arch-input" value="${esc(svc.domains || '')}" placeholder="app.example.fr, api.example.fr" onchange="_archSetField('${svc.id}','domains',this.value);_archRender()">`) +

@@ -360,18 +360,24 @@ func (a *Agent) pairWithAdmin(ctx context.Context) (string, error) {
 	return "", fmt.Errorf("agent: appairage impossible après 5 tentatives")
 }
 
-// retryPairing tente de s'appairer avec l'Admin toutes les 60 s jusqu'au succès.
-// Appelé en goroutine quand l'appairage initial a échoué (ex : Admin temporairement
-// injoignable, AGENT_ADMIN_URL mal configuré puis corrigé sans redémarrage).
+// retryPairing tente de s'appairer avec le Core/Admin en backoff exponentiel
+// (5 s → 10 s → 20 s → 40 s → 60 s max) jusqu'au succès.
+// Appelé en goroutine quand l'appairage initial a échoué (ex : Core qui démarre
+// après l'Agent, AGENT_ADMIN_URL mal configuré puis corrigé sans redémarrage).
 // Une fois le token obtenu, la discovery est mise à jour et un re-scan est déclenché.
 func (a *Agent) retryPairing(ctx context.Context) {
-	ticker := time.NewTicker(60 * time.Second)
-	defer ticker.Stop()
+	delay := 5 * time.Second
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-time.After(delay):
+			if delay < 60*time.Second {
+				delay *= 2
+				if delay > 60*time.Second {
+					delay = 60 * time.Second
+				}
+			}
 			if a.cfg.ControlPlane.AuthToken != "" {
 				return // appairage réussi entre-temps
 			}
@@ -380,7 +386,7 @@ func (a *Agent) retryPairing(ctx context.Context) {
 				token, err = a.pairWithAdmin(ctx)
 			}
 			if err != nil {
-				a.log.Warn("agent: appairage (retry) échoué", "err", err)
+				a.log.Warn("agent: appairage (retry) échoué", "err", err, "prochain_essai", delay)
 				continue
 			}
 			a.discovery.SetToken(token)
@@ -480,7 +486,7 @@ func (a *Agent) Start(ctx context.Context) error {
 			token, err = a.pairWithAdmin(ctx)
 		}
 		if err != nil {
-			a.log.Warn("agent: appairage impossible — retry en arrière-plan toutes les 60 s", "err", err)
+			a.log.Warn("agent: appairage impossible — retry en arrière-plan (backoff 5 s → 60 s)", "err", err)
 			go a.retryPairing(ctx)
 		}
 	}
