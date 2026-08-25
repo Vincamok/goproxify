@@ -252,6 +252,9 @@ function infraCoreCard(n, idx) {
         <button class="btn-icon" title="${t('infra.title.rollback')}" onclick="nodeAction('${esc(n.node_name)}','rollback')">
           <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
         </button>
+        ${_infraPendingDeploy(name) ? `<button class="btn-icon" title="${t('infra.mark_deployed')}" onclick="archMarkDeployed('${esc(name)}')">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+        </button>` : ''}
         <button class="btn-icon" title="${t('infra.title.delete_node')}" style="color:var(--red);margin-left:auto;" onclick="deleteActiveNode('${esc(n.id)}','${esc(name)}','core')">
           <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
         </button>
@@ -306,6 +309,9 @@ function infraAgentCard(n) {
     <button class="btn-icon" title="${t('infra.title.events')}" onclick="agentEvents('${esc(nodeName)}','${esc(name)}')">
       ${iconEvents}
     </button>
+    ${_infraPendingDeploy(name) ? `<button class="btn-icon" title="${t('infra.mark_deployed')}" onclick="archMarkDeployed('${esc(name)}')">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+    </button>` : ''}
     <button class="btn-icon" title="${t('infra.title.delete_node')}" style="color:var(--red);margin-left:auto;" onclick="deleteActiveNode('${esc(nodeName || n.id)}','${esc(name)}','agent')">
       ${iconTrash}
     </button>

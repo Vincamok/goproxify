@@ -76,7 +76,7 @@ function _archSvcFromExisting(role, node, cfg) {
   if (cfg.docker === false && !cfg.podman) docker = false;
   if (hasPodman && !hasDocker) { podman = true; docker = false; }
   else if (hasDocker) { docker = true; podman = false; }
-  if (role === 'agent' && cfg.docker === undefined && cfg.podman === undefined && !runtimes.length) {
+  if (role === 'agent' && cfg.docker === undefined && cfg.podman === undefined && !runtimes.length && node.status !== 'online') {
     docker = true;
     podman = false;
   }
@@ -341,27 +341,36 @@ function _archLoad() {
       }
     }
     // Prérempli les domaines des services Core depuis la table /domains.
-    // domain.core_id = UUID token → matché via _arch.coreList (qui a id + node_name).
+    // domain.core_id = UUID token → matché via tokens (id + node_name).
+    // On écrase aussi svc.acme et svc.dnsProvider d'après les vraies données.
     if (Array.isArray(domains) && domains.length) {
-      const tokenByNodeName = new Map();
+      const tokenByID = new Map();
       for (const tok of (Array.isArray(tokens) ? tokens : [])) {
-        if (tok.id && tok.node_name) tokenByNodeName.set(tok.id, tok.node_name);
+        if (tok.id && tok.node_name) tokenByID.set(tok.id, tok.node_name);
       }
-      const domainsByCoreName = new Map();
+      // index par node_name : { domains[], hasAcme, dnsProvider }
+      const infoByCoreName = new Map();
       for (const d of domains) {
         if (!d.domain || !d.core_id) continue;
-        const nodeName = tokenByNodeName.get(d.core_id) || d.core_id;
-        const list = domainsByCoreName.get(nodeName) || [];
-        list.push(d.domain);
-        domainsByCoreName.set(nodeName, list);
+        const nodeName = tokenByID.get(d.core_id) || d.core_id;
+        const info = infoByCoreName.get(nodeName) || { domainList: [], hasAcme: false, dnsProvider: 'none' };
+        info.domainList.push(d.domain);
+        // Une délégation (delegated_to_core_id non vide) n'est pas de l'ACME
+        if (!d.delegated_to_core_id && d.cert_method === 'dns') {
+          info.hasAcme = true;
+          if (d.dns_provider && d.dns_provider !== 'none') info.dnsProvider = d.dns_provider;
+        }
+        infoByCoreName.set(nodeName, info);
       }
       for (const h of _arch.hosts) {
         for (const s of h.services || []) {
           if (s.type !== 'core') continue;
-          if (s.domains) continue; // déjà rempli depuis declared-nodes
-          const coreName = s.name;
-          const list = domainsByCoreName.get(coreName);
-          if (list && list.length) s.domains = list.join(', ');
+          const info = infoByCoreName.get(s.name);
+          if (!info) continue;
+          if (!s.domains) s.domains = info.domainList.join(', ');
+          // Toujours écraser acme/dnsProvider avec la réalité de /domains
+          s.acme = info.hasAcme;
+          if (info.hasAcme) s.dnsProvider = info.dnsProvider;
         }
       }
     }
