@@ -4,7 +4,7 @@
 const _arch = {
   step: 'canvas', // canvas | handoff
   hosts: [],
-  haGroupIds: [], // service ids (core) members of one HA group (v1: un seul groupe)
+  haGroups: [], // [{id:'ha-1', members:['svc-id-a','svc-id-b']}, ...] — N groupes HA possibles
   selectedSvcId: null,
   selectedHostId: null,
   loading: false,
@@ -119,7 +119,7 @@ function _archHydrateFromExisting(nodes, declared) {
     if (n.status !== 'declared') return true;
     return !liveKeys.has(n.role + ':' + _nodeKey(n));
   });
-  if (!list.length) return { hosts: [_archEmptyHost(1)], haGroupIds: [], existingCount: 0 };
+  if (!list.length) return { hosts: [_archEmptyHost(1)], haGroups: [], existingCount: 0 };
 
   const declByName = {};
   for (const d of (Array.isArray(declared) ? declared : [])) {
@@ -131,7 +131,7 @@ function _archHydrateFromExisting(nodes, declared) {
   const hosts = [];
   const hostByKey = new Map();
   const coreSvcByName = new Map();
-  const haGroupIds = [];
+  const haGroupsByGid = {}; // gid → [svc.id]
 
   const ensureHost = (key, opts) => {
     if (hostByKey.has(key)) {
@@ -165,7 +165,11 @@ function _archHydrateFromExisting(nodes, declared) {
     const svc = _archSvcFromExisting('core', c, cfg);
     host.services.push(svc);
     coreSvcByName.set(cName, svc);
-    if (cfg.cluster) haGroupIds.push(svc.id);
+    if (cfg.cluster) {
+      const gid = cfg.cluster_group || 'ha-1';
+      if (!haGroupsByGid[gid]) haGroupsByGid[gid] = [];
+      haGroupsByGid[gid].push(svc.id);
+    }
   }
 
   for (const a of agents) {
@@ -221,7 +225,8 @@ function _archHydrateFromExisting(nodes, declared) {
     });
   }
 
-  return { hosts: hosts.length ? hosts : [_archEmptyHost(1)], haGroupIds, existingCount: list.length };
+  const haGroups = Object.entries(haGroupsByGid).map(([id, members]) => ({ id, members }));
+  return { hosts: hosts.length ? hosts : [_archEmptyHost(1)], haGroups, existingCount: list.length };
 }
 
 // ── Modèle : Hôte (machine) → Rôle (service) → Capacité (option du rôle) ──
@@ -258,11 +263,28 @@ function _archRoleAccent(type) {
   return (_ARCH_ROLES[type] || {}).accent || 'var(--border)';
 }
 
+// ── Helpers groupes HA ────────────────────────────────────────────────────────
+
+function _archGroupOfSvc(svcId) {
+  return _arch.haGroups.find(g => g.members.includes(svcId)) || null;
+}
+function _archInHA(svcId) {
+  return _arch.haGroups.some(g => g.members.includes(svcId));
+}
+function _archNextGroupId() {
+  const ids = new Set(_arch.haGroups.map(g => g.id));
+  let n = 1;
+  while (ids.has('ha-' + n)) n++;
+  return 'ha-' + n;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 /** Capacités actives d'un rôle, dans l'ordre du catalogue. */
 function _archSvcCaps(svc) {
   return _ARCH_CAPS.filter(c => {
     if (c.role !== svc.type) return false;
-    if (c.id === 'ha')  return _arch.haGroupIds.includes(svc.id);
+    if (c.id === 'ha')  return _archInHA(svc.id);
     if (c.id === 'tls') return !!(svc.domains || svc.acme);
     return !!svc[c.id];
   });
@@ -293,7 +315,7 @@ function openArchWizard() {
   } catch {}
   _arch.step = savedPacks ? 'handoff' : 'canvas';
   _arch.hosts = [_archEmptyHost(1)];
-  _arch.haGroupIds = [];
+  _arch.haGroups = [];
   _arch.selectedSvcId = null;
   _arch.selectedHostId = null;
   _arch.packs = savedPacks || [];
@@ -334,7 +356,7 @@ function _archLoad() {
     }
     const hydrated = _archHydrateFromExisting(nodes, _arch.declaredNodes);
     _arch.hosts = hydrated.hosts;
-    _arch.haGroupIds = hydrated.haGroupIds;
+    _arch.haGroups = hydrated.haGroups;
     _arch.existingCount = hydrated.existingCount || 0;
     // Applique l'état portail Access depuis les settings Admin
     for (const h of _arch.hosts) {
@@ -718,13 +740,18 @@ function _archInspectRole(svc) {
       ${_archGroup(t('arch.group.caps'),
         _archCapRow(!!svc.access, t('arch.svc.access') + _archImpactBadge('restart', svc.existing && svc.status !== 'online'), t('arch.cap.access_desc'),
           `_archSetOpt('${svc.id}','access',this.checked)`) +
-        _archCapRow(_arch.haGroupIds.includes(svc.id), t('arch.svc.ha') + _archImpactBadge('redeploy', svc.existing), t('arch.cap.ha_desc'),
-          `_archSetHAMember('${svc.id}',this.checked)`,
+        _archCapRow(_archInHA(svc.id), t('arch.svc.ha') + _archImpactBadge('redeploy', svc.existing), t('arch.cap.ha_desc'),
+          `_archSetHAGroup('${svc.id}',this.checked,'')`,
           (() => {
-            const peers = _arch.haGroupIds.filter(id => id !== svc.id).map(id => { const p = _archFindSvc(id); return p ? p.name : id; });
-            return peers.length
-              ? `<div class="arch-cap-desc">${esc(t('arch.ha.peers', { names: peers.join(', ') }))}</div>`
-              : `<div class="arch-cap-desc">${esc(t('arch.ha.peers_none'))}</div>`;
+            const curGroup = _archGroupOfSvc(svc.id);
+            const peers = curGroup ? curGroup.members.filter(id => id !== svc.id).map(id => { const p = _archFindSvc(id); return p ? p.name : id; }) : [];
+            const groupOpts = _arch.haGroups.map(g =>
+              `<option value="${esc(g.id)}" ${curGroup && curGroup.id === g.id ? 'selected' : ''}>${esc(g.id.replace(/^ha-(\d+)$/, t('arch.ha.group_n') + ' $1'))}</option>`
+            ).join('') + `<option value="new">${esc(t('arch.ha.new_group'))}</option>`;
+            return `<div style="margin-bottom:4px;">${esc(t('arch.ha.group'))} : <select class="arch-select" style="display:inline-block;width:auto;margin-left:4px;" onchange="_archSetHAGroup('${svc.id}',true,this.value)">${groupOpts}</select></div>` +
+              (peers.length
+                ? `<div class="arch-cap-desc">${esc(t('arch.ha.peers', { names: peers.join(', ') }))}</div>`
+                : `<div class="arch-cap-desc">${esc(t('arch.ha.peers_none'))}</div>`);
           })()) +
         _archCapRow(!!(svc.domains || svc.acme), t('arch.svc.domains') + _archImpactBadge('restart', svc.existing), t('arch.cap.tls_desc'),
           `_archSetTLS('${svc.id}',this.checked)`,
@@ -886,9 +913,9 @@ function _archSetRuntime(id, kind, on) {
 function _archRemoveHost(hostId) {
   const host = _arch.hosts.find(h => h.id === hostId);
   if (host) {
-    for (const s of host.services) {
-      _arch.haGroupIds = _arch.haGroupIds.filter(id => id !== s.id);
-    }
+    const rmIds = new Set(host.services.map(s => s.id));
+    for (const g of _arch.haGroups) g.members = g.members.filter(id => !rmIds.has(id));
+    _arch.haGroups = _arch.haGroups.filter(g => g.members.length > 0);
   }
   if (_arch.selectedHostId === hostId) {
     _arch.selectedHostId = null;
@@ -963,7 +990,8 @@ function _archRemoveSvc(hostId, svcId) {
   const host = _arch.hosts.find(h => h.id === hostId);
   if (!host) return;
   host.services = host.services.filter(s => s.id !== svcId);
-  _arch.haGroupIds = _arch.haGroupIds.filter(id => id !== svcId);
+  for (const g of _arch.haGroups) g.members = g.members.filter(id => id !== svcId);
+  _arch.haGroups = _arch.haGroups.filter(g => g.members.length > 0);
   if (_arch.selectedSvcId === svcId) _arch.selectedSvcId = null;
   _archRender();
 }
@@ -1034,11 +1062,21 @@ function _archSetField(id, key, val) {
   if (s) s[key] = val;
 }
 
-function _archSetHAMember(id, on) {
+/** Ajoute/retire un Core d'un groupe HA. groupId='new' crée un groupe, ''=auto. */
+function _archSetHAGroup(id, on, groupId) {
+  // Retire de tout groupe existant
+  for (const g of _arch.haGroups) g.members = g.members.filter(m => m !== id);
+  _arch.haGroups = _arch.haGroups.filter(g => g.members.length > 0);
+
   if (on) {
-    if (!_arch.haGroupIds.includes(id)) _arch.haGroupIds.push(id);
-  } else {
-    _arch.haGroupIds = _arch.haGroupIds.filter(x => x !== id);
+    if (!groupId || groupId === 'new') {
+      // Crée un nouveau groupe
+      _arch.haGroups.push({ id: _archNextGroupId(), members: [id] });
+    } else {
+      const g = _arch.haGroups.find(g => g.id === groupId);
+      if (g) g.members.push(id);
+      else _arch.haGroups.push({ id: groupId, members: [id] });
+    }
   }
   _archRender();
 }
@@ -1054,17 +1092,15 @@ function _archValidate() {
   }
   const total = _arch.hosts.reduce((n, h) => n + (h.services || []).length, 0);
   if (!total) return t('arch.err.empty');
-  if (_arch.haGroupIds.length === 1) return t('arch.err.ha_one');
-  if (_arch.haGroupIds.length > 0 && _arch.haGroupIds.length < 2) return t('arch.err.ha_one');
-
-  if (_arch.haGroupIds.length >= 2) {
+  for (const g of _arch.haGroups) {
+    if (g.members.length === 1) return t('arch.err.ha_one');
     const haHosts = new Set();
-    for (const id of _arch.haGroupIds) {
+    for (const id of g.members) {
       const h = _archFindHostOfSvc(id);
       if (h) haHosts.add(h.id);
     }
     if (haHosts.size > 1) {
-      for (const id of _arch.haGroupIds) {
+      for (const id of g.members) {
         const s = _archFindSvc(id);
         if (s && !(s.reachable || '').trim()) {
           return t('arch.err.ha_reachable', { name: s.name });
@@ -1095,8 +1131,10 @@ function _archHAPeerHost(svc) {
 }
 
 function _archHAPeersCSV(selfId) {
+  const g = _archGroupOfSvc(selfId);
+  if (!g) return '';
   const parts = [];
-  for (const id of _arch.haGroupIds) {
+  for (const id of g.members) {
     if (id === selfId) continue;
     const s = _archFindSvc(id);
     if (!s) continue;
@@ -1106,15 +1144,23 @@ function _archHAPeersCSV(selfId) {
   return parts.join(',');
 }
 
+function _archHALeaderOf(svcId) {
+  const g = _archGroupOfSvc(svcId);
+  if (!g || !g.members.length) return null;
+  return g.members[0] === svcId ? null : _archFindSvc(g.members[0]);
+}
+
 function _archAccessHANote() {
-  if (_arch.haGroupIds.length < 2) return '';
-  let n = 0;
-  for (const id of _arch.haGroupIds) {
-    const s = _archFindSvc(id);
-    if (s && s.access) n++;
+  for (const g of _arch.haGroups) {
+    if (g.members.length < 2) continue;
+    let n = 0;
+    for (const id of g.members) {
+      const s = _archFindSvc(id);
+      if (s && s.access) n++;
+    }
+    if (n >= 2) return t('arch.note.access_ha');
   }
-  if (n < 2) return '';
-  return t('arch.note.access_ha');
+  return '';
 }
 
 function _archNetworkFlows() {
@@ -1133,7 +1179,7 @@ function _archNetworkFlows() {
   if (hasAgent && hasCore) {
     flows.push({ from: 'Agent', to: 'Core :8000', dir: t('arch.flow.outbound'), why: 'WS + discovery' });
   }
-  if (_arch.haGroupIds.length >= 2) {
+  if (_arch.haGroups.some(g => g.members.length >= 2)) {
     flows.push({ from: 'Core', to: 'Core :8000 / :8002', dir: t('arch.flow.peer'), why: 'Peers HA / Raft' });
   }
   if (multiHost) {
@@ -1207,8 +1253,6 @@ function _archBuildPacks() {
   _wiz.pairingSecret = _arch.pairingSecret;
   _wiz.scenario = 'full';
   const packs = [];
-  const haLeader = _arch.haGroupIds[0] ? _archFindSvc(_arch.haGroupIds[0]) : null;
-  const haGroup = 'ha-1';
 
   for (const host of _arch.hosts) {
     if (!(host.services || []).length) continue;
@@ -1220,12 +1264,14 @@ function _archBuildPacks() {
     let agentOpts = null;
     if (cores[0]) {
       const c = cores[0];
-      const inHA = _arch.haGroupIds.includes(c.id);
+      const cGroup = _archGroupOfSvc(c.id);
+      const inHA = !!cGroup && cGroup.members.length >= 2;
+      const haLeader = inHA ? _archFindSvc(cGroup.members[0]) : null;
       coreOpts = _buildCoreOpts({
         wc_name: c.name,
         wc_cluster: inHA,
         wc_cluster_node_id: c.name,
-        wc_cluster_group: haGroup,
+        wc_cluster_group: cGroup ? cGroup.id : 'ha-1',
         wc_cluster_peers: inHA ? _archHAPeersCSV(c.id) : '',
         wc_raft_leader: inHA && haLeader && haLeader.id !== c.id ? haLeader.name : '',
         wc_portal: !!c.access,
@@ -1391,7 +1437,8 @@ async function _archPersistDeclared() {
           target_core: r.role === 'agent' ? ((pack.agentOpts.envVars || []).find(e => e.k === 'GPX_CONTROL_PLANE_CORE_ENDPOINT') || {}).v : undefined,
           reachable_host: (r.svc && r.svc.reachable) || '',
           internet_exposed: !!(hostMeta && hostMeta.internet),
-          cluster: _arch.haGroupIds.includes(r.svc && r.svc.id),
+          cluster: _archInHA(r.svc && r.svc.id),
+          cluster_group: (() => { const g = _archGroupOfSvc(r.svc && r.svc.id); return g ? g.id : ''; })(),
           portal: !!(r.svc && r.svc.access),
           arch_bootstrap: pack.bootstrapUrl,
           auto_accept: true,
