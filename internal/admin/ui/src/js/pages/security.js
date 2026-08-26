@@ -270,8 +270,9 @@ async function renderSecurityBans(ctx) {
       fetches.push(api('GET', '/security/fail2ban').catch(() => null));
       fetches.push(api('GET', '/security/crowdsec').catch(() => null));
       fetches.push(api('GET', '/security/ips-provider').catch(() => null));
+      fetches.push(api('GET', '/security/threat-config').catch(() => null));
     }
-    const [bansRaw, threats, f2bCfg, csCfg, ipsProvider] = await Promise.all(fetches);
+    const [bansRaw, threats, f2bCfg, csCfg, ipsProvider, threatCfg] = await Promise.all(fetches);
     const bans = filterSecBans(bansRaw || [], coreCtx);
 
     window._secBans = bans;
@@ -281,11 +282,13 @@ async function renderSecurityBans(ctx) {
       window._f2bCfg = f2bCfg || {};
       window._csCfg = csCfg || {};
       window._ipsProvider = ipsProvider?.provider || 'native';
+      window._threatCfg = threatCfg || {};
     }
 
     content.innerHTML = `
       ${securityCoreBanner(coreCtx)}
       ${isAdmin ? ipsProviderBanner(ipsProvider?.provider || 'native', f2bCfg, csCfg) : ''}
+      ${isAdmin ? threatEngineBanner(threatCfg || {}) : ''}
       <div class="sec-bans-list-stack">
         <div class="card blueprint">
           <div class="card-header">
@@ -441,6 +444,122 @@ function ipsProviderBanner(provider, f2bCfg, csCfg) {
     <div id="ips-provider-panel">${configPanel}</div>
   </div>`;
 }
+
+function threatEngineBanner(cfg) {
+  const enabled = !!cfg.enabled;
+  const svgBolt = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`;
+
+  const wl = cfg.whitelist || {};
+  const lists = cfg.lists || {};
+
+  return `<div class="sec-bans-config" style="margin-top:12px">
+    <div class="sec-bans-config-head">
+      <div>
+        <div class="sec-bans-config-title">${svgBolt} ${t('security.threat.title')}</div>
+        <div class="sec-bans-config-sub">${t('security.threat.sub')}</div>
+      </div>
+      <label class="toggle" style="margin-left:auto">
+        <input type="checkbox" id="threat-enabled" ${enabled ? 'checked' : ''} onchange="saveThreatConfig()">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+    <div id="threat-engine-body" style="${enabled ? '' : 'display:none'}">
+      <form onsubmit="saveThreatConfig(event)" style="margin-top:12px">
+        <div class="sec-bans-engine-fields" style="grid-template-columns:repeat(3,1fr)">
+          <div class="field" style="margin:0">
+            <label class="field-label">${t('security.threat.rate_limit')}</label>
+            <input id="threat-rate" type="number" class="input" value="${cfg.rate_limit||0}" min="0" step="0.5" placeholder="0 = désactivé">
+          </div>
+          <div class="field" style="margin:0">
+            <label class="field-label">${t('security.threat.error_threshold')}</label>
+            <input id="threat-errs" type="number" class="input" value="${cfg.error_threshold||20}" min="1">
+          </div>
+          <div class="field" style="margin:0">
+            <label class="field-label">${t('security.threat.error_window')}</label>
+            <input id="threat-ewin" class="input" value="${cfg.error_window||'10s'}" placeholder="10s">
+          </div>
+          <div class="field" style="margin:0">
+            <label class="field-label">${t('security.threat.ban_duration')}</label>
+            <input id="threat-dur" class="input" value="${cfg.ban_duration||'24h'}" placeholder="24h">
+          </div>
+          <div class="field" style="margin:0">
+            <label class="field-label">${t('security.threat.refresh')}</label>
+            <input id="threat-refresh" class="input" value="${lists.refresh_interval||'6h'}" placeholder="6h">
+          </div>
+        </div>
+
+        <div style="margin-top:12px;display:flex;gap:16px;flex-wrap:wrap">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12.5px">
+            <input type="checkbox" id="threat-ua" ${lists.ua_enabled?'checked':''}>
+            ${t('security.threat.list_ua')}
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12.5px">
+            <input type="checkbox" id="threat-path" ${lists.path_enabled?'checked':''}>
+            ${t('security.threat.list_path')}
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12.5px">
+            <input type="checkbox" id="threat-ip" ${lists.ip_enabled?'checked':''}>
+            ${t('security.threat.list_ip')}
+          </label>
+        </div>
+
+        <div style="margin-top:12px">
+          <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px">${t('security.threat.whitelist')}</div>
+          <div class="sec-bans-engine-fields" style="grid-template-columns:repeat(3,1fr)">
+            <div class="field" style="margin:0">
+              <label class="field-label">${t('security.threat.wl_ips')}</label>
+              <textarea id="threat-wl-ips" class="input" rows="2" placeholder="10.0.0.0/8&#10;203.0.113.1">${(wl.ips||[]).join('\n')}</textarea>
+            </div>
+            <div class="field" style="margin:0">
+              <label class="field-label">${t('security.threat.wl_uas')}</label>
+              <textarea id="threat-wl-uas" class="input" rows="2" placeholder="mon-crawler&#10;pingdom">${(wl.uas||[]).join('\n')}</textarea>
+            </div>
+            <div class="field" style="margin:0">
+              <label class="field-label">${t('security.threat.wl_paths')}</label>
+              <textarea id="threat-wl-paths" class="input" rows="2" placeholder="/healthz&#10;/.well-known/">${(wl.paths||[]).join('\n')}</textarea>
+            </div>
+          </div>
+        </div>
+
+        <button class="btn btn-primary btn-sm" type="submit" style="margin-top:10px">${t('common.save')}</button>
+      </form>
+    </div>
+  </div>`;
+}
+
+window.saveThreatConfig = async function(e) {
+  if (e) e.preventDefault();
+  const enabled = document.getElementById('threat-enabled')?.checked ?? false;
+
+  // Afficher/masquer le corps au toggle.
+  const body = document.getElementById('threat-engine-body');
+  if (body) body.style.display = enabled ? '' : 'none';
+
+  const cfg = {
+    enabled,
+    rate_limit: parseFloat(document.getElementById('threat-rate')?.value || '0') || 0,
+    error_threshold: parseInt(document.getElementById('threat-errs')?.value || '20', 10),
+    error_window: document.getElementById('threat-ewin')?.value || '10s',
+    ban_duration: document.getElementById('threat-dur')?.value || '24h',
+    lists: {
+      refresh_interval: document.getElementById('threat-refresh')?.value || '6h',
+      ua_enabled: document.getElementById('threat-ua')?.checked ?? false,
+      path_enabled: document.getElementById('threat-path')?.checked ?? false,
+      ip_enabled: document.getElementById('threat-ip')?.checked ?? false,
+    },
+    whitelist: {
+      ips: (document.getElementById('threat-wl-ips')?.value || '').split('\n').map(s => s.trim()).filter(Boolean),
+      uas: (document.getElementById('threat-wl-uas')?.value || '').split('\n').map(s => s.trim()).filter(Boolean),
+      paths: (document.getElementById('threat-wl-paths')?.value || '').split('\n').map(s => s.trim()).filter(Boolean),
+    },
+  };
+
+  try {
+    await api('PUT', '/security/threat-config', cfg);
+    window._threatCfg = cfg;
+    toast(t('security.threat.saved'), 'success');
+  } catch(err) { toast(err.message, 'error'); }
+};
 
 function _secLocaleCompare(a, b) {
   return String(a || '').localeCompare(String(b || ''), typeof gpxBCP47 === 'function' ? gpxBCP47() : undefined);
