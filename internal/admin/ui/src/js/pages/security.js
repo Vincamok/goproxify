@@ -266,12 +266,10 @@ async function renderSecurityBans(ctx) {
       api('GET', '/security/bans?active=true'),
       api('GET', '/security/threats?limit=500'),
     ];
-    if (isAdmin) {
-      fetches.push(api('GET', '/security/fail2ban').catch(() => null));
-      fetches.push(api('GET', '/security/crowdsec').catch(() => null));
-      fetches.push(api('GET', '/security/ips-provider').catch(() => null));
-      fetches.push(api('GET', '/security/threat-config').catch(() => null));
-    }
+    fetches.push(api('GET', '/security/fail2ban').catch(() => null));
+    fetches.push(api('GET', '/security/crowdsec').catch(() => null));
+    fetches.push(api('GET', '/security/ips-provider').catch(() => null));
+    fetches.push(api('GET', '/security/threat-config').catch(() => null));
     const [bansRaw, threats, f2bCfg, csCfg, ipsProvider, threatCfg] = await Promise.all(fetches);
     const bans = filterSecBans(bansRaw || [], coreCtx);
 
@@ -287,8 +285,8 @@ async function renderSecurityBans(ctx) {
 
     content.innerHTML = `
       ${securityCoreBanner(coreCtx)}
-      ${isAdmin ? ipsProviderBanner(ipsProvider?.provider || 'native', f2bCfg, csCfg) : ''}
-      ${isAdmin ? threatEngineBanner(threatCfg || {}) : ''}
+      ${ipsProviderBanner(ipsProvider?.provider || 'native', f2bCfg, csCfg)}
+      ${threatEngineBanner(threatCfg || {})}
       <div class="sec-bans-list-stack">
         <div class="card blueprint">
           <div class="card-header">

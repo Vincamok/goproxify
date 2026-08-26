@@ -706,6 +706,7 @@ pages['core-settings'] = function() {
         { page: 'core-waf',      icon: '<path d="M8 2l5 3v4c0 3-2.5 5.5-5 6.5C5.5 14.5 3 12 3 9V5l5-3z"/><path d="M6 8h4M8 6v4"/>', label: t('coresettings.item.waf'), desc: t('coresettings.item.waf_desc') },
         { page: 'core-ipfilter', icon: '<circle cx="8" cy="8" r="6"/><path d="M5 8h6M8 5v6"/>', label: t('coresettings.item.ipfilter'), desc: t('coresettings.item.ipfilter_desc') },
         { page: 'core-auth',     icon: '<rect x="4" y="8" width="8" height="6" rx="1"/><path d="M6 8V6a2 2 0 014 0v2"/>', label: t('coresettings.item.auth'), desc: t('coresettings.item.auth_desc') },
+        { page: 'core-security-bans', icon: '<path d="M8 2l5 3v4c0 3-2.5 5.5-5 6.5C5.5 14.5 3 12 3 9V5l5-3z"/><path d="M6 11l2 2 4-4"/>', label: t('coresettings.item.ban_engines'), desc: t('coresettings.item.ban_engines_desc') },
       ]
     },
     {
