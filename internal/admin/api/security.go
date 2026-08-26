@@ -551,19 +551,40 @@ func (h *SecurityHandler) putCrowdSecConfig(w http.ResponseWriter, r *http.Reque
 
 // ── IPS Provider ─────────────────────────────────────────────────────────────
 
-// getIPSProvider retourne le fournisseur IPS actif : "native", "fail2ban" ou "crowdsec".
+// ipsProviderKey retourne la clé settings pour un Core donné.
+func ipsProviderKey(coreID string) string {
+	if coreID == "" {
+		return "ips_provider"
+	}
+	return "ips_provider:" + coreID
+}
+
+// threatConfigKey retourne la clé settings pour un Core donné.
+func threatConfigKey(coreID string) string {
+	if coreID == "" {
+		return "threat_engine_config"
+	}
+	return "threat_engine_config:" + coreID
+}
+
+// getIPSProvider retourne le fournisseur IPS actif pour le Core demandé.
 func (h *SecurityHandler) getIPSProvider(w http.ResponseWriter, r *http.Request) {
-	provider := "native"
-	if h.Fail2Ban != nil && h.Fail2Ban.GetConfig().Enabled {
-		provider = "fail2ban"
-	} else if h.CrowdSec != nil && h.CrowdSec.GetConfig().Enabled {
-		provider = "crowdsec"
+	coreID := r.URL.Query().Get("core")
+	key := ipsProviderKey(coreID)
+	row := h.DB.QueryRowContext(r.Context(), `SELECT value FROM settings WHERE key=?`, key)
+	var provider string
+	if err := row.Scan(&provider); err != nil {
+		provider = "native"
+	}
+	if provider == "" || provider == "none" {
+		provider = "native"
 	}
 	jsonOK(w, map[string]string{"provider": provider})
 }
 
-// putIPSProvider active le fournisseur choisi et désactive l'autre.
+// putIPSProvider enregistre le fournisseur choisi pour le Core demandé.
 func (h *SecurityHandler) putIPSProvider(w http.ResponseWriter, r *http.Request) {
+	coreID := r.URL.Query().Get("core")
 	var req struct {
 		Provider string `json:"provider"`
 	}
@@ -577,41 +598,27 @@ func (h *SecurityHandler) putIPSProvider(w http.ResponseWriter, r *http.Request)
 		writeErr(w, r, http.StatusBadRequest, "api.err.json")
 		return
 	}
-
-	wantF2B := req.Provider == "fail2ban"
-	wantCS := req.Provider == "crowdsec"
-
-	if h.Fail2Ban != nil {
-		cfg := h.Fail2Ban.GetConfig()
-		if cfg.Enabled != wantF2B {
-			cfg.Enabled = wantF2B
-			if err := h.Fail2Ban.SaveConfig(cfg); err != nil {
-				secJSONErr(w, err, http.StatusInternalServerError)
-				return
-			}
-		}
+	provider := req.Provider
+	if provider == "none" {
+		provider = "native"
 	}
-	if h.CrowdSec != nil {
-		cfg := h.CrowdSec.GetConfig()
-		if cfg.Enabled != wantCS {
-			cfg.Enabled = wantCS
-			if err := h.CrowdSec.SaveConfig(cfg); err != nil {
-				secJSONErr(w, err, http.StatusInternalServerError)
-				return
-			}
-			go h.CrowdSec.SyncNow(context.Background())
-		}
+	_, err := h.DB.ExecContext(r.Context(),
+		`INSERT INTO settings (key, value) VALUES (?, ?)
+		 ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+		ipsProviderKey(coreID), provider)
+	if err != nil {
+		secJSONErr(w, err, http.StatusInternalServerError)
+		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // ── Threat Config ─────────────────────────────────────────────────────────────
 
-const threatConfigKey = "threat_engine_config"
-
 func (h *SecurityHandler) getThreatConfig(w http.ResponseWriter, r *http.Request) {
+	coreID := r.URL.Query().Get("core")
 	row := h.DB.QueryRowContext(r.Context(),
-		`SELECT value FROM settings WHERE key=?`, threatConfigKey)
+		`SELECT value FROM settings WHERE key=?`, threatConfigKey(coreID))
 	var raw string
 	if err := row.Scan(&raw); err != nil {
 		jsonOK(w, map[string]any{"enabled": false})
@@ -622,6 +629,7 @@ func (h *SecurityHandler) getThreatConfig(w http.ResponseWriter, r *http.Request
 }
 
 func (h *SecurityHandler) putThreatConfig(w http.ResponseWriter, r *http.Request) {
+	coreID := r.URL.Query().Get("core")
 	var cfg json.RawMessage
 	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
 		writeErr(w, r, http.StatusBadRequest, "api.err.json")
@@ -630,7 +638,7 @@ func (h *SecurityHandler) putThreatConfig(w http.ResponseWriter, r *http.Request
 	_, err := h.DB.ExecContext(r.Context(),
 		`INSERT INTO settings (key, value) VALUES (?, ?)
 		 ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
-		threatConfigKey, string(cfg))
+		threatConfigKey(coreID), string(cfg))
 	if err != nil {
 		secJSONErr(w, err, http.StatusInternalServerError)
 		return

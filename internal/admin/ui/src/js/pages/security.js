@@ -266,22 +266,22 @@ async function renderSecurityBans(ctx) {
       api('GET', '/security/bans?active=true'),
       api('GET', '/security/threats?limit=500'),
     ];
+    const coreQ = coreCtx?.coreRef ? `?core=${encodeURIComponent(coreCtx.coreRef)}` : '';
     fetches.push(api('GET', '/security/fail2ban').catch(() => null));
     fetches.push(api('GET', '/security/crowdsec').catch(() => null));
-    fetches.push(api('GET', '/security/ips-provider').catch(() => null));
-    fetches.push(api('GET', '/security/threat-config').catch(() => null));
+    fetches.push(api('GET', `/security/ips-provider${coreQ}`).catch(() => null));
+    fetches.push(api('GET', `/security/threat-config${coreQ}`).catch(() => null));
     const [bansRaw, threats, f2bCfg, csCfg, ipsProvider, threatCfg] = await Promise.all(fetches);
     const bans = filterSecBans(bansRaw || [], coreCtx);
 
     window._secBans = bans;
     window._secThreats = threats || [];
     window._secMode = mode;
-    if (isAdmin) {
-      window._f2bCfg = f2bCfg || {};
-      window._csCfg = csCfg || {};
-      window._ipsProvider = ipsProvider?.provider || 'native';
-      window._threatCfg = threatCfg || {};
-    }
+    window._secCoreQ = coreQ;
+    window._f2bCfg = f2bCfg || {};
+    window._csCfg = csCfg || {};
+    window._ipsProvider = ipsProvider?.provider || 'native';
+    window._threatCfg = threatCfg || {};
 
     content.innerHTML = `
       ${securityCoreBanner(coreCtx)}
@@ -553,7 +553,7 @@ window.saveThreatConfig = async function(e) {
   };
 
   try {
-    await api('PUT', '/security/threat-config', cfg);
+    await api('PUT', `/security/threat-config${window._secCoreQ || ''}`, cfg);
     window._threatCfg = cfg;
     toast(t('security.threat.saved'), 'success');
   } catch(err) { toast(err.message, 'error'); }
@@ -1225,7 +1225,7 @@ window.saveF2BConfig = async function(e) {
   };
   try {
     await Promise.all([
-      api('PUT', '/security/ips-provider', { provider: 'fail2ban' }),
+      api('PUT', `/security/ips-provider${window._secCoreQ || ''}`, { provider: 'fail2ban' }),
       api('PUT', '/security/fail2ban', cfg),
     ]);
     toast(t('security.ips.saved'), 'success');
@@ -1242,7 +1242,7 @@ window.saveCrowdSecConfig = async function(e) {
   };
   try {
     await Promise.all([
-      api('PUT', '/security/ips-provider', { provider: 'crowdsec' }),
+      api('PUT', `/security/ips-provider${window._secCoreQ || ''}`, { provider: 'crowdsec' }),
       api('PUT', '/security/crowdsec', cfg),
     ]);
     toast(t('security.ips.saved'), 'success');
@@ -1252,7 +1252,7 @@ window.saveCrowdSecConfig = async function(e) {
 
 window.selectIPSProvider = async function(provider) {
   try {
-    await api('PUT', '/security/ips-provider', { provider });
+    await api('PUT', `/security/ips-provider${window._secCoreQ || ''}`, { provider });
     window._ipsProvider = provider;
     toast(t('security.ips.saved'), 'success');
     reloadCurrentSecurityPage();
