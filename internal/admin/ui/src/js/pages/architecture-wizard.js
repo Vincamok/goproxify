@@ -101,6 +101,8 @@ function _archSvcFromExisting(role, node, cfg) {
     existing: true,
     status: node.status || 'declared',
     nodeName,
+    delegationsOut: [],
+    delegationsIn: [],
   };
 }
 
@@ -378,6 +380,9 @@ function _archLoad() {
       }
       // index par node_name : { domains[], hasAcme, dnsProvider }
       const infoByCoreName = new Map();
+      // délégations : sourceNodeName → [{id, domain, targetName, mode}], targetNodeName → [...]
+      const delegOut = new Map();
+      const delegIn  = new Map();
       for (const d of domains) {
         if (!d.domain || !d.core_id) continue;
         const nodeName = tokenByID.get(d.core_id) || d.core_id;
@@ -389,14 +394,26 @@ function _archLoad() {
           if (d.dns_provider && d.dns_provider !== 'none') info.dnsProvider = d.dns_provider;
         }
         infoByCoreName.set(nodeName, info);
+        if (d.delegated_to_core_id) {
+          const targetName = tokenByID.get(d.delegated_to_core_id) || d.delegated_to_core_id;
+          const mode = d.delegation_mode || 'passthrough';
+          const entry = { id: d.id, domain: d.domain, targetName, sourceName: nodeName, mode };
+          if (!delegOut.has(nodeName)) delegOut.set(nodeName, []);
+          delegOut.get(nodeName).push(entry);
+          if (!delegIn.has(targetName)) delegIn.set(targetName, []);
+          delegIn.get(targetName).push(entry);
+        }
       }
       for (const h of _arch.hosts) {
         for (const s of h.services || []) {
           if (s.type !== 'core') continue;
-          const info = infoByCoreName.get(s.nodeName || s.name) || infoByCoreName.get(s.name);
+          const key = s.nodeName || s.name;
+          const info = infoByCoreName.get(key) || infoByCoreName.get(s.name);
           s.domains = info ? info.domainList.join(', ') : '';
           s.acme = info ? info.hasAcme : false;
           s.dnsProvider = (info && info.hasAcme) ? info.dnsProvider : 'none';
+          s.delegationsOut = delegOut.get(key) || delegOut.get(s.name) || [];
+          s.delegationsIn  = delegIn.get(key)  || delegIn.get(s.name)  || [];
         }
       }
     }
@@ -761,7 +778,43 @@ function _archInspectRole(svc) {
             `<div class="arch-cap-desc">${t('arch.opt.acme_admin_hint')}</div>`
           )
         )
-      )}`;
+      )}
+      ${(() => {
+        const dOut = svc.delegationsOut || [];
+        const dIn  = svc.delegationsIn  || [];
+        if (!dOut.length && !dIn.length) return '';
+        const outHTML = dOut.length ? `
+          <div class="arch-cap-desc" style="margin-bottom:8px;">${esc(t('arch.deleg.out_desc'))}</div>
+          ${dOut.map(d => `
+            <div style="padding:8px 0;border-bottom:1px solid var(--border);">
+              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:5px;">
+                <span style="font-size:12px;font-weight:600;flex:1;min-width:0;">${esc(d.domain)}</span>
+                <span style="font-size:11px;color:var(--text2);">→ ${esc(d.targetName)}</span>
+              </div>
+              <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                <label style="display:flex;align-items:center;gap:4px;font-size:11.5px;cursor:pointer;" title="${esc(t('arch.deleg.passthrough_hint'))}">
+                  <input type="radio" name="dmode_${esc(d.id)}" value="passthrough" ${d.mode !== 'terminate' ? 'checked' : ''} onchange="_archSetDelegMode('${esc(d.id)}','passthrough')">
+                  ${esc(t('arch.deleg.passthrough'))}
+                </label>
+                <label style="display:flex;align-items:center;gap:4px;font-size:11.5px;cursor:pointer;" title="${esc(t('arch.deleg.terminate_hint'))}">
+                  <input type="radio" name="dmode_${esc(d.id)}" value="terminate" ${d.mode === 'terminate' ? 'checked' : ''} onchange="_archSetDelegMode('${esc(d.id)}','terminate')">
+                  ${esc(t('arch.deleg.terminate'))}
+                </label>
+              </div>
+            </div>`).join('')}
+        ` : '';
+        const inHTML = dIn.length ? `
+          ${dOut.length ? `<div style="margin-top:10px;"></div>` : ''}
+          <div class="arch-cap-desc" style="margin-bottom:6px;">${esc(t('arch.deleg.in_desc'))}</div>
+          ${dIn.map(d => `
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:5px 0;border-bottom:1px solid var(--border);">
+              <span style="font-size:12px;font-weight:600;flex:1;min-width:0;">${esc(d.domain)}</span>
+              <span style="font-size:11px;color:var(--text2);">${esc(t('arch.deleg.from'))} ${esc(d.sourceName)}</span>
+              <span style="font-size:11px;padding:2px 6px;border-radius:4px;background:var(--bg2,var(--bg));color:var(--text2);">${esc(d.mode === 'terminate' ? t('arch.deleg.terminate') : t('arch.deleg.passthrough'))}</span>
+            </div>`).join('')}
+        ` : '';
+        return _archGroup(t('arch.group.delegations'), outHTML + inHTML);
+      })()}`;
   } else if (svc.type === 'agent') {
     const cores = _arch.hosts.flatMap(h => (h.services || []).filter(s => s.type === 'core'));
     const targetOpts = cores.map(c =>
@@ -1009,6 +1062,34 @@ async function _archApplyPortal(coreName, enabled) {
     toast(t('arch.toast.portal_applied'), 'success');
   } catch (e) {
     toast(t('common.error_msg', { msg: e.message }), 'error');
+  }
+}
+
+async function _archSetDelegMode(domainId, mode) {
+  try {
+    const existing = await api('GET', '/domains/' + encodeURIComponent(domainId));
+    if (!existing) return;
+    await api('PUT', '/domains/' + encodeURIComponent(domainId), {
+      domain: existing.domain,
+      core_id: existing.core_id,
+      dns_provider: existing.dns_provider || '',
+      dns_credentials: existing.dns_credentials || null,
+      cert_method: existing.cert_method || 'manual',
+      delegated_to_core_id: existing.delegated_to_core_id || '',
+      delegated_endpoint: existing.delegated_endpoint || '',
+      delegation_mode: mode,
+    });
+    for (const h of _arch.hosts) {
+      for (const s of h.services || []) {
+        for (const d of [...(s.delegationsOut || []), ...(s.delegationsIn || [])]) {
+          if (d.id === domainId) d.mode = mode;
+        }
+      }
+    }
+    toast(t('arch.deleg.mode_saved'), 'success');
+  } catch (e) {
+    toast(t('common.error_msg', { msg: e.message }), 'error');
+    _archRender();
   }
 }
 
