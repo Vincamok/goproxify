@@ -75,7 +75,7 @@ function _archSvcFromExisting(role, node, cfg) {
   let podman = !!cfg.podman;
   if (cfg.docker === false && !cfg.podman) docker = false;
   if (hasPodman && !hasDocker) { podman = true; docker = false; }
-  else if (hasDocker) { docker = true; podman = false; }
+  else if (hasDocker && cfg.docker !== false) { docker = true; podman = false; }
   if (role === 'agent' && cfg.docker === undefined && cfg.podman === undefined && !runtimes.length && node.status !== 'online') {
     docker = true;
     podman = false;
