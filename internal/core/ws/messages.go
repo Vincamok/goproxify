@@ -69,7 +69,16 @@ const (
 	TypePortalInviteCompleted = "portal_invite_completed"
 	TypePortalSendEmailOTP    = "portal_send_email_otp"
 	TypePortalAudit           = "portal_audit"
+	TypeThreatBan             = "threat_ban" // IP bannie par le moteur de détection automatique
 )
+
+// ThreatBanPayload est envoyé par Core → Admin quand le moteur détecte et banne une IP.
+type ThreatBanPayload struct {
+	IP        string `json:"ip"`
+	Reason    string `json:"reason"`
+	ExpiresAt string `json:"expires_at,omitempty"` // RFC3339
+	NodeName  string `json:"node_name,omitempty"`
+}
 
 // LogEntryPayload est le format normalisé des logs relayés Core → Admin.
 // Compatible avec POST /internal/v1/logs (Admin) et AccessLogger.ship.

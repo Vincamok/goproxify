@@ -1225,8 +1225,7 @@ func (s *Server) handleHAThreatExport(w http.ResponseWriter, r *http.Request) {
 }
 
 // threatBanCallback retourne la fonction appelée par le moteur quand il détecte une menace.
-// Elle ajoute le ban au BanStore local pour un effet immédiat. Le ban sera
-// persisté dans Admin lors du prochain cycle de sync (heartbeat / ws).
+// Elle ajoute le ban au BanStore local pour un effet immédiat et notifie Admin via WS.
 func (s *Server) threatBanCallback() threat.BanCallback {
 	return func(ip, reason string, expires time.Time) {
 		b := &router.RuntimeBan{
@@ -1236,11 +1235,21 @@ func (s *Server) threatBanCallback() threat.BanCallback {
 			Source:    "threat",
 			ExpiresAt: &expires,
 		}
-		// Injecter dans la liste de bans existante.
 		s.mu.Lock()
 		s.pendingThreatBans = append(s.pendingThreatBans, b)
 		s.mu.Unlock()
 		s.flushThreatBans()
+
+		// Notifier Admin pour persister le ban dans security_bans.
+		payload := corews.ThreatBanPayload{
+			IP:        ip,
+			Reason:    reason,
+			ExpiresAt: expires.UTC().Format(time.RFC3339),
+			NodeName:  s.cfg.Identity.NodeName,
+		}
+		if msg, err := corews.NewMessage(0, corews.TypeThreatBan, payload); err == nil {
+			s.wsHub.BroadcastToAdmins(msg)
+		}
 	}
 }
 

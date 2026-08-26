@@ -280,7 +280,28 @@ func (m *Manager) HandleCoreMessage(msg coreWS.Message) {
 		m.handlePortalSendEmailOTP(msg.Payload)
 	case coreWS.TypePortalAudit:
 		m.handlePortalAudit(msg.Payload)
+	case coreWS.TypeThreatBan:
+		m.handleThreatBan(msg.Payload)
 	}
+}
+
+func (m *Manager) handleThreatBan(raw json.RawMessage) {
+	if m.db == nil || len(raw) == 0 {
+		return
+	}
+	var p coreWS.ThreatBanPayload
+	if err := json.Unmarshal(raw, &p); err != nil || p.IP == "" {
+		return
+	}
+	var expiresAt any
+	if p.ExpiresAt != "" {
+		expiresAt = p.ExpiresAt
+	}
+	m.db.Exec( //nolint:errcheck
+		`INSERT OR IGNORE INTO security_bans (id, ip, domain, reason, source, expires_at)
+		 VALUES (?, ?, '', ?, 'threat', ?)`,
+		"threat-"+p.IP, p.IP, p.Reason, expiresAt,
+	)
 }
 
 func (m *Manager) handlePortalAudit(raw json.RawMessage) {

@@ -165,7 +165,7 @@ func (e *Engine) scan() {
 			`INSERT OR IGNORE INTO security_bans (id, ip, domain, reason, source, expires_at) VALUES (?,?,?,?,?,?)`,
 			uuid.New().String(), rawIP, "",
 			fmt.Sprintf("Fail2Ban : %d erreurs en %ds", count, window),
-			"native", expiresAt)
+			"fail2ban", expiresAt)
 		if err == nil {
 			if rows, _ := res.RowsAffected(); rows > 0 {
 				reason := fmt.Sprintf("Fail2Ban : %d erreurs en %ds", count, window)
