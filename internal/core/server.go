@@ -2308,6 +2308,19 @@ func (s *Server) handleAgentContainerStop(w http.ResponseWriter, r *http.Request
 		s.table.Upsert(rt)
 		changed = true
 	}
+	// Routes Portainer : portainer:{endpointID}:{containerID12}:{host}
+	for _, rt := range s.table.All() {
+		if !strings.HasPrefix(rt.ID, "portainer:") {
+			continue
+		}
+		parts := strings.SplitN(rt.ID, ":", 4)
+		if len(parts) >= 3 && parts[2] == shortID {
+			if s.table.Delete(rt.ID) {
+				changed = true
+			}
+		}
+	}
+
 	if changed {
 		metrics.Core.RouteCount.Set(float64(s.table.Len()))
 		s.log.Info("agent: routes/backends label retirés", "container", p.Name)

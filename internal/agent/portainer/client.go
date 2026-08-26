@@ -15,6 +15,12 @@ import (
 	"time"
 )
 
+// endpointsResponse couvre le format paginé de Portainer 2.19+
+// ({ "value": [...], "totalCount": N }) et l'ancien format tableau brut.
+type endpointsResponse struct {
+	Value []Endpoint `json:"value"`
+}
+
 // Client interroge l'API Portainer.
 type Client struct {
 	baseURL string
@@ -52,6 +58,29 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
+func (c *Client) getRaw(ctx context.Context, path string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-API-Key", c.token)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("portainer: GET %s → %d: %s", path, resp.StatusCode, b)
+	}
+	return b, nil
+}
+
 // Endpoint représente un hôte Docker enregistré dans Portainer.
 type Endpoint struct {
 	ID     int    `json:"Id"`
@@ -61,12 +90,20 @@ type Endpoint struct {
 }
 
 // ListEndpoints retourne tous les endpoints actifs.
+// Portainer 2.19+ retourne un objet paginé { "value": [...], "totalCount": N } ;
+// les versions antérieures retournent un tableau brut. On gère les deux.
 func (c *Client) ListEndpoints(ctx context.Context) ([]Endpoint, error) {
-	var endpoints []Endpoint
-	if err := c.get(ctx, "/api/endpoints?limit=100", &endpoints); err != nil {
+	raw, err := c.getRaw(ctx, "/api/endpoints?limit=100")
+	if err != nil {
 		return nil, err
 	}
-	// Ne garder que les endpoints joignables
+	var endpoints []Endpoint
+	var paged endpointsResponse
+	if err := json.Unmarshal(raw, &paged); err == nil && paged.Value != nil {
+		endpoints = paged.Value
+	} else if err := json.Unmarshal(raw, &endpoints); err != nil {
+		return nil, fmt.Errorf("portainer: décodage endpoints: %w", err)
+	}
 	active := endpoints[:0]
 	for _, e := range endpoints {
 		if e.Status == 1 {

@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vincamok/goproxify/internal/agent/docker"
@@ -26,6 +27,9 @@ type Discovery struct {
 	agentName     string
 	pollInterval  time.Duration
 	log           *slog.Logger
+
+	mu       sync.Mutex
+	prevSeen map[string]bool // clés "endpointID:containerID" du scan précédent
 }
 
 // NewDiscovery crée une Discovery Portainer.
@@ -99,13 +103,57 @@ func (d *Discovery) scan(ctx context.Context) {
 			}
 		}
 	}
+
+	d.mu.Lock()
+	prev := d.prevSeen
+	d.prevSeen = seen
+	d.mu.Unlock()
+
+	for key := range prev {
+		if !seen[key] {
+			d.removeByKey(ctx, key)
+		}
+	}
+}
+
+// removeByKey supprime une route portainer disparue identifiée par "endpointID:containerID".
+func (d *Discovery) removeByKey(ctx context.Context, key string) {
+	parts := strings.SplitN(key, ":", 2)
+	if len(parts) != 2 {
+		return
+	}
+	containerID := parts[1]
+	shortID := containerID
+	if len(shortID) > 12 {
+		shortID = shortID[:12]
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"container_id": shortID,
+		"name":         key,
+		"source":       "portainer",
+	})
+	url := d.adminEndpoint + "/internal/v1/agent/containers"
+	req, _ := http.NewRequestWithContext(ctx, http.MethodDelete, url, bytes.NewReader(payload))
+	req.Header.Set("Authorization", "Bearer "+d.authToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		d.log.Warn("portainer: suppression route", "key", key, "err", err)
+		return
+	}
+	resp.Body.Close()
+	d.log.Info("portainer: route retirée", "key", key)
 }
 
 // report envoie la config proxy vers l'Administration.
 func (d *Discovery) report(ctx context.Context, ep Endpoint, spec *docker.ProxySpec) {
 	containerName := strings.TrimPrefix(spec.ContainerName, "/")
+	shortID := spec.ContainerID
+	if len(shortID) > 12 {
+		shortID = shortID[:12]
+	}
 	payload := map[string]any{
-		"id":           fmt.Sprintf("portainer:%d:%s:%s", ep.ID, spec.ContainerID[:12], spec.Host),
+		"id":           fmt.Sprintf("portainer:%d:%s:%s", ep.ID, shortID, spec.Host),
 		"host":         spec.Host,
 		"aliases":      spec.Aliases,
 		"paths":        spec.Paths,
