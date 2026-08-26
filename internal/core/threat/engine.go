@@ -47,7 +47,10 @@ func New(log *slog.Logger, banFn BanCallback) *Engine {
 }
 
 // Start démarre la boucle de refresh des listes. Doit être appelé une seule fois.
+// Les fichiers de listes par défaut sont toujours seedés dans le volume au démarrage,
+// même si le moteur n'est pas encore activé, afin que l'utilisateur puisse les éditer.
 func (e *Engine) Start(ctx context.Context) {
+	e.lists.seedDefaults()
 	ctx, cancel := context.WithCancel(ctx)
 	e.cancel = cancel
 	go e.run(ctx)

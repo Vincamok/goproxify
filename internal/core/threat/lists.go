@@ -191,6 +191,16 @@ func (l *Lists) loadFromDisk(cfg ListsConfig) {
 	}
 }
 
+// seedDefaults s'assure que les 3 fichiers de listes existent dans le volume.
+// Appelé au démarrage du moteur, indépendamment de la config.
+func (l *Lists) seedDefaults() {
+	dir := listsPath()
+	_ = os.MkdirAll(dir, 0o755)
+	l.seedIfMissing(dir, "ua.txt", defaultUA)
+	l.seedIfMissing(dir, "paths.txt", defaultPaths)
+	l.seedIfMissing(dir, "ips.txt", defaultIPs)
+}
+
 // seedIfMissing retourne le contenu du fichier sur disque.
 // Si le fichier est absent, il est créé à partir du contenu embarqué.
 func (l *Lists) seedIfMissing(dir, filename string, embedded []byte) []byte {
