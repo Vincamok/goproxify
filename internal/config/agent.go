@@ -18,6 +18,7 @@ type AgentConfig struct {
 	} `mapstructure:"control_plane"`
 
 	Docker struct {
+		Enabled        bool   `mapstructure:"enabled"`          // défaut: true (false pour désactiver la discovery locale)
 		SocketPath     string `mapstructure:"socket_path"`      // /var/run/docker.sock
 		PollIntervalMs int    `mapstructure:"poll_interval_ms"` // Intervalle de scrute des événements
 		LabelPrefix    string `mapstructure:"label_prefix"`     // "goproxify."

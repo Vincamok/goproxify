@@ -64,16 +64,19 @@ func New(cfg *config.AgentConfig) (*Agent, error) {
 	// Network manager
 	netMgr := agentdocker.NewNetworkManager(client, cfg.NetworkManagement.CoreContainerName, log)
 
-	// Discovery
-	disc := agentdocker.NewDiscovery(
-		client,
-		cfg.ControlPlane.CoreEndpoint,
-		cfg.ControlPlane.AuthToken,
-		cfg.Docker.LabelPrefix,
-		cfg.Identity.NodeName,
-		netMgr,
-		log,
-	)
+	// Discovery Docker locale (désactivable via docker.enabled: false)
+	var disc *agentdocker.Discovery
+	if cfg.Docker.Enabled {
+		disc = agentdocker.NewDiscovery(
+			client,
+			cfg.ControlPlane.CoreEndpoint,
+			cfg.ControlPlane.AuthToken,
+			cfg.Docker.LabelPrefix,
+			cfg.Identity.NodeName,
+			netMgr,
+			log,
+		)
+	}
 
 	// Lifecycle
 	lc := agentdocker.NewLifecycleManager(client, log)
@@ -389,8 +392,10 @@ func (a *Agent) retryPairing(ctx context.Context) {
 				a.log.Warn("agent: appairage (retry) échoué", "err", err, "prochain_essai", delay)
 				continue
 			}
-			a.discovery.SetToken(token)
-			go a.discovery.ScanAll(ctx)
+			if a.discovery != nil {
+				a.discovery.SetToken(token)
+				go a.discovery.ScanAll(ctx)
+			}
 			// Propager le token au heartbeatLoop (qui tourne avec authToken="")
 			select {
 			case a.tokenUpdate <- token:
@@ -499,7 +504,7 @@ func (a *Agent) Start(ctx context.Context) error {
 
 	// Propager le token résolu à la discovery et aux autres composants
 	// qui ont été construits avant le pairing (dans New()).
-	if token != "" {
+	if token != "" && a.discovery != nil {
 		a.discovery.SetToken(token)
 	}
 
@@ -542,9 +547,11 @@ func (a *Agent) Start(ctx context.Context) error {
 	}
 
 	// Événements cycle de vie / santé → Core (WS prioritaire, HTTP fallback)
-	a.discovery.SetOnLifecycle(func(containerID, containerName, action string) {
-		go a.emitEvent(containerID, action, "container="+containerName)
-	})
+	if a.discovery != nil {
+		a.discovery.SetOnLifecycle(func(containerID, containerName, action string) {
+			go a.emitEvent(containerID, action, "container="+containerName)
+		})
+	}
 	a.lifecycle.SetOnEscalation(func(containerID, containerName, eventType, detail string) {
 		go a.emitEvent(containerID, eventType, detail)
 	})
@@ -571,7 +578,9 @@ func (a *Agent) Start(ctx context.Context) error {
 				a.log.Warn("heartbeat: re-appairage impossible", "err", err)
 				return ""
 			}
-			a.discovery.SetToken(t)
+			if a.discovery != nil {
+				a.discovery.SetToken(t)
+			}
 			return t
 		},
 		a.log,
@@ -581,7 +590,9 @@ func (a *Agent) Start(ctx context.Context) error {
 	go a.emitEvent("", "agent_online", "version="+buildinfo.Agent)
 
 	// Discovery Docker/Podman (socket local)
-	a.discovery.Start(ctx)
+	if a.discovery != nil {
+		a.discovery.Start(ctx)
+	}
 
 	// Métriques conteneur → Core (LB adaptatif)
 	if a.wsClient != nil && a.dockerClient != nil {
@@ -640,12 +651,14 @@ func (a *Agent) emitEvent(containerID, eventType, detail string) {
 // detectedRuntimes retourne la liste des runtimes de conteneurs actifs sur cet agent.
 func (a *Agent) detectedRuntimes() []string {
 	var runtimes []string
-	sp := a.cfg.Docker.SocketPath
-	if sp != "" {
-		if strings.Contains(sp, "podman") {
-			runtimes = append(runtimes, "podman")
-		} else {
-			runtimes = append(runtimes, "docker")
+	if a.discovery != nil {
+		sp := a.cfg.Docker.SocketPath
+		if sp != "" {
+			if strings.Contains(sp, "podman") {
+				runtimes = append(runtimes, "podman")
+			} else {
+				runtimes = append(runtimes, "docker")
+			}
 		}
 	}
 	if a.portainerDisc != nil {
