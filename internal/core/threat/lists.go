@@ -6,6 +6,7 @@ package threat
 import (
 	"bufio"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,18 +20,14 @@ import (
 	"time"
 )
 
-// Sources par défaut.
-var defaultUASources = []string{
-	"https://raw.githubusercontent.com/mitchellkrogza/nginx-ultimate-bad-bot-blocker/master/bad-referrers.list",
-}
+//go:embed defaults/ua.txt
+var defaultUA []byte
 
-var defaultPathSources = []string{
-	"https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/common.txt",
-}
+//go:embed defaults/paths.txt
+var defaultPaths []byte
 
-var defaultIPSources = []string{
-	"https://iplists.firehol.org/files/firehol_level1.netset",
-}
+//go:embed defaults/ips.txt
+var defaultIPs []byte
 
 const listsDir = "/etc/goproxify/threat-lists"
 const listsEnvKey = "GPX_THREAT_LISTS_PATH"
@@ -122,12 +119,8 @@ func (l *Lists) refresh(ctx context.Context, cfg ListsConfig) {
 	dir := listsPath()
 	_ = os.MkdirAll(dir, 0o755)
 
-	if cfg.UAEnabled {
-		sources := cfg.UASources
-		if len(sources) == 0 {
-			sources = defaultUASources
-		}
-		if data, updated := l.fetchAndCache(ctx, dir, "ua.txt", sources); updated {
+	if cfg.UAEnabled && len(cfg.UASources) > 0 {
+		if data, updated := l.fetchAndCache(ctx, dir, "ua.txt", cfg.UASources); updated {
 			entries := parseLines(data)
 			l.mu.Lock()
 			l.ua = entries
@@ -137,12 +130,8 @@ func (l *Lists) refresh(ctx context.Context, cfg ListsConfig) {
 		}
 	}
 
-	if cfg.PathEnabled {
-		sources := cfg.PathSources
-		if len(sources) == 0 {
-			sources = defaultPathSources
-		}
-		if data, updated := l.fetchAndCache(ctx, dir, "paths.txt", sources); updated {
+	if cfg.PathEnabled && len(cfg.PathSources) > 0 {
+		if data, updated := l.fetchAndCache(ctx, dir, "paths.txt", cfg.PathSources); updated {
 			entries := parseLines(data)
 			l.mu.Lock()
 			l.paths = entries
@@ -152,12 +141,8 @@ func (l *Lists) refresh(ctx context.Context, cfg ListsConfig) {
 		}
 	}
 
-	if cfg.IPEnabled {
-		sources := cfg.IPSources
-		if len(sources) == 0 {
-			sources = defaultIPSources
-		}
-		if data, updated := l.fetchAndCache(ctx, dir, "ips.txt", sources); updated {
+	if cfg.IPEnabled && len(cfg.IPSources) > 0 {
+		if data, updated := l.fetchAndCache(ctx, dir, "ips.txt", cfg.IPSources); updated {
 			nets := parseNets(data)
 			l.mu.Lock()
 			l.nets = nets
@@ -171,12 +156,15 @@ func (l *Lists) refresh(ctx context.Context, cfg ListsConfig) {
 }
 
 // loadFromDisk charge les listes depuis le disque au démarrage.
+// Si un fichier n'existe pas encore, il est initialisé depuis les defaults embarqués.
 func (l *Lists) loadFromDisk(cfg ListsConfig) {
 	dir := listsPath()
+	_ = os.MkdirAll(dir, 0o755)
 	l.loadMeta(dir)
 
 	if cfg.UAEnabled {
-		if data, err := os.ReadFile(filepath.Join(dir, "ua.txt")); err == nil {
+		data := l.seedIfMissing(dir, "ua.txt", defaultUA)
+		if len(data) > 0 {
 			entries := parseLines(data)
 			l.mu.Lock()
 			l.ua = entries
@@ -184,7 +172,8 @@ func (l *Lists) loadFromDisk(cfg ListsConfig) {
 		}
 	}
 	if cfg.PathEnabled {
-		if data, err := os.ReadFile(filepath.Join(dir, "paths.txt")); err == nil {
+		data := l.seedIfMissing(dir, "paths.txt", defaultPaths)
+		if len(data) > 0 {
 			entries := parseLines(data)
 			l.mu.Lock()
 			l.paths = entries
@@ -192,13 +181,27 @@ func (l *Lists) loadFromDisk(cfg ListsConfig) {
 		}
 	}
 	if cfg.IPEnabled {
-		if data, err := os.ReadFile(filepath.Join(dir, "ips.txt")); err == nil {
+		data := l.seedIfMissing(dir, "ips.txt", defaultIPs)
+		if len(data) > 0 {
 			nets := parseNets(data)
 			l.mu.Lock()
 			l.nets = nets
 			l.mu.Unlock()
 		}
 	}
+}
+
+// seedIfMissing retourne le contenu du fichier sur disque.
+// Si le fichier est absent, il est créé à partir du contenu embarqué.
+func (l *Lists) seedIfMissing(dir, filename string, embedded []byte) []byte {
+	path := filepath.Join(dir, filename)
+	data, err := os.ReadFile(path)
+	if err == nil {
+		return data
+	}
+	l.log.Info("threat: liste absente, initialisation depuis les defaults embarqués", "file", filename)
+	_ = os.WriteFile(path, embedded, 0o644)
+	return embedded
 }
 
 // fetchAndCache télécharge depuis les sources et met en cache sur disque.
