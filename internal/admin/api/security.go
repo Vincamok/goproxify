@@ -544,9 +544,9 @@ func (h *SecurityHandler) putCrowdSecConfig(w http.ResponseWriter, r *http.Reque
 
 // ── IPS Provider ─────────────────────────────────────────────────────────────
 
-// getIPSProvider retourne le fournisseur IPS actif : "none", "fail2ban" ou "crowdsec".
+// getIPSProvider retourne le fournisseur IPS actif : "native", "fail2ban" ou "crowdsec".
 func (h *SecurityHandler) getIPSProvider(w http.ResponseWriter, r *http.Request) {
-	provider := "none"
+	provider := "native"
 	if h.Fail2Ban != nil && h.Fail2Ban.GetConfig().Enabled {
 		provider = "fail2ban"
 	} else if h.CrowdSec != nil && h.CrowdSec.GetConfig().Enabled {
@@ -565,7 +565,7 @@ func (h *SecurityHandler) putIPSProvider(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	switch req.Provider {
-	case "none", "fail2ban", "crowdsec":
+	case "native", "none", "fail2ban", "crowdsec":
 	default:
 		writeErr(w, r, http.StatusBadRequest, "api.err.json")
 		return

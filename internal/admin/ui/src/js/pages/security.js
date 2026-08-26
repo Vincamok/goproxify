@@ -280,12 +280,12 @@ async function renderSecurityBans(ctx) {
     if (isAdmin) {
       window._f2bCfg = f2bCfg || {};
       window._csCfg = csCfg || {};
-      window._ipsProvider = ipsProvider?.provider || 'none';
+      window._ipsProvider = ipsProvider?.provider || 'native';
     }
 
     content.innerHTML = `
       ${securityCoreBanner(coreCtx)}
-      ${isAdmin ? ipsProviderBanner(ipsProvider?.provider || 'none', f2bCfg, csCfg) : ''}
+      ${isAdmin ? ipsProviderBanner(ipsProvider?.provider || 'native', f2bCfg, csCfg) : ''}
       <div class="sec-bans-list-stack">
         <div class="card blueprint">
           <div class="card-header">
@@ -400,7 +400,7 @@ function ipsProviderBanner(provider, f2bCfg, csCfg) {
   const svgOff = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>`;
 
   const options = [
-    { value: 'none',     icon: svgOff,    label: t('security.ips.none'),        desc: t('security.ips.none_desc') },
+    { value: 'native',   icon: svgOff,    label: t('security.ips.native'),      desc: t('security.ips.native_desc') },
     { value: 'fail2ban', icon: svgWrench, label: t('security.fail2ban_native'), desc: t('security.ips.f2b_desc') },
     { value: 'crowdsec', icon: svgShield, label: t('security.crowdsec'),         desc: t('security.ips.cs_desc') },
   ];
@@ -419,7 +419,7 @@ function ipsProviderBanner(provider, f2bCfg, csCfg) {
       ${crowdSecPanel(csCfg)}
     </div>` : `
     <div class="ips-config-panel">
-      <button class="btn btn-primary btn-sm" onclick="selectIPSProvider('none')">${t('common.save')}</button>
+      <button class="btn btn-primary btn-sm" onclick="selectIPSProvider('native')">${t('common.save')}</button>
     </div>`;
 
   return `<div class="sec-bans-config">
@@ -1158,7 +1158,7 @@ window.ipsSelectLocal = function(provider) {
   } else if (provider === 'crowdsec') {
     panel.innerHTML = `<div class="ips-config-panel"><div class="ips-config-panel-head"><span class="ips-config-panel-name">${svgShield}${t('security.crowdsec')}</span></div>${crowdSecPanel(csCfg)}</div>`;
   } else {
-    panel.innerHTML = `<div class="ips-config-panel"><button class="btn btn-primary btn-sm" onclick="selectIPSProvider('none')">${t('common.save')}</button></div>`;
+    panel.innerHTML = `<div class="ips-config-panel"><button class="btn btn-primary btn-sm" onclick="selectIPSProvider('native')">${t('common.save')}</button></div>`;
   }
 };
 
