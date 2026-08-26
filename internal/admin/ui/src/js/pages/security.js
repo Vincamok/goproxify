@@ -285,8 +285,8 @@ async function renderSecurityBans(ctx) {
 
     content.innerHTML = `
       ${securityCoreBanner(coreCtx)}
-      ${ipsProviderBanner(ipsProvider?.provider || 'native', f2bCfg, csCfg)}
-      ${threatEngineBanner(threatCfg || {})}
+      ${!isAdmin ? ipsProviderBanner(ipsProvider?.provider || 'native', f2bCfg, csCfg) : ''}
+      ${!isAdmin ? threatEngineBanner(threatCfg || {}) : ''}
       <div class="sec-bans-list-stack">
         <div class="card blueprint">
           <div class="card-header">
