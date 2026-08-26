@@ -1680,6 +1680,15 @@ func (s *Server) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "node_name requis", http.StatusBadRequest)
 		return
 	}
+
+	// Si l'agent avait "docker" dans ses runtimes et ne l'a plus, purger ses routes Docker.
+	if prev, ok := s.nodeStore.Get(hb.NodeName); ok {
+		if hasRuntime(prev.ContainerRuntimes, "docker", "podman") &&
+			!hasRuntime(hb.ContainerRuntimes, "docker", "podman") {
+			s.purgeDockerRoutesForAgent(hb.NodeName)
+		}
+	}
+
 	s.nodeStore.Upsert(coreagent.NodeInfo{
 		NodeName:          hb.NodeName,
 		Role:              hb.Role,
@@ -1690,6 +1699,35 @@ func (s *Server) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		ContainerRuntimes: hb.ContainerRuntimes,
 	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func hasRuntime(runtimes []string, names ...string) bool {
+	for _, r := range runtimes {
+		for _, n := range names {
+			if r == n {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (s *Server) purgeDockerRoutesForAgent(agentName string) {
+	changed := false
+	for _, rt := range s.table.All() {
+		if rt.AgentName != agentName {
+			continue
+		}
+		if strings.HasPrefix(rt.ID, "docker:") || strings.HasPrefix(rt.ID, "docker-host:") {
+			if s.table.Delete(rt.ID) {
+				changed = true
+			}
+		}
+	}
+	if changed {
+		metrics.Core.RouteCount.Set(float64(s.table.Len()))
+		s.log.Info("agent: routes Docker purgées (docker désactivé)", "agent", agentName)
+	}
 }
 
 type agentContainerPayload struct {
@@ -2961,6 +2999,12 @@ func (s *Server) handleWSAgentMessage(connID string, msg corews.Message) error {
 		}
 		if hb.NodeName == "" {
 			hb.NodeName = connID
+		}
+		if prev, ok := s.nodeStore.Get(hb.NodeName); ok {
+			if hasRuntime(prev.ContainerRuntimes, "docker", "podman") &&
+				!hasRuntime(hb.ContainerRuntimes, "docker", "podman") {
+				s.purgeDockerRoutesForAgent(hb.NodeName)
+			}
 		}
 		s.nodeStore.Upsert(coreagent.NodeInfo{
 			NodeName:          hb.NodeName,

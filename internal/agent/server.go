@@ -64,9 +64,11 @@ func New(cfg *config.AgentConfig) (*Agent, error) {
 	// Network manager
 	netMgr := agentdocker.NewNetworkManager(client, cfg.NetworkManagement.CoreContainerName, log)
 
-	// Discovery Docker locale (désactivable via docker.enabled: false)
+	// Discovery Docker locale (désactivable via docker.enabled: false).
+	// Compat ascendante : si docker.runtime est défini (ancienne config), Docker reste actif.
+	dockerEnabled := cfg.Docker.Enabled || cfg.Docker.Runtime != ""
 	var disc *agentdocker.Discovery
-	if cfg.Docker.Enabled {
+	if dockerEnabled {
 		disc = agentdocker.NewDiscovery(
 			client,
 			cfg.ControlPlane.CoreEndpoint,

@@ -244,6 +244,7 @@ function _buildAgentOpts(d) {
     adminURL ? { k:'GPX_CONTROL_PLANE_ADMIN_ENDPOINT', v: adminURL } : null,
     { k:'GPX_PAIRING_SECRET',                    v: _wiz.pairingSecret || '' },
     d.wa_region ? { k:'GPX_IDENTITY_REGION',  v: d.wa_region } : null,
+    useContainerRuntime ? { k:'GPX_DOCKER_ENABLED',  v: 'true' } : null,
     useContainerRuntime ? { k:'GPX_DOCKER_RUNTIME', v: runtime } : null,
     useContainerRuntime && coreContainer ? { k:'GPX_NETWORK_MANAGEMENT_CORE_CONTAINER_NAME', v: coreContainer } : null,
     d.wa_k8s       ? { k:'GPX_KUBERNETES_ENABLED',     v: 'true' } : null,
