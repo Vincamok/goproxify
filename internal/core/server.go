@@ -49,6 +49,7 @@ import (
 	coretokens "github.com/vincamok/goproxify/internal/core/tokens"
 	"github.com/vincamok/goproxify/internal/core/tracing"
 	"github.com/vincamok/goproxify/internal/core/waf"
+	"github.com/vincamok/goproxify/internal/core/threat"
 	corews "github.com/vincamok/goproxify/internal/core/ws"
 	"github.com/vincamok/goproxify/internal/labels"
 	"github.com/vincamok/goproxify/internal/nodeident"
@@ -66,6 +67,12 @@ type Server struct {
 	providerStore *router.AuthProviderStore
 	profileStore  *router.IPProfileStore
 	banStore      *router.BanStore
+	threatEngine  *threat.Engine
+
+	// Bans threat : merge avec les bans Admin sans écraser.
+	bansMu            sync.Mutex
+	lastBanList       []*router.RuntimeBan
+	pendingThreatBans []*router.RuntimeBan
 	cache         *corecache.Store
 	proxyStore    *proxystore.Store
 	proxyPipe     *proxypipeline.Pipeline
@@ -349,6 +356,10 @@ func (s *Server) Start(ctx context.Context) error {
 	// Sync pools discovery depuis les Cores pairs (LB cross-Core)
 	s.startPeerSyncLoop(ctx)
 
+	// Moteur de détection automatique des menaces.
+	s.threatEngine = threat.New(s.log.Logger(), s.threatBanCallback())
+	s.threatEngine.Start(ctx)
+
 	// Portail d'accès : activable via env (dev) ou push Admin.
 	if os.Getenv("GPX_PORTAL_ENABLED") == "true" || os.Getenv("GPX_PORTAL_ENABLED") == "1" {
 		pcfg := portal.Config{Enabled: true, PublicHost: os.Getenv("GPX_PORTAL_PUBLIC_HOST")}
@@ -403,6 +414,9 @@ func (s *Server) Stop(ctx context.Context) {
 	}
 	if s.tokenStore != nil {
 		s.tokenStore.Close() //nolint:errcheck
+	}
+	if s.threatEngine != nil {
+		s.threatEngine.Stop()
 	}
 }
 
@@ -704,6 +718,15 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Moteur de détection automatique (threat engine) — après les bans explicites.
+	if s.threatEngine != nil {
+		if blocked, reason := s.threatEngine.Check(r, remoteIP); blocked {
+			s.log.Warn("ip bloquée par moteur de détection", "ip", remoteIP, "reason", reason)
+			serveDefaultError(w, r, http.StatusForbidden)
+			return
+		}
+	}
+
 	route, ok := s.table.ByHost(host)
 	if !ok {
 		serveDefaultError(w, r, http.StatusNotFound)
@@ -728,6 +751,10 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 	h.ServeHTTP(rw, r)
 	metrics.Core.RequestsTotal.WithLabelValues(host, r.Method, fmt.Sprintf("%d", rw.status)).Inc()
 	metrics.Core.RequestDuration.WithLabelValues(host).Observe(time.Since(start).Seconds())
+
+	if s.threatEngine != nil {
+		s.threatEngine.RecordStatus(remoteIP, rw.status)
+	}
 }
 
 func (s *Server) invalidateDispatchCache() {
@@ -900,6 +927,9 @@ func (s *Server) startInternalAPI() error {
 	mux.HandleFunc("POST /internal/v1/auth-providers", s.handlePushAuthProviders)
 	mux.HandleFunc("POST /internal/v1/ip-profiles", s.handlePushIPProfiles)
 	mux.HandleFunc("POST /internal/v1/bans", s.handlePushBans)
+	mux.HandleFunc("POST /internal/v1/threat-config", s.handlePushThreatConfig)
+	mux.HandleFunc("POST /internal/v1/threat-lists/sync", s.handleHAThreatSync)
+	mux.HandleFunc("GET /internal/v1/threat-lists/export", s.handleHAThreatExport)
 	mux.HandleFunc("POST /internal/v1/settings", s.handlePushSettings)
 	mux.HandleFunc("POST /internal/v1/portal", s.handlePushPortal)
 	mux.HandleFunc("POST /internal/v1/cluster/peers", s.handlePushClusterPeers)
@@ -1159,6 +1189,80 @@ func (s *Server) handlePushIPProfiles(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) handlePushThreatConfig(w http.ResponseWriter, r *http.Request) {
+	var cfg threat.Config
+	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if s.threatEngine != nil {
+		s.threatEngine.UpdateConfig(cfg)
+	}
+	s.log.Info("threat: config mise à jour", "enabled", cfg.Enabled)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleHAThreatSync(w http.ResponseWriter, r *http.Request) {
+	var p threat.HAPayload
+	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if s.threatEngine != nil {
+		s.threatEngine.ApplyHAPayload(p)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleHAThreatExport(w http.ResponseWriter, r *http.Request) {
+	if s.threatEngine == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	p := s.threatEngine.BuildHAPayload()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(p) //nolint:errcheck
+}
+
+// threatBanCallback retourne la fonction appelée par le moteur quand il détecte une menace.
+// Elle ajoute le ban au BanStore local pour un effet immédiat. Le ban sera
+// persisté dans Admin lors du prochain cycle de sync (heartbeat / ws).
+func (s *Server) threatBanCallback() threat.BanCallback {
+	return func(ip, reason string, expires time.Time) {
+		b := &router.RuntimeBan{
+			ID:        "threat-" + ip,
+			IP:        ip,
+			Reason:    reason,
+			Source:    "threat",
+			ExpiresAt: &expires,
+		}
+		// Injecter dans la liste de bans existante.
+		s.mu.Lock()
+		s.pendingThreatBans = append(s.pendingThreatBans, b)
+		s.mu.Unlock()
+		s.flushThreatBans()
+	}
+}
+
+// flushThreatBans fusionne les bans threat dans le BanStore actif.
+func (s *Server) flushThreatBans() {
+	s.mu.Lock()
+	toAdd := s.pendingThreatBans
+	s.pendingThreatBans = nil
+	s.mu.Unlock()
+	if len(toAdd) == 0 {
+		return
+	}
+	// Reconstruire la liste complète (BanStore ne supporte que Replace).
+	// Les bans threat ont une durée limitée — ils s'effaceront à expiration.
+	s.bansMu.Lock()
+	defer s.bansMu.Unlock()
+	merged := append(s.lastBanList, toAdd...)
+	s.lastBanList = merged
+	s.banStore.Replace(merged)
+	s.log.Info("threat: ban(s) appliqués", "count", len(toAdd))
+}
+
 func (s *Server) handlePushBans(w http.ResponseWriter, r *http.Request) {
 	var list []*router.RuntimeBan
 	if err := json.NewDecoder(r.Body).Decode(&list); err != nil {
@@ -1397,7 +1501,13 @@ func (s *Server) loadIPProfilesFromDisk() {
 
 // applyBans met à jour le store en mémoire et persiste sur le volume Core.
 func (s *Server) applyBans(list []*router.RuntimeBan) {
-	s.banStore.Replace(list)
+	// Conserver la liste Admin pour pouvoir y fusionner les bans threat.
+	s.bansMu.Lock()
+	s.lastBanList = list
+	merged := append(list, s.pendingThreatBans...)
+	s.bansMu.Unlock()
+
+	s.banStore.Replace(merged)
 	if err := bans.Save(bans.Dir(), list); err != nil {
 		s.log.Warn("core: persistance bans échouée", "err", err)
 		return

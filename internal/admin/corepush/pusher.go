@@ -583,6 +583,19 @@ func (p *Pusher) PushIPProfiles(ctx context.Context) {
 }
 
 // PushBans envoie les bans IP actifs à tous les Cores (HTTP legacy).
+// PushThreatConfig envoie la config du moteur de détection à tous les Cores.
+func (p *Pusher) PushThreatConfig(ctx context.Context, cfg any) {
+	cores, err := p.activeCores(ctx)
+	if err != nil {
+		p.log.Error("corepush: lecture des Cores pour threat-config", "err", err)
+		return
+	}
+	body, _ := json.Marshal(cfg)
+	for _, c := range cores {
+		go p.post(ctx, c, "/internal/v1/threat-config", body, "threat-config")
+	}
+}
+
 func (p *Pusher) PushBans(ctx context.Context) {
 	cores, err := p.activeCores(ctx)
 	if err != nil {

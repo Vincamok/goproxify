@@ -32,6 +32,8 @@ type SecurityHandler struct {
 	ScanCtx    context.Context
 	// OnBansChange notifie un changement de bans (push vers les Cores).
 	OnBansChange func()
+	// OnThreatConfigChange envoie la config du moteur de détection aux Cores.
+	OnThreatConfigChange func(cfg any)
 }
 
 func (h *SecurityHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -87,6 +89,11 @@ func (h *SecurityHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.getIPSProvider(w, r)
 	case r.Method == http.MethodPut && sub == "ips-provider":
 		h.putIPSProvider(w, r)
+	// Moteur de détection automatique (threat engine)
+	case r.Method == http.MethodGet && sub == "threat-config":
+		h.getThreatConfig(w, r)
+	case r.Method == http.MethodPut && sub == "threat-config":
+		h.putThreatConfig(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -594,6 +601,42 @@ func (h *SecurityHandler) putIPSProvider(w http.ResponseWriter, r *http.Request)
 			}
 			go h.CrowdSec.SyncNow(context.Background())
 		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ── Threat Config ─────────────────────────────────────────────────────────────
+
+const threatConfigKey = "threat_engine_config"
+
+func (h *SecurityHandler) getThreatConfig(w http.ResponseWriter, r *http.Request) {
+	row := h.DB.QueryRowContext(r.Context(),
+		`SELECT value FROM settings WHERE key=?`, threatConfigKey)
+	var raw string
+	if err := row.Scan(&raw); err != nil {
+		jsonOK(w, map[string]any{"enabled": false})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(raw)) //nolint:errcheck
+}
+
+func (h *SecurityHandler) putThreatConfig(w http.ResponseWriter, r *http.Request) {
+	var cfg json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		writeErr(w, r, http.StatusBadRequest, "api.err.json")
+		return
+	}
+	_, err := h.DB.ExecContext(r.Context(),
+		`INSERT INTO settings (key, value) VALUES (?, ?)
+		 ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+		threatConfigKey, string(cfg))
+	if err != nil {
+		secJSONErr(w, err, http.StatusInternalServerError)
+		return
+	}
+	if h.OnThreatConfigChange != nil {
+		h.OnThreatConfigChange(cfg)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
