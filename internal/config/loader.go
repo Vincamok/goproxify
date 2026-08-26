@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -169,6 +170,23 @@ func applyAgentEnvOverrides(cfg *AgentConfig) {
 	}
 	if v := os.Getenv("GPX_DOCKER_RUNTIME"); v != "" {
 		cfg.Docker.Runtime = v
+	}
+	if v := os.Getenv("GPX_DOCKER_ENABLED"); v != "" {
+		cfg.Docker.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("GPX_PORTAINER_ENABLED"); v != "" {
+		cfg.Portainer.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("GPX_PORTAINER_URL"); v != "" {
+		cfg.Portainer.URL = v
+	}
+	if v := os.Getenv("GPX_PORTAINER_API_KEY"); v != "" {
+		cfg.Portainer.APIKey = v
+	}
+	if v := os.Getenv("GPX_PORTAINER_POLL_INTERVAL_S"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Portainer.PollIntervalS = n
+		}
 	}
 }
 
