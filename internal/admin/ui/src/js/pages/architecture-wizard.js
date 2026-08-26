@@ -394,11 +394,9 @@ function _archLoad() {
         for (const s of h.services || []) {
           if (s.type !== 'core') continue;
           const info = infoByCoreName.get(s.nodeName || s.name) || infoByCoreName.get(s.name);
-          if (!info) continue;
-          s.domains = info.domainList.join(', ');
-          // Toujours écraser acme/dnsProvider avec la réalité de /domains
-          s.acme = info.hasAcme;
-          if (info.hasAcme) s.dnsProvider = info.dnsProvider;
+          s.domains = info ? info.domainList.join(', ') : '';
+          s.acme = info ? info.hasAcme : false;
+          s.dnsProvider = (info && info.hasAcme) ? info.dnsProvider : 'none';
         }
       }
     }
