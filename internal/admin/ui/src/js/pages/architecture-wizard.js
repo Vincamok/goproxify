@@ -393,9 +393,9 @@ function _archLoad() {
       for (const h of _arch.hosts) {
         for (const s of h.services || []) {
           if (s.type !== 'core') continue;
-          const info = infoByCoreName.get(s.name);
+          const info = infoByCoreName.get(s.nodeName || s.name) || infoByCoreName.get(s.name);
           if (!info) continue;
-          if (!s.domains) s.domains = info.domainList.join(', ');
+          s.domains = info.domainList.join(', ');
           // Toujours écraser acme/dnsProvider avec la réalité de /domains
           s.acme = info.hasAcme;
           if (info.hasAcme) s.dnsProvider = info.dnsProvider;
