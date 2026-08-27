@@ -82,9 +82,13 @@ func LookupPAT(ctx context.Context, db *sql.DB, plain string) (userID, tokenID s
 	defer rows.Close()
 	for rows.Next() {
 		var s string
-		if rows.Scan(&s) == nil {
-			scopes = append(scopes, s)
+		if err := rows.Scan(&s); err != nil {
+			return "", "", nil, err
 		}
+		scopes = append(scopes, s)
+	}
+	if err := rows.Err(); err != nil {
+		return "", "", nil, err
 	}
 	if scopes == nil {
 		scopes = []string{}
