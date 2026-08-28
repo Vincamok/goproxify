@@ -118,18 +118,10 @@ func BootstrapCore(path string) error {
 }
 
 // BootstrapAgent génère agent.json s'il est absent.
+// Si le fichier existe mais manque les sections docker/portainer, elles sont
+// ajoutées depuis les env vars (migration transparente lors de la mise à jour).
 // GPX_CONTROL_PLANE_CORE_ENDPOINT est requis si l'agent est sur un hôte distant.
 func BootstrapAgent(path string) error {
-	if fileExists(path) {
-		return nil
-	}
-
-	coreEndpoint := envOr("GPX_CONTROL_PLANE_CORE_ENDPOINT", "http://goproxify-core:8000")
-	adminEndpoint := envOr("GPX_CONTROL_PLANE_ADMIN_ENDPOINT", "")
-	joinToken := envOr("GPX_CONTROL_PLANE_JOIN_TOKEN", "")
-	nodeName := envOr("GPX_IDENTITY_AGENT_NODE_NAME", "")
-	logLevel := envOr("GPX_ENGINE_LOG_LEVEL", "info")
-
 	dockerEnabled := true
 	if v := os.Getenv("GPX_DOCKER_ENABLED"); v == "false" || v == "0" {
 		dockerEnabled = false
@@ -138,11 +130,21 @@ func BootstrapAgent(path string) error {
 	if !dockerEnabled {
 		dockerRuntime = ""
 	}
-
 	portainerEnabled := os.Getenv("GPX_PORTAINER_ENABLED") == "true" || os.Getenv("GPX_PORTAINER_ENABLED") == "1"
 	portainerURL := os.Getenv("GPX_PORTAINER_URL")
 	portainerAPIKey := os.Getenv("GPX_PORTAINER_API_KEY")
 	portainerPollS := envIntOr("GPX_PORTAINER_POLL_INTERVAL_S", 30)
+
+	if fileExists(path) {
+		// Migration : ajoute docker/portainer si absents (agents mis à jour depuis une ancienne version).
+		return migrateAgentDockerConfig(path, dockerEnabled, dockerRuntime, portainerEnabled, portainerURL, portainerAPIKey, portainerPollS)
+	}
+
+	coreEndpoint := envOr("GPX_CONTROL_PLANE_CORE_ENDPOINT", "http://goproxify-core:8000")
+	adminEndpoint := envOr("GPX_CONTROL_PLANE_ADMIN_ENDPOINT", "")
+	joinToken := envOr("GPX_CONTROL_PLANE_JOIN_TOKEN", "")
+	nodeName := envOr("GPX_IDENTITY_AGENT_NODE_NAME", "")
+	logLevel := envOr("GPX_ENGINE_LOG_LEVEL", "info")
 
 	cfg := map[string]any{
 		"identity": map[string]any{
@@ -160,10 +162,10 @@ func BootstrapAgent(path string) error {
 			"runtime":      dockerRuntime,
 		},
 		"portainer": map[string]any{
-			"enabled":          portainerEnabled,
-			"url":              portainerURL,
-			"api_key":          portainerAPIKey,
-			"poll_interval_s":  portainerPollS,
+			"enabled":         portainerEnabled,
+			"url":             portainerURL,
+			"api_key":         portainerAPIKey,
+			"poll_interval_s": portainerPollS,
 		},
 		"engine": map[string]any{
 			"log_level": logLevel,
@@ -174,6 +176,46 @@ func BootstrapAgent(path string) error {
 		return fmt.Errorf("bootstrap agent: %w", err)
 	}
 	slog.Info("bootstrap: agent.json créé", "path", path)
+	return nil
+}
+
+// migrateAgentDockerConfig ajoute les sections docker/portainer dans agent.json
+// si elles sont absentes. Opération idempotente et atomique.
+func migrateAgentDockerConfig(path string, dockerEnabled bool, dockerRuntime string, portainerEnabled bool, portainerURL, portainerAPIKey string, portainerPollS int) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil // non bloquant
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil
+	}
+	changed := false
+	if _, ok := m["docker"]; !ok {
+		m["docker"] = map[string]any{
+			"enabled":      dockerEnabled,
+			"socket_path":  envOr("GPX_DOCKER_SOCKET_PATH", "/var/run/docker.sock"),
+			"label_prefix": "goproxify.",
+			"runtime":      dockerRuntime,
+		}
+		changed = true
+	}
+	if _, ok := m["portainer"]; !ok {
+		m["portainer"] = map[string]any{
+			"enabled":         portainerEnabled,
+			"url":             portainerURL,
+			"api_key":         portainerAPIKey,
+			"poll_interval_s": portainerPollS,
+		}
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	if err := writeJSON(path, m); err != nil {
+		return fmt.Errorf("bootstrap agent: migration docker/portainer: %w", err)
+	}
+	slog.Info("bootstrap: agent.json migré — sections docker/portainer ajoutées", "path", path)
 	return nil
 }
 
