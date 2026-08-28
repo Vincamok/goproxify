@@ -172,7 +172,11 @@ func applyAgentEnvOverrides(cfg *AgentConfig) {
 		cfg.Docker.Runtime = v
 	}
 	if v := os.Getenv("GPX_DOCKER_ENABLED"); v != "" {
-		cfg.Docker.Enabled = v == "true" || v == "1"
+		enabled := v == "true" || v == "1"
+		cfg.Docker.Enabled = enabled
+		if !enabled {
+			cfg.Docker.Runtime = "" // neutralise le fallback compat-ascendante dans server.go
+		}
 	}
 	if v := os.Getenv("GPX_PORTAINER_ENABLED"); v != "" {
 		cfg.Portainer.Enabled = v == "true" || v == "1"
