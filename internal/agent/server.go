@@ -32,6 +32,7 @@ import (
 // Agent orchestre tous les sous-systèmes.
 type Agent struct {
 	cfg               *config.AgentConfig
+	cfgPath           string // chemin vers agent.json (pour les écritures de config)
 	log               *slog.Logger
 	discovery         *agentdocker.Discovery
 	portainerDisc     *agentportainer.Discovery
@@ -50,7 +51,7 @@ type Agent struct {
 }
 
 // New crée un Agent à partir de la config.
-func New(cfg *config.AgentConfig) (*Agent, error) {
+func New(cfg *config.AgentConfig, cfgPath string) (*Agent, error) {
 	cfg.Identity.NodeName = nodeident.Resolve("agent")
 
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
@@ -190,9 +191,11 @@ func New(cfg *config.AgentConfig) (*Agent, error) {
 	}
 
 	intAPI.setDiscovery(disc)
+	intAPI.cfgPath = cfgPath
 
 	return &Agent{
 		cfg:           cfg,
+		cfgPath:       cfgPath,
 		log:           log,
 		discovery:     disc,
 		portainerDisc: portainerDisc,

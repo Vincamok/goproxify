@@ -130,6 +130,20 @@ func BootstrapAgent(path string) error {
 	nodeName := envOr("GPX_IDENTITY_AGENT_NODE_NAME", "")
 	logLevel := envOr("GPX_ENGINE_LOG_LEVEL", "info")
 
+	dockerEnabled := true
+	if v := os.Getenv("GPX_DOCKER_ENABLED"); v == "false" || v == "0" {
+		dockerEnabled = false
+	}
+	dockerRuntime := envOr("GPX_DOCKER_RUNTIME", "auto")
+	if !dockerEnabled {
+		dockerRuntime = ""
+	}
+
+	portainerEnabled := os.Getenv("GPX_PORTAINER_ENABLED") == "true" || os.Getenv("GPX_PORTAINER_ENABLED") == "1"
+	portainerURL := os.Getenv("GPX_PORTAINER_URL")
+	portainerAPIKey := os.Getenv("GPX_PORTAINER_API_KEY")
+	portainerPollS := envIntOr("GPX_PORTAINER_POLL_INTERVAL_S", 30)
+
 	cfg := map[string]any{
 		"identity": map[string]any{
 			"node_name": nodeName,
@@ -140,9 +154,16 @@ func BootstrapAgent(path string) error {
 			"join_token":     joinToken,
 		},
 		"docker": map[string]any{
+			"enabled":      dockerEnabled,
 			"socket_path":  envOr("GPX_DOCKER_SOCKET_PATH", "/var/run/docker.sock"),
 			"label_prefix": "goproxify.",
-			"runtime":      envOr("GPX_DOCKER_RUNTIME", "auto"),
+			"runtime":      dockerRuntime,
+		},
+		"portainer": map[string]any{
+			"enabled":          portainerEnabled,
+			"url":              portainerURL,
+			"api_key":          portainerAPIKey,
+			"poll_interval_s":  portainerPollS,
 		},
 		"engine": map[string]any{
 			"log_level": logLevel,

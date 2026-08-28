@@ -6,7 +6,6 @@ package config
 import (
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -149,9 +148,10 @@ func LoadAgent(path string) (*AgentConfig, error) {
 	return cfg, nil
 }
 
-// applyAgentEnvOverrides applique les variables d'environnement critiques de l'Agent
-// qui doivent toujours prendre le dessus sur le JSON (comme GPX_PAIRING_SECRET pour Admin/Core).
-// Cela permet de changer l'endpoint du Core via compose sans supprimer agent.json du volume.
+// applyAgentEnvOverrides applique uniquement les variables d'infra bootstrap-critiques
+// qui doivent pouvoir être modifiées via docker-compose sans supprimer agent.json du volume.
+// Les configs fonctionnelles (Docker, Portainer…) sont écrites dans agent.json au premier
+// démarrage par BootstrapAgent() et gérées ensuite via l'UI — les env vars ne les écrasent plus.
 func applyAgentEnvOverrides(cfg *AgentConfig) {
 	if cfg == nil {
 		return
@@ -167,30 +167,6 @@ func applyAgentEnvOverrides(cfg *AgentConfig) {
 	}
 	if v := os.Getenv("GPX_NETWORK_MANAGEMENT_CORE_CONTAINER_NAME"); v != "" {
 		cfg.NetworkManagement.CoreContainerName = v
-	}
-	if v := os.Getenv("GPX_DOCKER_RUNTIME"); v != "" {
-		cfg.Docker.Runtime = v
-	}
-	if v := os.Getenv("GPX_DOCKER_ENABLED"); v != "" {
-		enabled := v == "true" || v == "1"
-		cfg.Docker.Enabled = enabled
-		if !enabled {
-			cfg.Docker.Runtime = "" // neutralise le fallback compat-ascendante dans server.go
-		}
-	}
-	if v := os.Getenv("GPX_PORTAINER_ENABLED"); v != "" {
-		cfg.Portainer.Enabled = v == "true" || v == "1"
-	}
-	if v := os.Getenv("GPX_PORTAINER_URL"); v != "" {
-		cfg.Portainer.URL = v
-	}
-	if v := os.Getenv("GPX_PORTAINER_API_KEY"); v != "" {
-		cfg.Portainer.APIKey = v
-	}
-	if v := os.Getenv("GPX_PORTAINER_POLL_INTERVAL_S"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			cfg.Portainer.PollIntervalS = n
-		}
 	}
 }
 

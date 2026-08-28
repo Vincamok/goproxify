@@ -12,8 +12,10 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	agentdocker "github.com/vincamok/goproxify/internal/agent/docker"
@@ -28,6 +30,7 @@ type internalAPI struct {
 	authTokens []string
 	lifecycle  *agentdocker.LifecycleManager
 	discovery  *agentdocker.Discovery
+	cfgPath    string // chemin vers agent.json, pour l'action configure
 	log        *slog.Logger
 	srv        *http.Server
 }
@@ -150,11 +153,13 @@ func (a *internalAPI) Stop(ctx context.Context) {
 }
 
 type commandRequest struct {
-	Action    string `json:"action"`    // update | rollback | rescan
+	Action    string `json:"action"`    // update | rollback | rescan | configure
 	Container string `json:"container"` // ID ou nom
 	Prune     bool   `json:"prune"`
 	// Pour scale
 	ScaleTarget int `json:"scale_target"`
+	// Pour configure : patch JSON à merger dans agent.json
+	Patch json.RawMessage `json:"patch"`
 }
 
 func (a *internalAPI) handleCommand(w http.ResponseWriter, r *http.Request) {
@@ -213,7 +218,96 @@ func (a *internalAPI) handleCommand(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "rescan_started"})
 
+	case "configure":
+		if a.cfgPath == "" {
+			http.Error(w, "chemin config non configuré", http.StatusInternalServerError)
+			return
+		}
+		if len(cmd.Patch) == 0 {
+			http.Error(w, "patch JSON requis", http.StatusBadRequest)
+			return
+		}
+		if err := applyConfigPatch(a.cfgPath, cmd.Patch); err != nil {
+			a.log.Error("agent: configure échoué", "err", err)
+			http.Error(w, fmt.Sprintf("configure échoué : %v", err), http.StatusInternalServerError)
+			return
+		}
+		a.log.Info("agent: configure appliqué — redémarrage")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "configure_applied"})
+		go func() {
+			// Docker redémarre l'agent après SIGTERM (restart: unless-stopped).
+			p, err := os.FindProcess(os.Getpid())
+			if err == nil {
+				_ = p.Signal(syscall.SIGTERM)
+			}
+		}()
+
 	default:
 		http.Error(w, fmt.Sprintf("action inconnue : %q", cmd.Action), http.StatusBadRequest)
 	}
+}
+
+// applyConfigPatch lit agent.json, y merge le patch (shallow sur les sections top-level),
+// puis réécrit le fichier de façon atomique.
+func applyConfigPatch(cfgPath string, patch json.RawMessage) error {
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return fmt.Errorf("lecture %s : %w", cfgPath, err)
+	}
+
+	var base map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &base); err != nil {
+		return fmt.Errorf("parsing %s : %w", cfgPath, err)
+	}
+
+	var patchMap map[string]json.RawMessage
+	if err := json.Unmarshal(patch, &patchMap); err != nil {
+		return fmt.Errorf("parsing patch : %w", err)
+	}
+
+	// Merge : pour chaque section du patch, fusionner les clés dans la section base.
+	for section, patchVal := range patchMap {
+		baseVal, exists := base[section]
+		if !exists {
+			base[section] = patchVal
+			continue
+		}
+		var baseObj, patchObj map[string]json.RawMessage
+		if json.Unmarshal(baseVal, &baseObj) != nil || json.Unmarshal(patchVal, &patchObj) != nil {
+			// Remplacement direct si l'une des valeurs n'est pas un objet.
+			base[section] = patchVal
+			continue
+		}
+		for k, v := range patchObj {
+			baseObj[k] = v
+		}
+		merged, err := json.Marshal(baseObj)
+		if err != nil {
+			return fmt.Errorf("merge section %q : %w", section, err)
+		}
+		base[section] = merged
+	}
+
+	data, err := json.MarshalIndent(base, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal : %w", err)
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(cfgPath), ".cfg-patch-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	tmp.Close()
+	return os.Rename(tmpName, cfgPath)
 }
