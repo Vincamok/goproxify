@@ -49,6 +49,13 @@ func NewDiscovery(client *Client, adminEndpoint, authToken, labelPrefix, agentNa
 	}
 }
 
+// SetToken met à jour le token d'authentification vers le Core.
+func (d *Discovery) SetToken(token string) {
+	d.mu.Lock()
+	d.authToken = token
+	d.mu.Unlock()
+}
+
 // Start lance la boucle de découverte : scan initial puis polling périodique.
 // Portainer ne fournit pas de stream d'événements multi-endpoint, on poll donc.
 func (d *Discovery) Start(ctx context.Context) {
@@ -131,6 +138,10 @@ func (d *Discovery) removeByKey(ctx context.Context, key string) {
 	if len(shortID) > 12 {
 		shortID = shortID[:12]
 	}
+	d.mu.Lock()
+	token := d.authToken
+	d.mu.Unlock()
+
 	payload, _ := json.Marshal(map[string]any{
 		"container_id": shortID,
 		"name":         key,
@@ -138,7 +149,7 @@ func (d *Discovery) removeByKey(ctx context.Context, key string) {
 	})
 	url := d.adminEndpoint + "/internal/v1/agent/containers"
 	req, _ := http.NewRequestWithContext(ctx, http.MethodDelete, url, bytes.NewReader(payload))
-	req.Header.Set("Authorization", "Bearer "+d.authToken)
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -177,10 +188,14 @@ func (d *Discovery) report(ctx context.Context, ep Endpoint, spec *docker.ProxyS
 	}
 	docker.AttachSecurityPayload(payload, spec)
 
+	d.mu.Lock()
+	token := d.authToken
+	d.mu.Unlock()
+
 	body, _ := json.Marshal(payload)
 	url := d.adminEndpoint + "/internal/v1/agent/containers"
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+d.authToken)
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)

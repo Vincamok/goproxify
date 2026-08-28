@@ -398,6 +398,9 @@ func (a *Agent) retryPairing(ctx context.Context) {
 				a.discovery.SetToken(token)
 				go a.discovery.ScanAll(ctx)
 			}
+			if a.portainerDisc != nil {
+				a.portainerDisc.SetToken(token)
+			}
 			// Propager le token au heartbeatLoop (qui tourne avec authToken="")
 			select {
 			case a.tokenUpdate <- token:
