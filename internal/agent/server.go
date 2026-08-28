@@ -509,8 +509,13 @@ func (a *Agent) Start(ctx context.Context) error {
 
 	// Propager le token résolu à la discovery et aux autres composants
 	// qui ont été construits avant le pairing (dans New()).
-	if token != "" && a.discovery != nil {
-		a.discovery.SetToken(token)
+	if token != "" {
+		if a.discovery != nil {
+			a.discovery.SetToken(token)
+		}
+		if a.portainerDisc != nil {
+			a.portainerDisc.SetToken(token)
+		}
 	}
 
 	// Client WS persistant Agent→Core
