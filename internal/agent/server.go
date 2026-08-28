@@ -32,6 +32,7 @@ import (
 // Agent orchestre tous les sous-systèmes.
 type Agent struct {
 	cfg               *config.AgentConfig
+	cfgPath           string
 	log               *slog.Logger
 	discovery         *agentdocker.Discovery
 	portainerDisc     *agentportainer.Discovery
@@ -50,7 +51,7 @@ type Agent struct {
 }
 
 // New crée un Agent à partir de la config.
-func New(cfg *config.AgentConfig) (*Agent, error) {
+func New(cfg *config.AgentConfig, cfgPath ...string) (*Agent, error) {
 	cfg.Identity.NodeName = nodeident.Resolve("agent")
 
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
@@ -114,7 +115,11 @@ func New(cfg *config.AgentConfig) (*Agent, error) {
 	}
 
 	// API interne (reçoit les commandes de l'Admin)
-	intAPI := newInternalAPI(cfg.InternalAPI.Port, lc, log)
+	p := ""
+	if len(cfgPath) > 0 {
+		p = cfgPath[0]
+	}
+	intAPI := newInternalAPI(cfg.InternalAPI.Port, lc, log, p)
 
 	// Auto-scaler
 	var as *agentdocker.AutoScaler
@@ -191,8 +196,14 @@ func New(cfg *config.AgentConfig) (*Agent, error) {
 
 	intAPI.setDiscovery(disc)
 
+	path := ""
+	if len(cfgPath) > 0 {
+		path = cfgPath[0]
+	}
+
 	return &Agent{
 		cfg:           cfg,
+		cfgPath:       path,
 		log:           log,
 		discovery:     disc,
 		portainerDisc: portainerDisc,
