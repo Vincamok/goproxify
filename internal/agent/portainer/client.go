@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -42,13 +43,22 @@ func NewClient(baseURL, token string) *Client {
 	}
 }
 
+// setAuth applique soit X-API-Key (préfixe "ptr_"), soit Authorization Bearer.
+// Portainer 2.x refuse les deux headers simultanément.
+func (c *Client) setAuth(req *http.Request) {
+	if strings.HasPrefix(c.token, "ptr_") {
+		req.Header.Set("X-API-Key", c.token)
+	} else {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+}
+
 func (c *Client) get(ctx context.Context, path string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("X-API-Key", c.token)
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	c.setAuth(req)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -67,8 +77,7 @@ func (c *Client) getRaw(ctx context.Context, path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("X-API-Key", c.token)
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	c.setAuth(req)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
