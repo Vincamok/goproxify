@@ -164,13 +164,19 @@ func (d *Discovery) removeByKey(ctx context.Context, key string) {
 }
 
 // endpointHost extrait le hostname d'une URL d'endpoint Portainer.
-// Retourne "" pour les endpoints locaux (unix://).
+// Retourne "" pour les endpoints locaux (unix://, npipe://).
+// Portainer stocke parfois les URLs sans scheme (ex : "192.168.1.100:9001") ;
+// on normalise avant parsing pour éviter que url.Parse interprète l'hôte comme scheme.
 func endpointHost(rawURL string) string {
 	if rawURL == "" {
 		return ""
 	}
-	u, err := url.Parse(rawURL)
-	if err != nil || u.Scheme == "unix" {
+	normalized := rawURL
+	if !strings.Contains(rawURL, "://") {
+		normalized = "tcp://" + rawURL
+	}
+	u, err := url.Parse(normalized)
+	if err != nil || u.Scheme == "unix" || u.Scheme == "npipe" {
 		return ""
 	}
 	return u.Hostname()
@@ -186,6 +192,17 @@ func firstPublishedTCPPort(ports []ContainerPort) int {
 	for _, p := range ports {
 		if strings.EqualFold(p.Type, "tcp") && p.PublicPort > 0 {
 			return p.PublicPort
+		}
+	}
+	return 0
+}
+
+// firstPrivateTCPPort retourne le premier port TCP interne du conteneur (PrivatePort).
+// Utilisé pour les endpoints locaux où l'IP interne est directement accessible.
+func firstPrivateTCPPort(ports []ContainerPort) int {
+	for _, p := range ports {
+		if strings.EqualFold(p.Type, "tcp") && p.PrivatePort > 0 {
+			return p.PrivatePort
 		}
 	}
 	return 0
@@ -220,6 +237,17 @@ func (d *Discovery) resolveSpecs(c Container, firstNet, firstName, containerIP, 
 
 	// Endpoint local (unix:// ou TCP localhost) : garder l'IP interne du conteneur.
 	// Le Core doit être dans le même réseau Docker pour la joindre.
+	// Si aucun label de port, utiliser PrivatePort (port applicatif du conteneur).
+	if labels[docker.LabelBackendURL] == "" && labels[docker.LabelPort] == "" {
+		if priv := firstPrivateTCPPort(c.Ports); priv > 0 {
+			clone := make(map[string]string, len(labels)+1)
+			for k, v := range labels {
+				clone[k] = v
+			}
+			clone[docker.LabelPort] = strconv.Itoa(priv)
+			return docker.ParseLabelsMulti(c.ID, firstName, c.Image, firstNet, clone, nil, containerIP)
+		}
+	}
 	return docker.ParseLabelsMulti(c.ID, firstName, c.Image, firstNet, labels, nil, containerIP)
 }
 
