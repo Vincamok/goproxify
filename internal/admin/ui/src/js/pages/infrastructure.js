@@ -7,11 +7,17 @@ pages.infrastructure = async function() {
   const content = document.getElementById('content');
   content.innerHTML = '<p style="color:var(--text2)">' + t('common.loading') + '</p>';
   try {
-    const [nodes, health] = await Promise.all([
+    const [nodes, health, declaredAll] = await Promise.all([
       api('GET','/nodes'),
       api('GET','/health').catch(()=>null),
+      api('GET','/declared-nodes').catch(()=>[]),
     ]);
     const allNodes   = nodes || [];
+    // Build excluded map: nodeName → declared-node entry
+    window._excludedDeclaredNodes = new Map();
+    for (const dn of (declaredAll || [])) {
+      try { if (JSON.parse(dn.config || '{}').excluded) window._excludedDeclaredNodes.set(dn.name, dn); } catch {}
+    }
     const pendingNodes = allNodes.filter(n => n.status === 'pending');
     const coreNodes  = allNodes.filter(n => n.role === 'core' && n.status !== 'pending');
     const agentNodes = allNodes.filter(n => n.role === 'agent' && n.status !== 'pending');
@@ -287,7 +293,14 @@ function infraAgentCard(n) {
   const nodeName = n.node_name;
   const rts = (n.container_runtimes || []);
   const kicker = ['Agent', n.region, n.environment].filter(Boolean).join(' · ');
-  const cardStyle = declared ? 'padding:18px 20px;display:flex;flex-direction:column;gap:0;opacity:.55;filter:grayscale(.5);' : 'padding:18px 20px;display:flex;flex-direction:column;gap:0;';
+  const dnExcluded = window._excludedDeclaredNodes?.get(nodeName);
+  const excluded = !!dnExcluded;
+  const dnId = dnExcluded ? dnExcluded.id : '';
+  const cardStyle = declared
+    ? 'padding:18px 20px;display:flex;flex-direction:column;gap:0;opacity:.55;filter:grayscale(.5);'
+    : excluded
+      ? 'padding:18px 20px;display:flex;flex-direction:column;gap:0;border-color:rgba(239,68,68,.4);'
+      : 'padding:18px 20px;display:flex;flex-direction:column;gap:0;';
 
   // Icônes SVG inline
   const iconRescan  = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>`;
@@ -316,9 +329,13 @@ function infraAgentCard(n) {
     ${_infraPendingDeploy(name) ? `<button class="btn-icon" title="${t('infra.mark_deployed')}" onclick="archMarkDeployed('${esc(name)}')">
       <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
     </button>` : ''}
-    <button class="btn-icon" title="${t('infra.title.delete_node')}" style="color:var(--red);margin-left:auto;" onclick="deleteActiveNode('${esc(nodeName || n.id)}','${esc(name)}','agent')">
-      ${iconTrash}
-    </button>
+    ${excluded
+      ? `<button class="btn-icon" title="${t('infra.excluded.confirm_btn')}" style="color:var(--red);margin-left:auto;" onclick="confirmAgentRemoval('${esc(dnId)}','${esc(nodeName)}','${esc(name)}')">
+           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+         </button>`
+      : `<button class="btn-icon" title="${t('infra.title.delete_node')}" style="color:var(--red);margin-left:auto;" onclick="deleteActiveNode('${esc(nodeName || n.id)}','${esc(name)}','agent')">
+           ${iconTrash}
+         </button>`}
   </div>`;
 
   return `<div class="card blueprint" style="${cardStyle}">
@@ -332,6 +349,7 @@ function infraAgentCard(n) {
       </div>
       <div style="flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
         ${statusBadge(online, declared)}
+        ${excluded ? `<span class="tag" style="font-size:10px;background:rgba(239,68,68,.15);color:var(--red,#ef4444);border:1px solid rgba(239,68,68,.35);padding:2px 6px;border-radius:4px;">${t('infra.excluded_badge')}</span>` : ''}
         ${_infraPendingDeploy(name) ? `<span class="tag" style="font-size:10px;background:rgba(249,115,22,.15);color:var(--orange,#f97316);border:1px solid rgba(249,115,22,.35);padding:2px 6px;border-radius:4px;">${t('infra.redeploy_required')}</span>` : ''}
         <span style="font-size:10px;opacity:.45;font-family:monospace;">v${esc(n.version || '—')}</span>
       </div>
@@ -350,13 +368,14 @@ async function deleteActiveNode(id, name, role) {
     try {
       if (role === 'agent') {
         await api('POST', '/agents/' + encodeURIComponent(id) + '/revoke');
-        try { await api('DELETE', '/nodes/' + encodeURIComponent(id)); } catch (_) { /* agent may not be in Admin nodes table */ }
-        toast(t('infra.toast.agent_revoked'), 'success');
+        await api('POST', '/declared-nodes', {role: 'agent', name: id, config: {excluded: true}}).catch(() => {});
+        toast(t('infra.toast.agent_excluded'), 'success');
+        _showAgentStopSnippet(id, name);
       } else {
         await api('DELETE', '/nodes/' + encodeURIComponent(id));
         toast(t('infra.toast.node_deleted'), 'success');
+        navigate('infrastructure');
       }
-      navigate('infrastructure');
     } catch (e) {
       toast(t('common.error_msg', { msg: e.message }), 'error');
     }
@@ -382,6 +401,32 @@ async function deleteActiveNode(id, name, role) {
   }
 
   confirm_(t('infra.confirm.delete_node', { name }), doDelete);
+}
+
+function _showAgentStopSnippet(nodeName, displayName) {
+  const svcName = nodeName.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+  const snippet = `# Stop and remove the agent container\ndocker compose stop ${svcName}\ndocker compose rm -f ${svcName}\n\n# Or with plain docker:\ndocker stop ${svcName} && docker rm ${svcName}`;
+  modal(
+    t('infra.excluded.compose_title'),
+    `<p style="margin:0 0 10px;font-size:13.5px;">${t('infra.excluded.compose_hint')}</p>
+     <pre style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:12px;font-size:12px;font-family:monospace;overflow-x:auto;white-space:pre;">${esc(snippet)}</pre>
+     <p style="margin:10px 0 0;font-size:12px;color:var(--text2);">${t('infra.excluded.lead')}</p>`,
+    `<button class="btn btn-secondary" onclick="closeModal();navigate('infrastructure')">${t('common.close')}</button>`
+  );
+}
+
+async function confirmAgentRemoval(dnId, nodeName, displayName) {
+  const doRemove = async () => {
+    try {
+      if (dnId) await api('DELETE', '/declared-nodes/' + encodeURIComponent(dnId));
+      try { await api('DELETE', '/nodes/' + encodeURIComponent(nodeName)); } catch (_) {}
+      toast(t('infra.toast.agent_removal_confirmed'), 'success');
+      navigate('infrastructure');
+    } catch (e) {
+      toast(t('common.error_msg', { msg: e.message }), 'error');
+    }
+  };
+  confirm_(t('infra.confirm.delete_node', { name: displayName }), doRemove);
 }
 
 /** Génère les opts Agent (envVars, volumes, image) depuis un formulaire "Ajouter un agent". */
