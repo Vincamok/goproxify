@@ -209,7 +209,8 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	certsH := &api.CertsHandler{DB: s.db, Log: s.log, Manager: acmeMgr}
 	nodesH := &api.NodesHandler{DB: s.db, Log: s.log}
-	declaredNodesH := &api.DeclaredNodesHandler{DB: s.db, Log: s.log, CoreNodeName: s.cfg.Identity.CoreNodeName}
+	topoSnapshotsH := &api.TopologySnapshotsHandler{DB: s.db, Log: s.log}
+	declaredNodesH := &api.DeclaredNodesHandler{DB: s.db, Log: s.log, CoreNodeName: s.cfg.Identity.CoreNodeName, Snapshots: topoSnapshotsH}
 	bootstrapH := &api.BootstrapHandler{
 		DB:  s.db,
 		Log: s.log,
@@ -427,6 +428,8 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/api/v1/nodes/", protected(nodesH))
 	mux.Handle("/api/v1/declared-nodes", protected(declaredNodesH))
 	mux.Handle("/api/v1/declared-nodes/", protected(declaredNodesH))
+	mux.Handle("/api/v1/topology-snapshots", protected(topoSnapshotsH))
+	mux.Handle("/api/v1/topology-snapshots/", protected(topoSnapshotsH))
 	mux.Handle("POST /api/v1/bootstrap-tickets", protected(http.HandlerFunc(bootstrapH.ServeCreate)))
 	mux.Handle("/api/v1/node-events", protected(nodeEventsH))
 	mux.Handle("/api/v1/discovered-containers", protected(discoveredH))

@@ -71,6 +71,44 @@ pages.infrastructure = async function() {
     `;
     renderTopology(allNodes.filter(n => n.status !== 'pending'), health);
 
+    // Snapshots de topologie
+    const snapshots = await api('GET','/topology-snapshots').catch(()=>[]);
+    if (snapshots && snapshots.length) {
+      const snapDiv = document.createElement('div');
+      snapDiv.style.cssText = 'margin-top:24px';
+      snapDiv.innerHTML = `
+        <div class="card blueprint">
+          <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;">
+            <span class="card-title">${t('infra.snapshots.title')}</span>
+            <button class="btn btn-secondary btn-sm" onclick="createTopoSnapshot()">${t('infra.snapshots.create')}</button>
+          </div>
+          <div class="table-wrap"><table>
+            <thead><tr><th>${t('infra.snapshots.col.label')}</th><th>${t('common.date')}</th><th></th></tr></thead>
+            <tbody>${snapshots.map(s => `<tr>
+              <td style="font-size:12px;color:var(--text2);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(s.label||'—')}</td>
+              <td style="font-size:11px;">${fmtDate(s.created_at)}</td>
+              <td style="text-align:right;white-space:nowrap;">
+                <button class="btn btn-secondary btn-sm" style="margin-right:4px;" onclick="restoreTopoSnapshot('${esc(s.id)}','${esc(s.label||s.id)}')">${t('infra.snapshots.restore')}</button>
+                <button class="btn btn-danger btn-sm" onclick="deleteTopoSnapshot('${esc(s.id)}')">${t('common.delete')}</button>
+              </td>
+            </tr>`).join('')}</tbody>
+          </table></div>
+        </div>`;
+      content.appendChild(snapDiv);
+    } else {
+      const snapDiv = document.createElement('div');
+      snapDiv.style.cssText = 'margin-top:24px';
+      snapDiv.innerHTML = `
+        <div class="card blueprint">
+          <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;">
+            <span class="card-title">${t('infra.snapshots.title')}</span>
+            <button class="btn btn-secondary btn-sm" onclick="createTopoSnapshot()">${t('infra.snapshots.create')}</button>
+          </div>
+          <p style="margin:12px 16px;font-size:13px;color:var(--text2);">${t('infra.snapshots.empty')}</p>
+        </div>`;
+      content.appendChild(snapDiv);
+    }
+
     // Événements scaling & santé
     const events = await api('GET','/node-events?limit=30').catch(() => []);
     const scaleEvents = (events||[]).filter(e => e.event_type.startsWith('scale_') || e.event_type === 'health_escalation');
@@ -427,6 +465,49 @@ async function confirmAgentRemoval(dnId, nodeName, displayName) {
     }
   };
   confirm_(t('infra.confirm.delete_node', { name: displayName }), doRemove);
+}
+
+async function createTopoSnapshot() {
+  const label = prompt(t('infra.snapshots.label_prompt'), '');
+  if (label === null) return;
+  try {
+    await api('POST', '/topology-snapshots', { label: label || '' });
+    toast(t('infra.snapshots.toast.created'), 'success');
+    navigate('infrastructure');
+  } catch (e) {
+    toast(t('common.error_msg', { msg: e.message }), 'error');
+  }
+}
+
+async function restoreTopoSnapshot(id, label) {
+  _confirmCb = async () => {
+    try {
+      const res = await api('POST', '/topology-snapshots/' + encodeURIComponent(id) + '/restore');
+      toast(t('infra.snapshots.toast.restored', { n: res.declared_nodes }), 'success');
+      navigate('infrastructure');
+    } catch (e) {
+      toast(t('common.error_msg', { msg: e.message }), 'error');
+    }
+  };
+  modal(
+    t('infra.snapshots.restore_title'),
+    `<p style="font-size:13.5px;line-height:1.5;">${t('infra.snapshots.restore_lead', { label: esc(label) })}</p>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">${t('common.cancel')}</button>
+     <button class="btn btn-danger" onclick="closeModal();if(_confirmCb){const f=_confirmCb;_confirmCb=null;f();}">${t('infra.snapshots.restore_confirm')}</button>`
+  );
+}
+
+async function deleteTopoSnapshot(id) {
+  const doDelete = async () => {
+    try {
+      await api('DELETE', '/topology-snapshots/' + encodeURIComponent(id));
+      toast(t('infra.snapshots.toast.deleted'), 'success');
+      navigate('infrastructure');
+    } catch (e) {
+      toast(t('common.error_msg', { msg: e.message }), 'error');
+    }
+  };
+  confirm_(t('infra.snapshots.delete_confirm'), doDelete);
 }
 
 /** Génère les opts Agent (envVars, volumes, image) depuis un formulaire "Ajouter un agent". */
