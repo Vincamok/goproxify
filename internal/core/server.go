@@ -949,7 +949,6 @@ func (s *Server) startInternalAPI() error {
 	// Relay Admin → Agent (Admin appelle Core, Core relaie à l'Agent)
 	mux.HandleFunc("POST /internal/v1/agent/{name}/rescan", s.handleAgentRescanRelay)
 	mux.HandleFunc("POST /internal/v1/agent/{name}/command", s.handleAgentCommandRelay)
-	mux.HandleFunc("PATCH /internal/v1/agent/{name}/config", s.handleAgentConfigRelay)
 
 	// Endpoints Core → Admin (lecture de l'état des nœuds et conteneurs)
 	mux.HandleFunc("GET /internal/v1/nodes", s.handleListNodes)
@@ -2763,66 +2762,6 @@ func (s *Server) handleAgentCommandRelay(w http.ResponseWriter, r *http.Request)
 	resp, err := agentRelayHTTP.Do(req)
 	if err != nil {
 		s.log.Warn("command relay: agent injoignable", "agent", name, "endpoint", n.Endpoint, "err", err)
-		http.Error(w, "agent injoignable", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-	w.WriteHeader(resp.StatusCode)
-}
-
-// handleAgentConfigRelay relaie un patch de configuration vers l'Agent cible.
-// PATCH /internal/v1/agent/{name}/config
-// Body : JSON partiel des sections à écraser dans agent.json.
-// L'Agent écrit le fichier puis s'arrête (os.Exit(0)) ; Docker le redémarre automatiquement.
-func (s *Server) handleAgentConfigRelay(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "erreur lecture body", http.StatusBadRequest)
-		return
-	}
-
-	// Ajouter l'action "configure" au payload avant de relayer.
-	var patch map[string]json.RawMessage
-	if err := json.Unmarshal(body, &patch); err != nil {
-		http.Error(w, "JSON invalide", http.StatusBadRequest)
-		return
-	}
-	patch["action"] = json.RawMessage(`"configure"`)
-	enriched, _ := json.Marshal(patch)
-
-	// WS prioritaire.
-	if s.wsHub.IsAgentConnected(name) {
-		msg, err := corews.NewMessage(0, corews.TypeCommand, json.RawMessage(enriched))
-		if err != nil {
-			http.Error(w, "erreur interne", http.StatusInternalServerError)
-			return
-		}
-		if err := s.wsHub.SendToAgentByName(name, msg); err != nil {
-			http.Error(w, "agent injoignable", http.StatusBadGateway)
-			return
-		}
-		w.WriteHeader(http.StatusAccepted)
-		return
-	}
-
-	// Fallback HTTP.
-	n, ok := s.nodeStore.Get(name)
-	if !ok || n.Endpoint == "" {
-		http.Error(w, "agent introuvable ou endpoint inconnu", http.StatusNotFound)
-		return
-	}
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
-		n.Endpoint+"/internal/v1/command", bytes.NewReader(enriched))
-	if err != nil {
-		http.Error(w, "erreur interne", http.StatusInternalServerError)
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	setAgentInternalAuth(req)
-	resp, err := agentRelayHTTP.Do(req)
-	if err != nil {
-		s.log.Warn("config relay: agent injoignable", "agent", name, "err", err)
 		http.Error(w, "agent injoignable", http.StatusBadGateway)
 		return
 	}

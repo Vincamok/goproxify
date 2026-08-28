@@ -502,7 +502,7 @@ func runAgentService() {
 		os.Exit(1)
 	}
 
-	ag, err := agent.New(cfg, cfgPath)
+	ag, err := agent.New(cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "initialisation agent : %v\n", err)
 		os.Exit(1)

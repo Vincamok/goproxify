@@ -9,11 +9,9 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -24,9 +22,8 @@ import (
 // internalAPI expose une API HTTP locale sur laquelle le Core / l'Admin poussent des commandes.
 // Écoute sur :8001 (configurable). Auth Bearer obligatoire (fail-closed).
 type internalAPI struct {
-	port    int
-	cfgPath string // chemin vers agent.json (pour l'action configure)
-	mu      sync.RWMutex
+	port int
+	mu   sync.RWMutex
 	// authTokens : valeurs Bearer acceptées (pairing secret et/ou token Agent).
 	authTokens []string
 	lifecycle  *agentdocker.LifecycleManager
@@ -35,15 +32,11 @@ type internalAPI struct {
 	srv        *http.Server
 }
 
-func newInternalAPI(port int, lifecycle *agentdocker.LifecycleManager, log *slog.Logger, cfgPath ...string) *internalAPI {
+func newInternalAPI(port int, lifecycle *agentdocker.LifecycleManager, log *slog.Logger) *internalAPI {
 	if port == 0 {
 		port = 8001
 	}
-	p := ""
-	if len(cfgPath) > 0 {
-		p = cfgPath[0]
-	}
-	return &internalAPI{port: port, cfgPath: p, lifecycle: lifecycle, log: log}
+	return &internalAPI{port: port, lifecycle: lifecycle, log: log}
 }
 
 // setDiscovery injecte la Discovery après construction (le pairing peut survenir après New).
@@ -173,13 +166,8 @@ func (a *internalAPI) handleCommand(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "non autorisé", http.StatusUnauthorized)
 		return
 	}
-	rawBody, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "erreur lecture body", http.StatusBadRequest)
-		return
-	}
 	var cmd commandRequest
-	if err := json.Unmarshal(rawBody, &cmd); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
 		http.Error(w, "JSON invalide", http.StatusBadRequest)
 		return
 	}
@@ -225,62 +213,7 @@ func (a *internalAPI) handleCommand(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "rescan_started"})
 
-	case "configure":
-		if a.cfgPath == "" {
-			http.Error(w, "chemin config non configuré", http.StatusNotImplemented)
-			return
-		}
-		var patch map[string]json.RawMessage
-		if err := json.Unmarshal(rawBody, &patch); err != nil {
-			http.Error(w, "JSON invalide", http.StatusBadRequest)
-			return
-		}
-		delete(patch, "action")
-		if err := a.applyConfigPatch(patch); err != nil {
-			a.log.Error("agent: configure échoué", "err", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.WriteHeader(http.StatusAccepted)
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "restarting"})
-		go func() {
-			a.log.Info("agent: configure — redémarrage pour appliquer la nouvelle config")
-			os.Exit(0)
-		}()
-
 	default:
 		http.Error(w, fmt.Sprintf("action inconnue : %q", cmd.Action), http.StatusBadRequest)
 	}
-}
-
-// applyConfigPatch fusionne un patch JSON partiel dans agent.json et le réécrit.
-func (a *internalAPI) applyConfigPatch(patch map[string]json.RawMessage) error {
-	data, err := os.ReadFile(a.cfgPath)
-	if err != nil {
-		return fmt.Errorf("lecture %s: %w", a.cfgPath, err)
-	}
-	var current map[string]json.RawMessage
-	if err := json.Unmarshal(data, &current); err != nil {
-		return fmt.Errorf("parsing %s: %w", a.cfgPath, err)
-	}
-	for k, v := range patch {
-		current[k] = v
-	}
-	out, err := json.MarshalIndent(current, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(a.cfgPath), ".configure-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-	if _, err := tmp.Write(out); err != nil {
-		tmp.Close()
-		return err
-	}
-	tmp.Sync() //nolint:errcheck
-	tmp.Close()
-	return os.Rename(tmpName, a.cfgPath)
 }

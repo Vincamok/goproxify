@@ -92,8 +92,6 @@ func (h *NodesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.triggerRollback(w, r, id)
 	case r.Method == http.MethodPost && id != "" && action == "rescan":
 		h.triggerRescan(w, r, id)
-	case r.Method == http.MethodPatch && id != "" && action == "config":
-		h.configureAgent(w, r, id)
 	case r.Method == http.MethodDelete && id != "" && action == "":
 		h.deleteNode(w, r, id)
 	default:
