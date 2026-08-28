@@ -8,6 +8,7 @@ package portainer
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -31,10 +32,13 @@ type Client struct {
 // NewClient crée un Client Portainer.
 // token est un API-key Portainer (Settings → API Keys) ou un JWT de session.
 func NewClient(baseURL, token string) *Client {
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // Portainer self-signed certs
+	}
 	return &Client{
 		baseURL: baseURL,
 		token:   token,
-		http:    &http.Client{Timeout: 15 * time.Second},
+		http:    &http.Client{Timeout: 15 * time.Second, Transport: transport},
 	}
 }
 
