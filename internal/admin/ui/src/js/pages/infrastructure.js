@@ -293,7 +293,7 @@ function infraAgentCard(n) {
   const iconUpdate  = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>`;
   const iconContainers = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>`;
   const iconEvents  = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>`;
-  const iconConfig = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`;
+  const iconCfg2    = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>`;
   const iconTrash   = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>`;
 
   const activeActions = `<div style="display:flex;gap:6px;margin-top:14px;align-items:center;">
@@ -308,6 +308,9 @@ function infraAgentCard(n) {
     </button>
     <button class="btn-icon" title="${t('infra.title.events')}" onclick="agentEvents('${esc(nodeName)}','${esc(name)}')">
       ${iconEvents}
+    </button>
+    <button class="btn-icon" title="${t('infra.configure')}" onclick="agentConfigure('${esc(nodeName)}',${JSON.stringify(n).replace(/</g,'\\u003c').replace(/>/g,'\\u003e')})">
+      ${iconCfg2}
     </button>
     ${_infraPendingDeploy(name) ? `<button class="btn-icon" title="${t('infra.mark_deployed')}" onclick="archMarkDeployed('${esc(name)}')">
       <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
@@ -386,6 +389,75 @@ async function agentRescan(nodeName) {
     toast(t('infra.toast.rescan_started'), 'success');
   } catch(e) { toast(t('infra.toast.rescan_failed', { msg: e.message }), 'error'); }
 }
+
+async function agentConfigure(nodeName, node) {
+  const name = (node && (node.display_name || node.node_name)) || nodeName;
+  const formId = 'agent-cfg-form-' + nodeName.replace(/[^a-z0-9]/gi,'_');
+
+  const sectionTitle = (label) =>
+    `<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);margin:16px 0 8px;">${label}</div>`;
+
+  const toggle = (id, label, checked) =>
+    `<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+       <input type="checkbox" id="${id}" ${checked?'checked':''} style="accent-color:var(--accent);width:16px;height:16px;">
+       ${label}
+     </label>`;
+
+  const field = (id, label, value, type='text', placeholder='') =>
+    `<label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text2);">${label}
+       <input id="${id}" type="${type}" value="${esc(value||'')}" placeholder="${esc(placeholder)}"
+         style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text1);font-family:inherit;">
+     </label>`;
+
+  const d = (node && node._agent_config && node._agent_config.docker) || {};
+  const p = (node && node._agent_config && node._agent_config.portainer) || {};
+
+  const body = `<form id="${formId}" style="display:flex;flex-direction:column;gap:10px;">
+    ${sectionTitle(t('infra.configure.docker_section'))}
+    ${toggle('cfg-docker-enabled', t('infra.configure.enabled'), d.enabled !== false)}
+    ${field('cfg-docker-socket', 'Socket path', d.socket_path, 'text', '/var/run/docker.sock')}
+    ${sectionTitle(t('infra.configure.portainer_section'))}
+    ${toggle('cfg-portainer-enabled', t('infra.configure.enabled'), !!p.enabled)}
+    ${field('cfg-portainer-url', t('infra.configure.url'), p.url, 'url', 'https://portainer:9443')}
+    ${field('cfg-portainer-key', t('infra.configure.api_key'), p.api_key, 'password', 'ptr_...')}
+    ${field('cfg-portainer-poll', t('infra.configure.poll_interval'), p.poll_interval_s||30, 'number', '30')}
+    <p style="margin:8px 0 0;font-size:11px;color:var(--text2);">${t('infra.configure.restart_notice')}</p>
+  </form>`;
+
+  const footer = `
+    <button class="btn btn-secondary" onclick="closeModal()">${t('common.cancel')}</button>
+    <button class="btn btn-primary" id="cfg-apply-btn" onclick="_submitAgentConfigure('${esc(nodeName)}','${formId}')">${t('common.save')}</button>`;
+
+  modal(t('infra.configure.title', { name: esc(name) }), body, footer);
+}
+window.agentConfigure = agentConfigure;
+
+window._submitAgentConfigure = async function(nodeName, formId) {
+  const btn = document.getElementById('cfg-apply-btn');
+  if (btn) { btn.disabled = true; btn.textContent = t('infra.configure.applying'); }
+
+  const patch = {
+    docker: {
+      enabled: document.getElementById('cfg-docker-enabled')?.checked ?? true,
+      socket_path: document.getElementById('cfg-docker-socket')?.value || '/var/run/docker.sock',
+    },
+    portainer: {
+      enabled: document.getElementById('cfg-portainer-enabled')?.checked ?? false,
+      url: document.getElementById('cfg-portainer-url')?.value || '',
+      api_key: document.getElementById('cfg-portainer-key')?.value || '',
+      poll_interval_s: parseInt(document.getElementById('cfg-portainer-poll')?.value || '30', 10) || 30,
+    },
+  };
+
+  try {
+    await api('POST', `/nodes/${encodeURIComponent(nodeName)}/configure`, patch);
+    closeModal();
+    toast(t('infra.configure.applied'), 'success');
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = t('common.save'); }
+    toast(t('infra.configure.failed', { msg: e.message }), 'error');
+  }
+};
 
 async function agentUpdate(nodeName) {
   if (!confirm(t('infra.confirm.update_agent', { name: nodeName }))) return;
@@ -718,6 +790,7 @@ function _detailsCardHTML(n) {
     const iconUpdate = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>`;
     const iconContainers = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>`;
     const iconEvents = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>`;
+    const iconConfigure = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>`;
     body = `<div style="margin-top:10px;">
       <div style="font-size:11px;color:var(--text2);">${t('infra.linked_core')}</div>
       <div style="font-family:monospace;font-size:12px;">${esc(n.target_core||'—')}</div>
@@ -729,6 +802,7 @@ function _detailsCardHTML(n) {
       <button class="btn-icon" title="${t('infra.title.events')}" onclick="agentEvents('${esc(nn)}','${esc(dn)}')">${iconEvents}</button>
       <button class="btn-icon" title="${t('infra.title.rescan')}" onclick="agentRescan('${esc(nn)}')">${iconRescan}</button>
       <button class="btn-icon" title="${t('infra.title.update_agent')}" onclick="agentUpdate('${esc(nn)}')">${iconUpdate}</button>
+      <button class="btn-icon" title="${t('infra.configure')}" onclick="agentConfigure('${esc(nn)}',${JSON.stringify(n).replace(/</g,'\\u003c').replace(/>/g,'\\u003e')})">${iconConfigure}</button>
     </div>`;
   }
 

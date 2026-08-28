@@ -92,6 +92,8 @@ func (h *NodesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.triggerRollback(w, r, id)
 	case r.Method == http.MethodPost && id != "" && action == "rescan":
 		h.triggerRescan(w, r, id)
+	case r.Method == http.MethodPost && id != "" && action == "configure":
+		h.configureAgent(w, r, id)
 	case r.Method == http.MethodDelete && id != "" && action == "":
 		h.deleteNode(w, r, id)
 	default:
@@ -636,6 +638,29 @@ func (h *NodesHandler) triggerRescan(w http.ResponseWriter, r *http.Request, nod
 	h.Log.Info("nodes: rescan déclenché", "node", nodeID)
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "rescan_started", "node": nodeID})
+}
+
+// configureAgent envoie un patch de configuration à un Agent via le relay Core.
+// Le patch est un objet JSON dont les sections (docker, portainer…) sont mergées
+// dans agent.json ; l'Agent redémarre ensuite automatiquement.
+func (h *NodesHandler) configureAgent(w http.ResponseWriter, r *http.Request, nodeID string) {
+	var patch json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+		http.Error(w, "JSON invalide", http.StatusBadRequest)
+		return
+	}
+	payload := map[string]any{
+		"action": "configure",
+		"patch":  patch,
+	}
+	if err := h.relayToAgent(r.Context(), nodeID, payload); err != nil {
+		h.Log.Warn("nodes: configure échoué", "node", nodeID, "err", err)
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	h.Log.Info("nodes: configure envoyé", "node", nodeID)
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "configure_sent", "node": nodeID})
 }
 
 func (h *NodesHandler) nodeEndpoint(ctx context.Context, nodeID string) (string, error) {
