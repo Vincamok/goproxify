@@ -743,8 +743,6 @@ async function agentUpdate(nodeName) {
 }
 
 async function agentContainers(nodeName, displayName) {
-  // Les conteneurs découverts sont des routes Agent (docker:/k8s:) sur le Core,
-  // agrégées par GET /discovered-containers — filtrées par agent_name.
   let items = [];
   let loadErr = '';
   try {
@@ -754,40 +752,61 @@ async function agentContainers(nodeName, displayName) {
     loadErr = e.message || t('prism.load_err');
   }
 
-  const srcLabel = { docker: 'Docker', k8s: 'Kubernetes', portainer: 'Portainer' };
-  const rows = items.length
-    ? items.map(c => {
-        const backends = (c.backends || []).join(', ') || '—';
-        const src = srcLabel[c.source] || c.source || '—';
-        const tls = c.tls ? '<span class="tag tag-green" style="font-size:10px;">TLS</span>' : '';
-        return `<tr>
-          <td style="padding:6px 10px;font-size:12px;font-family:monospace;">${esc(c.host || '—')}</td>
-          <td style="padding:6px 10px;font-size:11px;color:var(--text2);">${esc(backends)}</td>
-          <td style="padding:6px 10px;font-size:11px;">${esc(src)} ${tls}</td>
-          <td style="padding:6px 10px;font-size:11px;color:var(--text2);">${esc(c.core_name || '—')}</td>
-        </tr>`;
-      }).join('')
-    : `<tr><td colspan="4" style="padding:12px 10px;font-size:12px;color:var(--text2);text-align:center;">${
-        loadErr
-          ? t('common.error_msg', { msg: esc(loadErr) })
-          : t('infra.containers.empty')
-      }</td></tr>`;
+  const srcLabel = { docker: 'Docker', k8s: 'Kubernetes', portainer: 'Portainer', podman: 'Podman' };
+  const srcOrder = ['docker', 'portainer', 'k8s', 'podman'];
 
-  const body = `
-    <p style="margin:0 0 12px;font-size:12px;color:var(--text2);">${t('infra.containers.intro', { name: esc(displayName) })}</p>
-    <div style="overflow-x:auto;max-height:360px;overflow-y:auto;">
+  // group by source
+  const groups = {};
+  for (const c of items) {
+    const src = c.source || 'docker';
+    if (!groups[src]) groups[src] = [];
+    groups[src].push(c);
+  }
+
+  const tableFor = (list) => {
+    const rows = list.map(c => {
+      const backends = (c.backends || []).join(', ') || '—';
+      const tls = c.tls ? ' <span class="tag tag-green" style="font-size:10px;">TLS</span>' : '';
+      return `<tr>
+        <td style="padding:6px 10px;font-size:12px;font-family:monospace;">${esc(c.host || '—')}</td>
+        <td style="padding:6px 10px;font-size:11px;color:var(--text2);">${esc(backends)}</td>
+        <td style="padding:6px 10px;font-size:11px;color:var(--text2);">${esc(c.core_name || '—')}${tls}</td>
+      </tr>`;
+    }).join('');
+    return `<div style="overflow-x:auto;max-height:280px;overflow-y:auto;margin-bottom:16px;">
       <table style="width:100%;border-collapse:collapse;border:1px solid var(--border);border-radius:6px;overflow:hidden;">
         <thead>
           <tr style="background:var(--bg2);">
             <th style="padding:6px 10px;font-size:11px;font-weight:600;text-align:left;">${t('infra.col.host')}</th>
             <th style="padding:6px 10px;font-size:11px;font-weight:600;text-align:left;">${t('infra.col.backends')}</th>
-            <th style="padding:6px 10px;font-size:11px;font-weight:600;text-align:left;">${t('trafic.source')}</th>
             <th style="padding:6px 10px;font-size:11px;font-weight:600;text-align:left;">Core</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
+  };
+
+  let sections = '';
+  const presentSrcs = srcOrder.filter(s => groups[s]);
+  const otherSrcs = Object.keys(groups).filter(s => !srcOrder.includes(s));
+  for (const src of [...presentSrcs, ...otherSrcs]) {
+    const label = srcLabel[src] || src;
+    sections += `<h4 style="margin:0 0 8px;font-size:12px;font-weight:600;color:var(--text1);">${esc(label)} <span style="font-weight:400;color:var(--text2);">(${groups[src].length})</span></h4>`;
+    sections += tableFor(groups[src]);
+  }
+
+  if (!sections) {
+    sections = `<p style="font-size:12px;color:var(--text2);text-align:center;">${
+      loadErr
+        ? t('common.error_msg', { msg: esc(loadErr) })
+        : t('infra.containers.empty')
+    }</p>`;
+  }
+
+  const body = `
+    <p style="margin:0 0 16px;font-size:12px;color:var(--text2);">${t('infra.containers.intro', { name: esc(displayName) })}</p>
+    ${sections}`;
   modal(t('infra.containers.title'), body,
     `<button class="btn btn-secondary" onclick="agentRescan('${esc(nodeName)}');closeModal()">${t('infra.rescan')}</button>
      <button class="btn btn-primary" onclick="closeModal()" aria-label="${t('common.close')}">${t('common.close')}</button>`);
