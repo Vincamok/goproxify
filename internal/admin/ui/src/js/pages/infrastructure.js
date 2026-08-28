@@ -664,6 +664,33 @@ async function agentRescan(nodeName) {
   } catch(e) { toast(t('infra.toast.rescan_failed', { msg: e.message }), 'error'); }
 }
 
+function _epCoreRowHTML(epName, coreEndpoint, authToken) {
+  return `<div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:4px;align-items:center;" class="ep-core-row">
+    <input type="text" placeholder="${t('infra.configure.ep_core_name')}" value="${esc(epName)}"
+      style="font-size:11px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text1);">
+    <input type="url" placeholder="http://core:8000" value="${esc(coreEndpoint)}"
+      style="font-size:11px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text1);">
+    <input type="password" placeholder="${t('infra.configure.ep_core_token')}" value="${esc(authToken)}"
+      style="font-size:11px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text1);">
+    <button type="button" style="padding:4px 8px;font-size:11px;background:var(--red,#e53e3e);color:#fff;border:none;border-radius:4px;cursor:pointer;"
+      onclick="this.closest('.ep-core-row').remove()">✕</button>
+  </div>`;
+}
+
+function _renderEpCoreRows(epCores) {
+  return Object.entries(epCores).map(([name, conf]) =>
+    _epCoreRowHTML(name, conf.core_endpoint || '', conf.auth_token || '')
+  ).join('');
+}
+
+window._addEpCoreRow = function() {
+  const list = document.getElementById('cfg-ep-cores-list');
+  if (!list) return;
+  const div = document.createElement('div');
+  div.innerHTML = _epCoreRowHTML('', '', '');
+  list.appendChild(div.firstElementChild);
+};
+
 async function agentConfigure(nodeName, node) {
   const name = (node && (node.display_name || node.node_name)) || nodeName;
   const formId = 'agent-cfg-form-' + nodeName.replace(/[^a-z0-9]/gi,'_');
@@ -696,6 +723,14 @@ async function agentConfigure(nodeName, node) {
     ${field('cfg-portainer-key', t('infra.configure.api_key'), p.api_key, 'password', 'ptr_...')}
     ${field('cfg-portainer-poll', t('infra.configure.poll_interval'), p.poll_interval_s||30, 'number', '30')}
     ${field('cfg-portainer-skip', t('infra.configure.skip_endpoints'), (p.skip_endpoints||[]).join(', '), 'text', 'lucas.vm-docker, prod-server')}
+    <div style="margin-top:10px;">
+      <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:6px;">${t('infra.configure.endpoint_cores')}</div>
+      <div id="cfg-ep-cores-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px;">
+        ${_renderEpCoreRows(p.endpoint_cores||{})}
+      </div>
+      <button type="button" class="btn btn-secondary" style="font-size:11px;padding:4px 10px;" onclick="_addEpCoreRow()">${t('infra.configure.endpoint_cores_add')}</button>
+      <p style="margin:4px 0 0;font-size:10px;color:var(--text2);">${t('infra.configure.endpoint_cores_hint')}</p>
+    </div>
     <p style="margin:8px 0 0;font-size:11px;color:var(--text2);">${t('infra.configure.restart_notice')}</p>
   </form>`;
 
@@ -722,6 +757,17 @@ window._submitAgentConfigure = async function(nodeName, formId) {
       api_key: document.getElementById('cfg-portainer-key')?.value || '',
       poll_interval_s: parseInt(document.getElementById('cfg-portainer-poll')?.value || '30', 10) || 30,
       skip_endpoints: (document.getElementById('cfg-portainer-skip')?.value || '').split(',').map(s => s.trim()).filter(Boolean),
+      endpoint_cores: (() => {
+        const result = {};
+        document.querySelectorAll('#cfg-ep-cores-list .ep-core-row').forEach(row => {
+          const inputs = row.querySelectorAll('input');
+          const name = inputs[0]?.value?.trim();
+          const ep = inputs[1]?.value?.trim();
+          const tok = inputs[2]?.value?.trim();
+          if (name && ep) result[name] = { core_endpoint: ep, auth_token: tok };
+        });
+        return result;
+      })(),
     },
   };
 

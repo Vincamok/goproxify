@@ -169,6 +169,13 @@ func New(cfg *config.AgentConfig, cfgPath string) (*Agent, error) {
 	var portainerDisc *agentportainer.Discovery
 	if cfg.Portainer.Enabled && cfg.Portainer.URL != "" && cfg.Portainer.APIKey != "" {
 		pc := agentportainer.NewClient(cfg.Portainer.URL, cfg.Portainer.APIKey)
+		epCores := make(map[string]agentportainer.EndpointCoreInput, len(cfg.Portainer.EndpointCores))
+		for name, c := range cfg.Portainer.EndpointCores {
+			epCores[name] = agentportainer.EndpointCoreInput{
+				CoreEndpoint: c.CoreEndpoint,
+				AuthToken:    c.AuthToken,
+			}
+		}
 		portainerDisc = agentportainer.NewDiscovery(
 			pc,
 			cfg.ControlPlane.CoreEndpoint,
@@ -179,6 +186,7 @@ func New(cfg *config.AgentConfig, cfgPath string) (*Agent, error) {
 			log,
 			netMgr,
 			cfg.Portainer.SkipEndpoints,
+			epCores,
 		)
 	}
 

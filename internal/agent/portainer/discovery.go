@@ -24,6 +24,12 @@ type netManager interface {
 	ConnectCoreToNetwork(ctx context.Context, networkID string) error
 }
 
+// endpointCoreConf est la config d'un Core alternatif pour un endpoint Portainer.
+type endpointCoreConf struct {
+	coreEndpoint string
+	authToken    string
+}
+
 // Discovery découvre les conteneurs sur tous les endpoints Portainer
 // et les rapporte à l'Administration Goproxify.
 type Discovery struct {
@@ -36,23 +42,37 @@ type Discovery struct {
 	log           *slog.Logger
 	netMgr        netManager // connecte le Core aux réseaux Docker locaux (nil = désactivé)
 	skipEndpoints map[string]bool
+	endpointCores map[string]endpointCoreConf // endpoint name (lowercase) → Core alternatif
 
 	mu       sync.Mutex
 	prevSeen map[string]bool // clés "endpointID:containerID" du scan précédent
 }
 
+// EndpointCoreInput est utilisé par l'appelant pour configurer les Cores alternatifs.
+type EndpointCoreInput struct {
+	CoreEndpoint string
+	AuthToken    string
+}
+
 // NewDiscovery crée une Discovery Portainer.
 // netMgr peut être nil ; s'il est fourni, le Core est connecté aux réseaux Docker
 // des conteneurs découverts sur les endpoints locaux (socket unix).
-// skipEndpoints liste les noms d'endpoints Portainer à ignorer (gérés par un autre agent).
 func NewDiscovery(client *Client, adminEndpoint, authToken, labelPrefix, agentName string,
-	pollIntervalS int, log *slog.Logger, netMgr netManager, skipEndpoints []string) *Discovery {
+	pollIntervalS int, log *slog.Logger, netMgr netManager,
+	skipEndpoints []string, epCores map[string]EndpointCoreInput) *Discovery {
 	if pollIntervalS <= 0 {
 		pollIntervalS = 30
 	}
 	skip := make(map[string]bool, len(skipEndpoints))
 	for _, name := range skipEndpoints {
 		skip[strings.ToLower(name)] = true
+	}
+	cores := make(map[string]endpointCoreConf, len(epCores))
+	for name, c := range epCores {
+		cores[strings.ToLower(name)] = endpointCoreConf{
+			coreEndpoint: c.CoreEndpoint,
+			authToken:    c.AuthToken,
+		}
 	}
 	return &Discovery{
 		client:        client,
@@ -64,6 +84,7 @@ func NewDiscovery(client *Client, adminEndpoint, authToken, labelPrefix, agentNa
 		log:           log,
 		netMgr:        netMgr,
 		skipEndpoints: skip,
+		endpointCores: cores,
 	}
 }
 
@@ -138,7 +159,7 @@ func (d *Discovery) scan(ctx context.Context) {
 					d.log.Warn("portainer: connexion Core au réseau", "network", firstNet, "err", err)
 				}
 			}
-			key := fmt.Sprintf("%d:%s", ep.ID, c.ID)
+			key := fmt.Sprintf("%d:%s:%s", ep.ID, ep.Name, c.ID)
 			seen[key] = true
 			for _, spec := range specs {
 				d.report(ctx, ep, spec)
@@ -158,28 +179,35 @@ func (d *Discovery) scan(ctx context.Context) {
 	}
 }
 
-// removeByKey supprime une route portainer disparue identifiée par "endpointID:containerID".
+// removeByKey supprime une route portainer disparue identifiée par "endpointID:endpointName:containerID".
 func (d *Discovery) removeByKey(ctx context.Context, key string) {
-	parts := strings.SplitN(key, ":", 2)
-	if len(parts) != 2 {
+	// Format : "endpointID:endpointName:containerID"
+	// Compat ancien format "endpointID:containerID" (sans endpointName).
+	parts := strings.SplitN(key, ":", 3)
+	var epName, containerID string
+	switch len(parts) {
+	case 3:
+		epName = parts[1]
+		containerID = parts[2]
+	case 2:
+		containerID = parts[1]
+	default:
 		return
 	}
-	containerID := parts[1]
 	shortID := containerID
 	if len(shortID) > 12 {
 		shortID = shortID[:12]
 	}
-	d.mu.Lock()
-	token := d.authToken
-	d.mu.Unlock()
+
+	coreEndpoint, token := d.coreFor(epName)
 
 	payload, _ := json.Marshal(map[string]any{
 		"container_id": shortID,
 		"name":         key,
 		"source":       "portainer",
 	})
-	url := d.adminEndpoint + "/internal/v1/agent/containers"
-	req, _ := http.NewRequestWithContext(ctx, http.MethodDelete, url, bytes.NewReader(payload))
+	reqURL := coreEndpoint + "/internal/v1/agent/containers"
+	req, _ := http.NewRequestWithContext(ctx, http.MethodDelete, reqURL, bytes.NewReader(payload))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
@@ -189,6 +217,20 @@ func (d *Discovery) removeByKey(ctx context.Context, key string) {
 	}
 	resp.Body.Close()
 	d.log.Info("portainer: route retirée", "key", key)
+}
+
+// coreFor retourne l'endpoint et le token du Core à utiliser pour un endpoint Portainer donné.
+// Si aucun Core alternatif n'est configuré pour cet endpoint, retourne le Core par défaut.
+func (d *Discovery) coreFor(epName string) (coreEndpoint, token string) {
+	if epName != "" {
+		if conf, ok := d.endpointCores[strings.ToLower(epName)]; ok {
+			return conf.coreEndpoint, conf.authToken
+		}
+	}
+	d.mu.Lock()
+	tok := d.authToken
+	d.mu.Unlock()
+	return d.adminEndpoint, tok
 }
 
 // endpointHost extrait le hostname d'une URL d'endpoint Portainer.
@@ -307,13 +349,11 @@ func (d *Discovery) report(ctx context.Context, ep Endpoint, spec *docker.ProxyS
 	}
 	docker.AttachSecurityPayload(payload, spec)
 
-	d.mu.Lock()
-	token := d.authToken
-	d.mu.Unlock()
+	coreEndpoint, token := d.coreFor(ep.Name)
 
 	body, _ := json.Marshal(payload)
-	url := d.adminEndpoint + "/internal/v1/agent/containers"
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	reqURL := coreEndpoint + "/internal/v1/agent/containers"
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 

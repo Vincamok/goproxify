@@ -84,10 +84,18 @@ type AgentConfig struct {
 	// Portainer permet de découvrir des conteneurs sur plusieurs hôtes Docker
 	// via l'API Portainer, sans installer l'Agent sur chaque hôte.
 	Portainer struct {
-		Enabled        bool     `mapstructure:"enabled"`
-		URL            string   `mapstructure:"url"`              // ex: https://portainer:9443
-		APIKey         string   `mapstructure:"api_key"`          // Settings → API Keys
-		PollIntervalS  int      `mapstructure:"poll_interval_s"`  // défaut: 30
-		SkipEndpoints  []string `mapstructure:"skip_endpoints"`   // noms d'endpoints à ignorer
+		Enabled        bool                        `mapstructure:"enabled"`
+		URL            string                      `mapstructure:"url"`              // ex: https://portainer:9443
+		APIKey         string                      `mapstructure:"api_key"`          // Settings → API Keys
+		PollIntervalS  int                         `mapstructure:"poll_interval_s"`  // défaut: 30
+		SkipEndpoints  []string                    `mapstructure:"skip_endpoints"`   // noms d'endpoints à ignorer
+		EndpointCores  map[string]EndpointCoreConf `mapstructure:"endpoint_cores"`   // endpoint → Core alternatif
 	} `mapstructure:"portainer"`
+}
+
+// EndpointCoreConf permet de router les routes d'un endpoint Portainer
+// vers un Core GoProxify différent de celui par défaut de l'agent.
+type EndpointCoreConf struct {
+	CoreEndpoint string `mapstructure:"core_endpoint"` // ex: http://lucas-core:8000
+	AuthToken    string `mapstructure:"auth_token"`    // token d'agent pour ce Core
 }
