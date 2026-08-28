@@ -1840,9 +1840,16 @@ func (s *Server) handleAgentContainerStart(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	if existing == nil {
-		if rt, ok := s.table.ByHost(p.Host); ok && (isDockerDiscoveryRoute(rt) || (isPortainer && strings.HasPrefix(rt.ID, "portainer:"))) {
-			existing = rt
-			routeID = rt.ID
+		if rt, ok := s.table.ByHost(p.Host); ok {
+			if isPortainer && strings.HasPrefix(rt.ID, "portainer:") {
+				existing = rt
+				routeID = rt.ID
+			} else if !isPortainer && isDockerDiscoveryRoute(rt) {
+				existing = rt
+				routeID = rt.ID
+			}
+			// Ne pas réutiliser une route docker-host comme base pour une route portainer
+			// (ni l'inverse) : deux sources distinctes peuvent coexister pour le même host.
 		}
 	}
 

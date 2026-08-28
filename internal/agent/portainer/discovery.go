@@ -176,6 +176,11 @@ func endpointHost(rawURL string) string {
 	return u.Hostname()
 }
 
+// isLocalHost retourne true si l'hôte est localhost ou une adresse de loopback.
+func isLocalHost(h string) bool {
+	return h == "localhost" || h == "127.0.0.1" || h == "::1"
+}
+
 // firstPublishedTCPPort retourne le premier port TCP publié (port hôte) du conteneur.
 func firstPublishedTCPPort(ports []ContainerPort) int {
 	for _, p := range ports {
@@ -187,13 +192,19 @@ func firstPublishedTCPPort(ports []ContainerPort) int {
 }
 
 // resolveSpecs construit les ProxySpec en résolvant l'IP/port correctement selon l'endpoint.
-// Pour les endpoints distants (TCP), utilise l'hôte de l'endpoint + port publié plutôt que
-// l'IP interne du conteneur qui n'est pas routable depuis le Core.
+//
+// Stratégie de résolution du backend :
+//   - Si goproxify.backend ou goproxify.ip est posé dans les labels → priorité absolue (déjà géré par ParseLabelsMulti)
+//   - Endpoint TCP distant (epHost non vide) → utiliser epHost + premier port publié
+//     (l'IP interne Docker du conteneur distant n'est pas routable depuis le Core)
+//   - Endpoint local (unix:// ou epHost vide) → passer containerIP vide pour que
+//     ParseLabelsMulti tombe sur le nom du conteneur, résolvable via DNS Docker
 func (d *Discovery) resolveSpecs(c Container, firstNet, firstName, containerIP, epHost string) []*docker.ProxySpec {
 	labels := c.Labels
 
-	// Pour les endpoints TCP distants : remplacer l'IP interne par l'hôte de l'endpoint
-	if epHost != "" && labels[docker.LabelBackendURL] == "" && labels[docker.LabelIP] == "" {
+	if epHost != "" && !isLocalHost(epHost) && labels[docker.LabelBackendURL] == "" && labels[docker.LabelIP] == "" {
+		// Endpoint TCP distant : l'IP interne Docker n'est pas routable depuis le Core.
+		// Utiliser l'hôte de l'endpoint Portainer + premier port TCP publié.
 		clone := make(map[string]string, len(labels)+2)
 		for k, v := range labels {
 			clone[k] = v
@@ -204,9 +215,11 @@ func (d *Discovery) resolveSpecs(c Container, firstNet, firstName, containerIP, 
 				clone[docker.LabelPort] = strconv.Itoa(pub)
 			}
 		}
-		labels = clone
+		return docker.ParseLabelsMulti(c.ID, firstName, c.Image, firstNet, clone, nil, "")
 	}
 
+	// Endpoint local (unix:// ou TCP localhost) : garder l'IP interne du conteneur.
+	// Le Core doit être dans le même réseau Docker pour la joindre.
 	return docker.ParseLabelsMulti(c.ID, firstName, c.Image, firstNet, labels, nil, containerIP)
 }
 
