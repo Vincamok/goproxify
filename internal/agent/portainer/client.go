@@ -126,6 +126,14 @@ func (c *Client) ListEndpoints(ctx context.Context) ([]Endpoint, error) {
 	return active, nil
 }
 
+// ContainerPort est un port publié par un conteneur Docker.
+type ContainerPort struct {
+	IP          string `json:"IP"`
+	PrivatePort int    `json:"PrivatePort"`
+	PublicPort  int    `json:"PublicPort"`
+	Type        string `json:"Type"` // "tcp" | "udp"
+}
+
 // Container est un résumé de conteneur retourné par l'API Docker proxifiée de Portainer.
 type Container struct {
 	ID      string            `json:"Id"`
@@ -133,6 +141,7 @@ type Container struct {
 	Image   string            `json:"Image"`
 	Labels  map[string]string `json:"Labels"`
 	State   string            `json:"State"`
+	Ports   []ContainerPort   `json:"Ports"`
 	NetworkSettings struct {
 		Networks map[string]struct {
 			NetworkID string `json:"NetworkID"`

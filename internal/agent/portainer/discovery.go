@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -91,6 +93,7 @@ func (d *Discovery) scan(ctx context.Context) {
 			continue
 		}
 		d.log.Info("portainer: endpoint scanné", "endpoint", ep.Name, "containers", len(containers))
+		epHost := endpointHost(ep.URL)
 		for _, c := range containers {
 			firstNet, firstIP := "", ""
 			for name, net := range c.NetworkSettings.Networks {
@@ -102,7 +105,7 @@ func (d *Discovery) scan(ctx context.Context) {
 			if len(c.Names) > 0 {
 				firstName = c.Names[0]
 			}
-			specs := docker.ParseLabelsMulti(c.ID, firstName, c.Image, firstNet, c.Labels, nil, firstIP)
+			specs := d.resolveSpecs(c, firstNet, firstName, firstIP, epHost)
 			if len(specs) == 0 {
 				d.log.Debug("portainer: container sans labels goproxify", "container", firstName, "image", c.Image)
 				continue
@@ -158,6 +161,53 @@ func (d *Discovery) removeByKey(ctx context.Context, key string) {
 	}
 	resp.Body.Close()
 	d.log.Info("portainer: route retirée", "key", key)
+}
+
+// endpointHost extrait le hostname d'une URL d'endpoint Portainer.
+// Retourne "" pour les endpoints locaux (unix://).
+func endpointHost(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Scheme == "unix" {
+		return ""
+	}
+	return u.Hostname()
+}
+
+// firstPublishedTCPPort retourne le premier port TCP publié (port hôte) du conteneur.
+func firstPublishedTCPPort(ports []ContainerPort) int {
+	for _, p := range ports {
+		if strings.EqualFold(p.Type, "tcp") && p.PublicPort > 0 {
+			return p.PublicPort
+		}
+	}
+	return 0
+}
+
+// resolveSpecs construit les ProxySpec en résolvant l'IP/port correctement selon l'endpoint.
+// Pour les endpoints distants (TCP), utilise l'hôte de l'endpoint + port publié plutôt que
+// l'IP interne du conteneur qui n'est pas routable depuis le Core.
+func (d *Discovery) resolveSpecs(c Container, firstNet, firstName, containerIP, epHost string) []*docker.ProxySpec {
+	labels := c.Labels
+
+	// Pour les endpoints TCP distants : remplacer l'IP interne par l'hôte de l'endpoint
+	if epHost != "" && labels[docker.LabelBackendURL] == "" && labels[docker.LabelIP] == "" {
+		clone := make(map[string]string, len(labels)+2)
+		for k, v := range labels {
+			clone[k] = v
+		}
+		clone[docker.LabelIP] = epHost
+		if clone[docker.LabelPort] == "" {
+			if pub := firstPublishedTCPPort(c.Ports); pub > 0 {
+				clone[docker.LabelPort] = strconv.Itoa(pub)
+			}
+		}
+		labels = clone
+	}
+
+	return docker.ParseLabelsMulti(c.ID, firstName, c.Image, firstNet, labels, nil, containerIP)
 }
 
 // report envoie la config proxy vers l'Administration.

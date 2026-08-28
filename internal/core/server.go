@@ -1823,17 +1823,24 @@ func (s *Server) handleAgentContainerStart(w http.ResponseWriter, r *http.Reques
 		weight = 100
 	}
 	backendURL := p.Backends[0]
-	routeID := dockerHostRouteID(p.Host)
+
+	isPortainer := p.Source == "portainer" || strings.HasPrefix(p.ID, "portainer:")
+	var routeID string
+	if isPortainer && p.ID != "" {
+		routeID = p.ID
+	} else {
+		routeID = dockerHostRouteID(p.Host)
+	}
 
 	var existing *router.Route
-	if p.ContainerID != "" {
+	if !isPortainer && p.ContainerID != "" {
 		if folded := s.foldDockerRoutesForContainer(p.ContainerID, p.Host); folded != nil {
 			existing = folded
 			routeID = folded.ID
 		}
 	}
 	if existing == nil {
-		if rt, ok := s.table.ByHost(p.Host); ok && isDockerDiscoveryRoute(rt) {
+		if rt, ok := s.table.ByHost(p.Host); ok && (isDockerDiscoveryRoute(rt) || (isPortainer && strings.HasPrefix(rt.ID, "portainer:"))) {
 			existing = rt
 			routeID = rt.ID
 		}
