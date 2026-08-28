@@ -477,7 +477,20 @@ function _archCapLegendHTML() {
 }
 
 function _archLibraryHTML() {
-  return `
+  // Raccourci "Ajouter un agent" quand un Core est déjà présent sur la toile
+  const hasCores = _arch.hosts.some(h => (h.services || []).some(s => s.type === 'core'));
+  const quickAddHTML = hasCores ? `
+    <div class="arch-panel">
+      <div class="arch-panel-head">
+        <div class="arch-panel-title">${t('infra.add_agent')}</div>
+        <div class="arch-panel-sub">${t('arch.lib.quickadd_sub') || 'Ajouter un agent à l\'infrastructure existante'}</div>
+      </div>
+      <div class="arch-panel-body">
+        <button class="btn btn-primary btn-sm" style="width:100%;justify-content:center;" onclick="_archQuickAddAgent()">${t('arch.add_host') ? (t('infra.add_agent')) : 'Ajouter un agent'}</button>
+      </div>
+    </div>` : '';
+
+  return `${quickAddHTML}
     <div class="arch-panel">
       <div class="arch-panel-head">
         <div class="arch-panel-title">${t('arch.palette.hosts')}</div>
@@ -507,6 +520,17 @@ function _archLibraryHTML() {
       </div>
       <div class="arch-panel-body">${_archCapLegendHTML()}</div>
     </div>`;
+}
+
+/** Ajoute un agent sur le premier hôte qui contient un Core (ou un nouvel hôte), et ouvre l'inspecteur. */
+function _archQuickAddAgent() {
+  // Cherche un hôte avec un Core pour co-localiser l'agent, sinon crée un hôte dédié
+  let host = _arch.hosts.find(h => (h.services || []).some(s => s.type === 'core'));
+  if (!host) {
+    host = _archEmptyHost(_arch.hosts.length + 1);
+    _arch.hosts.push(host);
+  }
+  _archAddService(host.id, 'agent');
 }
 
 // ── Toile ─────────────────────────────────────────────────────────────────

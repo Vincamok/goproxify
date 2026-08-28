@@ -50,7 +50,6 @@ pages.infrastructure = async function() {
         <h2 style="font-family:var(--font-heading);font-size:16px;font-weight:600;margin:0;">${t('page.infrastructure')}</h2>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <button type="button" class="btn btn-secondary btn-sm" onclick="openDockerLabelsModal()">${t('infra.labels')}</button>
-          <button type="button" class="btn btn-secondary btn-sm" onclick="openAddAgentModal()">${t('infra.add_agent')}</button>
           <button type="button" class="btn btn-primary btn-sm" onclick="openInfraWizard()">${t('infra.add')}</button>
         </div>
       </div>
