@@ -75,12 +75,15 @@ func (d *Discovery) scan(ctx context.Context) {
 
 	seen := map[string]bool{}
 
+	d.log.Info("portainer: scan", "endpoints", len(endpoints))
+
 	for _, ep := range endpoints {
 		containers, err := d.client.ListContainers(ctx, ep.ID)
 		if err != nil {
 			d.log.Warn("portainer: liste containers", "endpoint", ep.Name, "err", err)
 			continue
 		}
+		d.log.Info("portainer: endpoint scanné", "endpoint", ep.Name, "containers", len(containers))
 		for _, c := range containers {
 			firstNet, firstIP := "", ""
 			for name, net := range c.NetworkSettings.Networks {
@@ -94,6 +97,7 @@ func (d *Discovery) scan(ctx context.Context) {
 			}
 			specs := docker.ParseLabelsMulti(c.ID, firstName, c.Image, firstNet, c.Labels, nil, firstIP)
 			if len(specs) == 0 {
+				d.log.Debug("portainer: container sans labels goproxify", "container", firstName, "image", c.Image)
 				continue
 			}
 			key := fmt.Sprintf("%d:%s", ep.ID, c.ID)
