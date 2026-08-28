@@ -1681,12 +1681,11 @@ func (s *Server) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Si l'agent avait "docker" dans ses runtimes et ne l'a plus, purger ses routes Docker.
-	if prev, ok := s.nodeStore.Get(hb.NodeName); ok {
-		if hasRuntime(prev.ContainerRuntimes, "docker", "podman") &&
-			!hasRuntime(hb.ContainerRuntimes, "docker", "podman") {
-			s.purgeDockerRoutesForAgent(hb.NodeName)
-		}
+	// Purger les routes Docker si l'agent ne signale pas de runtime Docker/Podman.
+	// On purge à chaque heartbeat sans runtime (pas seulement sur transition)
+	// pour couvrir le cas d'un redémarrage du Core (nodeStore vide).
+	if !hasRuntime(hb.ContainerRuntimes, "docker", "podman") {
+		s.purgeDockerRoutesForAgent(hb.NodeName)
 	}
 
 	s.nodeStore.Upsert(coreagent.NodeInfo{
@@ -3000,11 +2999,8 @@ func (s *Server) handleWSAgentMessage(connID string, msg corews.Message) error {
 		if hb.NodeName == "" {
 			hb.NodeName = connID
 		}
-		if prev, ok := s.nodeStore.Get(hb.NodeName); ok {
-			if hasRuntime(prev.ContainerRuntimes, "docker", "podman") &&
-				!hasRuntime(hb.ContainerRuntimes, "docker", "podman") {
-				s.purgeDockerRoutesForAgent(hb.NodeName)
-			}
+		if !hasRuntime(hb.ContainerRuntimes, "docker", "podman") {
+			s.purgeDockerRoutesForAgent(hb.NodeName)
 		}
 		s.nodeStore.Upsert(coreagent.NodeInfo{
 			NodeName:          hb.NodeName,
