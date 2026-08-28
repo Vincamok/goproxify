@@ -178,6 +178,7 @@ func New(cfg *config.AgentConfig, cfgPath string) (*Agent, error) {
 			cfg.Portainer.PollIntervalS,
 			log,
 			netMgr,
+			cfg.Portainer.SkipEndpoints,
 		)
 	}
 

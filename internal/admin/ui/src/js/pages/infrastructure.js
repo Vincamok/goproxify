@@ -695,6 +695,7 @@ async function agentConfigure(nodeName, node) {
     ${field('cfg-portainer-url', t('infra.configure.url'), p.url, 'url', 'https://portainer:9443')}
     ${field('cfg-portainer-key', t('infra.configure.api_key'), p.api_key, 'password', 'ptr_...')}
     ${field('cfg-portainer-poll', t('infra.configure.poll_interval'), p.poll_interval_s||30, 'number', '30')}
+    ${field('cfg-portainer-skip', t('infra.configure.skip_endpoints'), (p.skip_endpoints||[]).join(', '), 'text', 'lucas.vm-docker, prod-server')}
     <p style="margin:8px 0 0;font-size:11px;color:var(--text2);">${t('infra.configure.restart_notice')}</p>
   </form>`;
 
@@ -720,6 +721,7 @@ window._submitAgentConfigure = async function(nodeName, formId) {
       url: document.getElementById('cfg-portainer-url')?.value || '',
       api_key: document.getElementById('cfg-portainer-key')?.value || '',
       poll_interval_s: parseInt(document.getElementById('cfg-portainer-poll')?.value || '30', 10) || 30,
+      skip_endpoints: (document.getElementById('cfg-portainer-skip')?.value || '').split(',').map(s => s.trim()).filter(Boolean),
     },
   };
 

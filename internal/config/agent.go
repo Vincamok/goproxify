@@ -84,9 +84,10 @@ type AgentConfig struct {
 	// Portainer permet de découvrir des conteneurs sur plusieurs hôtes Docker
 	// via l'API Portainer, sans installer l'Agent sur chaque hôte.
 	Portainer struct {
-		Enabled        bool   `mapstructure:"enabled"`
-		URL            string `mapstructure:"url"`              // ex: https://portainer:9443
-		APIKey         string `mapstructure:"api_key"`          // Settings → API Keys
-		PollIntervalS  int    `mapstructure:"poll_interval_s"`  // défaut: 30
+		Enabled        bool     `mapstructure:"enabled"`
+		URL            string   `mapstructure:"url"`              // ex: https://portainer:9443
+		APIKey         string   `mapstructure:"api_key"`          // Settings → API Keys
+		PollIntervalS  int      `mapstructure:"poll_interval_s"`  // défaut: 30
+		SkipEndpoints  []string `mapstructure:"skip_endpoints"`   // noms d'endpoints à ignorer
 	} `mapstructure:"portainer"`
 }

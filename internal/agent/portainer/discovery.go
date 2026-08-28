@@ -35,6 +35,7 @@ type Discovery struct {
 	pollInterval  time.Duration
 	log           *slog.Logger
 	netMgr        netManager // connecte le Core aux réseaux Docker locaux (nil = désactivé)
+	skipEndpoints map[string]bool
 
 	mu       sync.Mutex
 	prevSeen map[string]bool // clés "endpointID:containerID" du scan précédent
@@ -43,10 +44,15 @@ type Discovery struct {
 // NewDiscovery crée une Discovery Portainer.
 // netMgr peut être nil ; s'il est fourni, le Core est connecté aux réseaux Docker
 // des conteneurs découverts sur les endpoints locaux (socket unix).
+// skipEndpoints liste les noms d'endpoints Portainer à ignorer (gérés par un autre agent).
 func NewDiscovery(client *Client, adminEndpoint, authToken, labelPrefix, agentName string,
-	pollIntervalS int, log *slog.Logger, netMgr netManager) *Discovery {
+	pollIntervalS int, log *slog.Logger, netMgr netManager, skipEndpoints []string) *Discovery {
 	if pollIntervalS <= 0 {
 		pollIntervalS = 30
+	}
+	skip := make(map[string]bool, len(skipEndpoints))
+	for _, name := range skipEndpoints {
+		skip[strings.ToLower(name)] = true
 	}
 	return &Discovery{
 		client:        client,
@@ -57,6 +63,7 @@ func NewDiscovery(client *Client, adminEndpoint, authToken, labelPrefix, agentNa
 		pollInterval:  time.Duration(pollIntervalS) * time.Second,
 		log:           log,
 		netMgr:        netMgr,
+		skipEndpoints: skip,
 	}
 }
 
@@ -96,6 +103,10 @@ func (d *Discovery) scan(ctx context.Context) {
 	d.log.Info("portainer: scan", "endpoints", len(endpoints))
 
 	for _, ep := range endpoints {
+		if d.skipEndpoints[strings.ToLower(ep.Name)] {
+			d.log.Debug("portainer: endpoint ignoré (skip_endpoints)", "endpoint", ep.Name)
+			continue
+		}
 		containers, err := d.client.ListContainers(ctx, ep.ID)
 		if err != nil {
 			d.log.Warn("portainer: liste containers", "endpoint", ep.Name, "err", err)
@@ -312,5 +323,5 @@ func (d *Discovery) report(ctx context.Context, ep Endpoint, spec *docker.ProxyS
 		return
 	}
 	defer resp.Body.Close()
-	d.log.Info("portainer: proxy rapporté", "host", spec.Host, "endpoint", ep.Name, "status", resp.StatusCode)
+	d.log.Info("portainer: proxy rapporté", "host", spec.Host, "backend", spec.BackendURL, "endpoint", ep.Name, "status", resp.StatusCode)
 }

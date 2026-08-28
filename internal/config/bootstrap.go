@@ -166,6 +166,7 @@ func BootstrapAgent(path string) error {
 			"url":             portainerURL,
 			"api_key":         portainerAPIKey,
 			"poll_interval_s": portainerPollS,
+			"skip_endpoints":  []string{},
 		},
 		"engine": map[string]any{
 			"log_level": logLevel,
