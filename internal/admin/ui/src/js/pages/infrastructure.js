@@ -44,6 +44,7 @@ pages.infrastructure = async function() {
         <h2 style="font-family:var(--font-heading);font-size:16px;font-weight:600;margin:0;">${t('page.infrastructure')}</h2>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <button type="button" class="btn btn-secondary btn-sm" onclick="openDockerLabelsModal()">${t('infra.labels')}</button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="openAddAgentModal()">${t('infra.add_agent')}</button>
           <button type="button" class="btn btn-primary btn-sm" onclick="openInfraWizard()">${t('infra.add')}</button>
         </div>
       </div>
@@ -382,6 +383,154 @@ async function deleteActiveNode(id, name, role) {
 
   confirm_(t('infra.confirm.delete_node', { name }), doDelete);
 }
+
+/** Génère les opts Agent (envVars, volumes, image) depuis un formulaire "Ajouter un agent". */
+function _buildAddAgentOpts({ name, coreURL, docker, dockerSock, portainer, portainerURL, portainerKey, pairingSecret }) {
+  const cat = window._gpxCatalog;
+  const image = cat ? cat.image('agent') : 'ghcr.io/vincamok/goproxify/agent:preview';
+  const netBlock = cat ? cat.netBlock() : '\nnetworks:\n  goproxify_net:\n    driver: bridge';
+  const sockPath = dockerSock || '/var/run/docker.sock';
+  const envVars = [
+    { k: 'GPX_IDENTITY_AGENT_NODE_NAME',    v: name },
+    { k: 'GPX_CONTROL_PLANE_CORE_ENDPOINT', v: coreURL },
+    { k: 'GPX_PAIRING_SECRET',              v: pairingSecret || '' },
+    docker ? { k: 'GPX_DOCKER_ENABLED',  v: 'true' } : { k: 'GPX_DOCKER_ENABLED', v: 'false' },
+    docker ? { k: 'GPX_DOCKER_RUNTIME',  v: 'auto' } : null,
+    portainer                 ? { k: 'GPX_PORTAINER_ENABLED',  v: 'true' }         : null,
+    portainer && portainerURL ? { k: 'GPX_PORTAINER_URL',      v: portainerURL }    : null,
+    portainer && portainerKey ? { k: 'GPX_PORTAINER_API_KEY',  v: portainerKey }    : null,
+  ].filter(Boolean);
+  const volumes = [];
+  if (docker) volumes.push(`${sockPath}:${sockPath}:ro`);
+  volumes.push(`${name}_data:/etc/goproxify`);
+  return { name, svcName: name, image, envVars, ports: [], volumes, netBlock, restart: 'unless-stopped', command: 'agent' };
+}
+
+window.openAddAgentModal = async function() {
+  const cores = (window._coreNodes || []).filter(n => n.status === 'online');
+  let pairingSecret = _wiz.pairingSecret;
+  if (!pairingSecret) {
+    const sec = await api('GET', '/pairing-secret').catch(() => null);
+    pairingSecret = sec?.secret || '';
+    _wiz.pairingSecret = pairingSecret;
+  }
+
+  const coreOptions = cores.length
+    ? cores.map(c => `<option value="${esc(c.node_name||c.id)}">${esc(c.display_name||c.node_name||c.id)}</option>`).join('')
+    : `<option value="">${t('common.none')}</option>`;
+
+  const formHTML = `
+    <div style="display:flex;flex-direction:column;gap:12px;">
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text2);">${t('infra.add_agent.name')}
+        <input id="aa-name" type="text" value="goproxify-agent-1" placeholder="goproxify-agent-1"
+          style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text1);">
+      </label>
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text2);">${t('infra.add_agent.core')}
+        <select id="aa-core-select" onchange="document.getElementById('aa-core-url').value=this.value?'':'http://goproxify-core:8000'"
+          style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text1);">
+          ${coreOptions}
+          <option value="__custom__">${t('infra.add_agent.core_url')}</option>
+        </select>
+        <input id="aa-core-url" type="text" placeholder="http://goproxify-core:8000"
+          value="${cores.length ? 'http://' + esc(cores[0].node_name||cores[0].id) + ':8000' : 'http://goproxify-core:8000'}"
+          style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text1);margin-top:4px;">
+      </label>
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);margin-top:4px;">${t('infra.add_agent.docker')}</div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+        <input type="checkbox" id="aa-docker" checked style="accent-color:var(--accent);width:16px;height:16px;">
+        ${t('infra.configure.enabled')}
+      </label>
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);margin-top:4px;">${t('infra.add_agent.portainer')}</div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+        <input type="checkbox" id="aa-portainer" style="accent-color:var(--accent);width:16px;height:16px;">
+        ${t('infra.configure.enabled')}
+      </label>
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text2);">${t('infra.add_agent.portainer_url')}
+        <input id="aa-portainer-url" type="url" value="" placeholder="https://portainer:9443"
+          style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text1);">
+      </label>
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text2);">${t('infra.add_agent.portainer_key')}
+        <input id="aa-portainer-key" type="password" value="" placeholder="ptr_..."
+          style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text1);">
+      </label>
+    </div>`;
+
+  const footer = `
+    <button class="btn btn-secondary" onclick="closeModal()">${t('common.cancel')}</button>
+    <button class="btn btn-primary" id="aa-generate-btn" onclick="_submitAddAgent('${esc(pairingSecret)}')">${t('infra.add_agent.step1')}</button>`;
+
+  modal(t('infra.add_agent.title'), formHTML, footer);
+};
+
+window._submitAddAgent = async function(pairingSecret) {
+  const name   = (document.getElementById('aa-name')?.value || '').trim();
+  const coreSelectVal = document.getElementById('aa-core-select')?.value;
+  let coreURL = (document.getElementById('aa-core-url')?.value || '').trim();
+  if (coreSelectVal && coreSelectVal !== '__custom__') {
+    coreURL = `http://${coreSelectVal}:8000`;
+  }
+  const docker       = document.getElementById('aa-docker')?.checked ?? true;
+  const portainer    = document.getElementById('aa-portainer')?.checked ?? false;
+  const portainerURL = document.getElementById('aa-portainer-url')?.value || '';
+  const portainerKey = document.getElementById('aa-portainer-key')?.value || '';
+
+  if (!name) { toast(t('infra.add_agent.name') + ' requis', 'error'); return; }
+  if (!coreURL) { toast(t('infra.add_agent.core_url') + ' requis', 'error'); return; }
+
+  const btn = document.getElementById('aa-generate-btn');
+  if (btn) { btn.disabled = true; btn.textContent = t('infra.add_agent.generating'); }
+
+  // 1. Créer le declared_node avec auto_accept
+  const agentConfig = {
+    docker: { enabled: docker, runtime: docker ? 'auto' : '' },
+    portainer: { enabled: portainer, url: portainerURL, api_key: portainerKey },
+    core_endpoint: coreURL,
+    auto_accept: true,
+  };
+  try {
+    await api('POST', '/declared-nodes', {
+      role: 'agent',
+      name,
+      config: agentConfig,
+    });
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = t('infra.add_agent.step1'); }
+    toast(t('common.error_msg', { msg: e.message }), 'error');
+    return;
+  }
+
+  // 2. Générer le snippet docker-compose
+  const opts = _buildAddAgentOpts({ name, coreURL, docker, portainer, portainerURL, portainerKey, pairingSecret });
+  const composeText = _cfgComposeText(opts, 'inline');
+  const envText = opts.envVars.map(({ k, v }) => `${k}=${v}`).join('\n');
+
+  const snippetHTML = `
+    <div style="display:flex;flex-direction:column;gap:14px;">
+      <p style="margin:0;font-size:13px;color:var(--text2);">${t('infra.add_agent.step2_body')}</p>
+      <div>
+        <div style="font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--text2);margin-bottom:6px;">docker-compose.yml</div>
+        <div style="position:relative;">
+          <button class="btn btn-ghost btn-sm" style="position:absolute;top:6px;right:6px;font-size:11px;z-index:1;"
+            onclick="navigator.clipboard.writeText(document.getElementById('aa-compose-pre').textContent).then(()=>toast('Copié','success'))">${t('infra.add_agent.copy_compose')}</button>
+          <pre id="aa-compose-pre" style="background:var(--bg2);border-radius:6px;padding:12px 80px 12px 14px;font-size:11px;overflow-x:auto;white-space:pre;color:var(--text1);margin:0;max-height:220px;overflow-y:auto;">${esc(composeText)}</pre>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--text2);margin-bottom:6px;">.env</div>
+        <div style="position:relative;">
+          <button class="btn btn-ghost btn-sm" style="position:absolute;top:6px;right:6px;font-size:11px;z-index:1;"
+            onclick="navigator.clipboard.writeText(document.getElementById('aa-env-pre').textContent).then(()=>toast('Copié','success'))">${t('infra.add_agent.copy_env')}</button>
+          <pre id="aa-env-pre" style="background:var(--bg2);border-radius:6px;padding:12px 80px 12px 14px;font-size:11px;overflow-x:auto;white-space:pre;color:var(--text1);margin:0;max-height:180px;overflow-y:auto;">${esc(envText)}</pre>
+        </div>
+      </div>
+    </div>`;
+
+  // Remplace le contenu du modal
+  const modalBody = document.querySelector('.modal-body');
+  const modalFooter = document.querySelector('.modal-footer');
+  if (modalBody) modalBody.innerHTML = snippetHTML;
+  if (modalFooter) modalFooter.innerHTML = `<button class="btn btn-primary" onclick="closeModal();infraPage()">${t('common.close')}</button>`;
+};
 
 async function agentRescan(nodeName) {
   try {
