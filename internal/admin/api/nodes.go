@@ -34,21 +34,22 @@ type NodesHandler struct {
 }
 
 type nodeRow struct {
-	ID                string    `json:"id"`
-	NodeName          string    `json:"node_name"`
-	DisplayName       string    `json:"display_name"`
-	Role              string    `json:"role"`
-	Version           string    `json:"version"`
-	Endpoint          string    `json:"endpoint"`
-	CPUPCT            *float64  `json:"cpu_pct,omitempty"`
-	MemPCT            *float64  `json:"mem_pct,omitempty"`
-	Status            string    `json:"status"`
-	Region            string    `json:"region,omitempty"`
-	Environment       string    `json:"environment,omitempty"`
-	Tags              []string  `json:"tags"`
-	LastSeenAt        time.Time `json:"last_seen_at"`
-	ContainerRuntimes []string  `json:"container_runtimes,omitempty"`
-	TargetCore        string    `json:"target_core,omitempty"`
+	ID                string          `json:"id"`
+	NodeName          string          `json:"node_name"`
+	DisplayName       string          `json:"display_name"`
+	Role              string          `json:"role"`
+	Version           string          `json:"version"`
+	Endpoint          string          `json:"endpoint"`
+	CPUPCT            *float64        `json:"cpu_pct,omitempty"`
+	MemPCT            *float64        `json:"mem_pct,omitempty"`
+	Status            string          `json:"status"`
+	Region            string          `json:"region,omitempty"`
+	Environment       string          `json:"environment,omitempty"`
+	Tags              []string        `json:"tags"`
+	LastSeenAt        time.Time       `json:"last_seen_at"`
+	ContainerRuntimes []string        `json:"container_runtimes,omitempty"`
+	TargetCore        string          `json:"target_core,omitempty"`
+	AgentConfig       json.RawMessage `json:"_agent_config,omitempty"`
 }
 
 func (h *NodesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -310,15 +311,16 @@ func fetchNodesFromCore(ctx context.Context, coreEndpoint, token, coreName strin
 	}
 
 	var raw []struct {
-		NodeName          string    `json:"node_name"`
-		Role              string    `json:"role"`
-		Version           string    `json:"version"`
-		Endpoint          string    `json:"endpoint"`
-		CPUPCT            float64   `json:"cpu_pct"`
-		MemPCT            float64   `json:"mem_pct"`
-		Status            string    `json:"status"`
-		ContainerRuntimes []string  `json:"container_runtimes"`
-		LastSeenAt        time.Time `json:"last_seen_at"`
+		NodeName          string          `json:"node_name"`
+		Role              string          `json:"role"`
+		Version           string          `json:"version"`
+		Endpoint          string          `json:"endpoint"`
+		CPUPCT            float64         `json:"cpu_pct"`
+		MemPCT            float64         `json:"mem_pct"`
+		Status            string          `json:"status"`
+		ContainerRuntimes []string        `json:"container_runtimes"`
+		LastSeenAt        time.Time       `json:"last_seen_at"`
+		AgentConfig       json.RawMessage `json:"agent_config"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		return nil
@@ -339,6 +341,7 @@ func fetchNodesFromCore(ctx context.Context, coreEndpoint, token, coreName strin
 			LastSeenAt:        n.LastSeenAt,
 			ContainerRuntimes: n.ContainerRuntimes,
 			TargetCore:        coreName,
+			AgentConfig:       n.AgentConfig,
 		})
 	}
 	return result

@@ -5,21 +5,23 @@
 package agent
 
 import (
+	"encoding/json"
 	"sync"
 	"time"
 )
 
 // NodeInfo représente l'état courant d'un Agent.
 type NodeInfo struct {
-	NodeName          string    `json:"node_name"`
-	Role              string    `json:"role"`
-	Version           string    `json:"version"`
-	Endpoint          string    `json:"endpoint"` // API interne :8001
-	CPUPCT            float64   `json:"cpu_pct"`
-	MemPCT            float64   `json:"mem_pct"`
-	Status            string    `json:"status"`
-	ContainerRuntimes []string  `json:"container_runtimes,omitempty"`
-	LastSeenAt        time.Time `json:"last_seen_at"`
+	NodeName          string          `json:"node_name"`
+	Role              string          `json:"role"`
+	Version           string          `json:"version"`
+	Endpoint          string          `json:"endpoint"` // API interne :8001
+	CPUPCT            float64         `json:"cpu_pct"`
+	MemPCT            float64         `json:"mem_pct"`
+	Status            string          `json:"status"`
+	ContainerRuntimes []string        `json:"container_runtimes,omitempty"`
+	LastSeenAt        time.Time       `json:"last_seen_at"`
+	AgentConfig       json.RawMessage `json:"agent_config,omitempty"` // config sanitisée (sans secrets)
 }
 
 // NodeEvent représente un événement de cycle de vie ou de scaling.
@@ -54,8 +56,13 @@ func (s *NodeStore) Upsert(n NodeInfo) {
 	n.Status = "online"
 	n.LastSeenAt = time.Now().UTC()
 	s.mu.Lock()
-	if existing, ok := s.nodes[n.NodeName]; ok && n.Endpoint == "" {
-		n.Endpoint = existing.Endpoint
+	if existing, ok := s.nodes[n.NodeName]; ok {
+		if n.Endpoint == "" {
+			n.Endpoint = existing.Endpoint
+		}
+		if n.AgentConfig == nil {
+			n.AgentConfig = existing.AgentConfig
+		}
 	}
 	s.nodes[n.NodeName] = &n
 	s.mu.Unlock()

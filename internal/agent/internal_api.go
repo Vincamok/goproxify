@@ -280,6 +280,45 @@ func applyConfigPatch(cfgPath string, patch json.RawMessage) error {
 			continue
 		}
 		for k, v := range patchObj {
+			// Ne pas écraser un secret existant par une chaîne vide ou masquée ("••••••••").
+			if isSecretKey(k) {
+				var s string
+				if json.Unmarshal(v, &s) == nil && (s == "" || s == "••••••••") {
+					continue
+				}
+			}
+			// Merge récursif pour les sous-objets imbriqués (ex: endpoint_cores).
+			if baseVal, ok := baseObj[k]; ok {
+				var bSub, pSub map[string]json.RawMessage
+				if json.Unmarshal(baseVal, &bSub) == nil && json.Unmarshal(v, &pSub) == nil {
+					for sk, sv := range pSub {
+						// Merge de chaque sous-entrée (ex: un endpoint_core par nom).
+						if bEntry, ok2 := bSub[sk]; ok2 {
+							var bEnt, pEnt map[string]json.RawMessage
+							if json.Unmarshal(bEntry, &bEnt) == nil && json.Unmarshal(sv, &pEnt) == nil {
+								for ek, ev := range pEnt {
+									if isSecretKey(ek) {
+										var s string
+										if json.Unmarshal(ev, &s) == nil && (s == "" || s == "••••••••") {
+											continue
+										}
+									}
+									bEnt[ek] = ev
+								}
+								if merged, err := json.Marshal(bEnt); err == nil {
+									bSub[sk] = merged
+									continue
+								}
+							}
+						}
+						bSub[sk] = sv
+					}
+					if merged, err := json.Marshal(bSub); err == nil {
+						baseObj[k] = merged
+						continue
+					}
+				}
+			}
 			baseObj[k] = v
 		}
 		merged, err := json.Marshal(baseObj)
@@ -311,3 +350,13 @@ func applyConfigPatch(cfgPath string, patch json.RawMessage) error {
 	tmp.Close()
 	return os.Rename(tmpName, cfgPath)
 }
+
+var secretKeys = map[string]bool{
+	"api_key":    true,
+	"auth_token": true,
+	"password":   true,
+	"join_token": true,
+}
+
+func isSecretKey(k string) bool { return secretKeys[k] }
+

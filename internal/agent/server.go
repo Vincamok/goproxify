@@ -590,6 +590,7 @@ func (a *Agent) Start(ctx context.Context) error {
 		buildinfo.Agent,
 		internalEndpoint,
 		runtimes,
+		sanitizedAgentConfig(a.cfg),
 		a.wsClient,
 		a.tokenUpdate,
 		func() string {
@@ -669,6 +670,39 @@ func (a *Agent) emitEvent(containerID, eventType, detail string) {
 		a.wsClient,
 		a.log,
 	)
+}
+
+func maskIfSet(s string) string {
+	if s == "" {
+		return ""
+	}
+	return "••••••••"
+}
+
+// sanitizedAgentConfig retourne la config agent sans les secrets (api_key, auth_token, passwords).
+// Utilisé pour le heartbeat : l'Admin pré-remplit le modal de configuration sans exposer les secrets.
+func sanitizedAgentConfig(cfg *config.AgentConfig) map[string]any {
+	epCores := map[string]any{}
+	for name, ec := range cfg.Portainer.EndpointCores {
+		epCores[name] = map[string]any{
+			"core_endpoint": ec.CoreEndpoint,
+			"auth_token":    "••••••••",
+		}
+	}
+	return map[string]any{
+		"docker": map[string]any{
+			"enabled":     cfg.Docker.Enabled,
+			"socket_path": cfg.Docker.SocketPath,
+		},
+		"portainer": map[string]any{
+			"enabled":         cfg.Portainer.Enabled,
+			"url":             cfg.Portainer.URL,
+			"api_key":         maskIfSet(cfg.Portainer.APIKey),
+			"poll_interval_s": cfg.Portainer.PollIntervalS,
+			"skip_endpoints":  cfg.Portainer.SkipEndpoints,
+			"endpoint_cores":  epCores,
+		},
+	}
 }
 
 // detectedRuntimes retourne la liste des runtimes de conteneurs actifs sur cet agent.

@@ -19,7 +19,7 @@ import (
 // Si ws est non-nil et actif, le heartbeat est envoyé via WS ; sinon, fallback HTTP
 // (POST /internal/v1/agent/heartbeat) pour que le Core enregistre toujours l'Agent
 // dans son nodeStore — sinon l'Admin le laisse en « Non connecté » / declared.
-func heartbeatLoop(ctx context.Context, coreEndpoint, authToken, nodeName, version, internalEndpoint string, containerRuntimes []string, ws *wsclient.Client, tokenUpdate <-chan string, repairFn func() string, log *slog.Logger) {
+func heartbeatLoop(ctx context.Context, coreEndpoint, authToken, nodeName, version, internalEndpoint string, containerRuntimes []string, agentConfig any, ws *wsclient.Client, tokenUpdate <-chan string, repairFn func() string, log *slog.Logger) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
@@ -38,7 +38,7 @@ func heartbeatLoop(ctx context.Context, coreEndpoint, authToken, nodeName, versi
 
 		// Priorité WS si le client est connecté
 		if ws != nil && ws.IsActive() {
-			ws.SendHeartbeat(cpuPct, memPct, containerRuntimes, internalEndpoint)
+			ws.SendHeartbeat(cpuPct, memPct, containerRuntimes, internalEndpoint, agentConfig)
 			return
 		}
 
@@ -55,6 +55,7 @@ func heartbeatLoop(ctx context.Context, coreEndpoint, authToken, nodeName, versi
 			"cpu_pct":            cpuPct,
 			"mem_pct":            memPct,
 			"container_runtimes": containerRuntimes,
+			"agent_config":       agentConfig,
 		}
 		body, _ := json.Marshal(payload)
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost,

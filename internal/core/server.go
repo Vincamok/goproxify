@@ -1661,13 +1661,14 @@ func (s *Server) wsHeartbeatLoop(ctx context.Context) {
 // --- Handlers Agent → Core -----------------------------------------------
 
 type agentHeartbeatPayload struct {
-	NodeName          string   `json:"node_name"`
-	Role              string   `json:"role"`
-	Version           string   `json:"version"`
-	Endpoint          string   `json:"endpoint"`
-	CPUPCT            float64  `json:"cpu_pct"`
-	MemPCT            float64  `json:"mem_pct"`
-	ContainerRuntimes []string `json:"container_runtimes,omitempty"`
+	NodeName          string          `json:"node_name"`
+	Role              string          `json:"role"`
+	Version           string          `json:"version"`
+	Endpoint          string          `json:"endpoint"`
+	CPUPCT            float64         `json:"cpu_pct"`
+	MemPCT            float64         `json:"mem_pct"`
+	ContainerRuntimes []string        `json:"container_runtimes,omitempty"`
+	AgentConfig       json.RawMessage `json:"agent_config,omitempty"`
 }
 
 func (s *Server) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
@@ -1696,6 +1697,7 @@ func (s *Server) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		CPUPCT:            hb.CPUPCT,
 		MemPCT:            hb.MemPCT,
 		ContainerRuntimes: hb.ContainerRuntimes,
+		AgentConfig:       hb.AgentConfig,
 	})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -3026,6 +3028,7 @@ func (s *Server) handleWSAgentMessage(connID string, msg corews.Message) error {
 			CPUPCT:            hb.CPUPCT,
 			MemPCT:            hb.MemPCT,
 			ContainerRuntimes: hb.ContainerRuntimes,
+			AgentConfig:       hb.AgentConfig,
 		})
 		if s.metrics != nil {
 			s.metrics.UpdateHost(hb.Endpoint, hb.CPUPCT, hb.MemPCT)

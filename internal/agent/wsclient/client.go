@@ -109,7 +109,7 @@ func (c *Client) Close() {
 func (c *Client) IsActive() bool { return c.Active.Load() }
 
 // SendHeartbeat envoie un message heartbeat au Core.
-func (c *Client) SendHeartbeat(cpuPct, memPct float64, runtimes []string, endpoint string) {
+func (c *Client) SendHeartbeat(cpuPct, memPct float64, runtimes []string, endpoint string, agentConfig any) {
 	c.sendJSON(coreWS.TypeAgentHeartbeat, map[string]any{
 		"node_name":          c.agentName,
 		"agent_name":         c.agentName,
@@ -117,6 +117,7 @@ func (c *Client) SendHeartbeat(cpuPct, memPct float64, runtimes []string, endpoi
 		"cpu_pct":            cpuPct,
 		"mem_pct":            memPct,
 		"container_runtimes": runtimes,
+		"agent_config":       agentConfig,
 	})
 }
 
