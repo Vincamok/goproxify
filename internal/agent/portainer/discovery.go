@@ -19,6 +19,11 @@ import (
 	"github.com/vincamok/goproxify/internal/agent/docker"
 )
 
+// netManager est l'interface minimale pour connecter le Core à un réseau Docker.
+type netManager interface {
+	ConnectCoreToNetwork(ctx context.Context, networkID string) error
+}
+
 // Discovery découvre les conteneurs sur tous les endpoints Portainer
 // et les rapporte à l'Administration Goproxify.
 type Discovery struct {
@@ -29,14 +34,17 @@ type Discovery struct {
 	agentName     string
 	pollInterval  time.Duration
 	log           *slog.Logger
+	netMgr        netManager // connecte le Core aux réseaux Docker locaux (nil = désactivé)
 
 	mu       sync.Mutex
 	prevSeen map[string]bool // clés "endpointID:containerID" du scan précédent
 }
 
 // NewDiscovery crée une Discovery Portainer.
+// netMgr peut être nil ; s'il est fourni, le Core est connecté aux réseaux Docker
+// des conteneurs découverts sur les endpoints locaux (socket unix).
 func NewDiscovery(client *Client, adminEndpoint, authToken, labelPrefix, agentName string,
-	pollIntervalS int, log *slog.Logger) *Discovery {
+	pollIntervalS int, log *slog.Logger, netMgr netManager) *Discovery {
 	if pollIntervalS <= 0 {
 		pollIntervalS = 30
 	}
@@ -48,6 +56,7 @@ func NewDiscovery(client *Client, adminEndpoint, authToken, labelPrefix, agentNa
 		agentName:     agentName,
 		pollInterval:  time.Duration(pollIntervalS) * time.Second,
 		log:           log,
+		netMgr:        netMgr,
 	}
 }
 
@@ -94,6 +103,7 @@ func (d *Discovery) scan(ctx context.Context) {
 		}
 		d.log.Info("portainer: endpoint scanné", "endpoint", ep.Name, "containers", len(containers))
 		epHost := endpointHost(ep.URL)
+		isLocal := epHost == "" || isLocalHost(epHost)
 		for _, c := range containers {
 			firstNet, firstIP := "", ""
 			for name, net := range c.NetworkSettings.Networks {
@@ -109,6 +119,13 @@ func (d *Discovery) scan(ctx context.Context) {
 			if len(specs) == 0 {
 				d.log.Debug("portainer: container sans labels goproxify", "container", firstName, "image", c.Image)
 				continue
+			}
+			// Endpoint local (socket unix) : connecter le Core au réseau Docker du conteneur
+			// pour que l'IP interne soit joignable, comme le fait la découverte Docker locale.
+			if isLocal && d.netMgr != nil && firstNet != "" {
+				if err := d.netMgr.ConnectCoreToNetwork(ctx, firstNet); err != nil {
+					d.log.Warn("portainer: connexion Core au réseau", "network", firstNet, "err", err)
+				}
 			}
 			key := fmt.Sprintf("%d:%s", ep.ID, c.ID)
 			seen[key] = true

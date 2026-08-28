@@ -177,6 +177,7 @@ func New(cfg *config.AgentConfig, cfgPath string) (*Agent, error) {
 			cfg.Identity.NodeName,
 			cfg.Portainer.PollIntervalS,
 			log,
+			netMgr,
 		)
 	}
 
