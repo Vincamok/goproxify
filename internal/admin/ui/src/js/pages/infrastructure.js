@@ -729,8 +729,10 @@ async function agentConfigure(nodeName, node) {
          style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text1);font-family:inherit;">
      </label>`;
 
-  const d = (node && node._agent_config && node._agent_config.docker) || {};
-  const p = (node && node._agent_config && node._agent_config.portainer) || {};
+  // Fallback: si pas de heartbeat, utiliser la config déclarée (wizard)
+  const fallback = (node && node._declared_config) || {};
+  const d = (node && node._agent_config && node._agent_config.docker) || fallback.docker || {};
+  const p = (node && node._agent_config && node._agent_config.portainer) || fallback.portainer || {};
 
   const body = `<form id="${formId}" style="display:flex;flex-direction:column;gap:10px;">
     ${sectionTitle(t('infra.configure.docker_section'))}

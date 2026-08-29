@@ -50,6 +50,7 @@ type nodeRow struct {
 	ContainerRuntimes []string        `json:"container_runtimes,omitempty"`
 	TargetCore        string          `json:"target_core,omitempty"`
 	AgentConfig       json.RawMessage `json:"_agent_config,omitempty"`
+	DeclaredConfig    json.RawMessage `json:"_declared_config,omitempty"`
 }
 
 func (h *NodesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -229,17 +230,22 @@ func (h *NodesHandler) list(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			now := time.Now()
+			var declCfg json.RawMessage
+			if cfg != "" {
+				declCfg = json.RawMessage(cfg)
+			}
 			result = append(result, nodeRow{
-				ID:          id,
-				NodeName:    name,
-				DisplayName: name,
-				Role:        drole,
-				Status:      "declared",
-				Region:      region,
-				Environment: env,
-				TargetCore:  targetCore,
-				Tags:        []string{},
-				LastSeenAt:  now,
+				ID:             id,
+				NodeName:       name,
+				DisplayName:    name,
+				Role:           drole,
+				Status:         "declared",
+				Region:         region,
+				Environment:    env,
+				TargetCore:     targetCore,
+				Tags:           []string{},
+				LastSeenAt:     now,
+				DeclaredConfig: declCfg,
 			})
 		}
 	}
