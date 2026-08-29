@@ -665,65 +665,36 @@ async function agentRescan(nodeName) {
 }
 
 function _epCoreRowHTML(epName, coreEndpoint, authToken) {
+  const s = 'font-size:11px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text1);width:100%;';
   const cores = (window._coreNodes || []).filter(n => n.status !== 'pending');
-  const inputStyle = 'font-size:11px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text1);width:100%;';
-  const selectStyle = inputStyle + 'cursor:pointer;';
 
-  // Build the endpoint selector: known cores + "Autre…" fallback
-  const knownMatch = cores.find(c => {
-    const ep = c.endpoint || c.node_endpoint || '';
-    return ep && (ep === coreEndpoint || 'http://' + ep === coreEndpoint || 'https://' + ep === coreEndpoint);
-  });
+  const coreURL = c => { const ep = c.endpoint || c.node_endpoint || ''; return ep.startsWith('http') ? ep : 'http://' + ep; };
+  const knownMatch = cores.find(c => coreURL(c) === coreEndpoint);
   const isOther = coreEndpoint && !knownMatch;
 
-  const coreOptions = cores.map(c => {
-    const ep = c.endpoint || c.node_endpoint || '';
-    const url = ep.startsWith('http') ? ep : 'http://' + ep;
-    const selected = (c === knownMatch) ? 'selected' : '';
-    return `<option value="${esc(url)}" ${selected}>${esc(c.node_name || c.display_name)} — ${esc(url)}</option>`;
-  }).join('');
-
-  const epSelectHTML = `<select class="ep-core-select" onchange="_epCoreSelectChange(this)"
-      style="${selectStyle}">
-    ${cores.length ? '' : ''}
-    <option value="" ${!coreEndpoint ? 'selected' : ''}>${t('infra.configure.ep_core_select_placeholder')}</option>
-    ${coreOptions}
-    <option value="__other__" ${isOther ? 'selected' : ''}>${t('infra.configure.ep_core_other')}</option>
-  </select>
-  <input type="url" class="ep-core-manual" placeholder="http://core:8000" value="${esc(isOther ? coreEndpoint : '')}"
-    style="${inputStyle}margin-top:3px;display:${isOther ? 'block' : 'none'};">
-  <input type="hidden" class="ep-core-url" value="${esc(coreEndpoint)}">`;
+  const options = [
+    `<option value=""${!coreEndpoint ? ' selected' : ''}>${t('infra.configure.ep_core_select_placeholder')}</option>`,
+    ...cores.map(c => `<option value="${esc(coreURL(c))}"${c === knownMatch ? ' selected' : ''}>${esc(c.node_name || c.display_name)} — ${esc(coreURL(c))}</option>`),
+    `<option value="__other__"${isOther ? ' selected' : ''}>${t('infra.configure.ep_core_other')}</option>`,
+  ].join('');
 
   return `<div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:4px;align-items:start;" class="ep-core-row">
-    <input type="text" placeholder="${t('infra.configure.ep_core_name')}" value="${esc(epName)}"
-      style="${inputStyle}">
-    <div>${epSelectHTML}</div>
-    <input type="password" placeholder="${t('infra.configure.ep_core_token')}" value="${esc(authToken)}"
-      style="${inputStyle}">
+    <input type="text" placeholder="${t('infra.configure.ep_core_name')}" value="${esc(epName)}" style="${s}">
+    <div>
+      <select class="ep-core-select" onchange="_epCoreSelectChange(this)" style="${s}cursor:pointer;">${options}</select>
+      <input type="url" class="ep-core-manual" placeholder="http://core:8000" value="${esc(isOther ? coreEndpoint : '')}"
+        style="${s}margin-top:3px;display:${isOther ? 'block' : 'none'};">
+    </div>
+    <input type="password" placeholder="${t('infra.configure.ep_core_token')}" value="${esc(authToken)}" style="${s}">
     <button type="button" style="padding:4px 8px;font-size:11px;background:var(--red,#e53e3e);color:#fff;border:none;border-radius:4px;cursor:pointer;margin-top:2px;"
       onclick="this.closest('.ep-core-row').remove()">✕</button>
   </div>`;
 }
 
 window._epCoreSelectChange = function(sel) {
-  const row = sel.closest('.ep-core-row');
-  const manual = row.querySelector('.ep-core-manual');
-  const hidden = row.querySelector('.ep-core-url');
-  if (sel.value === '__other__') {
-    manual.style.display = 'block';
-    hidden.value = manual.value;
-  } else {
-    manual.style.display = 'none';
-    hidden.value = sel.value;
-  }
+  const manual = sel.closest('.ep-core-row').querySelector('.ep-core-manual');
+  manual.style.display = sel.value === '__other__' ? 'block' : 'none';
 };
-
-// Sync manual input → hidden
-document.addEventListener('input', function(e) {
-  if (!e.target.classList.contains('ep-core-manual')) return;
-  const row = e.target.closest('.ep-core-row');
-  if (row) row.querySelector('.ep-core-url').value = e.target.value;
-});
 
 function _renderEpCoreRows(epCores) {
   return Object.entries(epCores).map(([name, conf]) =>
@@ -809,8 +780,10 @@ window._submitAgentConfigure = async function(nodeName, formId) {
         const result = {};
         document.querySelectorAll('#cfg-ep-cores-list .ep-core-row').forEach(row => {
           const name = row.querySelector('input[type=text]')?.value?.trim();
-          const ep   = row.querySelector('.ep-core-url')?.value?.trim()
-                    || row.querySelector('input[type=url]')?.value?.trim();
+          const sel  = row.querySelector('.ep-core-select');
+          const ep   = (sel?.value === '__other__' || !sel)
+            ? row.querySelector('.ep-core-manual')?.value?.trim()
+            : sel?.value?.trim();
           const tok  = row.querySelector('input[type=password]')?.value?.trim();
           if (name && ep) result[name] = { core_endpoint: ep, auth_token: tok };
         });
