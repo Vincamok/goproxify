@@ -733,8 +733,29 @@ async function agentConfigure(nodeName, node) {
   const fallback = (node && node._declared_config) || {};
   const d = (node && node._agent_config && node._agent_config.docker) || fallback.docker || {};
   const p = (node && node._agent_config && node._agent_config.portainer) || fallback.portainer || {};
+  const cp = (node && node._agent_config && node._agent_config.control_plane) || {};
+
+  // Sélecteur "Core cible" — liste des Cores connus
+  const coreURL = c => { const ep = c.endpoint || c.node_endpoint || ''; return ep.startsWith('http') ? ep : 'http://' + ep; };
+  const coreNodes = (window._coreNodes || []).filter(n => n.status !== 'pending');
+  const currentCoreEP = cp.core_endpoint || '';
+  const knownCoreMatch = coreNodes.find(c => coreURL(c) === currentCoreEP);
+  const isCoreOther = currentCoreEP && !knownCoreMatch;
+  const coreSelectOpts = [
+    `<option value=""${!currentCoreEP ? ' selected' : ''}>${t('infra.configure.ep_core_select_placeholder')}</option>`,
+    ...coreNodes.map(c => `<option value="${esc(coreURL(c))}"${c === knownCoreMatch ? ' selected' : ''}>${esc(c.display_name||c.node_name)} — ${esc(coreURL(c))}</option>`),
+    `<option value="__other__"${isCoreOther ? ' selected' : ''}>${t('infra.configure.ep_core_other')}</option>`,
+  ].join('');
+  const selStyle = 'background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text1);font-family:inherit;width:100%;';
+  const coreSelect = `<label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text2);">${t('infra.configure.core_target')}
+    <select id="cfg-core-ep-select" style="${selStyle}" onchange="(function(s){const m=document.getElementById('cfg-core-ep-manual');if(m)m.style.display=s.value==='__other__'?'block':'none';})(this)">${coreSelectOpts}</select>
+    <input id="cfg-core-ep-manual" type="url" value="${esc(isCoreOther ? currentCoreEP : '')}" placeholder="http://lucas-core:8000"
+      style="${selStyle}display:${isCoreOther ? 'block' : 'none'};margin-top:4px;">
+  </label>`;
 
   const body = `<form id="${formId}" style="display:flex;flex-direction:column;gap:10px;">
+    ${sectionTitle(t('infra.configure.core_section'))}
+    ${coreSelect}
     ${sectionTitle(t('infra.configure.docker_section'))}
     ${toggle('cfg-docker-enabled', t('infra.configure.enabled'), d.enabled !== false)}
     ${field('cfg-docker-socket', 'Socket path', d.socket_path, 'text', '/var/run/docker.sock')}
@@ -767,7 +788,13 @@ window._submitAgentConfigure = async function(nodeName, formId) {
   const btn = document.getElementById('cfg-apply-btn');
   if (btn) { btn.disabled = true; btn.textContent = t('infra.configure.applying'); }
 
+  const cfgCoreSel = document.getElementById('cfg-core-ep-select');
+  const cfgCoreEP = cfgCoreSel?.value === '__other__'
+    ? document.getElementById('cfg-core-ep-manual')?.value?.trim()
+    : cfgCoreSel?.value?.trim();
+
   const patch = {
+    ...(cfgCoreEP ? { control_plane: { core_endpoint: cfgCoreEP } } : {}),
     docker: {
       enabled: document.getElementById('cfg-docker-enabled')?.checked ?? true,
       socket_path: document.getElementById('cfg-docker-socket')?.value || '/var/run/docker.sock',

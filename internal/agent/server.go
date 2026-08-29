@@ -690,6 +690,9 @@ func sanitizedAgentConfig(cfg *config.AgentConfig) map[string]any {
 		}
 	}
 	return map[string]any{
+		"control_plane": map[string]any{
+			"core_endpoint": cfg.ControlPlane.CoreEndpoint,
+		},
 		"docker": map[string]any{
 			"enabled":     cfg.Docker.Enabled,
 			"socket_path": cfg.Docker.SocketPath,
