@@ -360,7 +360,7 @@ function infraAgentCard(n) {
     <button class="btn-icon" title="${t('infra.title.events')}" onclick="agentEvents('${esc(nodeName)}','${esc(name)}')">
       ${iconEvents}
     </button>
-    <button class="btn-icon" title="${t('infra.configure')}" onclick="agentConfigure('${esc(nodeName)}',${JSON.stringify(n).replace(/</g,'\\u003c').replace(/>/g,'\\u003e')})">
+    <button class="btn-icon" title="${t('infra.configure')}" onclick="agentConfigure('${esc(nodeName)}',${JSON.stringify(n).replace(/</g,'\\u003c').replace(/>/g,'\\u003e').replace(/"/g,'&quot;')})">
       ${iconCfg2}
     </button>
     ${_infraPendingDeploy(name) ? `<button class="btn-icon" title="${t('infra.mark_deployed')}" onclick="archMarkDeployed('${esc(name)}')">
