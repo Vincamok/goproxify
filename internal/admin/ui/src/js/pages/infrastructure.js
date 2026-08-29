@@ -29,7 +29,7 @@ pages.infrastructure = async function() {
     window._infraNodes = [...allNodes, adminNode];
     window._topoSelection = new Set();
     _closeDetails();
-    _updateActionBar();
+
 
     const pendingSection = pendingNodes.length
       ? `<div style="margin-bottom:8px;font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--orange,#f97316);opacity:.9;">${t('infra.section.pending_accept', { n: pendingNodes.length })}</div>
@@ -1030,8 +1030,8 @@ async function showDeclaredNodeConfig(id) {
         </div>`;
     } else {
       modal(t('infra.config_title', { name: esc(node.name) }),
-        `<p style="margin:0 0 12px;font-size:13.5px;opacity:.8;">t('infra.config_unavailable')</p>
-         <p style="margin:0;font-size:13px;color:var(--text2);">t('infra.config_regen_hint')</p>`,
+        `<p style="margin:0 0 12px;font-size:13.5px;opacity:.8;">${t('infra.config_unavailable')}</p>
+         <p style="margin:0;font-size:13px;color:var(--text2);">${t('infra.config_regen_hint')}</p>`,
         `<button class="btn btn-ghost btn-sm" onclick="closeModal()">${t('common.cancel')}</button>
          <button class="btn btn-danger btn-sm" onclick="closeModal();deleteDeclaredNode('${id}')">${t('infra.delete_recreate')}</button>`);
       return;
@@ -1207,12 +1207,12 @@ function _detailsRelationActions(nodes) {
 window._topoLinkAgentsHint = function(coreName, nAgents) {
   modal(t('infra.link_agents_title'),
     `<p style="margin:0 0 10px;font-size:13px;color:var(--text2);">${t('infra.link_agents_body', { n: nAgents, core: esc(coreName) })}</p>
-     <p style="margin:0;font-size:12px;color:var(--text2);">t('infra.link_agents_hint')</p>`,
+     <p style="margin:0;font-size:12px;color:var(--text2);">${t('infra.link_agents_hint')}</p>`,
     `<button class="btn btn-primary" onclick="closeModal()">${t('infra.understood')}</button>`);
 };
 window._topoRaftHint = function() {
   modal(t('infra.tag.raft_cluster'),
-    `<p style="margin:0;font-size:13px;">t('infra.raft_hint_body')</p>`,
+    `<p style="margin:0;font-size:13px;">${t('infra.raft_hint_body')}</p>`,
     `<button class="btn btn-secondary" onclick="closeModal()">${t('common.close')}</button>
      <button class="btn btn-primary" onclick="closeModal();openInfraWizard()">${t('infra.open_wizard')}</button>`);
 };
@@ -1220,7 +1220,7 @@ window._topoCompareHint = function() {
   const names = _topoSelectedNodes().map(n => n.display_name || n.node_name || n.role).join(', ');
   modal(t('infra.compare'),
     `<p style="margin:0;font-size:13px;">${t('infra.selection', { names: esc(names) })}</p>
-     <p style="margin:10px 0 0;font-size:12px;color:var(--text2);">t('infra.compare_soon')</p>`,
+     <p style="margin:10px 0 0;font-size:12px;color:var(--text2);">${t('infra.compare_soon')}</p>`,
     `<button class="btn btn-primary" onclick="closeModal()">${t('common.close')}</button>`);
 };
 
@@ -1255,13 +1255,5 @@ function _clearTopoSelection() {
 }
 window._clearTopoSelection = _clearTopoSelection;
 
-function _updateActionBar() {
-  // La barre d'actions bas de page est remplacée par le panneau détails inline.
-  const bar = document.getElementById('topo-action-bar');
-  if (bar) bar.style.display = 'none';
-}
 
-// Compat : anciens appels drawer
-function _closeDrawer() { _closeDetails(); }
-function _ensureDrawer() { /* no-op — panneau inline #topo-details */ }
 

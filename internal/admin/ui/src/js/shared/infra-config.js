@@ -75,6 +75,14 @@ function _cfgCliText(opts) {
     + `  --network goproxify_net \\\n  ${image}`;
 }
 
+function _cfgMode(state) {
+  return state.inline ? 'inline' : (state.tab === 'portainer' ? 'portainer_vars' : 'env_file');
+}
+
+function _cfgEnvFileName(tab) {
+  return tab === 'portainer' ? 'stack.env — Variables à saisir dans Portainer' : '.env';
+}
+
 function _cfgContentHTML(opts, uid, adminOpts) {
   const state = window._cfgStates[uid] || window._cfgState;
   const { tab, inline } = state;
@@ -83,14 +91,13 @@ function _cfgContentHTML(opts, uid, adminOpts) {
     return _cfgLabel('Commande Docker') + _cfgPre(p + 'cfg-cli', _cfgCliText(opts))
       + (adminOpts ? _cfgLabel('Admin — Commande Docker') + _cfgPre(p + 'cfg-cli-admin', _cfgCliText(adminOpts)) : '');
   }
-  const mode = inline ? 'inline' : (tab === 'portainer' ? 'portainer_vars' : 'env_file');
+  const mode = _cfgMode(state);
   const compose = adminOpts ? _cfgComposeTextAdmin(opts, adminOpts, mode) : _cfgComposeText(opts, mode);
-  const envFileName = tab === 'portainer' ? 'stack.env — Variables à saisir dans Portainer' : '.env';
   const envText = adminOpts
     ? [...opts.envVars, ...adminOpts.envVars].map(({k,v}) => `${k}=${v}`).join('\n')
     : _cfgEnvFileText(opts);
   return _cfgLabel('docker-compose.yml') + _cfgPre(p + 'cfg-compose', compose)
-    + (!inline ? _cfgLabel(envFileName) + _cfgPre(p + 'cfg-env', envText) : '');
+    + (!inline ? _cfgLabel(_cfgEnvFileName(tab)) + _cfgPre(p + 'cfg-env', envText) : '');
 }
 
 function _cfgContentHTMLFull(coreOpts, agentOpts, uid, adminOpts) {
@@ -102,16 +109,15 @@ function _cfgContentHTMLFull(coreOpts, agentOpts, uid, adminOpts) {
       + _cfgLabel('Agent — Commande Docker') + _cfgPre(p + 'cfg-cli-agent', _cfgCliText(agentOpts))
       + (adminOpts ? _cfgLabel('Admin — Commande Docker') + _cfgPre(p + 'cfg-cli-admin', _cfgCliText(adminOpts)) : '');
   }
-  const mode = inline ? 'inline' : (tab === 'portainer' ? 'portainer_vars' : 'env_file');
+  const mode = _cfgMode(state);
   const compose = adminOpts
     ? _cfgComposeTextFullAdmin(coreOpts, agentOpts, adminOpts, mode)
     : _cfgComposeTextFull(coreOpts, agentOpts, mode);
-  const envFileName = tab === 'portainer' ? 'stack.env — Variables à saisir dans Portainer' : '.env';
   const envText = adminOpts
     ? _cfgEnvFileTextFull(coreOpts, agentOpts) + '\n' + adminOpts.envVars.map(({k,v}) => `${k}=${v}`).join('\n')
     : _cfgEnvFileTextFull(coreOpts, agentOpts);
   return _cfgLabel('docker-compose.yml') + _cfgPre(p + 'cfg-compose', compose)
-    + (!inline ? _cfgLabel(envFileName) + _cfgPre(p + 'cfg-env', envText) : '');
+    + (!inline ? _cfgLabel(_cfgEnvFileName(tab)) + _cfgPre(p + 'cfg-env', envText) : '');
 }
 
 function _cfgRender(uid) {
@@ -279,23 +285,9 @@ function _buildAdminOpts(d) {
   return { name, svcName: name, image, envVars, ports, volumes: [`${name}_data:/etc/goproxify`], netBlock, restart: 'unless-stopped', command: 'admin' };
 }
 
-function _cfgComposeSvcAdmin(opts, mode) {
-  const { name, image, envVars, ports, volumes, restart, svcName, command } = opts;
-  const svc = svcName || name;
-  let envSection;
-  if (mode === 'env_file')           envSection = `    env_file:\n      - .env`;
-  else if (mode === 'portainer_vars') envSection = `    environment:` + envVars.map(({k}) => `\n      - ${k}=\${${k}}`).join('');
-  else                               envSection = `    environment:` + envVars.map(({k,v}) => `\n      - ${k}=${v}`).join('');
-  const portSection = ports.length ? `    ports:\n` + ports.map(p => `      - "${p}"`).join('\n') + '\n' : '';
-  const volLines = volumes.map(v => `      - ${v}`).join('\n');
-  const volSection = volumes.length ? `    volumes:\n${volLines}\n` : '';
-  const cmdSection = command ? `    command: ["${command}"]\n` : '';
-  return `  ${svc}:\n    image: ${image}\n    container_name: ${name}\n    restart: ${restart}\n${cmdSection}${portSection}${envSection}\n${volSection}    networks:\n      - goproxify_net`;
-}
-
 function _cfgComposeTextAdmin(coreOpts, adminOpts, mode) {
   const coreSvc  = _cfgComposeSvc(coreOpts, mode);
-  const adminSvc = _cfgComposeSvcAdmin(adminOpts, mode);
+  const adminSvc = _cfgComposeSvc(adminOpts, mode);
   const coreVol  = `  ${coreOpts.name}_data:`;
   const adminVol = `  ${adminOpts.name}_data:`;
   return `services:\n${coreSvc}\n\n${adminSvc}\n\nvolumes:\n${coreVol}\n${adminVol}\n${coreOpts.netBlock}`;
@@ -307,7 +299,7 @@ function _cfgComposeTextFullAdmin(coreOpts, agentOpts, adminOpts, mode) {
     '    networks:\n      - goproxify_net',
     `    depends_on:\n      - ${coreOpts.svcName||coreOpts.name}\n    networks:\n      - goproxify_net`
   );
-  const adminSvc = _cfgComposeSvcAdmin(adminOpts, mode);
+  const adminSvc = _cfgComposeSvc(adminOpts, mode);
   const coreVol  = `  ${coreOpts.name}_data:`;
   const agentVol = agentOpts.volumes.filter(v=>!v.includes('docker.sock') && !v.includes('podman.sock')).map(v=>`  ${v.split(':')[0]}:`).join('\n');
   const adminVol = `  ${adminOpts.name}_data:`;
