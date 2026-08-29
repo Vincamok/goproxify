@@ -209,6 +209,8 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	certsH := &api.CertsHandler{DB: s.db, Log: s.log, Manager: acmeMgr}
 	nodesH := &api.NodesHandler{DB: s.db, Log: s.log}
+	autoConfigurer := &api.AgentAutoConfigurer{DB: s.db, Log: s.log, Nodes: nodesH}
+	go autoConfigurer.Start(ctx)
 	topoSnapshotsH := &api.TopologySnapshotsHandler{DB: s.db, Log: s.log}
 	declaredNodesH := &api.DeclaredNodesHandler{DB: s.db, Log: s.log, CoreNodeName: s.cfg.Identity.CoreNodeName, Snapshots: topoSnapshotsH}
 	bootstrapH := &api.BootstrapHandler{
