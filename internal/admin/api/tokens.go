@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -224,9 +225,11 @@ func normalizeCoreEndpoint(raw string) string {
 
 func (h *TokensHandler) revoke(w http.ResponseWriter, r *http.Request, id string) {
 	var role, nodeName string
-	_ = h.DB.QueryRowContext(r.Context(),
+	if err := h.DB.QueryRowContext(r.Context(),
 		`SELECT role, COALESCE(node_name,'') FROM tokens WHERE id=?`, id,
-	).Scan(&role, &nodeName)
+	).Scan(&role, &nodeName); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		h.Log.Warn("tokens: revoke pre-lookup", "id", id, "err", err)
+	}
 
 	res, err := h.DB.ExecContext(r.Context(),
 		`UPDATE tokens SET revoked=1 WHERE id=?`, id)

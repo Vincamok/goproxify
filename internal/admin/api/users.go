@@ -334,7 +334,11 @@ func (h *UsersHandler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Scopes != nil {
-		_ = replaceUserScopes(h.DB, id, *req.Scopes)
+		if err := replaceUserScopes(h.DB, id, *req.Scopes); err != nil {
+			h.Log.Error("users: create scopes", "err", err)
+			writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
+			return
+		}
 	}
 
 	actor := adminauth.UserIDFromContext(r.Context())

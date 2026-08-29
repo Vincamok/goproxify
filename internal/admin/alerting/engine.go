@@ -143,12 +143,11 @@ func (e *Engine) recordFired(rule Rule, ev Event, msg Message) {
 	detail, _ := json.Marshal(ev.Detail)
 	chansJSON, _ := json.Marshal(rule.Channels)
 	_, _ = e.db.Exec(
-		`INSERT INTO alert_events (rule_id, trigger, detail, channels) VALUES (?, ?, ?, ?)`,
-		rule.ID, string(ev.Trigger), string(detail), string(chansJSON),
+		`INSERT INTO alert_events (rule_id, trigger, detail, channels, message_title, message_body, priority) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		rule.ID, string(ev.Trigger), string(detail), string(chansJSON), msg.Title, msg.Body, rule.Priority,
 	)
 	// Purge des événements > 30 jours
 	_, _ = e.db.Exec(`DELETE FROM alert_events WHERE fired_at < datetime('now', '-30 days')`)
-	_ = msg
 }
 
 // loadRules charge et cache les règles actives (TTL 30 s).

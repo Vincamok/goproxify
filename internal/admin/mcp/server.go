@@ -760,8 +760,14 @@ func (h *Handler) toolDeleteProxy(r *http.Request, id string) (any, error) {
 		return nil, fmt.Errorf("aucun Core joignable")
 	}
 	client := coreproxy.NewClient()
+	var deleteErr error
 	for _, t := range targets {
-		_ = client.Delete(r.Context(), t, id)
+		if err := client.Delete(r.Context(), t, id); err != nil {
+			deleteErr = err
+		}
+	}
+	if deleteErr != nil {
+		return nil, fmt.Errorf("suppression partielle ou échouée : %w", deleteErr)
 	}
 	_ = admindb.WriteAudit(h.DB, actor, "delete", "proxy:"+id, "")
 	return map[string]any{"deleted": id}, nil

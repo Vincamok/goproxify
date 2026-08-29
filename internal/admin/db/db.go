@@ -613,6 +613,15 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	// Colonnes additives alert_events (ajoutées après la création initiale)
+	for _, s := range []string{
+		`ALTER TABLE alert_events ADD COLUMN message_title TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE alert_events ADD COLUMN message_body  TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE alert_events ADD COLUMN priority      INTEGER NOT NULL DEFAULT 0`,
+	} {
+		_, _ = db.Exec(s) // sqlite ignore si la colonne existe déjà
+	}
+
 	return nil
 }
 
