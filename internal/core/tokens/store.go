@@ -202,6 +202,17 @@ func (s *Store) RevokeByRaw(rawToken string) error {
 	return err
 }
 
+// HasActiveAgent retourne true si un agent non révoqué et non expiré portant ce nom existe.
+func (s *Store) HasActiveAgent(agentName string) bool {
+	var count int
+	_ = s.db.QueryRow(
+		`SELECT COUNT(*) FROM tokens WHERE name=? AND role='agent' AND revoked=0
+		  AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)`,
+		agentName,
+	).Scan(&count)
+	return count > 0
+}
+
 // --------------------------------------------------------------------------
 
 func (s *Store) insert(name, rawToken string, role Role, exp *time.Time) (string, error) {

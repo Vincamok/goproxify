@@ -286,6 +286,12 @@ func New(cfg *config.CoreConfig) (*Server, error) {
 	s.wsHub.SetJoinTokenUsedCallback(func(joinToken string) {
 		s.log.Info("ws/agent: JOIN_TOKEN utilisé pour connexion WS (conservé pour heartbeat HTTP)")
 	})
+	s.wsHub.SetTokenChecker(func(agentName string) bool {
+		if s.tokenStore == nil {
+			return false
+		}
+		return s.tokenStore.HasActiveAgent(agentName)
+	})
 
 	// Cluster Raft (optionnel)
 	if cfg.Cluster.Enabled {

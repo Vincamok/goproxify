@@ -60,6 +60,10 @@ type Hub struct {
 	// JOIN_TOKEN usage unique
 	joinStore *JoinTokenStore
 
+	// tokenChecker optionnel : vérifie si un agent (par nom) possède un auth_token valide.
+	// Utilisé pour restaurer la session d'un agent approuvé qui a perdu son HMAC ET son join token.
+	tokenChecker func(agentName string) bool
+
 	// Callbacks pour notifier le reste du Core
 	onAgentPending  func(agentID, agentName, version string) // Agent en attente d'approbation
 	onJoinTokenUsed func(joinToken string)                   // optionnel : révoquer dans tokenStore Core
@@ -110,6 +114,13 @@ func (h *Hub) SetHMACStore(s *AgentHMACStore) { h.hmacStore = s }
 // (ex: révoquer le token dans le tokenStore local du Core).
 func (h *Hub) SetJoinTokenUsedCallback(fn func(joinToken string)) {
 	h.onJoinTokenUsed = fn
+}
+
+// SetTokenChecker configure un callback qui vérifie si un agent (par nom) possède
+// un auth_token valide. Permet de restaurer la session d'un agent approuvé qui a
+// perdu son HMAC ET son join_token a déjà été consommé.
+func (h *Hub) SetTokenChecker(fn func(agentName string) bool) {
+	h.tokenChecker = fn
 }
 
 // SetAdminMessageHandler configure le handler pour les messages Admin→Core.
@@ -243,9 +254,23 @@ func (h *Hub) ServeAgent(w http.ResponseWriter, r *http.Request) {
 				storedHMAC, _ = h.hmacStore.Get(regPayload.Name)
 			}
 			if storedHMAC == "" {
-				conn.Close(websocket.StatusPolicyViolation, "join token invalide ou déjà utilisé")
-				h.log.Warn("ws/agent: JOIN_TOKEN refusé", "agent", agentID, "err", err)
-				return
+				// Dernier recours : auth_token valide mais pas de HMAC WS persisté → régénérer.
+				hmacOK := false
+				if h.tokenChecker != nil && h.tokenChecker(regPayload.Name) {
+					if freshHMAC, genErr := GenerateAgentHMAC(); genErr == nil {
+						ac.hmac = freshHMAC
+						ac.approved = true
+						_ = h.hmacStore.Set(agentID, freshHMAC)
+						_ = h.hmacStore.Set(regPayload.Name, freshHMAC)
+						h.log.Info("ws/agent: JOIN_TOKEN consommé, auth_token valide — HMAC régénéré", "agent", agentID)
+						hmacOK = true
+					}
+				}
+				if !hmacOK {
+					conn.Close(websocket.StatusPolicyViolation, "join token invalide ou déjà utilisé")
+					h.log.Warn("ws/agent: JOIN_TOKEN refusé", "agent", agentID, "err", err)
+					return
+				}
 			}
 			// Agent approuvé mais HMAC perdu côté agent — on restaure la session.
 			ac.hmac = storedHMAC
