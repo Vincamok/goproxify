@@ -267,6 +267,17 @@ func firstPublishedTCPPort(ports []ContainerPort) int {
 	return 0
 }
 
+// publishedPortFor retourne le port hôte publié correspondant au port privé donné.
+// Retourne 0 si aucun mapping n'existe pour ce port privé.
+func publishedPortFor(ports []ContainerPort, privatePort int) int {
+	for _, p := range ports {
+		if strings.EqualFold(p.Type, "tcp") && p.PrivatePort == privatePort && p.PublicPort > 0 {
+			return p.PublicPort
+		}
+	}
+	return 0
+}
+
 // firstPrivateTCPPort retourne le premier port TCP interne du conteneur (PrivatePort).
 // Utilisé pour les endpoints locaux où l'IP interne est directement accessible.
 func firstPrivateTCPPort(ports []ContainerPort) int {
@@ -297,7 +308,18 @@ func (d *Discovery) resolveSpecs(c Container, firstNet, firstName, containerIP, 
 			clone[k] = v
 		}
 		clone[docker.LabelIP] = epHost
-		if clone[docker.LabelPort] == "" {
+		// Pour les endpoints distants, le port doit être le port publié sur l'hôte (ex: 8080->80/tcp),
+		// pas le port interne du conteneur. goproxify.port=80 signifie "port conteneur 80",
+		// mais pour atteindre le conteneur depuis l'extérieur du réseau Docker il faut le port hôte.
+		if labelPortStr := clone[docker.LabelPort]; labelPortStr != "" {
+			// Tenter de trouver le port hôte correspondant au port interne spécifié par le label.
+			if labelPort, err := strconv.Atoi(labelPortStr); err == nil {
+				if pub := publishedPortFor(c.Ports, labelPort); pub > 0 {
+					clone[docker.LabelPort] = strconv.Itoa(pub)
+				}
+				// Si aucun mapping publié pour ce port, garder le label port (fallback).
+			}
+		} else {
 			if pub := firstPublishedTCPPort(c.Ports); pub > 0 {
 				clone[docker.LabelPort] = strconv.Itoa(pub)
 			}
