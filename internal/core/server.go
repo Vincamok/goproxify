@@ -101,6 +101,11 @@ type Server struct {
 	saveCacheMu    sync.Mutex
 	saveCacheTimer *time.Timer
 
+	// adminToken : token HMAC partagé par tous les Cores (reçu via TypeAdminToken).
+	// Utilisé pour relayer les routes agent aux Cores délégués.
+	adminTokenMu sync.RWMutex
+	adminToken   string
+
 	// Cache de chaînes dispatch invalidé par génération (revue P1 #3)
 	dispatchGen      atomic.Uint64
 	dispatchHandlers sync.Map // key -> *cachedDispatch
@@ -1794,6 +1799,129 @@ type agentContainerPayload struct {
 	// Cache & logs
 	Cache   json.RawMessage `json:"cache"`
 	Logging json.RawMessage `json:"logging"`
+
+	// Relayed indique que ce payload a déjà été relayé par un Core pair (anti-boucle).
+	Relayed bool `json:"relayed,omitempty"`
+}
+
+// agentRouteMatchesDelegation retourne vrai si host est couvert par le wildcard d'une délégation.
+func agentRouteMatchesDelegation(pattern, host string) bool {
+	if pattern == host {
+		return true
+	}
+	if strings.HasPrefix(pattern, "*.") {
+		return strings.HasSuffix(host, pattern[1:])
+	}
+	return false
+}
+
+// delegateBaseURL extrait scheme://host:port d'une URL backend de délégation.
+func delegateBaseURL(rawURL string) string {
+	idx := strings.Index(rawURL, "://")
+	if idx < 0 {
+		return ""
+	}
+	rest := rawURL[idx+3:]
+	if slash := strings.IndexByte(rest, '/'); slash >= 0 {
+		rest = rest[:slash]
+	}
+	if rest == "" {
+		return ""
+	}
+	return rawURL[:idx+3] + rest
+}
+
+// relayToDelegates relaie un payload de route agent aux Cores délégués dont le wildcard
+// couvre le host donné. Utilise le token admin partagé. Ne fait rien si Relayed=true.
+func (s *Server) relayToDelegates(ctx context.Context, p *agentContainerPayload) {
+	if p.Relayed {
+		return
+	}
+	s.adminTokenMu.RLock()
+	token := s.adminToken
+	s.adminTokenMu.RUnlock()
+	if token == "" {
+		return
+	}
+
+	p.Relayed = true
+	body, err := json.Marshal(p)
+	if err != nil {
+		return
+	}
+
+	for _, rt := range s.table.All() {
+		if !strings.HasPrefix(rt.ID, "deleg-") {
+			continue
+		}
+		if !agentRouteMatchesDelegation(rt.Host, p.Host) {
+			continue
+		}
+		if len(rt.Backends) == 0 {
+			continue
+		}
+		base := delegateBaseURL(rt.Backends[0].URL)
+		if base == "" {
+			continue
+		}
+		go func(base string, payload []byte) {
+			reqURL := base + "/internal/v1/agent/containers"
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(payload))
+			if err != nil {
+				return
+			}
+			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				s.log.Warn("core: relay route agent vers délégué", "delegate", base, "host", p.Host, "err", err)
+				return
+			}
+			resp.Body.Close()
+			s.log.Info("core: route agent relayée vers délégué", "delegate", base, "host", p.Host, "status", resp.StatusCode)
+		}(base, body)
+	}
+}
+
+// relayDeleteToDelegates propage la suppression d'un conteneur aux Cores délégués.
+func (s *Server) relayDeleteToDelegates(ctx context.Context, containerID, name string) {
+	s.adminTokenMu.RLock()
+	token := s.adminToken
+	s.adminTokenMu.RUnlock()
+	if token == "" {
+		return
+	}
+	body, _ := json.Marshal(map[string]any{
+		"container_id": containerID,
+		"name":         name,
+		"relayed":      true,
+	})
+	seen := map[string]bool{}
+	for _, rt := range s.table.All() {
+		if !strings.HasPrefix(rt.ID, "deleg-") || len(rt.Backends) == 0 {
+			continue
+		}
+		base := delegateBaseURL(rt.Backends[0].URL)
+		if base == "" || seen[base] {
+			continue
+		}
+		seen[base] = true
+		go func(base string) {
+			reqURL := base + "/internal/v1/agent/containers"
+			req, err := http.NewRequestWithContext(ctx, http.MethodDelete, reqURL, bytes.NewReader(body))
+			if err != nil {
+				return
+			}
+			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				s.log.Warn("core: relay suppression route vers délégué", "delegate", base, "err", err)
+				return
+			}
+			resp.Body.Close()
+		}(base)
+	}
 }
 
 func (s *Server) handleAgentContainerStart(w http.ResponseWriter, r *http.Request) {
@@ -1819,6 +1947,8 @@ func (s *Server) handleAgentContainerStart(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "host et backends requis", http.StatusBadRequest)
 		return
 	}
+	// Relay Core→Core : après traitement local, propager aux Cores délégués qui couvrent ce host.
+	defer s.relayToDelegates(r.Context(), &p)
 	role := strings.ToLower(strings.TrimSpace(p.Role))
 	if role == "" {
 		role = "normal"
@@ -2309,6 +2439,7 @@ func (s *Server) handleAgentContainerStop(w http.ResponseWriter, r *http.Request
 	var p struct {
 		ContainerID string `json:"container_id"`
 		Name        string `json:"name"`
+		Relayed     bool   `json:"relayed,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -2383,6 +2514,11 @@ func (s *Server) handleAgentContainerStop(w http.ResponseWriter, r *http.Request
 	if changed {
 		metrics.Core.RouteCount.Set(float64(s.table.Len()))
 		s.log.Info("agent: routes/backends label retirés", "container", p.Name)
+	}
+	// Relay suppression portainer aux Cores délégués.
+	if !p.Relayed {
+		p.Relayed = true
+		s.relayDeleteToDelegates(r.Context(), p.ContainerID, p.Name)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -3001,6 +3137,9 @@ func (s *Server) handleWSAdminMessage(connID string, msg corews.Message) error {
 			} else {
 				s.log.Debug("ws/admin: token Admin enregistré dans le store")
 			}
+			s.adminTokenMu.Lock()
+			s.adminToken = p.Token
+			s.adminTokenMu.Unlock()
 		}
 
 	case corews.TypePushGatewayPeers:
