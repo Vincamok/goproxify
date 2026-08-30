@@ -1816,8 +1816,22 @@ func agentRouteMatchesDelegation(pattern, host string) bool {
 }
 
 
+// payloadMatchesDelegation retourne vrai si le host ou l'un des aliases du payload
+// est couvert par le wildcard de délégation donné.
+func payloadMatchesDelegation(pattern string, p *agentContainerPayload) bool {
+	if agentRouteMatchesDelegation(pattern, p.Host) {
+		return true
+	}
+	for _, a := range p.Aliases {
+		if agentRouteMatchesDelegation(pattern, a) {
+			return true
+		}
+	}
+	return false
+}
+
 // relayToDelegates relaie un payload de route agent aux Cores délégués dont le wildcard
-// couvre le host donné. Utilise le token admin partagé. Ne fait rien si Relayed=true.
+// couvre le host ou l'un des aliases. Utilise le token admin partagé. Ne fait rien si Relayed=true.
 func (s *Server) relayToDelegates(ctx context.Context, p *agentContainerPayload) {
 	if p.Relayed {
 		return
@@ -1839,7 +1853,7 @@ func (s *Server) relayToDelegates(ctx context.Context, p *agentContainerPayload)
 		if !strings.HasPrefix(rt.ID, "deleg-") {
 			continue
 		}
-		if !agentRouteMatchesDelegation(rt.Host, p.Host) {
+		if !payloadMatchesDelegation(rt.Host, p) {
 			continue
 		}
 		base := rt.DelegateAPIEndpoint
