@@ -1815,21 +1815,6 @@ func agentRouteMatchesDelegation(pattern, host string) bool {
 	return false
 }
 
-// delegateBaseURL extrait scheme://host:port d'une URL backend de délégation.
-func delegateBaseURL(rawURL string) string {
-	idx := strings.Index(rawURL, "://")
-	if idx < 0 {
-		return ""
-	}
-	rest := rawURL[idx+3:]
-	if slash := strings.IndexByte(rest, '/'); slash >= 0 {
-		rest = rest[:slash]
-	}
-	if rest == "" {
-		return ""
-	}
-	return rawURL[:idx+3] + rest
-}
 
 // relayToDelegates relaie un payload de route agent aux Cores délégués dont le wildcard
 // couvre le host donné. Utilise le token admin partagé. Ne fait rien si Relayed=true.
@@ -1857,10 +1842,7 @@ func (s *Server) relayToDelegates(ctx context.Context, p *agentContainerPayload)
 		if !agentRouteMatchesDelegation(rt.Host, p.Host) {
 			continue
 		}
-		if len(rt.Backends) == 0 {
-			continue
-		}
-		base := delegateBaseURL(rt.Backends[0].URL)
+		base := rt.DelegateAPIEndpoint
 		if base == "" {
 			continue
 		}
@@ -1898,10 +1880,10 @@ func (s *Server) relayDeleteToDelegates(ctx context.Context, containerID, name s
 	})
 	seen := map[string]bool{}
 	for _, rt := range s.table.All() {
-		if !strings.HasPrefix(rt.ID, "deleg-") || len(rt.Backends) == 0 {
+		if !strings.HasPrefix(rt.ID, "deleg-") {
 			continue
 		}
-		base := delegateBaseURL(rt.Backends[0].URL)
+		base := rt.DelegateAPIEndpoint
 		if base == "" || seen[base] {
 			continue
 		}

@@ -824,15 +824,16 @@ func (m *Manager) resolveTokenCoreID(ctx context.Context, ref string) string {
 // Envoie aussi une liste vide aux autres Cores pour purger d'éventuelles routes deleg-* obsolètes.
 func (m *Manager) PushDelegations(ctx context.Context) {
 	type delegation struct {
-		ID                string
-		Domain            string
-		CoreID            string
-		DelegatedEndpoint string
-		DelegationMode    string
+		ID                  string
+		Domain              string
+		CoreID              string
+		DelegatedToCore     string
+		DelegatedEndpoint   string
+		DelegationMode      string
 	}
 
 	rows, err := m.db.QueryContext(ctx, `
-		SELECT id, domain, core_id, delegated_endpoint, delegation_mode
+		SELECT id, domain, core_id, delegated_to_core_id, delegated_endpoint, delegation_mode
 		FROM domains
 		WHERE delegated_to_core_id != '' AND delegated_endpoint != ''`)
 	if err != nil {
@@ -846,7 +847,7 @@ func (m *Manager) PushDelegations(ctx context.Context) {
 	for rows.Next() {
 		totalRows++
 		var d delegation
-		if err := rows.Scan(&d.ID, &d.Domain, &d.CoreID, &d.DelegatedEndpoint, &d.DelegationMode); err != nil {
+		if err := rows.Scan(&d.ID, &d.Domain, &d.CoreID, &d.DelegatedToCore, &d.DelegatedEndpoint, &d.DelegationMode); err != nil {
 			continue
 		}
 		m.log.Info("corews/manager: délégation DB", "domain", d.Domain, "core_id", d.CoreID, "endpoint", d.DelegatedEndpoint, "mode", d.DelegationMode)
@@ -887,10 +888,19 @@ func (m *Manager) PushDelegations(ctx context.Context) {
 		go func() {
 			routes := make([]router.Route, 0, len(delegs))
 			for _, d := range delegs {
+				// Récupère l'endpoint interne du Core délégué pour le relay Core→Core.
+				var delegateAPIEndpoint string
+				_ = m.db.QueryRowContext(ctx,
+					`SELECT node_endpoint FROM tokens
+					 WHERE role='core' AND revoked=0 AND node_endpoint != ''
+					   AND (id=? OR node_name=?)
+					 LIMIT 1`, d.DelegatedToCore, d.DelegatedToCore).Scan(&delegateAPIEndpoint)
+
 				r := router.Route{
-					ID:   "deleg-" + d.ID,
-					Host: d.Domain,
-					Type: router.RouteHTTP,
+					ID:                  "deleg-" + d.ID,
+					Host:                d.Domain,
+					Type:                router.RouteHTTP,
+					DelegateAPIEndpoint: delegateAPIEndpoint,
 				}
 				if d.DelegationMode == "terminate" {
 					r.TLSEnabled = true

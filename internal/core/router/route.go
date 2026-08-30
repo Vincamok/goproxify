@@ -18,6 +18,10 @@ type Route struct {
 	// AgentName est le nœud Agent qui a découvert / injecté cette route (docker:/k8s:).
 	AgentName string `json:"agent_name,omitempty"`
 
+	// DelegateAPIEndpoint est l'endpoint interne (http://host:8000) du Core délégué.
+	// Renseigné par Admin lors du push des délégations. Utilisé pour le relay Core→Core.
+	DelegateAPIEndpoint string `json:"delegate_api_endpoint,omitempty"`
+
 	// TLS
 	TLSEnabled     bool   `json:"tls_enabled"`
 	TLSPassthrough bool   `json:"tls_passthrough"` // SNI passthrough sans déchiffrement
