@@ -1860,13 +1860,21 @@ func (s *Server) relayToDelegates(ctx context.Context, p *agentContainerPayload)
 		if base == "" {
 			continue
 		}
-		go func(base string, payload []byte) {
+		// Utiliser le token du peer (Lucas Core) plutôt que le token admin local.
+		peerToken := token
+		for _, peer := range s.peers.All() {
+			if peer.Endpoint == base {
+				peerToken = peer.Token
+				break
+			}
+		}
+		go func(base, peerToken string, payload []byte) {
 			reqURL := base + "/internal/v1/agent/containers"
 			req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(payload))
 			if err != nil {
 				return
 			}
-			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set("Authorization", "Bearer "+peerToken)
 			req.Header.Set("Content-Type", "application/json")
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
@@ -1875,7 +1883,7 @@ func (s *Server) relayToDelegates(ctx context.Context, p *agentContainerPayload)
 			}
 			resp.Body.Close()
 			s.log.Info("core: route agent relayée vers délégué", "delegate", base, "host", p.Host, "status", resp.StatusCode)
-		}(base, body)
+		}(base, peerToken, body)
 	}
 }
 
@@ -1902,13 +1910,20 @@ func (s *Server) relayDeleteToDelegates(ctx context.Context, containerID, name s
 			continue
 		}
 		seen[base] = true
-		go func(base string) {
+		peerToken := token
+		for _, peer := range s.peers.All() {
+			if peer.Endpoint == base {
+				peerToken = peer.Token
+				break
+			}
+		}
+		go func(base, peerToken string) {
 			reqURL := base + "/internal/v1/agent/containers"
 			req, err := http.NewRequestWithContext(ctx, http.MethodDelete, reqURL, bytes.NewReader(body))
 			if err != nil {
 				return
 			}
-			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set("Authorization", "Bearer "+peerToken)
 			req.Header.Set("Content-Type", "application/json")
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
@@ -1916,7 +1931,7 @@ func (s *Server) relayDeleteToDelegates(ctx context.Context, containerID, name s
 				return
 			}
 			resp.Body.Close()
-		}(base)
+		}(base, peerToken)
 	}
 }
 
