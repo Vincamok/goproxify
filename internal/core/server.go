@@ -1961,6 +1961,8 @@ func (s *Server) handleAgentContainerStart(w http.ResponseWriter, r *http.Reques
 	// Relay Core→Core : après traitement local, propager aux Cores délégués qui couvrent ce host.
 	// context.Background() : r.Context() est annulé dès que le handler retourne.
 	defer s.relayToDelegates(context.Background(), &p)
+	// Purge les routes portainer qui seraient masquées par une délégation wildcard.
+	defer s.purgeRoutesShadowedByPassthrough()
 	role := strings.ToLower(strings.TrimSpace(p.Role))
 	if role == "" {
 		role = "normal"
