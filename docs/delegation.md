@@ -79,3 +79,22 @@ Si l'entrée loggue une IP privée type passerelle LAN (`192.168.x.1`), c'est so
 | IP client / WAF / analytics sur le Core apps | **Terminate** |
 | Frontal « dumb » L4 | **Passthrough** |
 | Frontal TLS + inspection HTTP | **Terminate** |
+
+---
+
+## Relay Core→Core via Portainer (`endpoint_cores`)
+
+La délégation de domaines (ci-dessus) est configurée dans l'Admin. Pour les routes **découvertes dynamiquement via l'Agent Portainer** (multi-hôtes), un mécanisme de relay différent s'applique.
+
+Quand l'Agent découvre des conteneurs sur un **endpoint Portainer distant**, il peut relayer leurs routes directement vers un Core alternatif via `endpoint_cores` dans `agent.json`. Le relay utilise l'**endpoint interne `:8000`** du Core cible avec le peer token configuré.
+
+```
+Agent ──discovery──▶ Portainer API
+                          │
+              endpoint "edge-dc2" ──▶ Core dc2 :8000 ──▶ backends dc2
+              endpoint "local"    ──▶ Core local :8000 ──▶ backends locaux
+```
+
+Les routes Portainer poussées vers un Core délégué sont automatiquement **purgées** du Core local pour éviter les doublons et les conflits de passthrough.
+
+Voir la [section Portainer multi-hôtes dans architecture.md](architecture.md#agent-discovery--telemetry).

@@ -7,6 +7,47 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ## [Unreleased]
 
+---
+
+## [0.2.3] — 2026-08-30
+
+### Ajouté — Relay Core→Core multi-hôtes (Portainer / délégation)
+
+**Relay Portainer multi-hôtes**
+- `endpoint_cores` : routage par endpoint Portainer vers un Core alternatif — chaque endpoint distant peut être servi par le Core le plus proche
+- `skip_endpoints` : liste d'endpoints à ignorer lors de la découverte Portainer
+- Connexion automatique du Core aux réseaux Docker des endpoints locaux Portainer
+- Utilisation du port hôte publié pour les endpoints distants (au lieu du port conteneur)
+- Purge automatique des routes Portainer masquées par la délégation après chaque upsert
+
+**Relay Core→Core**
+- Les routes Agent sont relayées vers les Cores délégués (Core→Core sans Admin)
+- Relay via `DelegateAPIEndpoint` (endpoint interne `:8000`) avec peer tokens
+- Vérification des aliases pour la correspondance de délégation
+- Logs diagnostics de délégation dans `PushDelegations` (WS)
+
+**Session WS Agent**
+- Restauration de la session WS d'un Agent via `auth_token` quand le join token est consommé
+- Auto-push de la config déclarée (`declared_config`) vers l'Agent à la première connexion
+
+### Ajouté — UI Endpoint (Admin webapp)
+
+- Sélecteur « Core cible » dans le modal `agentConfigure`
+- Pré-remplissage du modal depuis `declared_config` quand l'Agent est hors ligne
+- Pré-population du sélecteur `endpoint_cores` avec les Cores connus
+- Pré-remplissage du modal de configuration depuis la config live (Agent connecté)
+- Fix : échappement des guillemets dans le payload JSON `onclick` d'`agentConfigure`
+
+### Corrigé
+
+- Migration `agent.json` : ajout des sections `docker`/`portainer` si absentes au démarrage (agents antérieurs au write-through)
+- 4 erreurs silencieuses corrigées suite à l'audit dead-code
+- Fonctions dupliquées et appels `t()` non évalués supprimés
+
+---
+
+## [0.2.2] — 2026-08-09
+
 ### Modifié — Proxies YAML uniquement (suppression SQLite comme source de proxies)
 
 - `GPX_PROXY_STORE` supprimé : les proxies sont **toujours** stockés en fichiers YAML sur le Core (`proxies/*.yaml`, `proxies-revisions/*.yaml`)

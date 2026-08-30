@@ -76,6 +76,34 @@ Le Core est le **hub de connexion unique** — seul lui a besoin d'un port acces
 - Export Prometheus sur `:9191/metrics`
 - **Aucun port entrant requis** — l'Agent initie la connexion WS vers Core
 
+**Portainer multi-hôtes :**
+
+L'Agent peut scruter une API Portainer distante pour découvrir les conteneurs de plusieurs hôtes sans déployer d'Agent sur chacun. Options avancées dans `agent.json` → section `portainer` :
+
+| Champ | Type | Description |
+|-------|------|-------------|
+| `skip_endpoints` | `[]string` | Noms d'endpoints Portainer à ignorer lors de la découverte |
+| `endpoint_cores` | `map[string]{ core_endpoint, auth_token }` | Routage des routes d'un endpoint vers un Core GoProxify alternatif |
+
+Exemple :
+```json
+{
+  "portainer": {
+    "url": "https://portainer:9443",
+    "api_key": "ptr_xxx",
+    "skip_endpoints": ["local"],
+    "endpoint_cores": {
+      "edge-dc2": {
+        "core_endpoint": "http://core-dc2:8000",
+        "auth_token": "gpx_agent_..."
+      }
+    }
+  }
+}
+```
+
+Les routes découvertes sur `edge-dc2` sont relayées vers `core-dc2` (relay Core→Core via l'endpoint interne `:8000`) plutôt que vers le Core par défaut de l'Agent.
+
 ---
 
 ## Load balancing adaptatif
