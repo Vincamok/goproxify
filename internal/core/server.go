@@ -1948,7 +1948,8 @@ func (s *Server) handleAgentContainerStart(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	// Relay Core→Core : après traitement local, propager aux Cores délégués qui couvrent ce host.
-	defer s.relayToDelegates(r.Context(), &p)
+	// context.Background() : r.Context() est annulé dès que le handler retourne.
+	defer s.relayToDelegates(context.Background(), &p)
 	role := strings.ToLower(strings.TrimSpace(p.Role))
 	if role == "" {
 		role = "normal"
@@ -2518,7 +2519,7 @@ func (s *Server) handleAgentContainerStop(w http.ResponseWriter, r *http.Request
 	// Relay suppression portainer aux Cores délégués.
 	if !p.Relayed {
 		p.Relayed = true
-		s.relayDeleteToDelegates(r.Context(), p.ContainerID, p.Name)
+		s.relayDeleteToDelegates(context.Background(), p.ContainerID, p.Name)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
