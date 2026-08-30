@@ -842,11 +842,14 @@ func (m *Manager) PushDelegations(ctx context.Context) {
 	defer rows.Close()
 
 	byCoreID := map[string][]delegation{}
+	var totalRows int
 	for rows.Next() {
+		totalRows++
 		var d delegation
 		if err := rows.Scan(&d.ID, &d.Domain, &d.CoreID, &d.DelegatedEndpoint, &d.DelegationMode); err != nil {
 			continue
 		}
+		m.log.Info("corews/manager: délégation DB", "domain", d.Domain, "core_id", d.CoreID, "endpoint", d.DelegatedEndpoint, "mode", d.DelegationMode)
 		resolved := m.resolveTokenCoreID(ctx, d.CoreID)
 		if resolved != "" && resolved != d.CoreID {
 			if _, err := m.db.ExecContext(ctx,
@@ -869,8 +872,13 @@ func (m *Manager) PushDelegations(ctx context.Context) {
 		}
 		byCoreID[d.CoreID] = append(byCoreID[d.CoreID], d)
 	}
+	connectedCores := m.allEntries()
+	m.log.Info("corews/manager: PushDelegations", "domaines_délégués", totalRows, "cores_connectés", len(connectedCores))
+	for _, e := range connectedCores {
+		m.log.Info("corews/manager: core connecté", "id", e.id, "node_name", e.nodeName, "delegs_trouvées", len(byCoreID[e.id])+len(byCoreID[e.nodeName]))
+	}
 
-	for _, e := range m.allEntries() {
+	for _, e := range connectedCores {
 		e := e
 		delegs := byCoreID[e.id]
 		if len(delegs) == 0 {
