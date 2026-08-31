@@ -634,6 +634,12 @@ function filterSecThreatsList(threats) {
   return list;
 }
 
+function _secSourceLabel(source) {
+  if (!source) return '—';
+  const v = t('security.source.' + source);
+  return v.startsWith('security.source.') ? source : v;
+}
+
 function _secBansChip(active, key, label, onclick) {
   return `<button type="button" class="sec-bans-chip${active === key ? ' is-on' : ''}" onclick="${onclick}">${label}</button>`;
 }
@@ -664,6 +670,7 @@ function bansToolbarHTML(total, shown) {
       ${_secBansChip(source, 'native', t('security.source.native'), "setSecBansSource('native')")}
       ${_secBansChip(source, 'fail2ban', t('security.source.fail2ban'), "setSecBansSource('fail2ban')")}
       ${_secBansChip(source, 'crowdsec', t('security.source.crowdsec'), "setSecBansSource('crowdsec')")}
+      ${_secBansChip(source, 'threat', t('security.source.threat'), "setSecBansSource('threat')")}
       <span style="font-size:11px;color:var(--text3);margin-left:6px;">${t('security.filter_expiry')}</span>
       ${_secBansChip(expiry, '', t('security.filter.all'), "setSecBansExpiry('')")}
       ${_secBansChip(expiry, 'permanent', t('security.filter.permanent'), "setSecBansExpiry('permanent')")}
@@ -711,7 +718,7 @@ function bansTableRows(list) {
     <tbody>${list.map((b) => `<tr>
       <td class="mono">${esc(b.ip)}</td>
       <td>${esc(b.domain||'—')}</td>
-      <td><span class="tag tag-neutral">${esc(b.source)}</span></td>
+      <td><span class="tag tag-neutral">${esc(_secSourceLabel(b.source))}</span></td>
       <td style="color:var(--text2);font-size:12px">${esc(b.reason||'—')}</td>
       <td style="font-size:11px">${b.expires_at ? fmtDate(b.expires_at) : t('common.permanent')}</td>
       <td style="display:flex;gap:4px;justify-content:flex-end">
