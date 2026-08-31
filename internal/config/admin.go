@@ -15,8 +15,9 @@ type AdminConfig struct {
 
 	Server struct {
 		ListenAddr string `mapstructure:"listen_addr"`
-		APIPort    int    `mapstructure:"api_port"` // REST API + WebSocket
-		UIPort     int    `mapstructure:"ui_port"`  // Interface Web
+		APIPort    int    `mapstructure:"api_port"`   // REST API + WebSocket
+		UIPort     int    `mapstructure:"ui_port"`    // Interface Web
+		LocalPort  int    `mapstructure:"local_port"` // Port direct sur 0.0.0.0, jamais derrière le Core (0 = désactivé)
 		TLSEnabled bool   `mapstructure:"tls_enabled"`
 	} `mapstructure:"server"`
 

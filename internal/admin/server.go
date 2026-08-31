@@ -550,6 +550,25 @@ func (s *Server) Start(ctx context.Context) error {
 			}
 		}()
 	}
+
+	// Port local de secours : accès direct sans passer par le Core.
+	// Utile si Sentinel ou une règle de sécurité bloque l'accès proxifié.
+	if s.cfg.Server.LocalPort > 0 {
+		localAddr := fmt.Sprintf("0.0.0.0:%d", s.cfg.Server.LocalPort)
+		localSrv := &http.Server{
+			Addr:         localAddr,
+			Handler:      s.logMiddleware(mux), // sans HA forward
+			ReadTimeout:  30 * time.Second,
+			WriteTimeout: 30 * time.Second,
+		}
+		go func() {
+			s.log.Info("administration (port local direct)", "addr", localAddr)
+			if err := localSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				s.log.Error("admin local server", "err", err)
+			}
+		}()
+	}
+
 	return nil
 }
 
