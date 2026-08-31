@@ -6,6 +6,7 @@ package middleware
 import (
 	"net"
 	"net/http"
+	"strings"
 
 	"github.com/vincamok/goproxify/internal/core/router"
 )
@@ -36,8 +37,17 @@ func IPFilter(cfg *router.IPFilterConfig) func(http.Handler) http.Handler {
 func parseCIDRs(cidrs []string) []*net.IPNet {
 	nets := make([]*net.IPNet, 0, len(cidrs))
 	for _, c := range cidrs {
-		_, n, err := net.ParseCIDR(c)
-		if err == nil {
+		if !strings.Contains(c, "/") {
+			// IP seule → normalise en /32 ou /128
+			if ip := net.ParseIP(c); ip != nil {
+				if ip.To4() != nil {
+					c = c + "/32"
+				} else {
+					c = c + "/128"
+				}
+			}
+		}
+		if _, n, err := net.ParseCIDR(c); err == nil {
 			nets = append(nets, n)
 		}
 	}

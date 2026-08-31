@@ -141,12 +141,16 @@ func (e *Engine) Check(r *http.Request, ip string) (blocked bool, reason string)
 func (e *Engine) RecordStatus(ip string, status int) {
 	e.mu.RLock()
 	cfg := e.cfg
+	wl := e.wl
 	e.mu.RUnlock()
 
 	if !cfg.Enabled || cfg.ErrorThreshold <= 0 {
 		return
 	}
 	if status < 400 || status >= 500 {
+		return
+	}
+	if wl.allowedIP(ip) {
 		return
 	}
 

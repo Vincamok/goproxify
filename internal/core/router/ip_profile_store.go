@@ -5,6 +5,7 @@ package router
 
 import (
 	"net"
+	"strings"
 	"sync"
 )
 
@@ -63,8 +64,16 @@ func (s *IPProfileStore) Replace(profiles []*IPProfile) {
 	for _, p := range profiles {
 		var nets []*net.IPNet
 		for _, cidr := range p.CIDRs {
-			_, ipnet, err := net.ParseCIDR(cidr)
-			if err == nil {
+			if !strings.Contains(cidr, "/") {
+				if ip := net.ParseIP(cidr); ip != nil {
+					if ip.To4() != nil {
+						cidr = cidr + "/32"
+					} else {
+						cidr = cidr + "/128"
+					}
+				}
+			}
+			if _, ipnet, err := net.ParseCIDR(cidr); err == nil {
 				nets = append(nets, ipnet)
 			}
 		}
