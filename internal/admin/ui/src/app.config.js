@@ -114,6 +114,29 @@ const APP_CONFIG = {
       ],
     },
     {
+      page: 'access',
+      label: 'Accès',
+      icon: '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="8" cy="8" r="3"/><path d="M2 18c0-3 2.7-5 6-5"/><path d="M16 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/><path d="M16 14v4M14 16h4"/></svg>',
+      guard: (u) => u?.role === 'superadmin' || u?.role === 'admin',
+      children: [
+        {
+          page: 'users',
+          label: 'Utilisateurs & équipes',
+          icon: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="5" r="2.5"/><path d="M1 13c0-2.5 2.2-4 5-4s5 1.5 5 4"/><circle cx="13" cy="5" r="2"/><path d="M18 13c0-2-1.8-3.2-4-3.2"/></svg>',
+        },
+        {
+          page: 'tokens',
+          label: 'Tokens Core & Agent',
+          icon: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 11a4 4 0 100-8 4 4 0 000 8zM11 11l4 4"/></svg>',
+        },
+        {
+          page: 'access-policies',
+          label: 'Politiques d\'accès',
+          icon: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M5 7h6M5 9.5h4"/></svg>',
+        },
+      ],
+    },
+    {
       page: 'settings',
       label: 'Paramètres',
       icon: '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.2 3.2l1.4 1.4M11.4 11.4l1.4 1.4M3.2 12.8l1.4-1.4M11.4 4.6l1.4-1.4"/></svg>',
@@ -241,6 +264,8 @@ const APP_CONFIG = {
     'docker-labels':    'Labels Docker / Kubernetes',
     tokens:             'Tokens d\'appairage',
     'api-tokens':        'Mes tokens API',
+    access:              'Accès',
+    'access-policies':   'Politiques d\'accès',
     prism:              'Prism — Analyse',
     'core-prism':       'Prism',
     alerts:             'Règles d\'alertes',

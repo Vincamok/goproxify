@@ -11,6 +11,7 @@ pages.settings = async function() {
         { page: 'tokens', icon: '<path d="M7 11a4 4 0 100-8 4 4 0 000 8zM11 11l4 4"/>', label: gpxPageLabel('tokens'), desc: t('settings.item.tokens_desc') },
         { page: 'api-tokens', icon: '<path d="M7 11a4 4 0 100-8 4 4 0 000 8zM11 11l4 4M3 13l4 4"/>', label: gpxPageLabel('api-tokens'), desc: t('settings.item.api_tokens_desc') },
         { page: 'users', icon: '<circle cx="8" cy="6" r="3"/><path d="M2 14c0-3 2.7-5 6-5s6 2 6 5"/>', label: gpxPageLabel('users'), desc: t('settings.item.users_desc') },
+        { page: 'access-policies', icon: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M5 7h6M5 9.5h4"/>', label: gpxPageLabel('access-policies'), desc: t('settings.item.access_policies_desc') || 'Vue matricielle domaines × sujets' },
         { page: 'profile', icon: '<circle cx="8" cy="6" r="3"/><path d="M2 14c0-3 2.7-5 6-5s6 2 6 5"/><path d="M12 3l2 2-2 2"/>', label: gpxPageLabel('profile'), desc: t('settings.item.profile_desc') },
         { page: 'smtp', icon: '<path d="M2 4h12v10H2zM2 4l6 5 6-5"/>', label: gpxPageLabel('smtp', 'SMTP'), desc: t('settings.item.smtp_desc') || 'Email sortant (MFA, portail Access)' },
       ]
