@@ -15,6 +15,9 @@ import (
 	"time"
 )
 
+// Name est l'identifiant affiché dans les logs pour ce moteur.
+const Name = "Sentinel"
+
 // BanCallback est appelé quand le moteur détecte une menace et doit bannir une IP.
 // Le caller (server.go) ajoute le ban au BanStore et le notifie à Admin.
 type BanCallback func(ip, reason string, expires time.Time)

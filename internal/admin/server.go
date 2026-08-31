@@ -284,6 +284,11 @@ func (s *Server) Start(ctx context.Context) error {
 		CrowdSec:     csBouncer,
 		ScanCtx:      ctx,
 		OnBansChange: pushBans,
+		OnThreatConfigChange: func(cfg any) {
+			if manager != nil {
+				go manager.PushThreatConfig(context.Background(), cfg)
+			}
+		},
 	}
 	importH := &api.ImportHandler{DB: s.db, Log: s.log}
 	prismH := &api.PrismHandler{DB: s.db}
