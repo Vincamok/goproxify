@@ -3049,6 +3049,16 @@ func (s *Server) handleWSAdminMessage(connID string, msg corews.Message) error {
 		s.applyBans(list)
 		s.log.Info("ws/admin: bans mis à jour", "count", len(list))
 
+	case corews.TypePushThreatConfig:
+		var cfg threat.Config
+		if err := json.Unmarshal(msg.Payload, &cfg); err != nil {
+			return err
+		}
+		if s.threatEngine != nil {
+			s.threatEngine.UpdateConfig(cfg)
+		}
+		s.log.Info(threat.Name+": config mise à jour", "enabled", cfg.Enabled)
+
 	case corews.TypePushSettings:
 		var payload pushedSettings
 		if err := json.Unmarshal(msg.Payload, &payload); err != nil {

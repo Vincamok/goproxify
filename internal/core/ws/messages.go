@@ -27,6 +27,7 @@ const (
 	TypePushClusterPeers  = "push_cluster_peers"
 	TypePushGatewayPeers  = "push_gateway_peers"
 	TypePushDelegations   = "push_delegations"
+	TypePushThreatConfig  = "push_threat_config"
 	TypePushErrorPages        = "push_error_pages"
 	TypePushPortal            = "push_portal"
 	TypePushPortalTemplates   = "push_portal_templates"

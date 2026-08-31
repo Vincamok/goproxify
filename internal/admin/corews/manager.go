@@ -1036,6 +1036,15 @@ func (m *Manager) pushAllToEntry(ctx context.Context, e *coreEntry, s Settings) 
 		}
 	}()
 
+	// Config Sentinel (threat engine) — poussée après le full_sync
+	go func() {
+		if cfg := m.loadThreatConfig(ctx, e.id); cfg != nil {
+			if err := e.client.PushJSON(coreWS.TypePushThreatConfig, cfg); err != nil {
+				m.log.Warn("corews/manager: push threat config", "core", e.nodeName, "err", err)
+			}
+		}
+	}()
+
 	m.log.Info("corews/manager: full_sync envoyé", "core", e.nodeName)
 }
 
@@ -1249,4 +1258,34 @@ func (m *Manager) loadActiveBans(ctx context.Context) ([]router.RuntimeBan, erro
 		list = []router.RuntimeBan{}
 	}
 	return list, nil
+}
+
+// loadThreatConfig charge la config du Sentinel depuis la DB pour un Core donné.
+func (m *Manager) loadThreatConfig(ctx context.Context, coreID string) json.RawMessage {
+	key := "threat_engine_config"
+	if coreID != "" {
+		key = "threat_engine_config:" + coreID
+	}
+	var val string
+	_ = m.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key=?`, key).Scan(&val)
+	if val == "" {
+		return nil
+	}
+	return json.RawMessage(val)
+}
+
+// PushThreatConfig envoie la config du Sentinel à tous les Cores via WS.
+func (m *Manager) PushThreatConfig(ctx context.Context, cfg any) {
+	body, err := json.Marshal(cfg)
+	if err != nil {
+		return
+	}
+	for _, e := range m.allEntries() {
+		e := e
+		go func() {
+			if err := e.client.PushJSON(coreWS.TypePushThreatConfig, json.RawMessage(body)); err != nil {
+				m.log.Warn("corews: push threat config", "core", e.nodeName, "err", err)
+			}
+		}()
+	}
 }
