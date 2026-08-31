@@ -22,6 +22,9 @@ type GeoEntry struct {
 	CountryName string  `json:"country_name"`
 	Requests    int64   `json:"requests"`
 	Pct         float64 `json:"pct"`
+	Errors      int64   `json:"errors"`
+	ErrorRate   float64 `json:"error_rate"`
+	BannedIPs   int64   `json:"banned_ips"`
 }
 
 // GeoResolver résout les IPs en pays via ip-api.com et met en cache dans SQLite.
@@ -226,13 +229,15 @@ func (g *GeoResolver) resolve(ctx context.Context) {
 	g.log().Debug("geoip: cache mis à jour", "resolved", cached, "queried", len(payload))
 }
 
-// GetGeoBreakdown retourne la répartition du trafic par pays.
+// GetGeoBreakdown retourne la répartition du trafic par pays,
+// incluant le taux d'erreurs et le nombre d'IPs bannies actives.
 func GetGeoBreakdown(db *sql.DB, p Params) []GeoEntry {
 	w, args := where(p)
 	rows, err := db.Query(fmt.Sprintf(
 		`SELECT COALESCE(g.country_code,'?') as cc,
 		        COALESCE(g.country_name,'Unknown') as cn,
-		        COUNT(*) as n
+		        COUNT(*) as n,
+		        SUM(CASE WHEN l.status >= 400 THEN 1 ELSE 0 END) as errors
 		 FROM logs l
 		 LEFT JOIN geoip_cache g ON g.ip = l.ip
 		 %s GROUP BY cc, cn ORDER BY n DESC LIMIT 50`, w), args...)
@@ -245,7 +250,10 @@ func GetGeoBreakdown(db *sql.DB, p Params) []GeoEntry {
 	var total int64
 	for rows.Next() {
 		var e GeoEntry
-		_ = rows.Scan(&e.CountryCode, &e.CountryName, &e.Requests)
+		_ = rows.Scan(&e.CountryCode, &e.CountryName, &e.Requests, &e.Errors)
+		if e.Requests > 0 {
+			e.ErrorRate = float64(e.Errors) / float64(e.Requests) * 100
+		}
 		total += e.Requests
 		out = append(out, e)
 	}
@@ -254,5 +262,33 @@ func GetGeoBreakdown(db *sql.DB, p Params) []GeoEntry {
 			out[i].Pct = float64(out[i].Requests) / float64(total) * 100
 		}
 	}
+
+	// Bans actifs par pays (query séparée, sans filtre temporel)
+	bansPerCC := geoBannedIPs(db)
+	for i := range out {
+		out[i].BannedIPs = bansPerCC[out[i].CountryCode]
+	}
 	return out
+}
+
+// geoBannedIPs retourne le nombre d'IPs bannies actives par country_code.
+func geoBannedIPs(db *sql.DB) map[string]int64 {
+	rows, err := db.Query(
+		`SELECT COALESCE(g.country_code,'?') as cc, COUNT(DISTINCT sb.ip)
+		 FROM security_bans sb
+		 LEFT JOIN geoip_cache g ON g.ip = sb.ip
+		 WHERE (sb.expires_at IS NULL OR sb.expires_at > CURRENT_TIMESTAMP)
+		 GROUP BY cc`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	m := map[string]int64{}
+	for rows.Next() {
+		var cc string
+		var n int64
+		_ = rows.Scan(&cc, &n)
+		m[cc] = n
+	}
+	return m
 }

@@ -671,11 +671,102 @@ async function renderPrismPage() {
       </table>`;
   }
 
+  // Mode actif de la choroplèthe : 'requests' | 'error_rate' | 'banned_ips'
+  let geoViewMode = 'requests';
+
   function geoHtml(geo) {
-    return `<div class="prism-panel-title">Trafic par pays</div><div id="prism-geo-map" class="wm-wrap" style="min-height:200px"><div class="spinner" style="margin:80px auto"></div></div>`;
+    return `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+        <span class="prism-panel-title" style="margin:0">Trafic par pays</span>
+        <div class="btn-group" role="group" aria-label="Vue">
+          <button type="button" class="btn btn-xs geo-mode-btn ${geoViewMode==='requests'?'active':''}" data-geo-mode="requests">Requêtes</button>
+          <button type="button" class="btn btn-xs geo-mode-btn ${geoViewMode==='error_rate'?'active':''}" data-geo-mode="error_rate">Tx erreurs</button>
+          <button type="button" class="btn btn-xs geo-mode-btn ${geoViewMode==='banned_ips'?'active':''}" data-geo-mode="banned_ips">IPs bannies</button>
+        </div>
+      </div>
+      <div id="prism-geo-map" class="wm-wrap" style="min-height:200px"><div class="spinner" style="margin:80px auto"></div></div>`;
+  }
+
+  const GEO_PALETTES = {
+    requests:   [89,  128, 166],
+    error_rate: [220, 53,  69],
+    banned_ips: [217, 119, 6],
+  };
+
+  let _lastGeoData = null;
+
+  function _geoValue(entry, mode) {
+    if (mode === 'error_rate') return entry.error_rate || 0;
+    if (mode === 'banned_ips') return entry.banned_ips || 0;
+    return entry.requests || 0;
+  }
+
+  function _applyGeoMode(container, geo) {
+    const mode = geoViewMode;
+    const [r, g, b] = GEO_PALETTES[mode] || GEO_PALETTES.requests;
+
+    const byCC = {};
+    let maxVal = 0;
+    for (const entry of geo) {
+      byCC[entry.country_code] = entry;
+      const v = _geoValue(entry, mode);
+      if (v > maxVal) maxVal = v;
+    }
+
+    document.querySelectorAll('.geo-mode-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.geoMode === mode);
+    });
+
+    const svgEl = container.querySelector('svg');
+    if (svgEl && maxVal > 0) {
+      const paths = svgEl.querySelectorAll('.wm-countries path');
+      for (const p of paths) {
+        const entry = byCC[p.id];
+        if (entry) {
+          const v = _geoValue(entry, mode);
+          const alpha = v > 0 ? (0.12 + (v / maxVal) * 0.83).toFixed(2) : '0.06';
+          p.setAttribute('fill', `rgba(${r},${g},${b},${alpha})`);
+        }
+      }
+    }
+
+    const oldTable = container.querySelector('.geo-stats-table');
+    if (oldTable) oldTable.remove();
+
+    const flag = cc => {
+      if (!cc || cc.length !== 2 || cc === 'XX' || cc === 'LO') return '';
+      return String.fromCodePoint(0x1F1E6+cc.charCodeAt(0)-65, 0x1F1E6+cc.charCodeAt(1)-65) + ' ';
+    };
+    const maxR = Math.max(...geo.map(g => g.requests), 1);
+
+    const tableWrap = document.createElement('div');
+    tableWrap.className = 'geo-stats-table';
+    tableWrap.style.cssText = 'overflow-x:auto;border-top:1px solid var(--border)';
+    tableWrap.innerHTML = `
+      <table class="prism-table">
+        <thead><tr>
+          <th>Pays</th><th>Req.</th><th>Part</th>
+          <th>Erreurs</th><th>Tx err.</th><th>IPs bannies</th>
+        </tr></thead>
+        <tbody>${geo.slice(0, 15).map(entry => {
+          const errRateHigh = (entry.error_rate || 0) >= 5;
+          const hasBans = (entry.banned_ips || 0) > 0;
+          return `<tr>
+            <td><span style="font-size:15px">${flag(entry.country_code)}</span><span style="color:var(--text3);font-size:10px;margin-right:4px">${esc(entry.country_code)}</span>${esc(entry.country_name)}</td>
+            <td>${fmtNum(entry.requests)}</td>
+            <td><span class="prism-bar-bg"><span class="prism-bar-fill" style="width:${(entry.requests/maxR*100).toFixed(1)}%"></span></span> <span style="font-size:11px;color:var(--text3)">${(entry.pct||0).toFixed(1)}%</span></td>
+            <td>${fmtNum(entry.errors || 0)}</td>
+            <td style="color:${errRateHigh?'var(--red)':'inherit'};font-weight:${errRateHigh?'600':'400'}">${(entry.error_rate||0).toFixed(1)}%</td>
+            <td style="color:${hasBans?'var(--yellow,#d97706)':'inherit'};font-weight:${hasBans?'600':'400'}">${fmtNum(entry.banned_ips || 0)}</td>
+          </tr>`;
+        }).join('')}
+        </tbody>
+      </table>`;
+    container.appendChild(tableWrap);
   }
 
   async function renderChoropleth(geo) {
+    _lastGeoData = geo;
     const container = document.getElementById('prism-geo-map');
     if (!container) return;
 
@@ -695,11 +786,7 @@ async function renderPrismPage() {
     }
 
     const byCC = {};
-    let maxReq = 0;
-    for (const g of geo) {
-      byCC[g.country_code] = g;
-      if (g.requests > maxReq) maxReq = g.requests;
-    }
+    for (const g of geo) byCC[g.country_code] = g;
 
     const parser = new DOMParser();
     const svgDoc = parser.parseFromString(_worldSvgCache, 'image/svg+xml');
@@ -718,18 +805,17 @@ async function renderPrismPage() {
     const paths = svgEl.querySelectorAll('.wm-countries path');
     for (const p of paths) {
       const entry = byCC[p.id];
-      if (entry && maxReq > 0) {
-        const t = entry.requests / maxReq;
-        // accent-tinted fill, 8 intensity steps
-        const alpha = (0.12 + t * 0.83).toFixed(2);
-        p.setAttribute('fill', `rgba(89,128,166,${alpha})`);
+      if (entry) {
+        p.setAttribute('fill', 'var(--bg2)');
         p.setAttribute('stroke', 'var(--bg)');
         p.setAttribute('stroke-width', '0.5');
-        p.dataset.cc   = p.id;
-        p.dataset.name = entry.country_name;
-        p.dataset.req  = entry.requests;
-        p.dataset.pct  = entry.pct.toFixed(1);
-        p.style.cursor = 'pointer';
+        p.dataset.cc        = p.id;
+        p.dataset.name      = entry.country_name;
+        p.dataset.req       = entry.requests;
+        p.dataset.pct       = (entry.pct||0).toFixed(1);
+        p.dataset.errorRate = (entry.error_rate||0).toFixed(1);
+        p.dataset.bannedIps = entry.banned_ips || 0;
+        p.style.cursor      = 'pointer';
       } else {
         p.setAttribute('fill', 'var(--bg2)');
         p.setAttribute('stroke', 'var(--border)');
@@ -737,7 +823,6 @@ async function renderPrismPage() {
       }
     }
 
-    // Tooltip
     let tip = document.getElementById('wm-tooltip');
     if (!tip) {
       tip = document.createElement('div');
@@ -751,8 +836,9 @@ async function renderPrismPage() {
         tip.style.display = 'block';
         tip.style.left = (e.clientX + 16) + 'px';
         tip.style.top  = (e.clientY - 12) + 'px';
-        const entry = byCC[p.dataset.cc];
-        tip.innerHTML = `<b style="color:var(--text)">${esc(p.dataset.name)}</b> <span style="color:var(--text3);font-size:10px">${p.dataset.cc}</span><br><span style="color:var(--text2)">${fmtNum(parseInt(p.dataset.req))} req &nbsp;·&nbsp; <b>${p.dataset.pct}%</b> du trafic</span>`;
+        tip.innerHTML = `<b style="color:var(--text)">${esc(p.dataset.name)}</b> <span style="color:var(--text3);font-size:10px">${p.dataset.cc}</span><br>` +
+          `<span style="color:var(--text2)">${fmtNum(parseInt(p.dataset.req))} req &nbsp;·&nbsp; <b>${p.dataset.pct}%</b></span><br>` +
+          `<span style="font-size:11px;color:var(--text3)">Tx err. ${p.dataset.errorRate}% &nbsp;·&nbsp; Bans ${p.dataset.bannedIps}</span>`;
       } else {
         tip.style.display = 'none';
       }
@@ -772,28 +858,19 @@ async function renderPrismPage() {
     container.style.minHeight = '';
     container.appendChild(svgEl);
 
-    // Table below the map
-    const maxR = maxReq;
-    const flag = cc => {
-      if (!cc || cc.length !== 2 || cc === 'XX' || cc === 'LO') return '';
-      return String.fromCodePoint(0x1F1E6+cc.charCodeAt(0)-65, 0x1F1E6+cc.charCodeAt(1)-65) + ' ';
-    };
-    const tableWrap = document.createElement('div');
-    tableWrap.style.cssText = 'overflow-x:auto;border-top:1px solid var(--border)';
-    tableWrap.innerHTML = `
-      <table class="prism-table">
-        <thead><tr><th>Pays</th><th>Req.</th><th>Part</th></tr></thead>
-        <tbody>${geo.slice(0, 15).map(g => `
-          <tr>
-            <td><span style="font-size:15px">${flag(g.country_code)}</span><span style="color:var(--text3);font-size:10px;margin-right:4px">${esc(g.country_code)}</span>${esc(g.country_name)}</td>
-            <td>${fmtNum(g.requests)}</td>
-            <td><span class="prism-bar-bg"><span class="prism-bar-fill" style="width:${(g.requests/maxR*100).toFixed(1)}%"></span></span> <span style="font-size:11px;color:var(--text3)">${g.pct.toFixed(1)}%</span></td>
-          </tr>`).join('')}
-        </tbody>
-      </table>`;
-    container.appendChild(tableWrap);
-  }
+    _applyGeoMode(container, geo);
 
+    if (!container._geoModeListenerAttached) {
+      container._geoModeListenerAttached = true;
+      document.addEventListener('click', e => {
+        const btn = e.target.closest('.geo-mode-btn');
+        if (!btn) return;
+        geoViewMode = btn.dataset.geoMode || 'requests';
+        const c = document.getElementById('prism-geo-map');
+        if (c && _lastGeoData) _applyGeoMode(c, _lastGeoData);
+      });
+    }
+  }
   function referrersHtml(refs) {
     if (!refs || refs.length === 0) return `<div class="prism-panel-title">${t('prism.top_refs')}</div><p style="color:var(--text3);font-size:13px">${t('prism.no_refs')}</p>`;
     const maxR = Math.max(...refs.map(r=>r.requests), 1);
