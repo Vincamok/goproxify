@@ -147,21 +147,23 @@ pages['access-policies'] = async function () {
       const exp = d.cert_expires_at ? new Date(d.cert_expires_at) : null;
       const days = exp ? Math.round((exp - Date.now()) / 86400000) : null;
       if (days == null) return '';
-      if (days < 0)  return `<span class="tag tag-red" style="font-size:10px">${t('access.cert.expired')}</span>`;
-      if (days < 30) return `<span class="tag tag-yellow" style="font-size:10px">${t('access.cert.valid', {n:days})}</span>`;
-      return `<span class="tag tag-green" style="font-size:10px">${t('access.cert.valid', {n:days})}</span>`;
+      if (days < 0)  return `<span class="tag tag-red" style="font-size:10px">${t('domains.cert_expired')}</span>`;
+      if (days < 30) return `<span class="tag tag-yellow" style="font-size:10px">${t('domains.cert_days_warn', {n:days})}</span>`;
+      return `<span class="tag tag-green" style="font-size:10px">${t('domains.cert_valid', {n:days})}</span>`;
     };
+
+    const thUser = `text-align:center;font-size:11px;font-weight:500;max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-bottom:6px`;
 
     const userColsHtml = relevantUsers.map(u => {
       const label = u.email?.split('@')[0] || u.email || u.id;
       const isGlobalAdmin = (u.role === 'admin' || u.role === 'superadmin') && !(u.scopes?.length > 0);
-      return `<th title="${esc(u.email)}" style="font-size:11px;font-weight:500;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+      return `<th title="${esc(u.email)}" style="${thUser}">
         ${esc(label)}${isGlobalAdmin ? '<br><span class="tag tag-accent" style="font-size:9px;vertical-align:top">admin</span>' : ''}
       </th>`;
     }).join('');
 
     const teamColsHtml = relevantTeams.map(tm =>
-      `<th style="font-size:11px;font-weight:500;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(tm.name)}</th>`
+      `<th style="${thUser}">${esc(tm.name)}</th>`
     ).join('');
 
     const rows = (domains || []).map(d => {
