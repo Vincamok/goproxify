@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/vincamok/goproxify/internal/admin/backup"
 )
 
 // DeclaredNodesHandler gère les nœuds déclarés via l'assistant Infrastructure.
@@ -18,7 +20,7 @@ type DeclaredNodesHandler struct {
 	DB           *sql.DB
 	Log          *slog.Logger
 	CoreNodeName string // depuis admin.json identity.core_node_name ; sert de base déclarative
-	Snapshots    *TopologySnapshotsHandler
+	Scheduler    *backup.Scheduler
 }
 
 type declaredNode struct {
@@ -151,7 +153,9 @@ func (h *DeclaredNodesHandler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Snapshot before change so previous state is restorable.
-	go h.Snapshots.AutoSnapshot("before:" + req.Role + ":" + req.Name)
+	if h.Scheduler != nil {
+		go h.Scheduler.TakeSnapshot("avant:"+req.Role+":"+req.Name, "", 0) //nolint:errcheck
+	}
 
 	// Upsert par (role, name) : permet de persister placement / options pour un nœud déjà live.
 	var existingID string
@@ -206,7 +210,9 @@ func (h *DeclaredNodesHandler) create(w http.ResponseWriter, r *http.Request) {
 
 func (h *DeclaredNodesHandler) delete(w http.ResponseWriter, r *http.Request, id string) {
 	h.ensureTable()
-	go h.Snapshots.AutoSnapshot("before-remove:" + id)
+	if h.Scheduler != nil {
+		go h.Scheduler.TakeSnapshot("avant-suppression:"+id, "", 0) //nolint:errcheck
+	}
 	res, err := h.DB.ExecContext(r.Context(), `DELETE FROM declared_nodes WHERE id=?`, id)
 	if err != nil {
 		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
