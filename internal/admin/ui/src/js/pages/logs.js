@@ -685,10 +685,17 @@ function _flushLiveRows() {
   const isSystem = isSystemLogs();
   const frag = document.createDocumentFragment();
   for (const e of _livePending) {
-    const el = document.createElement('div');
-    el.innerHTML = isSystem ? renderSystemLogEntry(e) : renderLiveAccessEntry(e);
-    const node = el.firstElementChild;
-    if (node) frag.appendChild(node);
+    const row = document.createElement('div');
+    row.className = 'log-row';
+    if (isSystem) {
+      const ts = e.ts ? new Date(e.ts).toLocaleTimeString(typeof gpxBCP47==='function'?gpxBCP47():'en-US') : '—';
+      const lvlClass = e.level === 'error' ? 'log-lvl-error' : e.level === 'warn' ? 'log-lvl-warn' : e.level === 'debug' ? 'log-lvl-debug' : 'log-lvl-info';
+      const node = e.node_name ? ` · ${esc(e.node_name)}` : '';
+      row.innerHTML = `<span class="log-ts">${esc(ts)}</span><span class="log-lvl ${lvlClass}">${esc(e.level||'info')}</span><span class="log-comp">${esc(e.component||'')}${node}</span><span class="log-msg">${esc(e.message||'')}</span>`;
+    } else {
+      row.innerHTML = renderLiveAccessEntry(e);
+    }
+    frag.appendChild(row);
   }
   stream.appendChild(frag);
   while (stream.children.length > 500) stream.removeChild(stream.firstChild);
@@ -699,23 +706,16 @@ function _flushLiveRows() {
 
 function renderLiveAccessEntry(e) {
   const ts = e.ts ? new Date(e.ts).toLocaleTimeString(typeof gpxBCP47==='function'?gpxBCP47():'en-US') : '—';
-  const parts = [];
-  if (e.domain) parts.push(`<span class="mono" style="font-size:11px">${esc(e.domain)}</span>`);
-  if (e.path)   parts.push(`<span class="log-entry-path">${esc(e.path)}</span>`);
-  if (e.ip)     parts.push(`<span class="mono" style="font-size:11px">${esc(e.ip)}</span>`);
-  if (e.node_name) parts.push(`<span class="mono" style="font-size:11px">${esc(e.node_name)}</span>`);
-  if (e.latency_ms) parts.push(`<span>${esc(String(e.latency_ms))}ms</span>`);
-  return `<article class="log-entry">
-    <div class="log-entry-top">
-      <span class="log-entry-ts">${esc(ts)}</span>
-      ${logLvlBadge(e.level)}
-      <span class="chip" style="font-size:11px">${esc(e.component||'—')}</span>
-      ${e.method ? `<b>${esc(e.method)}</b>` : ''}
-      ${e.status ? httpStatusBadge(e.status) : ''}
-    </div>
-    ${parts.length ? `<div class="log-entry-mid">${parts.join(logEntrySep())}</div>` : ''}
-    ${e.message ? `<div class="log-entry-msg" title="${esc(e.message)}">${esc(e.message)}</div>` : ''}
-  </article>`;
+  const lvlClass = e.level === 'error' ? 'log-lvl-error' : e.level === 'warn' ? 'log-lvl-warn' : e.level === 'debug' ? 'log-lvl-debug' : 'log-lvl-info';
+  const node = e.node_name ? ` · ${esc(e.node_name)}` : '';
+  const domain = e.domain ? `<span class="mono" style="font-size:11px;margin-left:6px">${esc(e.domain)}</span>` : '';
+  const path   = e.path   ? `<span class="log-meta" style="margin-left:4px">${esc(e.path)}</span>` : '';
+  const ip     = e.ip     ? `<span class="mono" style="font-size:11px;margin-left:6px;color:var(--text2)">${esc(e.ip)}</span>` : '';
+  const status = e.status ? ` ${httpStatusBadge(e.status)}` : '';
+  const method = e.method ? `<b style="margin-left:6px">${esc(e.method)}</b>` : '';
+  const msg    = e.message ? `<span class="log-msg" style="margin-left:6px">${esc(e.message)}</span>` : '';
+  const lat    = e.latency_ms ? `<span class="log-meta" style="margin-left:6px">${esc(String(e.latency_ms))}ms</span>` : '';
+  return `<span class="log-ts">${esc(ts)}</span><span class="log-lvl ${lvlClass}">${esc(e.level||'info')}</span><span class="log-comp">${esc(e.component||'')}${node}</span>${method}${status}${domain}${path}${ip}${lat}${msg}`;
 }
 
 function appendLiveRow(e) {
