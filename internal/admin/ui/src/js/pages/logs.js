@@ -611,6 +611,9 @@ window.saveLogsSettings = async function() {
 function renderLiveLogs() {
   const c = document.getElementById('logs-tab-content');
   const isSystem = isSystemLogs();
+  const head = isSystem
+    ? `<th>${t('logs.ts')}</th><th>${t('logs.level')}</th><th>${t('logs.component')}</th><th>${t('logs.node')}</th><th>${t('logs.message')}</th>`
+    : `<th>${t('logs.ts')}</th><th>${t('logs.level')}</th><th>${t('logs.component')}</th><th>${t('logs.node')}</th><th>${t('logs.domain')}</th><th>${t('logs.method')}</th><th>${t('logs.path')}</th><th>${t('logs.status')}</th><th>${t('logs.ip')}</th><th>${t('logs.latency')}</th><th>${t('logs.msg')}</th>`;
   c.innerHTML = `
     <div class="search-bar" style="gap:8px;margin-bottom:12px">
       <input id="lf-live-search" class="input search-input" placeholder="${esc(t('logs.filter_text'))}" oninput="restartSSE()">
@@ -627,7 +630,15 @@ function renderLiveLogs() {
       <div class="logs-live-dot"></div>
       <span id="live-status">${t('logs.connecting')}</span>
     </div>
-    <div id="logs-stream" class="logs-stream"></div>`;
+    <div class="card blueprint" style="padding:0;overflow:hidden">
+      <div class="logs-desktop table-wrap">
+        <table>
+          <thead><tr>${head}</tr></thead>
+          <tbody id="live-tbody"></tbody>
+        </table>
+      </div>
+      <div id="live-list" class="logs-mobile logs-list"></div>
+    </div>`;
   startSSE();
 }
 
@@ -680,42 +691,39 @@ let _livePending = [];
 let _liveRaf = null;
 
 function _flushLiveRows() {
-  const stream = document.getElementById('logs-stream');
-  if (!stream) { _livePending = []; _liveRaf = null; return; }
+  const tbody = document.getElementById('live-tbody');
+  const list  = document.getElementById('live-list');
+  if (!tbody && !list) { _livePending = []; _liveRaf = null; return; }
   const isSystem = isSystemLogs();
-  const frag = document.createDocumentFragment();
+  const fragTbody = document.createDocumentFragment();
+  const fragList  = document.createDocumentFragment();
   for (const e of _livePending) {
-    const row = document.createElement('div');
-    row.className = 'log-row';
-    if (isSystem) {
-      const ts = e.ts ? new Date(e.ts).toLocaleTimeString(typeof gpxBCP47==='function'?gpxBCP47():'en-US') : '—';
-      const lvlClass = e.level === 'error' ? 'log-lvl-error' : e.level === 'warn' ? 'log-lvl-warn' : e.level === 'debug' ? 'log-lvl-debug' : 'log-lvl-info';
-      const node = e.node_name ? ` · ${esc(e.node_name)}` : '';
-      row.innerHTML = `<span class="log-ts">${esc(ts)}</span><span class="log-lvl ${lvlClass}">${esc(e.level||'info')}</span><span class="log-comp">${esc(e.component||'')}${node}</span><span class="log-msg">${esc(e.message||'')}</span>`;
-    } else {
-      row.innerHTML = renderLiveAccessEntry(e);
+    if (tbody) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = isSystem ? renderSystemLogRow(e) : renderAccessLogRow(e);
+      // innerHTML sur <tr> ne fonctionne pas directement — on passe par un wrapper
+      const tmp = document.createElement('tbody');
+      tmp.innerHTML = isSystem ? renderSystemLogRow(e) : renderAccessLogRow(e);
+      if (tmp.firstElementChild) fragTbody.appendChild(tmp.firstElementChild);
     }
-    frag.appendChild(row);
+    if (list) {
+      const wrap = document.createElement('div');
+      wrap.innerHTML = isSystem ? renderSystemLogEntry(e) : renderAccessLogEntry(e);
+      if (wrap.firstElementChild) fragList.appendChild(wrap.firstElementChild);
+    }
   }
-  stream.appendChild(frag);
-  while (stream.children.length > 500) stream.removeChild(stream.firstChild);
-  stream.scrollTop = stream.scrollHeight;
+  if (tbody) {
+    tbody.appendChild(fragTbody);
+    while (tbody.children.length > 500) tbody.removeChild(tbody.firstChild);
+    tbody.closest('.table-wrap')?.scrollTo(0, tbody.closest('.table-wrap').scrollHeight);
+  }
+  if (list) {
+    list.appendChild(fragList);
+    while (list.children.length > 500) list.removeChild(list.firstChild);
+    list.scrollTop = list.scrollHeight;
+  }
   _livePending = [];
   _liveRaf = null;
-}
-
-function renderLiveAccessEntry(e) {
-  const ts = e.ts ? new Date(e.ts).toLocaleTimeString(typeof gpxBCP47==='function'?gpxBCP47():'en-US') : '—';
-  const lvlClass = e.level === 'error' ? 'log-lvl-error' : e.level === 'warn' ? 'log-lvl-warn' : e.level === 'debug' ? 'log-lvl-debug' : 'log-lvl-info';
-  const node = e.node_name ? ` · ${esc(e.node_name)}` : '';
-  const domain = e.domain ? `<span class="mono" style="font-size:11px;margin-left:6px">${esc(e.domain)}</span>` : '';
-  const path   = e.path   ? `<span class="log-meta" style="margin-left:4px">${esc(e.path)}</span>` : '';
-  const ip     = e.ip     ? `<span class="mono" style="font-size:11px;margin-left:6px;color:var(--text2)">${esc(e.ip)}</span>` : '';
-  const status = e.status ? ` ${httpStatusBadge(e.status)}` : '';
-  const method = e.method ? `<b style="margin-left:6px">${esc(e.method)}</b>` : '';
-  const msg    = e.message ? `<span class="log-msg" style="margin-left:6px">${esc(e.message)}</span>` : '';
-  const lat    = e.latency_ms ? `<span class="log-meta" style="margin-left:6px">${esc(String(e.latency_ms))}ms</span>` : '';
-  return `<span class="log-ts">${esc(ts)}</span><span class="log-lvl ${lvlClass}">${esc(e.level||'info')}</span><span class="log-comp">${esc(e.component||'')}${node}</span>${method}${status}${domain}${path}${ip}${lat}${msg}`;
 }
 
 function appendLiveRow(e) {
@@ -734,8 +742,10 @@ window.toggleLivePause = function() {
 };
 
 window.clearLiveStream = function() {
-  const stream = document.getElementById('logs-stream');
-  if (stream) stream.innerHTML = '';
+  const tbody = document.getElementById('live-tbody');
+  const list  = document.getElementById('live-list');
+  if (tbody) tbody.innerHTML = '';
+  if (list)  list.innerHTML  = '';
   liveRows = [];
   _livePending = [];
 };
