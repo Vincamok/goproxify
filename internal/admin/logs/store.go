@@ -62,6 +62,9 @@ type SearchParams struct {
 	Kind     string
 	Page     int
 	PageSize int
+	// BeforeID active la pagination par curseur (keyset) : retourne les entrées avec id < BeforeID.
+	// Quand > 0, Page est ignoré et aucun COUNT n'est exécuté.
+	BeforeID int64
 }
 
 // Store gère la persistance et la diffusion des logs.
@@ -164,25 +167,39 @@ func (s *Store) Subscribe() (id int64, ch <-chan Entry, cancel func()) {
 }
 
 // Search retourne les entrées paginées selon les filtres.
-func (s *Store) Search(p SearchParams) ([]Entry, int, error) {
+// Quand p.BeforeID > 0, la pagination est par curseur (keyset) : pas de COUNT, résultat O(1).
+// Sinon, un COUNT plafonné à 10 001 est exécuté pour la première page.
+// Retourne (entries, hasMore, error).
+func (s *Store) Search(p SearchParams) ([]Entry, bool, error) {
 	if p.PageSize <= 0 {
 		p.PageSize = 50
 	}
-	if p.Page <= 0 {
-		p.Page = 1
-	}
 	where, args := buildWhere(p)
-	countQ := "SELECT COUNT(*) FROM logs" + where
-	var total int
-	if err := s.db.QueryRow(countQ, args...).Scan(&total); err != nil {
-		return nil, 0, err
+
+	var q string
+	var qArgs []any
+	if p.BeforeID > 0 {
+		// Keyset : pas d'OFFSET, on filtre directement sur l'id.
+		cursorClause := " AND id < ?"
+		if where == "" {
+			cursorClause = " WHERE id < ?"
+		}
+		q = "SELECT id, ts, level, component, COALESCE(node_name,''), domain, method, path, status, ip, latency_ms, bytes, message FROM logs" +
+			where + cursorClause + " ORDER BY id DESC LIMIT ?"
+		qArgs = append(args, p.BeforeID, p.PageSize)
+	} else {
+		if p.Page <= 0 {
+			p.Page = 1
+		}
+		offset := (p.Page - 1) * p.PageSize
+		q = "SELECT id, ts, level, component, COALESCE(node_name,''), domain, method, path, status, ip, latency_ms, bytes, message FROM logs" +
+			where + " ORDER BY id DESC LIMIT ? OFFSET ?"
+		qArgs = append(args, p.PageSize, offset)
 	}
-	offset := (p.Page - 1) * p.PageSize
-	q := "SELECT id, ts, level, component, COALESCE(node_name,''), domain, method, path, status, ip, latency_ms, bytes, message FROM logs" +
-		where + " ORDER BY id DESC LIMIT ? OFFSET ?"
-	rows, err := s.db.Query(q, append(args, p.PageSize, offset)...)
+
+	rows, err := s.db.Query(q, qArgs...)
 	if err != nil {
-		return nil, 0, err
+		return nil, false, err
 	}
 	defer rows.Close()
 	var out []Entry
@@ -199,13 +216,15 @@ func (s *Store) Search(p SearchParams) ([]Entry, int, error) {
 	if out == nil {
 		out = []Entry{}
 	}
-	return out, total, nil
+	hasMore := len(out) == p.PageSize
+	return out, hasMore, nil
 }
 
 // Export retourne les logs au format csv ou json.
 func (s *Store) Export(p SearchParams, format string) ([]byte, string, error) {
 	p.Page = 1
 	p.PageSize = 100000
+	p.BeforeID = 0
 	entries, _, err := s.Search(p)
 	if err != nil {
 		return nil, "", err

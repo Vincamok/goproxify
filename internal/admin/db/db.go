@@ -531,6 +531,10 @@ func migrate(db *sql.DB) error {
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_logs_retained ON logs (retained_until)`)       //nolint:errcheck
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_logs_ip       ON logs (ip)`)                   //nolint:errcheck
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_logs_user_id  ON logs (user_id)`)              //nolint:errcheck
+	// Keyset pagination : index partiels sur id DESC par kind (access vs system).
+	// Accélère WHERE id < ? AND status > 0 ORDER BY id DESC LIMIT n sans OFFSET.
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_logs_access_id ON logs (id DESC) WHERE status > 0`) //nolint:errcheck
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_logs_system_id ON logs (id DESC) WHERE status = 0`) //nolint:errcheck
 
 	// Bibliothèque de pages d'erreur (templates HTML + assets) — scope Admin V1.
 	for _, s := range []string{
