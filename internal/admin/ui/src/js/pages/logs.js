@@ -21,6 +21,10 @@ let logsSSE = null;
 let liveRows = [];
 let livePaused = false;
 
+// Keyset pagination : pile des curseurs pour navigation arrière.
+let logsCursorStack = [];   // before_id values pour revenir en arrière
+let logsCurrentLastID = 0;  // min id de la page courante (pour "suivant")
+
 function stopLogsSSE() {
   if (logsSSE) {
     logsSSE.close();
@@ -154,6 +158,8 @@ function renderLogsPage() {
   stopLogsSSE();
   livePaused = false;
   liveRows = [];
+  logsCursorStack = [];
+  logsCurrentLastID = 0;
   logsActiveTab = 'static';
 
   document.getElementById('topbar-actions').innerHTML = `
@@ -221,7 +227,7 @@ window.applyLogCellFilter = function(field, value, additive) {
   }
   syncLogFilterInputs();
   renderFilterChips();
-  loadStaticLogs(1);
+  loadStaticLogs(0);
 };
 
 window.clearLogFilter = function(field) {
@@ -233,7 +239,7 @@ window.clearLogFilter = function(field) {
   }
   syncLogFilterInputs();
   renderFilterChips();
-  loadStaticLogs(1);
+  loadStaticLogs(0);
 };
 
 function syncLogFilterInputs() {
@@ -368,7 +374,7 @@ function renderStaticLogs() {
       <div id="logs-pager" class="logs-pager"></div>
     </div>`;
   renderFilterChips();
-  loadStaticLogs(1);
+  loadStaticLogs(0);
 }
 
 function logEntrySep() {
@@ -456,7 +462,7 @@ window.logsFilter = function() {
   logsFilters.method = document.getElementById('lf-method')?.value || '';
   logsFilters.status = document.getElementById('lf-status')?.value || '';
   renderFilterChips();
-  loadStaticLogs(1);
+  loadStaticLogs(0);
 };
 
 function corrIconBtn(domain, ts) {
@@ -474,9 +480,22 @@ function prismIconBtn(domain, ip) {
   </button>`;
 }
 
-async function loadStaticLogs(page) {
-  const params = new URLSearchParams({ page, page_size: 50 });
-  // Portée menu toujours appliquée.
+// loadStaticLogs charge une page de logs.
+// beforeID=0 → première page (réinitialise le curseur).
+// beforeID>0 → page suivante via keyset (id < beforeID).
+// beforeID<0 → page précédente (dépile logsCursorStack).
+async function loadStaticLogs(beforeID) {
+  if (beforeID === 0) {
+    logsCursorStack = [];
+    logsCurrentLastID = 0;
+  } else if (beforeID < 0) {
+    // Retour arrière : dépiler
+    beforeID = logsCursorStack.pop() || 0;
+    logsCurrentLastID = 0;
+  }
+
+  const params = new URLSearchParams({ page_size: 50 });
+  if (beforeID > 0) params.set('before_id', beforeID);
   params.set('kind', logsScope.kind || logsFilters.kind || 'access');
   if (logsScope.node_name) params.set('node_name', logsScope.node_name);
   if (logsScope.lockComp && logsScope.component) params.set('component', logsScope.component);
@@ -490,7 +509,10 @@ async function loadStaticLogs(page) {
   try {
     const data = await api('GET', '/logs?' + params);
     const entries = data?.entries || [];
-    const total = data?.total || 0;
+    const hasMore = data?.has_more || false;
+    const lastID = data?.last_id || 0;
+    logsCurrentLastID = lastID;
+
     const tbody = document.getElementById('logs-tbody');
     const list = document.getElementById('logs-list');
     if (!entries.length) {
@@ -503,10 +525,11 @@ async function loadStaticLogs(page) {
       if (tbody) tbody.innerHTML = entries.map(renderAccessLogRow).join('');
       if (list) list.innerHTML = entries.map(renderAccessLogEntry).join('');
     }
+    const hasPrev = logsCursorStack.length > 0;
     const pager = document.getElementById('logs-pager');
-    if (pager) pager.innerHTML = `<span style="color:var(--text2);font-size:12px">${t('logs.entries', { n: total })}</span>
-      ${page > 1 ? `<button class="btn btn-secondary btn-sm" onclick="loadStaticLogs(${page-1})">${t('logs.prev')}</button>` : ''}
-      ${page * 50 < total ? `<button class="btn btn-secondary btn-sm" onclick="loadStaticLogs(${page+1})">${t('logs.next')}</button>` : ''}`;
+    if (pager) pager.innerHTML =
+      `${hasPrev ? `<button class="btn btn-secondary btn-sm" onclick="loadStaticLogs(-1)">${t('logs.prev')}</button>` : ''}
+       ${hasMore ? `<button class="btn btn-secondary btn-sm" onclick="logsCursorStack.push(${beforeID||0});loadStaticLogs(${lastID})">${t('logs.next')}</button>` : ''}`;
   } catch(e) { toast(e.message, 'error'); }
 }
 window.loadStaticLogs = loadStaticLogs;
@@ -652,19 +675,52 @@ function startSSE() {
   };
 }
 
-function appendLiveRow(e) {
+// Tampon pour regrouper les insertions DOM en un seul frame.
+let _livePending = [];
+let _liveRaf = null;
+
+function _flushLiveRows() {
   const stream = document.getElementById('logs-stream');
-  if (!stream) return;
-  const row = document.createElement('div');
-  row.className = 'log-row';
-  const ts = e.ts ? new Date(e.ts).toLocaleTimeString(typeof gpxBCP47==='function'?gpxBCP47():'en-US') : '—';
-  const lvlClass = e.level === 'error' ? 'log-lvl-error' : e.level === 'warn' ? 'log-lvl-warn' : e.level === 'debug' ? 'log-lvl-debug' : 'log-lvl-info';
-  const meta = [e.method, e.path, e.status ? e.status : ''].filter(Boolean).join(' ');
-  const node = e.node_name ? ` · ${e.node_name}` : '';
-  row.innerHTML = `<span class="log-ts">${esc(ts)}</span><span class="log-lvl ${lvlClass}">${esc(e.level||'info')}</span><span class="log-comp">${esc(e.component||'')}${esc(node)}</span><span class="log-msg">${esc(e.message||meta||'')}</span>${meta&&e.message?`<span class="log-meta">${esc(meta)}</span>`:''}`;
-  stream.appendChild(row);
+  if (!stream) { _livePending = []; _liveRaf = null; return; }
+  const isSystem = isSystemLogs();
+  const frag = document.createDocumentFragment();
+  for (const e of _livePending) {
+    const el = document.createElement('div');
+    el.innerHTML = isSystem ? renderSystemLogEntry(e) : renderLiveAccessEntry(e);
+    const node = el.firstElementChild;
+    if (node) frag.appendChild(node);
+  }
+  stream.appendChild(frag);
   while (stream.children.length > 500) stream.removeChild(stream.firstChild);
   stream.scrollTop = stream.scrollHeight;
+  _livePending = [];
+  _liveRaf = null;
+}
+
+function renderLiveAccessEntry(e) {
+  const ts = e.ts ? new Date(e.ts).toLocaleTimeString(typeof gpxBCP47==='function'?gpxBCP47():'en-US') : '—';
+  const parts = [];
+  if (e.domain) parts.push(`<span class="mono" style="font-size:11px">${esc(e.domain)}</span>`);
+  if (e.path)   parts.push(`<span class="log-entry-path">${esc(e.path)}</span>`);
+  if (e.ip)     parts.push(`<span class="mono" style="font-size:11px">${esc(e.ip)}</span>`);
+  if (e.node_name) parts.push(`<span class="mono" style="font-size:11px">${esc(e.node_name)}</span>`);
+  if (e.latency_ms) parts.push(`<span>${esc(String(e.latency_ms))}ms</span>`);
+  return `<article class="log-entry">
+    <div class="log-entry-top">
+      <span class="log-entry-ts">${esc(ts)}</span>
+      ${logLvlBadge(e.level)}
+      <span class="chip" style="font-size:11px">${esc(e.component||'—')}</span>
+      ${e.method ? `<b>${esc(e.method)}</b>` : ''}
+      ${e.status ? httpStatusBadge(e.status) : ''}
+    </div>
+    ${parts.length ? `<div class="log-entry-mid">${parts.join(logEntrySep())}</div>` : ''}
+    ${e.message ? `<div class="log-entry-msg" title="${esc(e.message)}">${esc(e.message)}</div>` : ''}
+  </article>`;
+}
+
+function appendLiveRow(e) {
+  _livePending.push(e);
+  if (!_liveRaf) _liveRaf = requestAnimationFrame(_flushLiveRows);
 }
 
 window.toggleLivePause = function() {
@@ -681,6 +737,7 @@ window.clearLiveStream = function() {
   const stream = document.getElementById('logs-stream');
   if (stream) stream.innerHTML = '';
   liveRows = [];
+  _livePending = [];
 };
 
 function logLvlBadge(lvl) {

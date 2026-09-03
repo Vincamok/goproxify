@@ -55,12 +55,16 @@ func (h *LogsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *LogsHandler) list(w http.ResponseWriter, r *http.Request) {
 	p := parseLogsParams(r)
-	entries, total, err := h.Store.Search(p)
+	entries, hasMore, err := h.Store.Search(p)
 	if err != nil {
 		logsJSONErr(w, err, http.StatusInternalServerError)
 		return
 	}
-	jsonOK(w, map[string]any{"total": total, "page": p.Page, "page_size": p.PageSize, "entries": entries})
+	var lastID int64
+	if len(entries) > 0 {
+		lastID = entries[len(entries)-1].ID
+	}
+	jsonOK(w, map[string]any{"has_more": hasMore, "last_id": lastID, "page": p.Page, "page_size": p.PageSize, "entries": entries})
 }
 
 func (h *LogsHandler) live(w http.ResponseWriter, r *http.Request) {
@@ -93,6 +97,7 @@ func parseLogsParams(r *http.Request) logs.SearchParams {
 	q := r.URL.Query()
 	page, _ := strconv.Atoi(q.Get("page"))
 	pageSize, _ := strconv.Atoi(q.Get("page_size"))
+	beforeID, _ := strconv.ParseInt(q.Get("before_id"), 10, 64)
 	return logs.SearchParams{
 		Level:     q.Get("level"),
 		Component: q.Get("component"),
@@ -108,6 +113,7 @@ func parseLogsParams(r *http.Request) logs.SearchParams {
 		Kind:      q.Get("kind"),
 		Page:      page,
 		PageSize:  pageSize,
+		BeforeID:  beforeID,
 	}
 }
 
