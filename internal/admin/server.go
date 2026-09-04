@@ -755,6 +755,7 @@ func (s *Server) handleAgentLogs(w http.ResponseWriter, r *http.Request) {
 		Bytes     int64  `json:"bytes"`
 		Message   string `json:"message"`
 		Referrer  string `json:"referrer"`
+		RequestID string `json:"request_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&batch); err != nil {
 		http.Error(w, "JSON invalide", http.StatusBadRequest)
@@ -782,6 +783,7 @@ func (s *Server) handleAgentLogs(w http.ResponseWriter, r *http.Request) {
 			Bytes:     item.Bytes,
 			Message:   item.Message,
 			Referrer:  item.Referrer,
+			RequestID: item.RequestID,
 		})
 	}
 	w.WriteHeader(http.StatusAccepted)

@@ -63,6 +63,7 @@ type ShipEntry struct {
 	Bytes     int64  `json:"bytes"`
 	Message   string `json:"message"`
 	Referrer  string `json:"referrer,omitempty"`
+	RequestID string `json:"request_id,omitempty"`
 }
 
 func NewAccessLogger(path string) *AccessLogger {
@@ -146,6 +147,7 @@ func (a *AccessLogger) ship() {
 				Bytes:     int64(e.BytesSent),
 				Message:   shipMessage(e),
 				Referrer:  e.Referrer,
+				RequestID: e.RequestID,
 			}
 		}
 		batch = batch[:0]

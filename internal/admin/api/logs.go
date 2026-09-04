@@ -119,6 +119,11 @@ func parseLogsParams(r *http.Request) logs.SearchParams {
 
 func (h *LogsHandler) correlate(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	requestID := q.Get("request_id")
+	if requestID != "" {
+		jsonOK(w, h.Store.CorrelateByRequestID(requestID))
+		return
+	}
 	domain := q.Get("domain")
 	tsStr := q.Get("ts")
 	window, _ := strconv.Atoi(q.Get("window"))
@@ -133,8 +138,7 @@ func (h *LogsHandler) correlate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	entries := h.Store.Correlate(domain, at, window)
-	jsonOK(w, entries)
+	jsonOK(w, h.Store.Correlate(domain, at, window))
 }
 
 func (h *LogsHandler) getSettings(w http.ResponseWriter, r *http.Request) {
