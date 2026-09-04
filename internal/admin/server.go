@@ -32,6 +32,7 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/ha"
 	"github.com/vincamok/goproxify/internal/admin/ipprofile"
 	"github.com/vincamok/goproxify/internal/admin/logs"
+	corelog "github.com/vincamok/goproxify/internal/core/logger"
 	"github.com/vincamok/goproxify/internal/admin/mcp"
 	"github.com/vincamok/goproxify/internal/admin/mfa"
 	"github.com/vincamok/goproxify/internal/admin/monitor"
@@ -1241,10 +1242,7 @@ func (s *Server) logMiddleware(next http.Handler) http.Handler {
 		} else if sw.status >= 400 {
 			level = "warn"
 		}
-		ip := r.Header.Get("X-Forwarded-For")
-		if ip == "" {
-			ip = r.RemoteAddr
-		}
+		ip := corelog.RealIP(r)
 		s.logStore.Write(logs.Entry{
 			Level:     level,
 			Component: "admin",
