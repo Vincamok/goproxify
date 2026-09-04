@@ -27,21 +27,22 @@ const (
 
 // Entry représente une ligne de log.
 type Entry struct {
-	ID            int64     `json:"id"`
-	Ts            time.Time `json:"ts"`
-	Level         string    `json:"level"`
-	Component     string    `json:"component"`
-	NodeName      string    `json:"node_name,omitempty"`
-	Domain        string    `json:"domain"`
-	Method        string    `json:"method"`
-	Path          string    `json:"path"`
-	Status        int       `json:"status"`
-	IP            string    `json:"ip"`
-	LatencyMs     int64     `json:"latency_ms"`
-	Bytes         int64     `json:"bytes"`
-	Message       string    `json:"message"`
-	Referrer      string    `json:"referrer,omitempty"`
-	UserID        string    `json:"user_id,omitempty"`
+	ID            int64      `json:"id"`
+	Ts            time.Time  `json:"ts"`
+	Level         string     `json:"level"`
+	Component     string     `json:"component"`
+	NodeName      string     `json:"node_name,omitempty"`
+	Domain        string     `json:"domain"`
+	Method        string     `json:"method"`
+	Path          string     `json:"path"`
+	Status        int        `json:"status"`
+	IP            string     `json:"ip"`
+	LatencyMs     int64      `json:"latency_ms"`
+	Bytes         int64      `json:"bytes"`
+	Message       string     `json:"message"`
+	Referrer      string     `json:"referrer,omitempty"`
+	UserID        string     `json:"user_id,omitempty"`
+	RequestID     string     `json:"request_id,omitempty"`
 	RetainedUntil *time.Time `json:"retained_until,omitempty"`
 }
 
@@ -123,12 +124,12 @@ func (s *Store) Write(e Entry) {
 	e.RetainedUntil = &retained
 
 	res, err := s.db.Exec(
-		`INSERT INTO logs (ts, level, component, node_name, domain, method, path, status, ip, latency_ms, bytes, message, referrer, user_id, retained_until)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO logs (ts, level, component, node_name, domain, method, path, status, ip, latency_ms, bytes, message, referrer, user_id, request_id, retained_until)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.Ts.UTC().Format(time.RFC3339Nano),
 		nvl(e.Level, "info"), nvl(e.Component, "admin"), e.NodeName,
 		e.Domain, e.Method, e.Path, e.Status, e.IP, e.LatencyMs, e.Bytes, e.Message, e.Referrer,
-		e.UserID, retained.Format(time.RFC3339),
+		e.UserID, e.RequestID, retained.Format(time.RFC3339),
 	)
 	if err == nil {
 		if id, err2 := res.LastInsertId(); err2 == nil {
@@ -184,7 +185,7 @@ func (s *Store) Search(p SearchParams) ([]Entry, bool, error) {
 		if where == "" {
 			cursorClause = " WHERE id < ?"
 		}
-		q = "SELECT id, ts, level, component, COALESCE(node_name,''), domain, method, path, status, ip, latency_ms, bytes, message FROM logs" +
+		q = "SELECT id, ts, level, component, COALESCE(node_name,''), domain, method, path, status, ip, latency_ms, bytes, message, COALESCE(request_id,'') FROM logs" +
 			where + cursorClause + " ORDER BY id DESC LIMIT ?"
 		qArgs = append(args, p.BeforeID, p.PageSize)
 	} else {
@@ -192,7 +193,7 @@ func (s *Store) Search(p SearchParams) ([]Entry, bool, error) {
 			p.Page = 1
 		}
 		offset := (p.Page - 1) * p.PageSize
-		q = "SELECT id, ts, level, component, COALESCE(node_name,''), domain, method, path, status, ip, latency_ms, bytes, message FROM logs" +
+		q = "SELECT id, ts, level, component, COALESCE(node_name,''), domain, method, path, status, ip, latency_ms, bytes, message, COALESCE(request_id,'') FROM logs" +
 			where + " ORDER BY id DESC LIMIT ? OFFSET ?"
 		qArgs = append(args, p.PageSize, offset)
 	}
@@ -207,7 +208,7 @@ func (s *Store) Search(p SearchParams) ([]Entry, bool, error) {
 		var e Entry
 		var ts string
 		if err := rows.Scan(&e.ID, &ts, &e.Level, &e.Component, &e.NodeName, &e.Domain, &e.Method, &e.Path,
-			&e.Status, &e.IP, &e.LatencyMs, &e.Bytes, &e.Message); err != nil {
+			&e.Status, &e.IP, &e.LatencyMs, &e.Bytes, &e.Message, &e.RequestID); err != nil {
 			continue
 		}
 		e.Ts, _ = time.Parse(time.RFC3339Nano, ts)
@@ -403,7 +404,27 @@ func matchesFilter(e Entry, p SearchParams) bool {
 	return true
 }
 
+// CorrelateByRequestID retourne tous les logs portant le même request_id.
+// C'est la corrélation exacte : une requête HTTP → ses logs système associés.
+func (s *Store) CorrelateByRequestID(requestID string) []Entry {
+	if requestID == "" {
+		return []Entry{}
+	}
+	rows, err := s.db.Query(
+		`SELECT id, ts, level, component, COALESCE(node_name,''), domain, method, path, status, ip, latency_ms, bytes, message, COALESCE(request_id,'')
+		 FROM logs
+		 WHERE request_id = ?
+		 ORDER BY ts ASC LIMIT 200`,
+		requestID)
+	if err != nil {
+		return []Entry{}
+	}
+	defer rows.Close()
+	return scanEntries(rows)
+}
+
 // Correlate retourne les logs système/agent proches dans le temps pour un domaine.
+// Fallback temporel utilisé quand aucun request_id n'est disponible.
 // Les logs Agent stockent le nom du conteneur dans domain (pas le host proxy) :
 // on matche aussi le message et des variantes du nom (dots → tirets).
 func (s *Store) Correlate(domain string, at time.Time, windowSec int) []Entry {
@@ -415,7 +436,7 @@ func (s *Store) Correlate(domain string, at time.Time, windowSec int) []Entry {
 	domainDash := strings.ReplaceAll(domain, ".", "-")
 	domainFlat := strings.ReplaceAll(domain, ".", "")
 	rows, err := s.db.Query(
-		`SELECT id, ts, level, component, node_name, domain, method, path, status, ip, latency_ms, bytes, message
+		`SELECT id, ts, level, component, COALESCE(node_name,''), domain, method, path, status, ip, latency_ms, bytes, message, COALESCE(request_id,'')
 		 FROM logs
 		 WHERE ts BETWEEN ? AND ?
 		   AND status = 0
@@ -432,12 +453,21 @@ func (s *Store) Correlate(domain string, at time.Time, windowSec int) []Entry {
 		return []Entry{}
 	}
 	defer rows.Close()
+	return scanEntries(rows)
+}
+
+func scanEntries(rows interface {
+	Next() bool
+	Scan(...any) error
+	Close() error
+}) []Entry {
+	defer rows.Close()
 	var out []Entry
 	for rows.Next() {
 		var e Entry
 		var ts string
 		if rows.Scan(&e.ID, &ts, &e.Level, &e.Component, &e.NodeName, &e.Domain, &e.Method,
-			&e.Path, &e.Status, &e.IP, &e.LatencyMs, &e.Bytes, &e.Message) != nil {
+			&e.Path, &e.Status, &e.IP, &e.LatencyMs, &e.Bytes, &e.Message, &e.RequestID) != nil {
 			continue
 		}
 		e.Ts, _ = time.Parse(time.RFC3339Nano, ts)

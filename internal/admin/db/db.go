@@ -365,6 +365,8 @@ func migrate(db *sql.DB) error {
 		`ALTER TABLE logs ADD COLUMN referrer TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE logs ADD COLUMN node_name TEXT NOT NULL DEFAULT ''`,
 		`CREATE INDEX IF NOT EXISTS idx_logs_node_name ON logs (node_name)`,
+		`ALTER TABLE logs ADD COLUMN request_id TEXT NOT NULL DEFAULT ''`,
+		`CREATE INDEX IF NOT EXISTS idx_logs_request_id ON logs (request_id) WHERE request_id != ''`,
 		`CREATE TABLE IF NOT EXISTS fail2ban_config (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '{}')`,
 		`CREATE TABLE IF NOT EXISTS vulnscan_state (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE IF NOT EXISTS crowdsec_config (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '{}')`,
