@@ -27,7 +27,7 @@ async function renderCertsPage(ctx) {
       api('GET', '/domains').catch(() => []),
       api('GET', '/tokens?role=edge').catch(() => []),
       api('GET', '/nodes').catch(() => []),
-      api('GET', '/internal/v1/metrics/summary').catch(() => null),
+      api('GET', '/metrics/summary').catch(() => null),
     ]);
     const tlsMap = {};
     for (const c of (tlsMetrics?.tls?.certs || [])) {

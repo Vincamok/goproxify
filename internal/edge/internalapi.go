@@ -1235,6 +1235,54 @@ func (s *Server) handleMetricsSummary(w http.ResponseWriter, _ *http.Request) {
 		pipeline = append(pipeline, pipelineStat{Stage: stage, Count: count})
 	}
 
+	// Sections lues par les pages Infrastructure, Portail, Sécurité et Domaines/TLS.
+	var peerSum, peerCount float64
+	if mf, ok := idx["gpx_peer_sync_duration_seconds"]; ok {
+		for _, m := range mf.GetMetric() {
+			peerSum += m.GetHistogram().GetSampleSum()
+			peerCount += float64(m.GetHistogram().GetSampleCount())
+		}
+	}
+	type tlsHostStat struct {
+		Host              string  `json:"host"`
+		HandshakeP95ms    float64 `json:"handshake_p95_ms"`
+		ActiveConnections float64 `json:"active_connections"`
+	}
+	tlsByHost := map[string]*tlsHostStat{}
+	tlsHost := func(host string) *tlsHostStat {
+		if ts, ok := tlsByHost[host]; ok {
+			return ts
+		}
+		ts := &tlsHostStat{Host: host}
+		tlsByHost[host] = ts
+		return ts
+	}
+	if mf, ok := idx["gpx_tls_handshake_seconds"]; ok {
+		for _, m := range mf.GetMetric() {
+			host := labelVal(m.GetLabel(), "host")
+			h := m.GetHistogram()
+			if host == "" || h.GetSampleCount() == 0 {
+				continue
+			}
+			b := map[float64]float64{}
+			for _, bk := range h.GetBucket() {
+				b[bk.GetUpperBound()] += float64(bk.GetCumulativeCount())
+			}
+			tlsHost(host).HandshakeP95ms = bucketQuantile(b, float64(h.GetSampleCount()), h.GetSampleSum(), 0.95) * 1000
+		}
+	}
+	if mf, ok := idx["gpx_tls_active_connections"]; ok {
+		for _, m := range mf.GetMetric() {
+			if host := labelVal(m.GetLabel(), "host"); host != "" {
+				tlsHost(host).ActiveConnections = m.GetGauge().GetValue()
+			}
+		}
+	}
+	tlsHosts := make([]tlsHostStat, 0, len(tlsByHost))
+	for _, ts := range tlsByHost {
+		tlsHosts = append(tlsHosts, *ts)
+	}
+
 	summary := map[string]any{
 		"active_requests":     getGauge("gpx_edge_active_requests", nil),
 		"routes_total":        getGauge("gpx_edge_routes_total", nil),
@@ -1250,6 +1298,17 @@ func (s *Server) handleMetricsSummary(w http.ResponseWriter, _ *http.Request) {
 		"certs":               certs,
 		"pipeline":            pipeline,
 		"proxies":             proxies,
+		"ws": map[string]any{
+			"admin_connections": getGauge("goproxify_ws_connections_active", map[string]string{"role": "admin"}),
+			"agent_connections": getGauge("goproxify_ws_connections_active", map[string]string{"role": "agent"}),
+		},
+		"peers": map[string]any{"sync_sum_s": peerSum, "sync_count": peerCount},
+		"portal": map[string]any{"sessions": map[string]any{
+			"one_shot": getGauge("gpx_portal_sessions_active", map[string]string{"type": "one_shot"}),
+			"multi":    getGauge("gpx_portal_sessions_active", map[string]string{"type": "multi"}),
+		}},
+		"waf":       map[string]any{"profiles_active": getGauge("gpx_waf_profiles_active", nil)},
+		"tls_hosts": tlsHosts,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

@@ -204,3 +204,67 @@ func TestOverview(t *testing.T) {
 		t.Errorf("une passerelle retirée doit être oubliée : %+v", edges)
 	}
 }
+
+func TestSummaryMergesEdges(t *testing.T) {
+	s := NewProxyMetricsSampler(nil, nil)
+	mk := func(admin, agent, one, multi, waf, peerSum, peerCount float64, p95, conns float64) edgeSummary {
+		var e edgeSummary
+		e.WS.AdminConnections, e.WS.AgentConnections = admin, agent
+		e.Portal.Sessions.OneShot, e.Portal.Sessions.Multi = one, multi
+		e.WAF.ProfilesActive = waf
+		e.Peers.SyncSumS, e.Peers.SyncCount = peerSum, peerCount
+		e.Pipeline = []struct {
+			Stage string  `json:"stage"`
+			Count float64 `json:"count"`
+		}{{Stage: "waf", Count: 3}}
+		e.TLSHosts = []struct {
+			Host              string  `json:"host"`
+			HandshakeP95ms    float64 `json:"handshake_p95_ms"`
+			ActiveConnections float64 `json:"active_connections"`
+		}{{Host: "A.lan", HandshakeP95ms: p95, ActiveConnections: conns}}
+		e.Certs = []edgeCert{{Domain: "a.lan", ExpSecs: 1000}}
+		return e
+	}
+	s.recordEdgeExtras("e1", mk(1, 2, 3, 4, 5, 0.2, 2, 10, 1))
+	s.recordEdgeExtras("e2", mk(1, 1, 1, 1, 1, 0.4, 2, 30, 2))
+
+	sum := s.Summary()
+	if ws := sum["ws"].(map[string]any); ws["admin_connections"] != 2.0 || ws["agent_connections"] != 3.0 {
+		t.Errorf("ws = %v", ws)
+	}
+	if ps := sum["portal"].(map[string]any)["sessions"].(map[string]any); ps["one_shot"] != 4.0 || ps["multi"] != 5.0 {
+		t.Errorf("portal = %v", ps)
+	}
+	if sum["waf"].(map[string]any)["profiles_active"] != 6.0 {
+		t.Errorf("waf = %v", sum["waf"])
+	}
+	// (0.2+0.4) s / 4 synchronisations = 150 ms
+	if got := sum["peers"].(map[string]any)["avg_sync_ms"].(float64); got < 149.9 || got > 150.1 {
+		t.Errorf("avg_sync_ms = %v, attendu 150", got)
+	}
+	pipe := sum["pipeline"].([]map[string]any)
+	if len(pipe) != 1 || pipe[0]["blocked_total"] != 6.0 {
+		t.Errorf("pipeline = %v", pipe)
+	}
+	cert := sum["tls"].(map[string]any)["certs"].([]map[string]any)[0]
+	if cert["handshake_p95_ms"] != 30.0 || cert["active_connections"] != 3.0 {
+		t.Errorf("tls = %v (pire p95, connexions additionnées)", cert)
+	}
+}
+
+func TestEvalsPerMinute(t *testing.T) {
+	s := NewProxyMetricsSampler(nil, nil)
+	if s.evalsPerMinute() != nil {
+		t.Fatal("aucune donnée : nil attendu")
+	}
+	t0 := time.Unix(1000, 0)
+	s.recordEvals(t0, 10)
+	s.recordEvals(t0.Add(60*time.Second), 11)
+	if got := s.evalsPerMinute().(float64); got != 1 {
+		t.Errorf("cycles/min = %v, attendu 1", got)
+	}
+	s.recordEvals(t0.Add(10*time.Minute), 5) // compteur remis à zéro : pas de valeur négative
+	if s.evalsPerMinute() != nil {
+		t.Error("après remise à zéro, nil attendu")
+	}
+}

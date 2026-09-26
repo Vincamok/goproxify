@@ -21,7 +21,7 @@ pages.portal = async function() {
   try {
     const [cfg, metricsPt] = await Promise.all([
       api('GET', '/portal?edge=' + encodeURIComponent(edgeName)).catch(() => ({})),
-      api('GET', '/internal/v1/metrics/summary').catch(() => null),
+      api('GET', '/metrics/summary').catch(() => null),
     ]);
     renderPortalPage(cfg || {}, edgeName, edgeLabel, metricsPt);
   } catch (e) {

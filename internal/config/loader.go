@@ -55,7 +55,6 @@ func Load[T AdminConfig | EdgeConfig | AgentConfig | LandingConfig](configPath s
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("lecture config %q : %w", configPath, err)
 	}
-	migrateLegacyKeys(v)
 
 	// Les env vars ne surchargent que les clés absentes du JSON (pas de AutomaticEnv global).
 	// On bind uniquement les clés qui peuvent légitimement manquer dans le JSON

@@ -104,7 +104,7 @@
 .as-seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin: 0 0 12px; }
 .as-seg button { border: 0; background: none; padding: 5px 14px; font-size: 12px; color: var(--text2); cursor: pointer; }
 .as-seg button[data-on] { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
-.as-hosts { display: flex; gap: 8px; overflow-x: auto; padding: 0 0 8px; margin: 0 0 12px; }
+.as-hosts { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 0 8px; margin: 0 0 12px; }
 .as-hcard { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 10px 12px; min-width: 170px; flex: none; position: relative; cursor: pointer; box-shadow: inset 4px 0 0 var(--h, var(--border)); text-align: left; font: inherit; color: inherit; }
 .as-hcard[data-sel], .as-hostbox[data-sel] { border: 2px solid var(--accent); }
 .as-hnew { min-width: 130px; display: flex; align-items: center; justify-content: center; border-style: dashed; color: var(--text2); box-shadow: none; }
@@ -131,7 +131,10 @@ button.as-zt { cursor: pointer; }
 .as-hostadd { position: relative; display: flex; }
 .as-node { box-shadow: inset 4px 0 0 var(--h, transparent); }
 @container (max-width: 620px) {
-  .as-hosts { flex-direction: column; overflow: visible; }
+  .as-hosts { flex-direction: column; flex-wrap: nowrap; }
+  .as-add { padding: 9px 14px; }
+  .as-mi { padding: 11px 12px; }
+  button.as-zt { padding: 6px 12px; }
   .as-hcard { min-width: 0; }
   .as-hostgrid { grid-template-columns: minmax(0, 1fr); }
 }

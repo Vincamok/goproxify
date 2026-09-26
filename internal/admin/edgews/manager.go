@@ -218,9 +218,6 @@ func (m *Manager) restoreEdgeTokensFromDisk(ctx context.Context) {
 		if role == "" {
 			role = "edge" // compat ancien format
 		}
-		if role == "core" {
-			role = "edge"
-		}
 		if role == "edge" && t.NodeEndpoint == "" {
 			continue // Passerelle sans endpoint n'est pas connecté
 		}

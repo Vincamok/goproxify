@@ -298,7 +298,7 @@ async function renderSecurityOverview(ctx) {
     const fetches = [
       api('GET', '/security/overview'),
       api('GET', '/security/timeline?limit=40&source=all'),
-      api('GET', '/internal/v1/metrics/summary').catch(() => null),
+      api('GET', '/metrics/summary').catch(() => null),
       api('GET', `/security/ips-provider${edgeQ}`).catch(() => null),
       api('GET', `/security/threat-config${edgeQ}`).catch(() => null),
       api('GET', '/security/fail2ban').catch(() => null),
@@ -995,7 +995,7 @@ async function renderAdminSecurityOverview() {
   try {
     const [ov, metrics, f2b, cs, nodes] = await Promise.all([
       api('GET', '/security/overview').catch(() => ({})),
-      api('GET', '/internal/v1/metrics/summary').catch(() => null),
+      api('GET', '/metrics/summary').catch(() => null),
       api('GET', '/security/fail2ban').catch(() => null),
       api('GET', '/security/crowdsec').catch(() => null),
       api('GET', '/nodes').catch(() => []),
@@ -1004,7 +1004,7 @@ async function renderAdminSecurityOverview() {
     const mf2b = metrics?.f2b || {};
     const mcs  = metrics?.crowdsec || {};
     const mwaf = metrics?.waf || {};
-    const mProxies = metrics?.proxies || [];
+    const mEdges = metrics?.edges || [];
 
     const activeBans    = o.active_bans    ?? 0;
     const activeThreats = o.active_threats ?? 0;
@@ -1039,13 +1039,13 @@ async function renderAdminSecurityOverview() {
       </div>`;
 
     const edgeRows = edgesList.map(n => {
-      const pm = mProxies.find(p => p.edge_name === (n.node_name || n.id) || p.edge_id === n.id);
-      const errColor = pm?.error_rate > 5 ? 'var(--red)' : pm?.error_rate > 1 ? 'var(--yellow)' : 'var(--green)';
+      const pm = mEdges.find(p => p.edge_name === (n.node_name || n.id));
+      const errColor = pm?.error_rate > 0.05 ? 'var(--red)' : pm?.error_rate > 0.01 ? 'var(--yellow)' : 'var(--green)';
       return `<tr style="font-size:12px">
         <td style="padding:6px 8px;font-weight:500">${esc(n.display_name || n.node_name || n.id)}</td>
         <td style="padding:6px 8px;color:${n.status === 'online' ? 'var(--green)' : 'var(--red)'}">${esc(n.status || '—')}</td>
         <td style="padding:6px 8px">${pm?.requests_per_second != null ? (pm.requests_per_second.toFixed(1) + ' req/s') : '—'}</td>
-        <td style="padding:6px 8px;color:${errColor}">${pm?.error_rate != null ? pm.error_rate.toFixed(1) + '%' : '—'}</td>
+        <td style="padding:6px 8px;color:${errColor}">${pm?.error_rate != null ? (pm.error_rate * 100).toFixed(1) + '%' : '—'}</td>
         <td style="padding:6px 8px">
           <button class="btn btn-secondary" style="font-size:11px;padding:2px 8px"
             onclick="selectEdgeAndNavigate(${JSON.stringify(n.node_name||n.id)},'edge-security')">
@@ -1068,7 +1068,7 @@ async function renderAdminSecurityOverview() {
           <div style="font-size:13px;font-weight:600;margin-bottom:10px">Moteurs IPS — état global</div>
           <div style="display:flex;flex-direction:column;gap:6px">
             ${engineChip('Fail2Ban', f2bActive, f2bActive ? `${mf2b.bans_total ?? '—'} bans` : 'désactivé')}
-            ${engineChip('CrowdSec', csActive,  csActive  ? `${mcs.decisions_active ?? '—'} décisions` : 'désactivé')}
+            ${engineChip('CrowdSec', csActive,  csActive  ? `${mcs.decisions_new ?? '—'} décisions` : 'désactivé')}
             ${engineChip('WAF', wafProfilesActive != null, wafProfilesActive != null ? `${wafProfilesActive} profils actifs` : 'inactif')}
           </div>
           ${certsExpired + certsExpiring > 0 ? `
@@ -3293,7 +3293,7 @@ async function renderSecurityRules() {
     const [rules, history, reMetrics] = await Promise.all([
       api('GET', '/rules-engine/rules'),
       api('GET', '/rules-engine/history'),
-      api('GET', '/internal/v1/metrics/summary').catch(() => null),
+      api('GET', '/metrics/summary').catch(() => null),
     ]);
     window._reRules = rules || [];
     window._reHistory = history || [];

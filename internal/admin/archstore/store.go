@@ -276,11 +276,6 @@ func (s *Store) readLocked() (*Architecture, error) {
 	if arch.Nodes == nil {
 		arch.Nodes = []NodeEntry{}
 	}
-	for i := range arch.Nodes {
-		if arch.Nodes[i].Role == "core" {
-			arch.Nodes[i].Role = "edge"
-		}
-	}
 	return &arch, nil
 }
 

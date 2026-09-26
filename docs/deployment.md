@@ -696,9 +696,9 @@ networks:
 
 ## Migration depuis la version « Core »
 
-Le composant historique « Core » s'appelle désormais **passerelle** (`edge` dans les commandes, variables, images et fichiers). Les bases SQLite de l'Admin et les fichiers du volume de la passerelle (`core.json`, `core-cache.gpx`, `core-tokens.db`) sont migrés automatiquement au premier démarrage, et les anciennes variables `…CORE…` restent acceptées avec un avertissement.
+Le composant historique « Core » s'appelle désormais **passerelle** (`edge` dans les commandes, variables, images et fichiers). Il n'y a pas de couche de compatibilité : les anciens noms ne sont plus lus et un déploiement existant se migre à la main (voir ci-dessous).
 
-Reste à adapter à la main :
+À adapter :
 
 | Avant | Après |
 |---|---|
@@ -706,6 +706,9 @@ Reste à adapter à la main :
 | `goproxify core` | `goproxify edge` |
 | `GPX_CORE_*`, `GPX_IDENTITY_CORE_NODE_NAME`, `GPX_CONTROL_PLANE_CORE_ENDPOINT` | `GPX_EDGE_*`, `GPX_IDENTITY_EDGE_NODE_NAME`, `GPX_CONTROL_PLANE_EDGE_ENDPOINT` |
 | métriques `gpx_core_*` | `gpx_edge_*` (dashboards et alertes) |
+| fichiers du volume `core.json`, `core-cache.gpx`, `core-tokens.db` | `edge.json`, `edge-cache.gpx`, `edge-tokens.db` (à renommer) |
+| clés `core_*` dans `agent.json` / `edge.json` | `edge_*` |
+| base SQLite de l'Admin (colonnes `core_*`, rôles et périmètres `core`) | non migrée : base neuve, ou renommage manuel |
 | champs JSON `core_*`, options CLI `-core`, paramètres d'outils MCP | `edge_*`, `-edge` |
 
 Pour garder les données du volume existant, déclarez-le sous son ancien nom :

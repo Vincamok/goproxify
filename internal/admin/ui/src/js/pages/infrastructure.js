@@ -12,7 +12,7 @@ pages.infrastructure = async function() {
     const [health, live, infraMetrics] = await Promise.all([
       api('GET','/health').catch(()=>null),
       api('GET','/nodes/live').catch(()=>null),
-      api('GET','/internal/v1/metrics/summary').catch(()=>null),
+      api('GET','/metrics/summary').catch(()=>null),
     ]);
     const allNodes = _arch.nodes;
     window._excludedDeclaredNodes = new Map();

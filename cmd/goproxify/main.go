@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -34,7 +33,6 @@ import (
 
 func main() {
 	buildinfo.Set(VersionAdmin, VersionEdge, VersionAgent, VersionWebapp, VersionLanding, GitCommit, BuildTime)
-	config.AliasLegacyEnv()
 
 	if len(os.Args) < 2 {
 		usage()
@@ -45,9 +43,6 @@ func main() {
 	case "admin":
 		runAdmin()
 	case "edge":
-		runEdge()
-	case "core":
-		fmt.Fprintln(os.Stderr, "avertissement : la commande « core » est renommée « edge »")
 		runEdge()
 	case "agent":
 		runAgent()
@@ -273,7 +268,6 @@ func runEdge() {
 
 	args := parseFlags(os.Args[2:])
 	cfgPath := configPath("edge", args)
-	config.MigrateLegacyEdgeFiles(filepath.Dir(cfgPath))
 	if err := config.BootstrapEdge(cfgPath); err != nil {
 		fmt.Fprintf(os.Stderr, "bootstrap edge : %v\n", err)
 		os.Exit(1)

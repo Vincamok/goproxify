@@ -40,10 +40,6 @@ func Open(path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("ping SQLite %q : %w", path, err)
 	}
 
-	if err := migrateCoreToEdge(db); err != nil {
-		return nil, fmt.Errorf("migration Core → Edge : %w", err)
-	}
-
 	if err := migrate(db); err != nil {
 		return nil, fmt.Errorf("migration SQLite : %w", err)
 	}

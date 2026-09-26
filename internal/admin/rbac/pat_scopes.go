@@ -286,7 +286,8 @@ func RequiredScopeForRequest(r *http.Request) string {
 	case strings.HasPrefix(path, "/api/v1/alert"):
 		return ScopeAlertsRead
 	case strings.HasPrefix(path, "/api/v1/prism"),
-		strings.HasPrefix(path, "/api/v1/metrics/proxies"):
+		strings.HasPrefix(path, "/api/v1/metrics/proxies"),
+		strings.HasPrefix(path, "/api/v1/metrics/summary"):
 		return ScopeMetricsRead
 	case strings.HasPrefix(path, "/api/v1/backups"):
 		return ScopeBackupsRead

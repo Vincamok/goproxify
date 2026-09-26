@@ -261,6 +261,24 @@ En plus des séries par host, la réponse porte les agrégats du tableau de bord
 `bytes_*_total` = octets cumulés depuis le démarrage des passerelles ; `edges` = dernier intervalle
 par passerelle ; `tls.certs` = plus proche expiration par domaine, lue dans les métriques des passerelles.
 
+### `GET /api/v1/metrics/summary`
+
+Synthèse lue par les pages Dashboard, Prism, Domaines/TLS, Infrastructure, Portail et Sécurité :
+agrégats du dernier relevé des passerelles (voir `GET /api/v1/metrics/proxies`) et métriques du
+processus Admin. Une section est **absente** tant que sa source n'a rien publié. Scope PAT : `metrics:read`.
+
+| Clé | Contenu |
+|-----|---------|
+| `global`, `edges`, `tls.certs` | comme `/metrics/proxies` ; chaque entrée de `tls.certs` porte en plus `handshake_p95_ms` (pire passerelle) et `active_connections` (somme) quand le domaine a servi des connexions TLS ; `edges[]` ajoute `error_rate` (fraction) |
+| `ws` | `admin_connections`, `agent_connections` — connexions WebSocket du plan de contrôle, somme des passerelles |
+| `peers` | `avg_sync_ms` — durée moyenne de synchronisation entre passerelles pairs (absent sans pair) |
+| `portal.sessions` | `one_shot`, `multi` — sessions du portail actives |
+| `waf` | `profiles_active` — profils comportementaux en mémoire |
+| `pipeline` | `[{stage, blocked_total}]` — requêtes bloquées par étape du pipeline de sécurité |
+| `f2b` | `bans_total`, `scans_total` — Fail2Ban (processus Admin) |
+| `crowdsec` | `decisions_new`, `decisions_deleted` — CrowdSec (processus Admin) |
+| `rules_engine` | `active_rules`, `actions_total`, `avg_duration_ms`, `evals_per_minute` (nul sans deux relevés) — moteur de règles |
+
 ### `GET /api/v1/proxies/:id/revisions`
 
 Liste les révisions sauvegardées d'un proxy. Réponse : `[{"revision":"<uuid>","status":"production|draft","updated_at":"...","created_by":"..."}]`.

@@ -670,6 +670,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/api/v1/discovered-containers", protected(discoveredH))
 	mux.Handle("/api/v1/backends/health", protected(backendsHealthH))
 	mux.Handle("/api/v1/metrics/proxies", protected(proxyMetricsH))
+	mux.Handle("/api/v1/metrics/summary", protected(http.HandlerFunc(proxyMetricsH.ServeSummary)))
 	mux.Handle("/api/v1/audit", protected(auditH))
 	mux.Handle("/api/v1/audit/", protected(auditH))
 	mux.Handle("/api/v1/alert-channels", protected(channelsH))
@@ -781,7 +782,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/internal/v1/events", auth.RequireBearerToken(s.db)(nodeEventsH))
 
 	addr := fmt.Sprintf("%s:%d", s.cfg.Server.ListenAddr, s.cfg.Server.APIPort)
-	var handler http.Handler = legacyCoreAPI(s.logMiddleware(mux))
+	var handler http.Handler = s.logMiddleware(mux)
 	if s.haManager != nil {
 		handler = s.haManager.ForwardOrHandle(handler)
 	}
