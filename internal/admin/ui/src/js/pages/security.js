@@ -1553,20 +1553,6 @@ async function renderSentinelDashboard({ mode }) {
       ? Math.round((bannedIPs.size / detectedIPs.size) * 100)
       : 0;
 
-    // Analyse des scénarios : déclenchements, IPs uniques, dernière occurrence
-    const scenariosMap = {};
-    for (const th of threats) {
-      const s = th.scenario || th.type || 'unknown';
-      if (!scenariosMap[s]) scenariosMap[s] = { count: 0, ips: new Set(), last: null };
-      scenariosMap[s].count++;
-      scenariosMap[s].ips.add(th.ip);
-      const d = new Date(th.created_at);
-      if (!isNaN(d) && (!scenariosMap[s].last || d > scenariosMap[s].last)) scenariosMap[s].last = d;
-    }
-    const scenarios = Object.entries(scenariosMap)
-      .map(([name, d]) => ({ name, count: d.count, ips: d.ips.size, last: d.last }))
-      .sort((a, b) => b.count - a.count);
-
     // Top IPs par nombre de menaces (pas de bans — c'est la vue Sentinel)
     const ipThreatMap = {};
     for (const th of threats) ipThreatMap[th.ip] = (ipThreatMap[th.ip] || 0) + 1;
@@ -1578,14 +1564,35 @@ async function renderSentinelDashboard({ mode }) {
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
       .slice(0, 20);
 
-    // Listes de détection
+    // Les bans Sentinel portent le motif de la détection (« threat: ua », « waf: comportement suspect »…).
+    const detectionKey = r => {
+      if (/^waf:/.test(r)) return 'waf';
+      if (/rate/.test(r)) return 'rate';
+      if (/4xx/.test(r)) return 'error4xx';
+      const m = /^threat:\s*(\w+)$/.exec(r);
+      return m ? m[1] : 'other';
+    };
+    const banCounts = {};
+    for (const b of sentinelBans) { const k = detectionKey(b.reason || ''); banCounts[k] = (banCounts[k] || 0) + 1; }
+
     const lists = threatCfg.lists || {};
     const custom = threatCfg.custom_lists || {};
     const whitelist = threatCfg.whitelist || {};
-    const listItems = [
-      { label: 'IPs malveillantes', enabled: lists.ip_enabled, custom: (custom.ips || []).length, wl: (whitelist.ips || []).length },
-      { label: 'User-Agents',       enabled: lists.ua_enabled, custom: (custom.uas || []).length, wl: (whitelist.uas || []).length },
-      { label: 'Paths',             enabled: lists.path_enabled, custom: (custom.paths || []).length, wl: (whitelist.paths || []).length },
+    const nCustom = k => (custom[k] || []).length;
+    const rateBanN = threatCfg.rate_ban_threshold || 1;
+    const detections = [
+      { key: 'ip', label: 'IP malveillante', on: !!lists.ip_enabled, score: 5, effect: 'ban', detail: 'Listes de réputation IP', wl: (whitelist.ips || []).length },
+      { key: 'custom_ip', label: 'IP personnalisée', on: nCustom('ips') > 0, score: 5, effect: 'ban', detail: `${nCustom('ips')} entrée${nCustom('ips') > 1 ? 's' : ''} inline` },
+      { key: 'ua', label: 'User-Agent suspect', on: !!lists.ua_enabled, score: 3, effect: 'ban', detail: 'Scanners et bots connus', wl: (whitelist.uas || []).length },
+      { key: 'custom_ua', label: 'User-Agent personnalisé', on: nCustom('uas') > 0, score: 3, effect: 'ban', detail: `${nCustom('uas')} entrée${nCustom('uas') > 1 ? 's' : ''} inline` },
+      { key: 'path', label: 'Path suspect', on: !!lists.path_enabled, score: 2, effect: 'ban', detail: 'Chemins sensibles (.env, wp-admin…)', wl: (whitelist.paths || []).length },
+      { key: 'custom_path', label: 'Path personnalisé', on: nCustom('paths') > 0, score: 2, effect: 'ban', detail: `${nCustom('paths')} entrée${nCustom('paths') > 1 ? 's' : ''} inline` },
+      { key: 'rate', label: 'Débit par IP', on: (threatCfg.rate_limit || 0) > 0, score: 4, effect: rateBanN > 1 ? `ban après ${rateBanN}` : 'ban',
+        detail: `${threatCfg.rate_limit || 0} req/s sur ${threatCfg.rate_window || '1s'}` },
+      { key: 'error4xx', label: 'Erreurs 4xx répétées', on: (threatCfg.error_threshold || 0) > 0, effect: 'ban',
+        detail: `${threatCfg.error_threshold || 0} erreurs sur ${threatCfg.error_window || '10s'}` },
+      { key: 'waf', label: 'Comportement WAF suspect', on: null, effect: 'ban', detail: 'Score WAF cumulé par IP (profil WAF du proxy)' },
+      { key: 'global', label: 'Limite globale', on: (threatCfg.global_rps || 0) > 0, effect: '503', detail: `${threatCfg.global_rps || 0} req/s toutes IPs (anti-DDoS)` },
     ];
 
     const cfgEnabled = !!threatCfg.enabled;
@@ -1647,30 +1654,6 @@ async function renderSentinelDashboard({ mode }) {
         </div>
       </div>
 
-      <!-- Scénarios déclenchés -->
-      <div class="card blueprint" style="margin-bottom:20px">
-        <div class="card-header"><span class="card-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>Scénarios déclenchés</span></div>
-        <div style="padding:0 16px 16px">
-          ${scenarios.length === 0 ? noData :
-            `<table style="width:100%;border-collapse:collapse;font-size:13px">
-              <thead><tr>
-                <th style="text-align:left;padding:8px 6px;border-bottom:1px solid var(--border)">Scénario</th>
-                <th style="text-align:right;padding:8px 6px;border-bottom:1px solid var(--border)">Décl.</th>
-                <th style="text-align:right;padding:8px 6px;border-bottom:1px solid var(--border)">IPs uniques</th>
-                <th style="text-align:right;padding:8px 6px;border-bottom:1px solid var(--border)">Dernière occurrence</th>
-              </tr></thead>
-              <tbody>${scenarios.map(s => `
-                <tr style="border-bottom:1px solid var(--border)">
-                  <td style="padding:6px;font-family:monospace;font-size:12px;color:var(--text1)">${esc(s.name)}</td>
-                  <td style="text-align:right;padding:6px"><span class="tag tag-red">${s.count}</span></td>
-                  <td style="text-align:right;padding:6px"><span class="tag tag-yellow">${s.ips}</span></td>
-                  <td style="text-align:right;padding:6px;font-size:11px;color:var(--text3)">${s.last ? fmtDate(s.last.toISOString()) : '—'}</td>
-                </tr>`).join('')}
-              </tbody>
-            </table>`}
-        </div>
-      </div>
-
       <!-- Décisions récentes + Top IPs -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
         <div class="card blueprint">
@@ -1711,22 +1694,34 @@ async function renderSentinelDashboard({ mode }) {
         </div>
       </div>
 
-      <!-- Listes de détection -->
+      <!-- Détections Sentinel -->
       <div class="card blueprint" style="margin-bottom:20px">
-        <div class="card-header"><span class="card-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/></svg>Listes de détection</span></div>
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:12px 16px 16px">
-          ${listItems.map(li => `
-            <div style="padding:10px 12px;border-radius:8px;background:var(--bg2);border:1px solid ${li.enabled ? 'var(--green)' : 'var(--border)'}">
-              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-                <span style="width:8px;height:8px;min-width:8px;border-radius:50%;background:${li.enabled ? 'var(--green)' : 'var(--text3)'}"></span>
-                <span style="font-size:12.5px;font-weight:600;color:${li.enabled ? 'var(--text1)' : 'var(--text2)'}">${li.label}</span>
-              </div>
-              <div style="font-size:11px;color:var(--text3);display:flex;flex-direction:column;gap:3px">
-                <span>${li.enabled ? 'Liste active' : 'Désactivée'}</span>
-                ${li.custom > 0 ? `<span>${li.custom} entrée${li.custom > 1 ? 's' : ''} inline</span>` : ''}
-                ${li.wl > 0 ? `<span>${li.wl} en whitelist</span>` : ''}
-              </div>
-            </div>`).join('')}
+        <div class="card-header"><span class="card-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>Détections</span></div>
+        <div style="padding:0 16px 16px">
+          ${cfgMode !== 'block' ? '<p style="font-size:12px;color:var(--yellow);margin:8px 0 0">Mode detect : les signaux sont journalisés, aucune IP n\'est bannie ni rejetée.</p>' : ''}
+          <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:8px">
+            <thead><tr>
+              <th style="text-align:left;padding:8px 6px;border-bottom:1px solid var(--border)">Détection</th>
+              <th style="text-align:left;padding:8px 6px;border-bottom:1px solid var(--border)">Configuration</th>
+              <th style="text-align:right;padding:8px 6px;border-bottom:1px solid var(--border)" title="Poids dans le score de la requête (seuil : ${threatCfg.score_threshold || 0})">Score</th>
+              <th style="text-align:right;padding:8px 6px;border-bottom:1px solid var(--border)">Effet</th>
+              <th style="text-align:right;padding:8px 6px;border-bottom:1px solid var(--border)">Bans actifs</th>
+            </tr></thead>
+            <tbody>${detections.map(d => {
+              const n = banCounts[d.key] || 0;
+              const dot = d.on === null ? 'var(--text3)' : d.on ? 'var(--green)' : 'var(--border)';
+              return `
+              <tr style="border-bottom:1px solid var(--border);${d.on === false ? 'opacity:.55' : ''}">
+                <td style="padding:6px"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${dot};margin-right:8px"></span>${d.label} <span style="font-family:monospace;font-size:11px;color:var(--text3)">${d.key}</span></td>
+                <td style="padding:6px;font-size:12px;color:var(--text2)">${d.on === false ? 'Désactivée' : d.detail}${d.wl ? ` · ${d.wl} en whitelist` : ''}</td>
+                <td style="text-align:right;padding:6px;color:var(--text2)">${d.score ?? '—'}</td>
+                <td style="text-align:right;padding:6px"><span class="tag ${d.effect === '503' ? 'tag-yellow' : 'tag-red'}">${d.effect === '503' ? 'rejet 503' : d.effect}</span></td>
+                <td style="text-align:right;padding:6px">${n > 0 ? `<span class="tag tag-red">${n}</span>` : '<span style="color:var(--text3)">—</span>'}</td>
+              </tr>`;
+            }).join('')}${banCounts.other ? `
+              <tr><td style="padding:6px;color:var(--text2)" colspan="4">Autres motifs</td><td style="text-align:right;padding:6px"><span class="tag tag-red">${banCounts.other}</span></td></tr>` : ''}
+            </tbody>
+          </table>
         </div>
       </div>
 

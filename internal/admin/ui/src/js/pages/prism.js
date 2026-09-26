@@ -142,6 +142,7 @@ async function renderPrismPage() {
   const LIVE_WINDOW_MS = 3600000;
   const LIVE_INTERVAL_MS = 5000;
   const lockNode = prismScope.lockNode;
+  const icoRescan = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>`;
   const icoBan = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>`;
 
   if (_prismLiveTimer) { clearInterval(_prismLiveTimer); _prismLiveTimer = null; }
@@ -435,7 +436,7 @@ async function renderPrismPage() {
     // Section bans : timeline + by-source + top IPs
     Promise.all([
       apiP('GET', '/prism/bans/timeline?' + q, signal).catch(() => []),
-      apiP('GET', '/prism/bans/by-source', signal).catch(() => []),
+      apiP('GET', '/prism/bans/breakdown', signal).catch(() => []),
       apiP('GET', '/prism/bans/top-ips?limit=20', signal).catch(() => []),
     ]).then(([timeline, bySource, topIPs]) => {
       upd('px-bans', bansHtml(timeline, bySource, topIPs));
@@ -830,6 +831,7 @@ async function renderPrismPage() {
               <button type="button" class="btn btn-ghost btn-icon btn-sm" data-prism="to-logs" data-ip="${esc(i.ip)}" title="${esc(t('prism.filter_logs'))}">
                 <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 8h10M7 12h10M7 16h6"/></svg>
               </button>
+              <button type="button" class="btn btn-ghost btn-icon btn-sm" data-prism="rescan" data-ip="${esc(i.ip)}" title="Re-scanner cette IP">${icoRescan}</button>
               ${banned
                 ? `<span class="btn btn-ghost btn-icon btn-sm" title="${esc(t('prism.banned'))}" style="color:var(--red);opacity:.9;cursor:default;pointer-events:none">${icoBan}</span>`
                 : `<button type="button" class="btn btn-ghost btn-icon btn-sm" data-prism="ban" data-ip="${esc(i.ip)}" title="${esc(t('prism.ban'))}">${icoBan}</button>`}
@@ -1024,6 +1026,52 @@ async function renderPrismPage() {
         ${stat('IPs bannies', fmtNum(e.banned_ips || 0), (e.banned_ips || 0) > 0)}
       </div>`;
     dr.classList.add('open');
+  }
+
+  // Ré-analyse une IP à la demande (bans actifs, historique, décisions Sentinel/CrowdSec, activité)
+  async function rescanIP(ip, btn) {
+    const dr = document.getElementById('prism-drawer');
+    if (!ip || !dr) return;
+    btn?.classList.add('is-spinning');
+    dr.classList.add('open');
+    dr.innerHTML = `<div class="spinner" style="margin:40px auto"></div>`;
+    try {
+      const d = await api('GET', '/prism/ip-scan?' + qp().replace(/(^|&)ip=[^&]*/, '') + '&ip=' + encodeURIComponent(ip));
+      const verdict = { banned: ['Bannie', 'var(--red)'], suspect: ['Suspecte', '#f59e0b'], clean: ['Aucun signal', 'var(--green)'] }[d.verdict] || ['—', 'var(--text3)'];
+      const when = s => s ? s.replace('T', ' ').slice(0, 16) : '—';
+      dr.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <span class="prism-panel-title" style="margin:0">Scan d'IP</span>
+          <button type="button" class="btn btn-ghost btn-sm" data-prism="close-drawer">✕</button>
+        </div>
+        <div class="mono" style="font-size:18px;font-weight:700">${esc(d.ip)}</div>
+        <div style="margin:6px 0 14px"><span class="prism-verdict" style="--v:${verdict[1]}">${verdict[0]}</span>
+          <span style="color:var(--text3);font-size:11px;margin-left:8px">scanné à ${esc(when(d.scanned_at))} UTC</span></div>
+        <div class="prism-dstats">
+          <div class="prism-dstat"><span>Requêtes (période)</span><b>${fmtNum(d.requests)}</b></div>
+          <div class="prism-dstat"><span>Erreurs</span><b${d.errors ? ' style="color:var(--red)"' : ''}>${fmtNum(d.errors)}</b></div>
+          <div class="prism-dstat"><span>Bans passés</span><b>${d.ban_history}</b></div>
+          <div class="prism-dstat"><span>Dernière activité</span><b style="font-size:13px">${esc(when(d.last_seen))}</b></div>
+        </div>
+        <div class="prism-panel-title" style="margin:16px 0 6px">Bans actifs</div>
+        ${(d.bans || []).length ? d.bans.map(b => `<div class="prism-bansrc">
+            <div class="prism-bansrc-head"><span class="prism-src-badge${b.sentinel ? ' sentinel' : ''}">${esc(b.source_label)}</span>${b.sentinel ? '<span class="prism-src-origin">source : Sentinel</span>' : ''}</div>
+            <div class="prism-bantech"><span>${esc(b.technique)}</span><span style="color:var(--text3)">${esc(when(b.since))}</span></div>
+          </div>`).join('') : '<p class="prism-muted">Aucun ban actif.</p>'}
+        <div class="prism-panel-title" style="margin:16px 0 6px">Décisions de menace</div>
+        ${(d.threats || []).length ? d.threats.map(x => `<div class="prism-bantech"><span>${esc(x.scenario)} <span style="color:var(--text3)">· ${esc(x.origin)}</span></span><b>×${x.occurrences}</b></div>`).join('') : '<p class="prism-muted">Aucune décision enregistrée.</p>'}
+        <div class="prism-panel-title" style="margin:16px 0 6px">Chemins les plus visés</div>
+        ${(d.top_paths || []).length ? d.top_paths.map(x => `<div class="prism-bantech"><span class="mono" style="overflow:hidden;text-overflow:ellipsis" title="${esc(x.path)}">${esc(x.path)}</span><b>${x.requests}${x.errors ? ` <span style="color:var(--red);font-weight:500">(${x.errors} err.)</span>` : ''}</b></div>`).join('') : '<p class="prism-muted">Aucune requête sur la période.</p>'}
+        <div style="display:flex;gap:8px;margin-top:18px;flex-wrap:wrap">
+          <button type="button" class="btn btn-secondary btn-sm" data-prism="rescan" data-ip="${esc(d.ip)}">${icoRescan} Re-scanner</button>
+          <button type="button" class="btn btn-secondary btn-sm" data-prism="to-logs" data-ip="${esc(d.ip)}">→ Logs</button>
+          ${d.verdict !== 'banned' ? `<button type="button" class="btn btn-ghost btn-sm" style="color:var(--red)" data-prism="ban" data-ip="${esc(d.ip)}">Bannir</button>` : ''}
+        </div>`;
+    } catch (e) {
+      dr.innerHTML = `<p style="color:var(--red)">${esc(t('prism.error'))}: ${esc(e.message || '')}</p>`;
+    } finally {
+      btn?.classList.remove('is-spinning');
+    }
   }
 
   function closeCountry() {
@@ -1441,23 +1489,33 @@ async function renderPrismPage() {
       </div>`;
     }
 
-    // By-source bars
+    // Ventilation par source puis par technique de détection
     let srcOut = '';
     if (bySource && bySource.length > 0) {
       const total = bySource.reduce((s, r) => s + r.count, 0) || 1;
-      const srcColors = { fail2ban: 'var(--yellow)', crowdsec: 'var(--blue)', rules_engine: 'var(--purple)', threat: 'var(--orange)', native: 'var(--text3)', admin: 'var(--green)' };
+      const srcColors = { fail2ban: 'var(--yellow)', crowdsec: 'var(--blue)', threat: 'var(--purple)', native: 'var(--text3)', agent: 'var(--green)' };
+      const icoShield = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2l8 3v6c0 5-3.5 9.5-8 11-4.5-1.5-8-6-8-11V5z"/></svg>`;
+      const groups = {};
+      for (const r of bySource) {
+        const g = groups[r.source] || (groups[r.source] = { label: r.source_label || r.source, sentinel: !!r.sentinel, count: 0, items: [] });
+        g.count += r.count;
+        g.items.push(r);
+      }
       srcOut = `<div style="margin-bottom:12px">
-        <div style="font-size:11px;opacity:.5;margin-bottom:6px">Par source (actifs)</div>
-        ${bySource.map(r => {
-          const pct = (r.count / total * 100).toFixed(1);
-          const color = srcColors[r.source] || 'var(--text3)';
-          return `<div style="margin-bottom:4px">
-            <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px">
-              <span style="opacity:.7">${esc(r.source)}</span><b>${r.count} <span style="opacity:.4">(${pct}%)</span></b>
+        <div style="font-size:11px;opacity:.5;margin-bottom:8px">Par source et technique (actifs)</div>
+        ${Object.entries(groups).sort((a, b) => b[1].count - a[1].count).map(([src, g]) => {
+          const color = srcColors[src] || 'var(--text3)';
+          return `<div class="prism-bansrc">
+            <div class="prism-bansrc-head">
+              <span class="prism-src-badge${g.sentinel ? ' sentinel' : ''}" style="--src:${color}">${g.sentinel ? icoShield : ''}${esc(g.label)}</span>
+              ${g.sentinel ? '<span class="prism-src-origin">source : Sentinel (passerelle)</span>' : ''}
+              <b style="margin-left:auto">${g.count} <span style="opacity:.4;font-weight:400">(${(g.count / total * 100).toFixed(0)}%)</span></b>
             </div>
-            <div style="height:4px;background:var(--border);border-radius:2px">
-              <div style="height:4px;width:${pct}%;background:${color};border-radius:2px"></div>
-            </div>
+            ${g.items.map(t => `<div class="prism-bantech">
+              <span title="${esc(t.technique)}">${esc(t.label)}</span>
+              <span class="prism-bar-bg" style="max-width:90px"><span class="prism-bar-fill" style="width:${(t.count / g.count * 100).toFixed(0)}%;background:${color}"></span></span>
+              <b>${t.count}</b>
+            </div>`).join('')}
           </div>`;
         }).join('')}
       </div>`;
@@ -1601,6 +1659,7 @@ async function renderPrismPage() {
       if (act === 'refresh') { e.preventDefault(); doRefresh(); }
       else if (act === 'tab') { e.preventDefault(); setTab(el.getAttribute('data-tab') || 'paths'); }
       else if (act === 'country') { e.preventDefault(); openCountry(el.getAttribute('data-cc') || ''); }
+      else if (act === 'rescan') { e.preventDefault(); rescanIP(el.getAttribute('data-ip') || '', el); }
       else if (act === 'close-drawer') { e.preventDefault(); closeCountry(); }
       else if (act === 'geo-style') { e.preventDefault(); geoStyle = el.dataset.style || 'zones'; if (_lastGeoData) renderChoropleth(_lastGeoData); }
       else if (act === 'quick') { e.preventDefault(); applyQuickRange(parseInt(el.getAttribute('data-ms'), 10) || 3600000); }

@@ -54,6 +54,10 @@ func (h *PrismHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.bansTimeline(w, r)
 	case r.Method == http.MethodGet && path == "bans/by-source":
 		h.bansBySource(w, r)
+	case r.Method == http.MethodGet && path == "bans/breakdown":
+		h.bansBreakdown(w, r)
+	case r.Method == http.MethodGet && path == "ip-scan":
+		h.ipScan(w, r)
 	case r.Method == http.MethodGet && path == "bans/top-ips":
 		h.bansTopIPs(w, r)
 	case r.Method == http.MethodGet && path == "live-ips":

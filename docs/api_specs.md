@@ -1053,3 +1053,8 @@ Codes d'erreur :
 - `403` — scope `gdpr:reveal` manquant
 - `400` — `entry_id` ou `reason` manquant
 - `422` — entrée non pseudonymisée ou clé non chargée
+
+## Prism — bans et scan d'IP
+
+- `GET /api/v1/prism/bans/breakdown` — bans actifs ventilés par source puis par technique de détection : `[{source, source_label, sentinel, technique, label, count}]`. `sentinel: true` pour la source `threat` (moteur Sentinel de la passerelle : techniques `ip`, `ua`, `path`, `rate` et leurs variantes `custom_*`) ; Fail2Ban est rapporté en `errors`, CrowdSec par scénario.
+- `GET /api/v1/prism/ip-scan?ip=<ip>[&from&to]` — ré-analyse à la demande d'une IP : `verdict` (`banned` | `suspect` | `clean`), bans actifs (avec source/technique), nombre de bans passés, décisions de menace, requêtes/erreurs sur la période et chemins les plus visés.

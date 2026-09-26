@@ -131,11 +131,16 @@ Le Sentinel s'applique **avant le routage**, indépendamment des proxies. Il ana
 |--------|-------------|
 | `rate` | Dépassement du rate limit par IP (`rate_limit` req/s) |
 | `path` | Scanning de chemins suspects (répertoires, extensions sensibles) |
-| `ip` | IP connue malveillante (listes custom denylist) |
-| `ua` | User-Agent suspect (scanners, bots malveillants) |
-| `custom_*` | Règles custom définies dans l'Admin |
+| `ip` | IP présente dans les listes de réputation (score 5) |
+| `ua` | User-Agent suspect (scanners, bots malveillants) (score 3) |
+| `path` | Scanning de chemins suspects (score 2) |
+| `custom_ip`, `custom_ua`, `custom_path` | Entrées inline définies dans l'Admin, mêmes scores que les listes |
+| `rate` | Dépassement du rate limit par IP (score 4) |
+| `error4xx` | `error_threshold` erreurs 4xx en `error_window` : ban direct, hors score |
+| `waf` | Score WAF cumulé par IP au-delà du seuil comportemental : ban direct, hors score |
+| *limite globale* | `global_rps` dépassé : `503` pour tous, sans ban |
 
-Dès qu'un signal (hors `rate`) dépasse le seuil, l'IP est bannie immédiatement. Le signal `rate` utilise `rate_ban_threshold` (nombre de dépassements avant ban).
+Dès qu'un signal (hors `rate`) dépasse le seuil, l'IP est bannie immédiatement. Le signal `rate` utilise `rate_ban_threshold` (nombre de dépassements avant ban). La page Sentinel de l'Edge liste ces détections avec leur état et le nombre de bans actifs par motif.
 
 Les compteurs (rate, erreurs 4xx) sont **bornés en mémoire** (~262 k IPs suivies, éviction au-delà, métrique `gpx_threat_counter_evictions_total`) et les **IPv6 sont comptées par /64** ; le ban, lui, vise l'IP exacte. Le score n'est pas conservé entre deux requêtes : `score_threshold` ne cumule que les signaux d'une même requête.
 

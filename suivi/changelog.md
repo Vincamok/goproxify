@@ -9,9 +9,13 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ### Corrigé
 
+- **Admin 0.31.1 — page Sentinel : liste des détections refaite** : le tableau « Scénarios déclenchés » affichait des scénarios **CrowdSec** (`security_threats`), pas des détections Sentinel. Il est remplacé, avec les trois tuiles « Listes de détection », par un catalogue unique de toutes les détections du moteur (`ip`, `ua`, `path`, leurs variantes `custom_*`, `rate`, `error4xx`, comportement WAF, limite globale) : état, configuration, poids dans le score, effet (ban ou rejet 503) et nombre de bans actifs par détection, lus depuis le motif des bans Sentinel. Interface uniquement. Restent à reprendre : les tuiles « Menaces enregistrées », « IPs détectées, non bannies », « Décisions récentes » et « Top IPs », qui lisent encore les décisions CrowdSec.
+
 - **Admin 0.29.2 — logs d'accès/système d'une passerelle vides** : le filtre par `node_id` excluait les logs sans `node_id` (ingestion HTTP, historique) ; ils sont désormais rattachés via `node_name`.
 
 ### Ajouté
+
+- **Prism — bans détaillés par source et technique, scan d'IP** : le panneau Bans ventile désormais les bans actifs par source (Fail2Ban, CrowdSec, Sentinel, manuel) puis par technique de détection (Sentinel : liste d'IP, User-Agent, chemin sensible, débit ; Fail2Ban : erreurs HTTP ; CrowdSec : scénario), avec un badge « Sentinel » explicite. Dans le tableau des IP, un bouton à icône re-scanne une IP (bans actifs, historique, décisions de menace, activité et chemins visés) dans un panneau latéral. Nouveaux endpoints `GET /prism/bans/breakdown` et `GET /prism/ip-scan`. (Admin `0.32.0`)
 
 - **Prism — Analyse repensé en « centre de commande »** : barre de filtres collante (plage rapide 15 min ajoutée), KPI avec sparklines, grande carte du monde avec zoom moulinet, déplacement, recentrage, légende de dégradé et style Zones ou Bulles proportionnelles, panneau latéral « Anomalies détectées » (pic d’erreurs, IP dominante, pays ou backend en erreur, part de bots élevée, avec actions directes) et « Top pays » cliquable qui ouvre un détail du pays. Les tableaux (chemins, IP, bots, référents, pays, backends, bans) passent en onglets. Interface uniquement, aucune modification d’API. (Admin `0.31.0`)
 
