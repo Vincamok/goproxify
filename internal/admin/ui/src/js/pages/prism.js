@@ -104,7 +104,7 @@ async function renderPrismPage() {
     } catch { /* ignore */ }
   }
 
-  const prismMetrics = await api('GET', '/internal/v1/metrics/summary').catch(() => null);
+  const prismMetrics = await api('GET', '/metrics/proxies?points=1').catch(() => null);
   const pmProxies = prismMetrics?.proxies || [];
   const topByTTFB = [...pmProxies].sort((a,b)=>(b.p95_ms||0)-(a.p95_ms||0)).slice(0,3);
   const topByErr = [...pmProxies].filter(p=>(p.error_rate||0)>0).sort((a,b)=>b.error_rate-a.error_rate).slice(0,3);

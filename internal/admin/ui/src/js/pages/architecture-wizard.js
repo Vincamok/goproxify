@@ -560,7 +560,7 @@ function _archCanvasHTML() {
       </div>
     </div>
     <div class="as-wz">
-      ${asSchemaHTML(_arch, { edit: true, selectedId: _arch.selectedSvcId })}
+      ${asSchemaHTML(_arch, { edit: true, selectedId: _arch.selectedSvcId, selectedHostId: _arch.selectedHostId })}
       <aside>${asInspectorHTML()}</aside>
     </div>
     ${haNote ? `<div class="arch-msg" data-tone="warn">${esc(haNote)}</div>` : ''}
@@ -703,7 +703,8 @@ function _archInspectRole(svc) {
           : '') +
         `<div class="arch-cap-desc">${t('arch.opt.region_from_host', { region: (host && host.region) || '—' })}</div>`
       )}
-      ${_archGroup(t('arch.opt.discovery'),
+      ${_archGroup(t('as.platforms'),
+        `<div class="arch-cap-desc" style="margin-bottom:6px">${t('as.platforms_hint')}</div>` +
         _archCapRow(!!svc.docker, t('arch.svc.docker') + _archImpactBadge('redeploy', svc.existing), t('arch.cap.docker_desc'),
           `_archSetRuntime('${svc.id}','docker',this.checked)`) +
         _archCapRow(!!svc.podman, t('arch.svc.podman') + _archImpactBadge('redeploy', svc.existing), t('arch.cap.podman_desc'),
@@ -1194,25 +1195,24 @@ function _archResolveEdgeEndpoint(agentHost, agentSvc) {
   return _arch.onlineEdgeEndpoint || 'http://goproxify-edge:8000';
 }
 
+/** Un pack par hôte : tous les rôles de l'hôte (passerelles, agents, Admin) dans un même Compose. */
 function _archBuildPacks() {
   _wiz.pairingSecret = _arch.pairingSecret;
   _wiz.scenario = 'full';
   const packs = [];
 
   for (const host of _arch.hosts) {
-    if (!(host.services || []).length) continue;
-    const edges = host.services.filter(s => s.type === 'edge');
-    const agents = host.services.filter(s => s.type === 'agent');
-    const admins = host.services.filter(s => s.type === 'admin');
+    const svcs = host.services || [];
+    if (!svcs.length) continue;
+    const edges = svcs.filter(s => s.type === 'edge');
+    const agents = svcs.filter(s => s.type === 'agent');
+    const admins = svcs.filter(s => s.type === 'admin');
 
-    let edgeOpts = null;
-    let agentOpts = null;
-    if (edges[0]) {
-      const c = edges[0];
+    const edgeOpts = edges.map(c => {
       const cGroup = _archGroupOfSvc(c.id);
       const inHA = !!cGroup && cGroup.members.length >= 2;
       const haLeader = inHA ? _archFindSvc(cGroup.members[0]) : null;
-      edgeOpts = _buildEdgeOpts({
+      return _buildEdgeOpts({
         wc_name: c.name,
         wc_cluster: inHA,
         wc_cluster_node_id: c.name,
@@ -1222,16 +1222,14 @@ function _archBuildPacks() {
         wc_portal: !!c.access,
         wc_http3: false,
       });
-    }
-    if (agents[0]) {
-      const a = agents[0];
-      const ep = _archResolveEdgeEndpoint(host, a);
-      const localEdge = edges[0];
-      const target = a.targetEdgeId ? _archFindSvc(a.targetEdgeId) : null;
-      agentOpts = _buildAgentOpts({
+    });
+
+    const agentOpts = agents.map(a => {
+      const localEdge = edgeOpts[0];
+      let opts = _buildAgentOpts({
         wa_name: a.name,
-        wa_edge_url: ep,
-        wa_edge_container_name: localEdge ? localEdge.name : (target ? target.name : ''),
+        wa_edge_url: _archResolveEdgeEndpoint(host, a),
+        wa_edge_container_name: localEdge ? localEdge.name : '',
         wa_region: (host.region || a.region || '').trim(),
         wa_docker: !!a.docker && !a.podman,
         wa_podman: !!a.podman,
@@ -1242,92 +1240,51 @@ function _archBuildPacks() {
         wa_portainer_key: a.portainerKey || '',
         wa_placement: localEdge ? 'colocated' : 'remote',
       });
-      if (localEdge && edgeOpts) {
-        agentOpts = {
-          ...agentOpts,
-          envVars: (agentOpts.envVars || [])
+      if (localEdge) {
+        opts = {
+          ...opts,
+          envVars: opts.envVars
             .filter(e => e.k !== 'GPX_CONTROL_PLANE_EDGE_ENDPOINT' && e.k !== 'GPX_NETWORK_MANAGEMENT_EDGE_CONTAINER_NAME')
             .concat([
-              { k: 'GPX_CONTROL_PLANE_EDGE_ENDPOINT', v: `http://${edgeOpts.name}:8000` },
-              { k: 'GPX_NETWORK_MANAGEMENT_EDGE_CONTAINER_NAME', v: edgeOpts.name },
+              { k: 'GPX_CONTROL_PLANE_EDGE_ENDPOINT', v: `http://${localEdge.name}:8000` },
+              { k: 'GPX_NETWORK_MANAGEMENT_EDGE_CONTAINER_NAME', v: localEdge.name },
             ]),
         };
       }
-    }
+      return opts;
+    });
 
-    const packUid = host.id;
+    const adminOpts = admins.length && edgeOpts.length
+      ? _buildAdminOpts({
+          wa_edge_name: edgeOpts[0].name,
+          wa_jwt_secret: _arch.jwtSecret,
+          wa_admin_email: (admins[0].acmeEmail || '').trim() || 'admin@example.com',
+          wa_admin_password: 'CHANGE_ME',
+        })
+      : null;
 
-    // Build Admin opts when Admin is co-located on this host
-    let adminOpts = null;
-    if (admins.length && edgeOpts) {
-      adminOpts = _buildAdminOpts({
-        wa_edge_name: edgeOpts.name,
-        wa_jwt_secret: _arch.jwtSecret,
-        wa_admin_email: (admins[0].acmeEmail || '').trim() || 'admin@example.com',
-        wa_admin_password: 'CHANGE_ME',
-      });
-    }
+    const all = [...edgeOpts, ...agentOpts, ...(adminOpts ? [adminOpts] : [])];
+    if (!all.length) continue;
 
-    let html = '';
-    if (edgeOpts && agentOpts) html = _renderConfigUI(edgeOpts, agentOpts, packUid, adminOpts);
-    else if (edgeOpts) html = _renderConfigUI(edgeOpts, null, packUid, adminOpts);
-    else if (agentOpts) html = _renderConfigUI(agentOpts, null, packUid, null);
-
-    // ACME hint stays as annotation after the compose tabs
-    if (admins.length) {
-      const acmeEdges = _arch.hosts.flatMap(h => h.services.filter(s => s.type === 'edge' && s.acme));
-      if (acmeEdges.length) {
-        const c = acmeEdges[0];
-        const hint = `<div style="font-size:12px;color:var(--text2);margin-top:10px;line-height:1.45;padding:10px;border-radius:8px;background:var(--bg);border:1px solid var(--border);">
-          <strong>${t('arch.acme.admin_title')}</strong><br>
-          <code>GPX_ACME_ENABLED=true</code>
-          ${c.acmeEmail ? `<br><code>GPX_ACME_EMAIL=${esc(c.acmeEmail)}</code>` : ''}
-          ${c.dnsProvider && c.dnsProvider !== 'none' ? `<br><code>GPX_ACME_DNS_TYPE=${esc(c.dnsProvider)}</code>` : ''}
-          <br><span style="opacity:.85;">${t('arch.acme.admin_token_hint')}</span>
-          ${c.domains ? `<br><span style="opacity:.85;">${t('arch.acme.domains_later', { domains: c.domains })}</span>` : ''}
-        </div>`;
-        html = (html || '') + hint;
+    // Plusieurs passerelles ou agents sur l'hôte : leurs variables se chevauchent (nom de nœud, secrets), donc
+    // le Compose porte les variables en ligne. Sinon : un seul .env, comme le script d'installation l'attend.
+    const multi = edgeOpts.length > 1 || agentOpts.length > 1;
+    const composeSvc = o => {
+      let block = _cfgComposeSvc(o, multi ? 'inline' : 'env_file');
+      if (o.command === 'agent' && edgeOpts.length) {
+        block = block.replace('    networks:\n      - goproxify_net', `    depends_on:\n      - ${edgeOpts[0].svcName || edgeOpts[0].name}\n    networks:\n      - goproxify_net`);
       }
-    }
-
-    // Annotate Edge pack with domains for handoff
-    if (edgeOpts && edges[0] && (edges[0].domains || edges[0].acme)) {
-      const note = [];
-      if (edges[0].domains) note.push(t('arch.acme.domains_later', { domains: edges[0].domains }));
-      if (edges[0].acme) note.push(t('arch.acme.admin_title'));
-      html = (html || '') + `<div style="font-size:12px;color:var(--text2);margin-top:10px;line-height:1.4;">${note.map(esc).join('<br>')}</div>`;
-    }
-
-    const token = _archUid('boot');
-    const origin = (typeof location !== 'undefined' && location.origin) ? location.origin : '';
-    const bootstrapUrl = `${origin}/bootstrap/${token}`; // remplacé à la création ticket
-
-    let composeText = '', envText = '', cliText = '';
-    if (edgeOpts && agentOpts && adminOpts) {
-      composeText = _cfgComposeTextFullAdmin(edgeOpts, agentOpts, adminOpts, 'env_file');
-      envText = _cfgEnvFileTextFull(edgeOpts, agentOpts) + '\n' + adminOpts.envVars.map(({k,v}) => `${k}=${v}`).join('\n');
-      cliText = _cfgCliText(edgeOpts) + '\n\n' + _cfgCliText(agentOpts) + '\n\n' + _cfgCliText(adminOpts);
-    } else if (edgeOpts && agentOpts) {
-      composeText = _cfgComposeTextFull(edgeOpts, agentOpts, 'env_file');
-      envText = _cfgEnvFileTextFull(edgeOpts, agentOpts);
-      cliText = _cfgCliText(edgeOpts) + '\n\n' + _cfgCliText(agentOpts);
-    } else if (edgeOpts && adminOpts) {
-      composeText = _cfgComposeTextAdmin(edgeOpts, adminOpts, 'env_file');
-      envText = [...edgeOpts.envVars, ...adminOpts.envVars].map(({k,v}) => `${k}=${v}`).join('\n');
-      cliText = _cfgCliText(edgeOpts) + '\n\n' + _cfgCliText(adminOpts);
-    } else if (edgeOpts) {
-      composeText = _cfgComposeText(edgeOpts, 'env_file');
-      envText = _cfgEnvFileText(edgeOpts);
-      cliText = _cfgCliText(edgeOpts);
-    } else if (agentOpts) {
-      composeText = _cfgComposeText(agentOpts, 'env_file');
-      envText = _cfgEnvFileText(agentOpts);
-      cliText = _cfgCliText(agentOpts);
-    }
+      return block;
+    };
+    const volNames = all.flatMap(o => o.volumes.filter(v => !v.includes('docker.sock') && !v.includes('podman.sock')).map(v => `  ${v.split(':')[0]}:`));
+    const composeText = `services:\n${all.map(composeSvc).join('\n\n')}\n\nvolumes:\n${[...new Set(volNames)].join('\n')}\n${all[0].netBlock}`;
+    const seenKeys = new Set();
+    const envText = multi ? '' : all.flatMap(o => o.envVars).filter(({ k }) => !seenKeys.has(k) && seenKeys.add(k)).map(({ k, v }) => `${k}=${v}`).join('\n');
+    const cliText = all.map(_cfgCliText).join('\n\n');
 
     let edgeEp = '';
-    if (agentOpts) {
-      const hit = (agentOpts.envVars || []).find(e => e.k === 'GPX_CONTROL_PLANE_EDGE_ENDPOINT');
+    if (agentOpts.length) {
+      const hit = (agentOpts[0].envVars || []).find(e => e.k === 'GPX_CONTROL_PLANE_EDGE_ENDPOINT');
       edgeEp = hit ? hit.v : '';
     } else if (edges[0] && edges[0].reachable) {
       edgeEp = typeof _wizEdgeEndpoint === 'function' ? _wizEdgeEndpoint(edges[0].reachable) : edges[0].reachable;
@@ -1336,10 +1293,10 @@ function _archBuildPacks() {
     packs.push({
       hostId: host.id,
       hostName: host.name,
-      html,
       edgeOpts,
       agentOpts,
-      bootstrapUrl,
+      adminOpts,
+      bootstrapUrl: '',
       qrCode: '',
       scriptUrl: '',
       installCmd: '',
@@ -1347,7 +1304,7 @@ function _archBuildPacks() {
       composeText,
       envText,
       cliText,
-      services: host.services.slice(),
+      services: svcs.slice(),
     });
   }
   return packs;
@@ -1357,8 +1314,6 @@ function _archBuildPacks() {
 async function _archCreateTickets(packs) {
   for (const p of packs) {
     try {
-      const nodeNames = [];
-      if (p.edgeOpts && p.edgeOpts.name) nodeNames.push(p.edgeOpts.name);
       if (p.agentOpts && p.agentOpts.name) nodeNames.push(p.agentOpts.name);
       const res = await api('POST', '/bootstrap-tickets', {
         host_name: p.hostName,
@@ -1380,9 +1335,9 @@ async function _archCreateTickets(packs) {
       if (res && res.install_cmd) p.installCmd = res.install_cmd;
       if (res && res.qr_code) p.qrCode = res.qr_code;
       // Pré-approbation Agent sur le(s) passerelle(s) avant connexion
-      if (p.agentOpts && p.agentOpts.name) {
+      for (const a of p.agentOpts) {
         try {
-          await api('POST', '/agents/' + encodeURIComponent(p.agentOpts.name) + '/approve');
+          await api('POST', '/agents/' + encodeURIComponent(a.name) + '/approve');
         } catch (e) {
           console.warn('agent pre-approve failed:', e.message);
         }

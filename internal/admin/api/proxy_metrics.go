@@ -68,6 +68,12 @@ type ProxyMetricsSampler struct {
 	series    map[string][]ProxyMetricSample
 	lastSeen  map[string]time.Time
 	sampledAt time.Time
+
+	// Vue globale (tableau de bord) : dernier intervalle par passerelle, octets et certificats.
+	edgeLast map[string]edgeWindow
+	bytes    map[string][2]float64 // passerelle → octets entrants / sortants cumulés
+	certs    map[string][]edgeCert
+	global   globalWindow
 }
 
 func NewProxyMetricsSampler(db *sql.DB, log *slog.Logger) *ProxyMetricsSampler {
@@ -77,6 +83,9 @@ func NewProxyMetricsSampler(db *sql.DB, log *slog.Logger) *ProxyMetricsSampler {
 		prevAt:   map[string]time.Time{},
 		series:   map[string][]ProxyMetricSample{},
 		lastSeen: map[string]time.Time{},
+		edgeLast: map[string]edgeWindow{},
+		bytes:    map[string][2]float64{},
+		certs:    map[string][]edgeCert{},
 	}
 }
 
@@ -119,45 +128,48 @@ func (s *ProxyMetricsSampler) edges(ctx context.Context) []edgeCred {
 	return out
 }
 
-func (s *ProxyMetricsSampler) fetch(ctx context.Context, c edgeCred) ([]hostCounters, bool) {
+func (s *ProxyMetricsSampler) fetch(ctx context.Context, c edgeCred) (edgeSummary, bool) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.endpoint+"/internal/v1/metrics/summary", nil)
 	if err != nil {
-		return nil, false
+		return edgeSummary{}, false
 	}
 	req.Header.Set("Authorization", "Bearer "+auth.PlainNodeToken(c.token))
 	resp, err := proxyMetricsClient.Do(req)
 	if err != nil {
-		return nil, false
+		return edgeSummary{}, false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, false
+		return edgeSummary{}, false
 	}
-	var payload struct {
-		Proxies []hostCounters `json:"proxies"`
+	var sum edgeSummary
+	if json.NewDecoder(resp.Body).Decode(&sum) != nil {
+		return edgeSummary{}, false
 	}
-	if json.NewDecoder(resp.Body).Decode(&payload) != nil {
-		return nil, false
-	}
-	return payload.Proxies, true
+	return sum, true
 }
 
 // Sample effectue un relevé de toutes les passerelles.
 func (s *ProxyMetricsSampler) Sample(ctx context.Context) {
 	edges := s.edges(ctx)
+	active := make(map[string]bool, len(edges))
+	for _, c := range edges {
+		active[c.name] = true
+	}
+	s.pruneEdges(active)
 	if len(edges) == 0 {
 		return
 	}
 	type result struct {
 		name  string
-		stats []hostCounters
+		sum   edgeSummary
 		ok    bool
 	}
 	res := make(chan result, len(edges))
 	for _, c := range edges {
 		go func(c edgeCred) {
-			st, ok := s.fetch(ctx, c)
-			res <- result{c.name, st, ok}
+			sum, ok := s.fetch(ctx, c)
+			res <- result{c.name, sum, ok}
 		}(c)
 	}
 	now := time.Now()
@@ -165,7 +177,8 @@ func (s *ProxyMetricsSampler) Sample(ctx context.Context) {
 	for range edges {
 		r := <-res
 		if r.ok {
-			s.ingestEdge(acc, r.name, r.stats, now)
+			s.ingestEdge(acc, r.name, r.sum.Proxies, now)
+			s.recordEdgeExtras(r.name, r.sum)
 		}
 	}
 	s.commit(acc, now)
@@ -188,6 +201,7 @@ func (s *ProxyMetricsSampler) ingestEdge(acc map[string]*hostWindow, edge string
 	if prevStats == nil || dt <= 0 {
 		return // premier relevé de cette passerelle : pas de différence possible
 	}
+	ea := hostWindow{buckets: map[float64]float64{}}
 	for host, c := range cur {
 		w := acc[host]
 		if w == nil {
@@ -205,19 +219,38 @@ func (s *ProxyMetricsSampler) ingestEdge(acc map[string]*hostWindow, edge string
 		w.sumS += c.DurationSumS - p.DurationSumS
 		w.count += c.DurationCount - p.DurationCount
 		w.rps += dReq / dt
+		ea.rps += dReq / dt
+		ea.sumS += c.DurationSumS - p.DurationSumS
+		ea.count += c.DurationCount - p.DurationCount
 		pb := make(map[float64]float64, len(p.LatencyBuckets))
 		for _, b := range p.LatencyBuckets {
 			pb[b.Le] = b.Count
 		}
 		for _, b := range c.LatencyBuckets {
 			w.buckets[b.Le] += b.Count - pb[b.Le]
+			ea.buckets[b.Le] += b.Count - pb[b.Le]
 		}
 	}
+	s.mu.Lock()
+	s.edgeLast[edge] = edgeWindow{RPS: ea.rps, P95ms: windowQuantile(ea.buckets, ea.count, ea.sumS, 0.95) * 1000}
+	s.mu.Unlock()
 }
 
 func (s *ProxyMetricsSampler) commit(acc map[string]*hostWindow, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	var gRPS, gReq, gErr float64
+	for _, w := range acc {
+		gRPS += w.rps
+		gReq += w.requests
+		gErr += w.errors
+	}
+	if len(acc) > 0 {
+		s.global = globalWindow{RPS: gRPS}
+		if gReq > 0 {
+			s.global.ErrRate = gErr / gReq
+		}
+	}
 	for host, w := range acc {
 		sm := ProxyMetricSample{T: now, RPS: w.rps}
 		if w.requests > 0 {
@@ -320,9 +353,101 @@ func (s *ProxyMetricsSampler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	}
 	points, _ := strconv.Atoi(r.URL.Query().Get("points"))
 	out, sampledAt := s.Snapshot(points)
+	global, edges, certs := s.Overview()
 	jsonOK(w, map[string]any{
 		"interval_s": int(proxyMetricsInterval / time.Second),
 		"sampled_at": sampledAt,
+		"global":     global,
+		"edges":      edges,
+		"tls":        map[string]any{"certs": certs},
 		"proxies":    out,
 	})
+}
+
+// edgeSummary : ce que le relevé lit dans /internal/v1/metrics/summary d'une passerelle.
+type edgeSummary struct {
+	Proxies  []hostCounters `json:"proxies"`
+	Certs    []edgeCert     `json:"certs"`
+	BytesIn  float64        `json:"bytes_in"`
+	BytesOut float64        `json:"bytes_out"`
+}
+
+type edgeCert struct {
+	Domain  string  `json:"domain"`
+	ExpSecs float64 `json:"exp_secs"`
+}
+
+type edgeWindow struct{ RPS, P95ms float64 }
+
+type globalWindow struct{ RPS, ErrRate float64 }
+
+// recordEdgeExtras retient les octets cumulés et les certificats d'une passerelle.
+func (s *ProxyMetricsSampler) recordEdgeExtras(edge string, sum edgeSummary) {
+	s.mu.Lock()
+	s.bytes[edge] = [2]float64{sum.BytesIn, sum.BytesOut}
+	s.certs[edge] = sum.Certs
+	s.mu.Unlock()
+}
+
+// pruneEdges oublie les passerelles qui n'ont plus de token actif.
+func (s *ProxyMetricsSampler) pruneEdges(active map[string]bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for name := range s.prev {
+		if !active[name] {
+			delete(s.prev, name)
+			delete(s.prevAt, name)
+			delete(s.edgeLast, name)
+			delete(s.bytes, name)
+			delete(s.certs, name)
+		}
+	}
+}
+
+type OverviewEdge struct {
+	EdgeName          string  `json:"edge_name"`
+	RequestsPerSecond float64 `json:"requests_per_second"`
+	P95ms             float64 `json:"p95_ms"`
+}
+
+type OverviewCert struct {
+	Domain           string  `json:"domain"`
+	ExpiresInSeconds float64 `json:"expires_in_seconds"`
+}
+
+// Overview : agrégats pour le tableau de bord — débit et erreurs 5xx du dernier intervalle, octets
+// cumulés, dernier intervalle par passerelle et certificats (plus proche expiration par domaine).
+func (s *ProxyMetricsSampler) Overview() (global map[string]any, edges []OverviewEdge, certs []OverviewCert) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var in, out float64
+	for _, b := range s.bytes {
+		in += b[0]
+		out += b[1]
+	}
+	global = map[string]any{
+		"requests_per_second": s.global.RPS,
+		"error_rate_5xx":      s.global.ErrRate,
+		"bytes_in_total":      in,
+		"bytes_out_total":     out,
+	}
+	edges = make([]OverviewEdge, 0, len(s.edgeLast))
+	for name, w := range s.edgeLast {
+		edges = append(edges, OverviewEdge{EdgeName: name, RequestsPerSecond: w.RPS, P95ms: w.P95ms})
+	}
+	sort.Slice(edges, func(i, j int) bool { return edges[i].EdgeName < edges[j].EdgeName })
+	soonest := map[string]float64{}
+	for _, cs := range s.certs {
+		for _, c := range cs {
+			if v, ok := soonest[c.Domain]; !ok || c.ExpSecs < v {
+				soonest[c.Domain] = c.ExpSecs
+			}
+		}
+	}
+	certs = make([]OverviewCert, 0, len(soonest))
+	for d, v := range soonest {
+		certs = append(certs, OverviewCert{Domain: d, ExpiresInSeconds: v})
+	}
+	sort.Slice(certs, func(i, j int) bool { return certs[i].Domain < certs[j].Domain })
+	return global, edges, certs
 }

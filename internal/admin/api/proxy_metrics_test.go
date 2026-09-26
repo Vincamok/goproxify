@@ -166,3 +166,41 @@ func TestSamplerSampleAgainstEdge(t *testing.T) {
 		t.Fatalf("série inattendue : %+v", ser)
 	}
 }
+
+func TestOverview(t *testing.T) {
+	s := NewProxyMetricsSampler(nil, nil)
+	t0 := time.Unix(1000, 0)
+	for _, e := range []string{"e1", "e2"} {
+		sampleOnce(s, e, []hostCounters{{Host: "a.lan"}}, t0)
+	}
+	acc := map[string]*hostWindow{}
+	t1 := t0.Add(10 * time.Second)
+	s.ingestEdge(acc, "e1", []hostCounters{{Host: "a.lan", Requests: 100, Errors: 10}}, t1)
+	s.ingestEdge(acc, "e2", []hostCounters{{Host: "a.lan", Requests: 100, Errors: 0}}, t1)
+	s.commit(acc, t1)
+	s.recordEdgeExtras("e1", edgeSummary{BytesIn: 10, BytesOut: 20, Certs: []edgeCert{{Domain: "a.lan", ExpSecs: 500}}})
+	s.recordEdgeExtras("e2", edgeSummary{BytesIn: 1, BytesOut: 2, Certs: []edgeCert{{Domain: "a.lan", ExpSecs: 100}}})
+
+	global, edges, certs := s.Overview()
+	if global["requests_per_second"] != 20.0 {
+		t.Errorf("rps global = %v, attendu 20", global["requests_per_second"])
+	}
+	if global["error_rate_5xx"] != 0.05 {
+		t.Errorf("error_rate_5xx = %v, attendu 0.05", global["error_rate_5xx"])
+	}
+	if global["bytes_in_total"] != 11.0 || global["bytes_out_total"] != 22.0 {
+		t.Errorf("octets = %v / %v, attendu 11 / 22", global["bytes_in_total"], global["bytes_out_total"])
+	}
+	if len(edges) != 2 || edges[0].EdgeName != "e1" || edges[0].RequestsPerSecond != 10 {
+		t.Errorf("passerelles inattendues : %+v", edges)
+	}
+	if len(certs) != 1 || certs[0].ExpiresInSeconds != 100 {
+		t.Errorf("certificats : la plus proche expiration attendue, obtenu %+v", certs)
+	}
+
+	s.pruneEdges(map[string]bool{"e1": true})
+	_, edges, _ = s.Overview()
+	if len(edges) != 1 || edges[0].EdgeName != "e1" {
+		t.Errorf("une passerelle retirée doit être oubliée : %+v", edges)
+	}
+}

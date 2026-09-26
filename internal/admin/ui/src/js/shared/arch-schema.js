@@ -101,7 +101,7 @@ function _asNodeHTML(model, svc, host, o) {
     ? `${t('as.admin_role')} · ${host ? host.name : ''}`
     : `${t(role.label)} · ${host ? host.name : ''}`;
   const virtual = svc.virtual ? ' data-virtual' : '';
-  return `<button type="button" class="as-node" style="--k:${role.k}" data-svc="${esc(svc.id)}"${virtual}${o.sel ? ' data-sel' : ''}${st === 'warn' ? ' data-tone="warn"' : ''}
+  return `<button type="button" class="as-node" style="--k:${role.k};--h:${_asHostColor(model, host)}" data-svc="${esc(svc.id)}"${virtual}${o.sel ? ' data-sel' : ''}${st === 'warn' ? ' data-tone="warn"' : ''}
     onclick="asNodeClick('${esc(svc.id)}')">
     <span class="as-hd"><span class="as-ic">${_ARCH_ICONS[svc.type] || ''}</span>
       <span class="as-nm">${esc(svc.name)}<small>${esc(meta)}</small></span>
@@ -127,7 +127,7 @@ function _asKpis(model, edges, agents) {
 }
 
 /** model = { hosts, haGroups } ; o = { edit, selectedId, kpis } */
-function asSchemaHTML(model, o) {
+function _asTiersHTML(model, o) {
   o = o || {};
   const all = _asAllSvcs(model);
   const edges = all.filter(x => x.s.type === 'edge');
@@ -153,7 +153,7 @@ function asSchemaHTML(model, o) {
 
   const upE = edges.filter(x => _asState(x.s) === 'ok').length;
   const upA = agents.filter(x => _asState(x.s) === 'ok').length;
-  return `<div class="as">
+  return `<div class="as-tiers">
     ${o.kpis ? _asKpis(model, edges, agents) : ''}
     <div class="as-net"><span class="as-pill">${_ARCH_ICONS.globe} ${esc(t('as.internet'))}</span></div>
     <div class="as-vl"><span>80 / 443</span></div>
@@ -175,17 +175,146 @@ function asSchemaHTML(model, o) {
   </div>`;
 }
 
+// ── Hôtes : chaque hôte porte un ou plusieurs rôles (passerelle, agent, Admin) ; un agent porte une ou plusieurs plateformes ──
+
+const _AS_HOST_COLORS = ['#378ADD', '#D85A30', '#7F77DD', '#1D9E75', '#BA7517', '#D4537E'];
+
+function _asHostColor(model, host) {
+  const i = host ? model.hosts.indexOf(host) : -1;
+  return i < 0 ? 'var(--border)' : _AS_HOST_COLORS[i % _AS_HOST_COLORS.length];
+}
+
+window._asMode = (function () {
+  try { return localStorage.getItem('gpx_as_mode') === 'host' ? 'host' : 'role'; } catch { return 'role'; }
+})();
+window._asMenu = null;
+
+function _asRerender() {
+  if (window._asEdit) { _archRender(); return; }
+  const root = document.getElementById('as-root');
+  if (root) root.innerHTML = asSchemaHTML(_arch, { kpis: true });
+}
+
+function asSetMode(mode) {
+  window._asMode = mode;
+  try { localStorage.setItem('gpx_as_mode', mode); } catch {}
+  _asRerender();
+}
+
+function asToggleMenu(hostId) {
+  window._asMenu = window._asMenu === hostId ? null : hostId;
+  _asRerender();
+}
+
+function asAddTo(hostId, type) {
+  window._asMenu = null;
+  const host = _arch.hosts.find(h => h.id === hostId);
+  if (host && type === 'edge' && !(host.services || []).length) host.internet = true;
+  _archAddService(hostId, type);
+}
+
+function asAddHost() {
+  const h = _archEmptyHost(_arch.hosts.length + 1);
+  _arch.hosts.push(h);
+  _arch.selectedHostId = h.id;
+  _arch.selectedSvcId = null;
+  _archRender();
+}
+
+/** Plateformes portées par les agents d'un hôte (Docker ou Podman, Portainer, K8s : cumulables sauf Docker/Podman). */
+function _asPlatforms(h) {
+  const set = new Set();
+  for (const s of h.services || []) {
+    if (s.type !== 'agent') continue;
+    if (s.docker) set.add('Docker');
+    if (s.podman) set.add('Podman');
+    if (s.portainer) set.add('Portainer');
+    if (s.k8s) set.add('K8s');
+  }
+  return [...set];
+}
+
+function _asAddMenu(model, h) {
+  if (window._asMenu !== h.id) return '';
+  const hasAdmin = _asAllSvcs(model).some(x => x.s.type === 'admin' && !x.s.virtual);
+  const item = (type, desc, off) => `<button type="button" class="as-mi" ${off ? 'disabled' : ''} onclick="event.stopPropagation();asAddTo('${h.id}','${type}')"><span>${esc(t(_AS_ROLE[type].label))}</span><small>${esc(desc)}</small></button>`;
+  return `<div class="as-menu">${item('edge', t('arch.role.edge_desc'))}${item('agent', t('arch.role.agent_desc'))}${item('admin', t('arch.role.admin_desc'), hasAdmin)}</div>`;
+}
+
+function _asHostHead(model, h, o) {
+  const inet = !!h.internet;
+  const zone = o.edit
+    ? `<button type="button" class="as-zt" data-p="${inet ? 0 : 1}" onclick="event.stopPropagation();_archSetHostInternet('${h.id}',${!inet})" title="${esc(t('arch.host.internet_hint'))}">${esc(inet ? t('arch.host.internet') : t('arch.host.private'))}</button>`
+    : `<span class="as-zt" data-p="${inet ? 0 : 1}">${esc(inet ? t('arch.host.internet') : t('arch.host.private'))}</span>`;
+  return `<div class="as-hh"><span class="as-hd-dot"></span><b>${esc(h.name)}</b>${zone}</div>
+    ${h.region ? `<small class="as-hsub">${esc(h.region)}</small>` : ''}`;
+}
+
+/** Bandeau d'hôtes du wizard : une carte par hôte + « Ajouter un hôte ». */
+function _asHostStripHTML(model, o) {
+  const cards = model.hosts.map(h => {
+    const sel = o.selectedHostId === h.id && !o.selectedId;
+    const roles = (h.services || []).map(s => `<span class="as-hrole" style="--k:${_AS_ROLE[s.type].k}" onclick="event.stopPropagation();asNodeClick('${esc(s.id)}')">${esc(s.name)}</span>`).join('');
+    const plats = _asPlatforms(h).map(p => `<span class="as-hplat">${esc(p)}</span>`).join('');
+    return `<div class="as-hcard"${sel ? ' data-sel' : ''} style="--h:${_asHostColor(model, h)}" onclick="_archSelectHost('${h.id}')">
+      ${_asHostHead(model, h, o)}
+      <div class="as-hroles">${roles || `<span class="as-hempty">${esc(t('as.host_empty'))}</span>`}</div>
+      ${plats ? `<div class="as-hroles">${plats}</div>` : ''}
+      <button type="button" class="as-add" onclick="event.stopPropagation();asToggleMenu('${h.id}')">${esc(t('as.add_element'))}</button>
+      ${_asAddMenu(model, h)}
+    </div>`;
+  }).join('');
+  return `<div class="as-hosts">${cards}<button type="button" class="as-hcard as-hnew" onclick="asAddHost()">+ ${esc(t('as.add_host'))}</button></div>`;
+}
+
+/** Vue « Par hôte » : chaque hôte est un cadre qui contient ses rôles. */
+function _asByHostHTML(model, o) {
+  const boxes = model.hosts.map(h => {
+    const svcs = (h.services || []).map(s => _asNodeHTML(model, s, h, { sel: o.selectedId === s.id, edit: !!o.edit })).join('');
+    const sel = o.edit && o.selectedHostId === h.id && !o.selectedId;
+    const plats = _asPlatforms(h).map(p => `<span class="as-hplat">${esc(p)}</span>`).join('');
+    return `<section class="as-hostbox"${sel ? ' data-sel' : ''} style="--h:${_asHostColor(model, h)}"${o.edit ? ` onclick="_archSelectHost('${h.id}')"` : ''}>
+      ${_asHostHead(model, h, o)}
+      ${plats ? `<div class="as-hroles">${plats}</div>` : ''}
+      <div class="as-hostgrid">${svcs || `<span class="as-hempty">${esc(t('as.host_empty'))}</span>`}
+        ${o.edit ? `<div class="as-hostadd"><button type="button" class="as-slot" onclick="event.stopPropagation();asToggleMenu('${h.id}')">+ ${esc(t('as.add_element'))}</button>${_asAddMenu(model, h)}</div>` : ''}
+      </div>
+    </section>`;
+  }).join('');
+  return `<div class="as-byhost">${boxes}${o.edit ? `<button type="button" class="as-slot" style="min-height:64px" onclick="asAddHost()">+ ${esc(t('as.add_host'))}</button>` : ''}</div>`;
+}
+
+function _asToolbarHTML() {
+  const b = (m, k) => `<button type="button"${window._asMode === m ? ' data-on' : ''} onclick="asSetMode('${m}')">${esc(t(k))}</button>`;
+  return `<div class="as-seg">${b('role', 'as.by_role')}${b('host', 'as.by_host')}</div>`;
+}
+
+/** model = { hosts, haGroups } ; o = { edit, selectedId, selectedHostId, kpis } */
+function asSchemaHTML(model, o) {
+  o = o || {};
+  const byHost = window._asMode === 'host';
+  const all = _asAllSvcs(model);
+  const kpis = o.kpis && byHost ? _asKpis(model, all.filter(x => x.s.type === 'edge'), all.filter(x => x.s.type === 'agent')) : '';
+  return `<div class="as">
+    ${_asToolbarHTML()}
+    ${o.edit && !byHost ? _asHostStripHTML(model, o) : ''}
+    ${kpis}
+    ${byHost ? _asByHostHTML(model, o) : _asTiersHTML(model, o)}
+  </div>`;
+}
+
 function asNodeClick(id) {
   if (id === 'admin-virtual') return;
   if (window._asEdit) { _archSelectSvc(id); return; }
   asOpenDetail(id);
 }
 
-/** Wizard : ajoute un nœud sur un hôte libre (ou un nouvel hôte). */
+/** Wizard : ajoute un nœud à l'hôte sélectionné, sinon sur un hôte libre (ou un nouvel hôte). */
 function asAdd(type) {
-  let host = _arch.hosts.find(h => !(h.services || []).length);
+  let host = _arch.hosts.find(h => h.id === _arch.selectedHostId)
+    || _arch.hosts.find(h => !(h.services || []).length);
   if (!host) { host = _archEmptyHost(_arch.hosts.length + 1); _arch.hosts.push(host); }
-  if (type === 'edge') host.internet = true;
+  if (type === 'edge' && !(host.services || []).length) host.internet = true;
   _archAddService(host.id, type);
 }
 
@@ -202,7 +331,22 @@ function asMoveSvc(svcId, toHostId) {
 function asInspectorHTML() {
   const svc = _arch.selectedSvcId ? _archFindSvc(_arch.selectedSvcId) : null;
   if (!svc) {
-    return `<div class="as-ins"><div class="arch-insp-empty">${esc(t('arch.inspector_empty'))}</div></div>`;
+    const h = _arch.selectedHostId ? _arch.hosts.find(x => x.id === _arch.selectedHostId) : null;
+    if (!h) return `<div class="as-ins"><div class="arch-insp-empty">${esc(t('arch.inspector_empty'))}</div></div>`;
+    const roles = (h.services || []).map(s => `<button class="arch-addrole" style="--arch-accent:${_archRoleAccent(s.type)};display:block;width:100%;text-align:left;margin-bottom:5px;" onclick="_archSelectSvc('${s.id}')">${esc(t(_ARCH_ROLES[s.type].label))} · ${esc(s.name)}</button>`).join('');
+    return `<div class="as-ins" style="padding:0;border:0;background:none"><div class="arch-panel">
+      <div class="arch-insp-head"><div class="arch-insp-level">${esc(t('as.host'))}</div><div class="arch-insp-name">${esc(h.name)}</div><div class="arch-insp-note">${esc(t('as.host_note'))}</div></div>
+      <div class="arch-insp-body">
+        ${_archGroup(t('arch.group.identity'),
+          _archField(t('arch.host.name'), `<input class="arch-input" value="${esc(h.name)}" onchange="_archRenameHost('${h.id}',this.value);_archRender()">`) +
+          _archField(t('arch.host.region'), `<input class="arch-input" value="${esc(h.region || '')}" placeholder="eu-west-1" onchange="_archSetHostRegion('${h.id}',this.value)">`) +
+          _archCapRow(!!h.internet, t('arch.host.internet'), t('arch.host.internet_hint'), `_archSetHostInternet('${h.id}',this.checked)`))}
+        ${_archGroup(t('as.host_elements'), roles || `<div class="arch-cap-desc">${esc(t('as.host_empty'))}</div>`)}
+        <div class="as-acts" style="margin-top:0">
+          <button class="btn btn-secondary btn-sm" onclick="asOpenConfig('${h.id}')">${esc(t('as.config'))}</button>
+          ${_arch.hosts.length > 1 ? `<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="_archRemoveHost('${h.id}')">${esc(t('arch.host.remove'))}</button>` : ''}
+        </div>
+      </div></div></div>`;
   }
   const host = _archFindHostOfSvc(svc.id);
   const hostOpts = _arch.hosts.map(h => `<option value="${esc(h.id)}"${host && h.id === host.id ? ' selected' : ''}>${esc(h.name)}</option>`).join('')
@@ -383,7 +527,7 @@ function _asFormatsHTML(host) {
       : `<p style="font-size:12.5px;color:var(--text2);margin:0 0 10px">${esc(t('as.ticket.hint'))}</p>
          <button class="btn btn-primary btn-sm" ${pack ? '' : 'disabled'} onclick="asMakeTicket('${host.id}')">${esc(t('as.ticket.generate'))}</button>`);
   }
-  if (!text) return pills + `<div class="as-empty">${esc(t('as.no_config'))}</div>`;
+  if (!text) return pills + `<div class="as-empty">${esc(t(_asM.fmt === 'env' && pack ? 'as.env_inline' : 'as.no_config'))}</div>`;
   return `${pills}<pre class="as-code" id="as-code">${esc(text)}</pre>
     <div class="as-acts"><button class="btn btn-secondary btn-sm" onclick="asCopy()">${esc(t('as.copy'))}</button>
     <button class="btn btn-secondary btn-sm" onclick="asDownload('${host.name.replace(/[^a-z0-9_-]/gi, '_')}-${_asM.fmt}.txt')">${esc(t('as.download'))}</button></div>`;

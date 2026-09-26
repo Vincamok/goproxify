@@ -5,13 +5,14 @@ pages.dashboard = async function() {
   const content = document.getElementById('content');
   content.innerHTML = '<p style="color:var(--text2)">' + t('common.loading') + '</p>';
   try {
-    const [health, proxies, nodes, domains, auditData, metricsSummary] = await Promise.all([
+    const [health, proxies, nodes, domains, auditData, metricsSummary, backendsHealth] = await Promise.all([
       api('GET', '/health').catch(() => null),
       api('GET', '/proxies').catch(() => []),
       api('GET', '/nodes').catch(() => []),
       api('GET', '/domains').catch(() => []),
       api('GET', '/audit?limit=8').catch(() => null),
-      api('GET', '/internal/v1/metrics/summary').catch(() => null),
+      api('GET', '/metrics/proxies?points=1').catch(() => null),
+      api('GET', '/backends/health').catch(() => null),
     ]);
 
     const allNodes    = nodes || [];
@@ -51,9 +52,9 @@ pages.dashboard = async function() {
 
     // Metrics summary
     const mGlobal   = metricsSummary?.global || {};
-    const mProxies  = metricsSummary?.proxies || [];
+    const mEdges    = metricsSummary?.edges || [];
     const mTLS      = metricsSummary?.tls?.certs || [];
-    const backendsDown = mProxies.reduce((s, p) => s + ((p.backends_total||0) - (p.backends_up||p.backends_total||0)), 0);
+    const backendsDown = Object.values(backendsHealth?.backends || {}).filter(s => s === 'down').length;
 
     // Cert expiry from Prometheus (< 7 days)
     const promCertsExpiring7 = mTLS.filter(c => c.expires_in_seconds != null && c.expires_in_seconds < 7 * 86400);
@@ -68,7 +69,7 @@ pages.dashboard = async function() {
       return (v/1073741824).toFixed(2) + ' GB';
     };
 
-    const metricsBandHtml = metricsSummary ? `
+    const metricsBandHtml = metricsSummary?.sampled_at ? `
       <div class="card blueprint" style="margin-bottom:20px;padding:14px 22px">
         <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
         <div style="display:flex;align-items:center;gap:28px;flex-wrap:wrap">
@@ -234,7 +235,7 @@ pages.dashboard = async function() {
               const mem = n.mem_pct != null ? Math.round(n.mem_pct) : null;
               const cpuColor = cpu > 85 ? 'var(--red)' : cpu > 65 ? 'var(--yellow)' : 'var(--accent)';
               const memColor = mem > 85 ? 'var(--red)' : mem > 65 ? 'var(--yellow)' : 'var(--accent)';
-              const edgeMetrics = mProxies.find(p => p.edge_id === n.id || p.edge_name === (n.node_name || n.id));
+              const edgeMetrics = mEdges.find(p => p.edge_name === (n.node_name || n.id));
               const p95ms = edgeMetrics?.p95_ms;
               const rps   = edgeMetrics?.requests_per_second;
               return `<div style="display:flex;align-items:center;gap:12px;padding:10px 20px;cursor:pointer;transition:background .15s"
