@@ -336,6 +336,10 @@ Corps : `{"data": <sauvegarde>, "selection": {"proxy_ids", "import_users", "impo
 
 Liste les certificats gérés.
 
+### `GET /api/v1/certs/{domain}/pem`
+
+Renvoie le certificat public (PEM, `Content-Type: application/x-pem-file`) d'un domaine géré. La clé privée n'est jamais exposée. `404` si le domaine n'a pas de certificat.
+
 ### `POST /api/v1/certs/import`
 
 Importe un certificat externe (non-ACME).

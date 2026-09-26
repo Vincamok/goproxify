@@ -1,8 +1,5 @@
 // Copyright 2024-2026 Vincamok / GoProxify contributors
 // SPDX-License-Identifier: Apache-2.0
-
-let _acmeRefreshTimer = null;
-
 const PROVIDER_LABELS = {
   ovh: 'OVH', cloudflare: 'Cloudflare', route53: 'Route 53',
   hetzner: 'Hetzner', gandi: 'Gandi', none: '—', '': '—',
@@ -35,43 +32,6 @@ const PROVIDER_FIELDS = {
   route53: [
     { key: 'hosted_zone_id', label: 'Hosted Zone ID', required: true, ph: 'Z1234567890' },
   ],
-};
-
-pages['acme-monitor'] = async function () {
-  if (_acmeRefreshTimer) { clearInterval(_acmeRefreshTimer); _acmeRefreshTimer = null; }
-  const root = document.getElementById('content');
-  root.innerHTML = `
-    <div style="padding:24px 28px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
-        <div>
-          <h2 style="margin:0;font-size:20px;">${t('acme_monitor.title')}</h2>
-          <p style="margin:4px 0 0;font-size:13px;opacity:0.55;">${t('acme_monitor.subtitle')}</p>
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-primary" style="font-size:12px;" onclick="openNewCertModal()">${t('acme_monitor.new_cert_btn')}</button>
-          <button class="btn btn-ghost" style="font-size:12px;" onclick="openImportCertModal()">${t('acme_monitor.import_btn')}</button>
-          <button class="btn btn-ghost" style="font-size:12px;" onclick="acmeMonitorLoad()">↻ ${t('common.refresh')}</button>
-        </div>
-      </div>
-
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
-        <div id="acme-config-section"></div>
-        <div id="acme-providers-section"></div>
-      </div>
-
-      <div id="acme-internal-ca-section" style="margin-bottom:24px;"></div>
-
-      <div id="acme-kpis" style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:24px;"></div>
-      <div id="acme-table-wrap"></div>
-    </div>`;
-  await Promise.all([acmeConfigLoad(), acmeProvidersLoad(), acmeInternalCALoad(), acmeMonitorLoad()]);
-  _acmeRefreshTimer = setInterval(acmeMonitorLoad, 60_000);
-  const obs = new MutationObserver(() => {
-    if (!document.getElementById('acme-kpis')) {
-      clearInterval(_acmeRefreshTimer); _acmeRefreshTimer = null; obs.disconnect();
-    }
-  });
-  obs.observe(document.getElementById('content'), { childList: true });
 };
 
 // ── Config ACME (email + CA) ─────────────────────────────────────────────────
@@ -347,142 +307,6 @@ window.submitNewCert = async function () {
   } catch (e) {
     toast(e.message || t('common.error'), 'error');
   }
-};
-
-// ── Monitor table ─────────────────────────────────────────────────────────────
-
-window.acmeMonitorLoad = async function () {
-  const data = await api('GET', '/certs/acme-monitor').catch(() => null);
-  if (!data) {
-    document.getElementById('acme-table-wrap').innerHTML =
-      `<p style="opacity:0.5;text-align:center;padding:40px 0;">${t('acme_monitor.load_error')}</p>`;
-    return;
-  }
-
-  const kpis = [
-    { label: t('acme_monitor.kpi_total'),    value: data.total,    color: 'var(--text)' },
-    { label: t('acme_monitor.kpi_ok'),       value: data.ok,       color: '#22c55e' },
-    { label: t('acme_monitor.kpi_warning'),  value: data.warning,  color: '#f59e0b' },
-    { label: t('acme_monitor.kpi_critical'), value: data.critical, color: '#ef4444' },
-    { label: t('acme_monitor.kpi_expired'),  value: data.expired,  color: '#6b7280' },
-  ];
-  document.getElementById('acme-kpis').innerHTML = kpis.map(k => `
-    <div style="background:var(--bg2);border-radius:10px;padding:16px 22px;min-width:110px;flex:1;">
-      <div style="font-size:26px;font-weight:700;color:${k.color};">${k.value}</div>
-      <div style="font-size:12px;opacity:0.6;margin-top:2px;">${k.label}</div>
-    </div>`).join('');
-
-  if (!data.certs.length) {
-    document.getElementById('acme-table-wrap').innerHTML =
-      `<p style="opacity:0.5;text-align:center;padding:40px 0;">${t('acme_monitor.no_certs')}</p>`;
-    return;
-  }
-
-  const rows = data.certs.map(c => {
-    const badge = statusBadge(c.status, c.days_left);
-    const exp = new Date(c.expires_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-    const upd = new Date(c.updated_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-    const provLabel = PROVIDER_LABELS[c.dns_provider] || c.dns_provider || '—';
-    const provColor = PROVIDER_COLORS[c.dns_provider];
-    const provBadge = provColor
-      ? `<span style="background:${provColor}22;color:${provColor};border:1px solid ${provColor}44;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:600;">${provLabel}</span>`
-      : `<span style="font-size:11px;opacity:0.5;">${provLabel}</span>`;
-    return `<tr style="cursor:pointer;" onclick="openAcmeCertDetail(${JSON.stringify(c).replace(/</g,'\\u003c').replace(/>/g,'\\u003e')})">
-      <td style="font-weight:500;padding:10px 10px;">${esc(c.domain)}</td>
-      <td style="padding:10px 10px;"><span style="font-size:11px;opacity:0.65;">${esc(c.issuer)}</span></td>
-      <td style="padding:10px 10px;">${provBadge}</td>
-      <td style="padding:10px 10px;">${exp}</td>
-      <td style="padding:10px 10px;">${upd}</td>
-      <td style="text-align:center;padding:10px 10px;">${badge}</td>
-      <td style="text-align:right;padding:10px 10px;" onclick="event.stopPropagation()">
-        <button class="btn btn-ghost" title="${t('acme_monitor.deploy')}" style="padding:4px 6px;"
-          onclick="openCertDeployPanel('${esc(c.id)}','${esc(c.domain)}')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
-        </button>
-        <button class="btn btn-ghost" title="${t('acme_monitor.edit')}" style="padding:4px 6px;${c.domain_id ? '' : 'opacity:0.35;cursor:not-allowed;'}"
-          ${c.domain_id ? `onclick="openDomainModal('${esc(c.domain_id)}')"` : `onclick="toast(t('acme_monitor.edit_no_domain'),'info')"`}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-        </button>
-        <button class="btn btn-ghost" title="${t('acme_monitor.renew')}" style="padding:4px 6px;"
-          onclick="acmeRenew('${esc(c.domain)}')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-        </button>
-        <button class="btn btn-ghost" title="${t('acme_monitor.delete')}" style="padding:4px 6px;color:var(--red);"
-          onclick="acmeDeleteCert('${esc(c.domain)}')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-        </button>
-      </td>
-    </tr>`;
-  }).join('');
-
-  document.getElementById('acme-table-wrap').innerHTML = `
-    <div style="overflow-x:auto;">
-      <table style="width:100%;border-collapse:collapse;font-size:13px;">
-        <thead>
-          <tr style="border-bottom:1px solid var(--border);opacity:0.6;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;">
-            <th style="text-align:left;padding:8px 10px;">${t('acme_monitor.col_domain')}</th>
-            <th style="text-align:left;padding:8px 10px;">${t('acme_monitor.col_issuer')}</th>
-            <th style="text-align:left;padding:8px 10px;">${t('acme_monitor.col_provider')}</th>
-            <th style="text-align:left;padding:8px 10px;">${t('acme_monitor.col_expires')}</th>
-            <th style="text-align:left;padding:8px 10px;">${t('acme_monitor.col_renewed')}</th>
-            <th style="text-align:center;padding:8px 10px;">${t('acme_monitor.col_status')}</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>`;
-};
-
-// ── Detail panel ──────────────────────────────────────────────────────────────
-
-window.openAcmeCertDetail = function (cert) {
-  document.getElementById('acme-cert-detail-backdrop')?.remove();
-  const provLabel = PROVIDER_LABELS[cert.dns_provider] || cert.dns_provider || '—';
-  const provColor = PROVIDER_COLORS[cert.dns_provider];
-  const exp = new Date(cert.expires_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-
-  document.body.insertAdjacentHTML('beforeend', `
-    <div id="acme-cert-detail-backdrop" class="dialog-backdrop" style="align-items:flex-start;justify-content:flex-end;background:rgba(0,0,0,0.4);" onclick="if(event.target===this)document.getElementById('acme-cert-detail-backdrop').remove()">
-      <div style="width:min(400px,98vw);height:100vh;overflow:auto;background:var(--bg2);border-left:1px solid var(--border);padding:24px 20px;" onclick="event.stopPropagation()">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
-          <div>
-            <h2 style="margin:0 0 4px;font-size:17px;font-weight:700;">${esc(cert.domain)}</h2>
-            <p style="margin:0;font-size:12px;opacity:0.5;">${t('acme_monitor.detail_title')}</p>
-          </div>
-          <button class="btn btn-ghost btn-icon" onclick="document.getElementById('acme-cert-detail-backdrop').remove()">✕</button>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:10px;font-size:13px;">
-          ${[
-            [t('acme_monitor.col_status'),   statusBadge(cert.status, cert.days_left)],
-            [t('acme_monitor.col_issuer'),   esc(cert.issuer)],
-            [t('acme_monitor.col_expires'),  exp],
-            [t('acme_monitor.detail_provider'), provColor
-              ? `<span style="background:${provColor}22;color:${provColor};border:1px solid ${provColor}44;padding:2px 9px;border-radius:4px;font-size:11px;font-weight:600;">${provLabel}</span>`
-              : provLabel],
-          ].map(([k,v]) => `
-            <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:var(--bg2);border-radius:8px;">
-              <span style="opacity:0.6;">${k}</span><span>${v}</span>
-            </div>`).join('')}
-        </div>
-        <div style="margin-top:24px;display:flex;flex-direction:column;gap:8px;">
-          <button class="btn btn-primary blueprint" style="width:100%;" onclick="openCertDeployPanel('${esc(cert.id)}','${esc(cert.domain)}')">
-            <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
-            ${t('acme_monitor.deploy')}
-          </button>
-          ${cert.domain_id ? `
-          <button class="btn btn-ghost" style="width:100%;font-size:12px;" onclick="document.getElementById('acme-cert-detail-backdrop').remove();openDomainModal('${esc(cert.domain_id)}')">
-            ${t('acme_monitor.edit')}
-          </button>` : ''}
-          <button class="btn btn-ghost" style="width:100%;font-size:12px;opacity:0.7;" onclick="acmeRenew('${esc(cert.domain)}')">
-            ${t('acme_monitor.renew')}
-          </button>
-          <button class="btn btn-ghost" style="width:100%;font-size:12px;color:var(--red);" onclick="acmeDeleteCert('${esc(cert.domain)}');document.getElementById('acme-cert-detail-backdrop').remove()">
-            ${t('acme_monitor.delete')}
-          </button>
-        </div>
-      </div>
-    </div>`);
 };
 
 // ── Actions ───────────────────────────────────────────────────────────────────

@@ -17,6 +17,7 @@ window.acmeInternalCALoad = async function () {
       <td style="padding:6px 8px;font-size:11px;opacity:0.7;">${esc(ca.subject)}</td>
       <td style="padding:6px 8px;font-size:11px;opacity:0.6;white-space:nowrap;">${fmtDate(ca.not_after)}</td>
       <td style="text-align:right;padding:6px 8px;white-space:nowrap;">
+        <button class="btn btn-ghost" style="padding:4px 6px;font-size:11px;" onclick="event.stopPropagation();dcDownloadCARoot('${esc(ca.id)}')">${t('dc.download_ca')}</button>
         <button class="btn btn-ghost" style="padding:4px 6px;font-size:11px;" onclick="event.stopPropagation();openInternalCACertsPanel('${esc(ca.id)}','${esc(ca.name)}')">${t('internal_ca.manage')}</button>
       </td>
     </tr>`).join('');
@@ -32,7 +33,7 @@ window.acmeInternalCALoad = async function () {
       </div>
       ${!cas.length
         ? `<p style="margin:0;font-size:12px;opacity:0.5;text-align:center;padding:16px 0;">${t('internal_ca.empty')}</p>`
-        : `<table style="width:100%;border-collapse:collapse;">
+        : `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;">
             <thead>
               <tr style="text-align:left;">
                 <th style="padding:4px 8px;font-size:10px;opacity:0.5;font-weight:500;">${t('internal_ca.col_name')}</th>
@@ -42,7 +43,7 @@ window.acmeInternalCALoad = async function () {
               </tr>
             </thead>
             <tbody>${rows}</tbody>
-          </table>`
+          </table></div>`
       }
     </div>`;
 };
@@ -98,6 +99,7 @@ window.submitInternalCA = async function () {
     document.getElementById('internal-ca-modal-backdrop')?.remove();
     toast(t('internal_ca.created'), 'success');
     acmeInternalCALoad();
+    window.acmeMonitorLoad?.();
   } catch (e) {
     toast(e.message || t('common.error'), 'error');
   }
@@ -182,6 +184,7 @@ window.revokeInternalCert = async function (caId, certID) {
     await api('DELETE', `/internal-ca/${caId}/certs/${certID}`);
     toast(t('internal_ca.revoked_toast'), 'success');
     icaLoadCerts(caId);
+    window.acmeMonitorLoad?.();
   } catch (e) {
     toast(e.message || t('common.error'), 'error');
   }
@@ -240,6 +243,7 @@ window.submitIssueInternalCert = async function (caId) {
     document.getElementById('internal-ca-issue-backdrop')?.remove();
     toast(t('internal_ca.issued'), 'success');
     icaLoadCerts(caId);
+    window.acmeMonitorLoad?.();
   } catch (e) {
     toast(e.message || t('common.error'), 'error');
   }

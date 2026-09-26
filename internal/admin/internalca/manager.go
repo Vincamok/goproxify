@@ -42,26 +42,26 @@ func (m *Manager) SetCertDir(dir string) {
 
 // CA représente une autorité de certification interne.
 type CA struct {
-	ID        string
-	Name      string
-	Subject   string
-	CertPEM   string
-	NotAfter  time.Time
-	CreatedAt time.Time
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Subject   string    `json:"subject"`
+	CertPEM   string    `json:"cert_pem"`
+	NotAfter  time.Time `json:"not_after"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // IssuedCert représente un certificat émis par une CA interne.
 type IssuedCert struct {
-	ID         string
-	CAID       string
-	CommonName string
-	Usage      string // "server" ou "client"
-	SANs       []string
-	Serial     string
-	CertPEM    string
-	NotAfter   time.Time
-	Revoked    bool
-	CreatedAt  time.Time
+	ID         string    `json:"id"`
+	CAID       string    `json:"ca_id"`
+	CommonName string    `json:"common_name"`
+	Usage      string    `json:"usage"` // "server" ou "client"
+	SANs       []string  `json:"sans"`
+	Serial     string    `json:"serial"`
+	CertPEM    string    `json:"cert_pem"`
+	NotAfter   time.Time `json:"not_after"`
+	Revoked    bool      `json:"revoked"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // CreateCA génère une nouvelle autorité racine (clé ECDSA P-256, auto-signée)

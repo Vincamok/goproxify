@@ -56,6 +56,8 @@ func (h *CertsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.obtain(w, r)
 	case r.Method == http.MethodPost && domain == "import":
 		h.importCert(w, r)
+	case r.Method == http.MethodGet && domain != "" && strings.HasSuffix(path, "/pem"):
+		h.pem(w, r, domain)
 	case r.Method == http.MethodDelete && domain != "":
 		h.delete(w, r, domain)
 	default:
@@ -196,6 +198,22 @@ func (h *CertsHandler) monitor(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	jsonOK(w, resp)
+}
+
+// pem renvoie uniquement le certificat public (jamais la clé privée).
+func (h *CertsHandler) pem(w http.ResponseWriter, r *http.Request, domain string) {
+	var certPEM string
+	err := h.DB.QueryRowContext(r.Context(), `SELECT cert_pem FROM certs WHERE domain=?`, domain).Scan(&certPEM)
+	if err == sql.ErrNoRows || (err == nil && certPEM == "") {
+		http.Error(w, "certificat introuvable", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-pem-file")
+	w.Write([]byte(certPEM)) //nolint:errcheck
 }
 
 func (h *CertsHandler) delete(w http.ResponseWriter, r *http.Request, domain string) {

@@ -275,6 +275,10 @@ Self-signed root CA generation and issuance of internal server/client certificat
 - MCP tools: `create_internal_ca`, `list_internal_cas`, `issue_internal_cert`, `list_internal_certs`, `revoke_internal_cert`
 - Admin UI: "Internal CA" section embedded in the "Domains & certificates" page (`/acme-monitor`) — create a CA, list CAs, side panel to issue/revoke certificates per CA
 
+### Domains & certificates page
+
+Single list of public certificates (ACME, imported) and local ones (issued by an internal CA), with expiry counters, an All / Public / Local filter and search. Row actions on the right: renew (reissue for local, replace for imported), deploy (download root CA for local), details, edit, copy, download, delete (revoke for local). The Add button opens a wizard: Public, Local (issued by an internal CA, with a reminder to install the root CA) or Import. ACME settings (email, directory URL), DNS providers and internal CAs live in a Settings side drawer. `GET /api/v1/certs/{domain}/pem` returns the public certificate only.
+
 ### Granular alerting
 
 Alertmanager-inspired model: each rule independently defines its scope, triggers and channels. The same event can notify multiple teams on different channels.
