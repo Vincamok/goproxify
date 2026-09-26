@@ -277,7 +277,7 @@ function _asByHostHTML(model, o) {
       ${_asHostHead(model, h, o)}
       ${plats ? `<div class="as-hroles">${plats}</div>` : ''}
       <div class="as-hostgrid">${svcs || `<span class="as-hempty">${esc(t('as.host_empty'))}</span>`}
-        ${o.edit ? `<div class="as-hostadd"><button type="button" class="as-slot" onclick="event.stopPropagation();asToggleMenu('${h.id}')">+ ${esc(t('as.add_element'))}</button>${_asAddMenu(model, h)}</div>` : ''}
+        ${o.edit ? `<div class="as-hostadd"><button type="button" class="as-slot" onclick="event.stopPropagation();asToggleMenu('${h.id}')">${esc(t('as.add_element'))}</button>${_asAddMenu(model, h)}</div>` : ''}
       </div>
     </section>`;
   }).join('');

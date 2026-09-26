@@ -73,7 +73,7 @@ function _archSvcFromExisting(role, node, cfg) {
   const runtimes = node.container_runtimes || [];
   const hasDocker = runtimes.some(r => String(r).toLowerCase().includes('docker'));
   const hasPodman = runtimes.some(r => String(r).toLowerCase().includes('podman'));
-  let docker = cfg.docker !== false;
+  let docker = cfg.docker !== false && !(cfg.podman && cfg.docker === undefined);
   let podman = !!cfg.podman;
   if (cfg.docker === false && !cfg.podman) docker = false;
   if (hasPodman && !hasDocker) { podman = true; docker = false; }

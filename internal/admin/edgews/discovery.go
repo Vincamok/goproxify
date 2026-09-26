@@ -67,13 +67,14 @@ func (m *Manager) discoverClusterPeers(ctx context.Context, hb edgeWS.EdgeHeartb
 }
 
 // nodeReportedHeartbeat indique si une passerelle de ce nom a déjà envoyé un heartbeat : il est alors
-// connu de l'Admin (souvent sous un autre nom de connexion) et ne doit pas être dédoublé.
+// connu de l'Admin (souvent sous un autre nom de connexion) et ne doit pas être dédoublé. Les pairs Raft
+// portent souvent le nom d'affichage (display_name) et non le node_name.
 func (m *Manager) nodeReportedHeartbeat(ctx context.Context, name string) bool {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	var n int
 	_ = m.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM nodes WHERE role='edge' AND node_name=?`, name).Scan(&n)
+		`SELECT COUNT(*) FROM nodes WHERE role='edge' AND (node_name=? OR display_name=?)`, name, name).Scan(&n)
 	return n > 0
 }
 

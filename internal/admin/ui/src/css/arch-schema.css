@@ -129,6 +129,7 @@ button.as-zt { cursor: pointer; }
 .as-hostbox { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 12px; box-shadow: inset 4px 0 0 var(--h, var(--border)); }
 .as-hostgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin: 10px 0 0; position: relative; }
 .as-hostadd { position: relative; display: flex; }
+.as-hostadd .as-slot { min-height: 44px; }
 .as-node { box-shadow: inset 4px 0 0 var(--h, transparent); }
 @container (max-width: 620px) {
   .as-hosts { flex-direction: column; flex-wrap: nowrap; }
