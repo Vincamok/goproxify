@@ -185,6 +185,20 @@ func (h *SecurityHandler) loadCertStatus(r *http.Request) []map[string]any {
 
 // ── Bans ─────────────────────────────────────────────────────────────────────
 
+// banEdgeClause restreint à une passerelle quand ?edge= est fourni ; les bans globaux (edge_name vide)
+// restent inclus car toutes les passerelles les appliquent. ?edge= accepte l'id du token ou le nom du nœud.
+func (h *SecurityHandler) banEdgeClause(r *http.Request, col string) (string, []any) {
+	e := r.URL.Query().Get("edge")
+	if e == "" {
+		return "", nil
+	}
+	var node string
+	if h.DB.QueryRowContext(r.Context(), `SELECT node_name FROM tokens WHERE id=? OR node_name=? LIMIT 1`, e, e).Scan(&node) == nil && node != "" {
+		e = node
+	}
+	return "(" + col + "=? OR " + col + "='')", []any{e}
+}
+
 func (h *SecurityHandler) listBans(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	var clauses []string
@@ -201,15 +215,22 @@ func (h *SecurityHandler) listBans(w http.ResponseWriter, r *http.Request) {
 		clauses = append(clauses, "source=?")
 		args = append(args, v)
 	}
-	if q.Get("active") == "true" {
+	switch q.Get("active") {
+	case "true":
 		clauses = append(clauses, "(expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)")
+	case "false":
+		clauses = append(clauses, "(expires_at IS NOT NULL AND expires_at <= CURRENT_TIMESTAMP)")
+	}
+	if c, a := h.banEdgeClause(r, "edge_name"); c != "" {
+		clauses = append(clauses, c)
+		args = append(args, a...)
 	}
 	where := ""
 	if len(clauses) > 0 {
 		where = " WHERE " + strings.Join(clauses, " AND ")
 	}
 	rows, err := h.DB.QueryContext(r.Context(),
-		`SELECT id, ip, domain, reason, source, expires_at, strftime('%Y-%m-%dT%H:%M:%SZ', created_at) FROM security_bans`+where+` ORDER BY created_at DESC LIMIT 200`,
+		`SELECT id, ip, domain, reason, source, edge_name, expires_at, strftime('%Y-%m-%dT%H:%M:%SZ', created_at) FROM security_bans`+where+` ORDER BY created_at DESC LIMIT 500`,
 		args...)
 	if err != nil {
 		secJSONErr(w, err, http.StatusInternalServerError)
@@ -221,7 +242,7 @@ func (h *SecurityHandler) listBans(w http.ResponseWriter, r *http.Request) {
 		var b security.Ban
 		var exp sql.NullString
 		var createdAt string
-		if err := rows.Scan(&b.ID, &b.IP, &b.Domain, &b.Reason, &b.Source, &exp, &createdAt); err != nil {
+		if err := rows.Scan(&b.ID, &b.IP, &b.Domain, &b.Reason, &b.Source, &b.EdgeName, &exp, &createdAt); err != nil {
 			if h.Log != nil {
 				h.Log.Warn("security bans: scan", "err", err)
 			}
@@ -365,15 +386,21 @@ func (h *SecurityHandler) listBanHistory(w http.ResponseWriter, r *http.Request)
 
 // bansByCountry retourne le nombre de bans actifs par pays (joint geoip_cache).
 func (h *SecurityHandler) bansByCountry(w http.ResponseWriter, r *http.Request) {
+	where := "(b.expires_at IS NULL OR b.expires_at = '' OR b.expires_at > CURRENT_TIMESTAMP)"
+	var args []any
+	if c, a := h.banEdgeClause(r, "b.edge_name"); c != "" {
+		where += " AND " + c
+		args = a
+	}
 	rows, err := h.DB.QueryContext(r.Context(), `
 		SELECT COALESCE(g.country_code, 'XX') AS cc,
 		       COALESCE(g.country_name, 'Unknown') AS name,
 		       COUNT(*) AS cnt
 		FROM security_bans b
 		LEFT JOIN geoip_cache g ON g.ip = b.ip
-		WHERE b.expires_at IS NULL OR b.expires_at = '' OR b.expires_at > CURRENT_TIMESTAMP
+		WHERE `+where+`
 		GROUP BY cc, name
-		ORDER BY cnt DESC`)
+		ORDER BY cnt DESC`, args...)
 	if err != nil {
 		secJSONErr(w, err, http.StatusInternalServerError)
 		return
@@ -922,11 +949,16 @@ func (h *SecurityHandler) exportBans(w http.ResponseWriter, r *http.Request) {
 		format = "csv"
 	}
 
+	where := ""
+	var args []any
+	if c, a := h.banEdgeClause(r, "edge_name"); c != "" {
+		where, args = " WHERE "+c, a
+	}
 	rows, err := h.DB.QueryContext(r.Context(), `
-		SELECT id, ip, domain, reason, source,
+		SELECT id, ip, domain, reason, source, edge_name,
 		       COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', expires_at), '') AS expires_at,
 		       strftime('%Y-%m-%dT%H:%M:%SZ', created_at) AS created_at
-		FROM security_bans ORDER BY created_at DESC LIMIT 10000`)
+		FROM security_bans`+where+` ORDER BY created_at DESC LIMIT 10000`, args...)
 	if err != nil {
 		secJSONErr(w, err, http.StatusInternalServerError)
 		return
@@ -939,13 +971,14 @@ func (h *SecurityHandler) exportBans(w http.ResponseWriter, r *http.Request) {
 		Domain    string `json:"domain"`
 		Reason    string `json:"reason"`
 		Source    string `json:"source"`
+		EdgeName  string `json:"edge_name"`
 		ExpiresAt string `json:"expires_at"`
 		CreatedAt string `json:"created_at"`
 	}
 	var bans []row
 	for rows.Next() {
 		var b row
-		if rows.Scan(&b.ID, &b.IP, &b.Domain, &b.Reason, &b.Source, &b.ExpiresAt, &b.CreatedAt) == nil {
+		if rows.Scan(&b.ID, &b.IP, &b.Domain, &b.Reason, &b.Source, &b.EdgeName, &b.ExpiresAt, &b.CreatedAt) == nil {
 			bans = append(bans, b)
 		}
 	}
@@ -963,9 +996,9 @@ func (h *SecurityHandler) exportBans(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=bans-export-%s.csv", ts))
 		cw := csv.NewWriter(w)
-		_ = cw.Write([]string{"id", "ip", "domain", "reason", "source", "expires_at", "created_at"})
+		_ = cw.Write([]string{"id", "ip", "domain", "reason", "source", "edge_name", "expires_at", "created_at"})
 		for _, b := range bans {
-			_ = cw.Write([]string{b.ID, b.IP, b.Domain, b.Reason, b.Source, b.ExpiresAt, b.CreatedAt})
+			_ = cw.Write([]string{b.ID, b.IP, b.Domain, b.Reason, b.Source, b.EdgeName, b.ExpiresAt, b.CreatedAt})
 		}
 		cw.Flush()
 	}
@@ -976,13 +1009,18 @@ func (h *SecurityHandler) exportBans(w http.ResponseWriter, r *http.Request) {
 func (h *SecurityHandler) intelKPIs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var active, histTotal, recurring int
-	h.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM security_bans`).Scan(&active)                      //nolint:errcheck
-	h.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM security_ban_history WHERE action='banned'`).Scan(&histTotal) //nolint:errcheck
-	h.DB.QueryRowContext(ctx, `SELECT COUNT(DISTINCT ip) FROM security_ban_history WHERE action='banned' GROUP BY ip HAVING COUNT(*)>=3`).Scan(&recurring) //nolint:errcheck
+	bc, ba := h.banEdgeClause(r, "edge_name")
+	and, where := "", ""
+	if bc != "" {
+		and, where = " AND "+bc, " WHERE "+bc
+	}
+	h.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM security_bans`+where, ba...).Scan(&active)                      //nolint:errcheck
+	h.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM security_ban_history WHERE action='banned'`+and, ba...).Scan(&histTotal) //nolint:errcheck
+	h.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM (SELECT ip FROM security_ban_history WHERE action='banned'`+and+` GROUP BY ip HAVING COUNT(*)>=3)`, ba...).Scan(&recurring) //nolint:errcheck
 
 	var bannedCount, unbannedCount int
-	h.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM security_ban_history WHERE action='banned'`).Scan(&bannedCount)   //nolint:errcheck
-	h.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM security_ban_history WHERE action='unbanned'`).Scan(&unbannedCount) //nolint:errcheck
+	h.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM security_ban_history WHERE action='banned'`+and, ba...).Scan(&bannedCount)   //nolint:errcheck
+	h.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM security_ban_history WHERE action='unbanned'`+and, ba...).Scan(&unbannedCount) //nolint:errcheck
 
 	jsonOK(w, map[string]any{
 		"active":        active,
@@ -999,9 +1037,14 @@ func (h *SecurityHandler) intelKPIs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SecurityHandler) intelByReason(w http.ResponseWriter, r *http.Request) {
+	bc, ba := h.banEdgeClause(r, "edge_name")
+	and := ""
+	if bc != "" {
+		and = " AND " + bc
+	}
 	rows, err := h.DB.QueryContext(r.Context(),
-		`SELECT reason, COUNT(*) as n FROM security_ban_history WHERE action='banned'
-		 GROUP BY reason ORDER BY n DESC LIMIT 30`)
+		`SELECT reason, COUNT(*) as n FROM security_ban_history WHERE action='banned'`+and+`
+		 GROUP BY reason ORDER BY n DESC LIMIT 30`, ba...)
 	if err != nil {
 		writeErr(w, r, http.StatusInternalServerError, "api.err.db")
 		return
@@ -1021,9 +1064,14 @@ func (h *SecurityHandler) intelByReason(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *SecurityHandler) intelBySource(w http.ResponseWriter, r *http.Request) {
+	bc, ba := h.banEdgeClause(r, "edge_name")
+	and := ""
+	if bc != "" {
+		and = " AND " + bc
+	}
 	rows, err := h.DB.QueryContext(r.Context(),
-		`SELECT source, COUNT(*) as n FROM security_ban_history WHERE action='banned'
-		 GROUP BY source ORDER BY n DESC`)
+		`SELECT source, COUNT(*) as n FROM security_ban_history WHERE action='banned'`+and+`
+		 GROUP BY source ORDER BY n DESC`, ba...)
 	if err != nil {
 		writeErr(w, r, http.StatusInternalServerError, "api.err.db")
 		return
@@ -1050,11 +1098,17 @@ func (h *SecurityHandler) intelTimeline(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	since := time.Now().UTC().Add(-time.Duration(hours) * time.Hour).Format("2006-01-02T15:04:05Z")
+	args := []any{since}
+	and := ""
+	if bc, ba := h.banEdgeClause(r, "edge_name"); bc != "" {
+		and = " AND " + bc
+		args = append(args, ba...)
+	}
 	rows, err := h.DB.QueryContext(r.Context(),
 		`SELECT strftime('%Y-%m-%dT%H:00:00Z', created_at) as hour, COUNT(*) as n
 		 FROM security_ban_history
-		 WHERE action='banned' AND created_at >= ?
-		 GROUP BY hour ORDER BY hour ASC`, since)
+		 WHERE action='banned' AND created_at >= ?`+and+`
+		 GROUP BY hour ORDER BY hour ASC`, args...)
 	if err != nil {
 		writeErr(w, r, http.StatusInternalServerError, "api.err.db")
 		return
@@ -1080,6 +1134,13 @@ func (h *SecurityHandler) intelTopIPs(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
+	args := []any{}
+	and := ""
+	if bc, ba := h.banEdgeClause(r, "edge_name"); bc != "" {
+		and = " AND " + bc
+		args = append(args, ba...)
+	}
+	args = append(args, limit)
 	rows, err := h.DB.QueryContext(r.Context(),
 		`SELECT ip,
 		        COUNT(*) as total_bans,
@@ -1087,8 +1148,8 @@ func (h *SecurityHandler) intelTopIPs(w http.ResponseWriter, r *http.Request) {
 		        (SELECT source FROM security_ban_history h2 WHERE h2.ip=h.ip AND h2.action='banned' GROUP BY source ORDER BY COUNT(*) DESC LIMIT 1) as main_source,
 		        (SELECT reason FROM security_ban_history h3 WHERE h3.ip=h.ip AND h3.action='banned' GROUP BY reason ORDER BY COUNT(*) DESC LIMIT 1) as main_reason,
 		        EXISTS(SELECT 1 FROM security_bans sb WHERE sb.ip=h.ip) as currently_banned
-		 FROM security_ban_history h WHERE action='banned'
-		 GROUP BY ip ORDER BY total_bans DESC LIMIT ?`, limit)
+		 FROM security_ban_history h WHERE action='banned'`+and+`
+		 GROUP BY ip ORDER BY total_bans DESC LIMIT ?`, args...)
 	if err != nil {
 		writeErr(w, r, http.StatusInternalServerError, "api.err.db")
 		return

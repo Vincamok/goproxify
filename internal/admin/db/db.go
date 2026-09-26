@@ -356,6 +356,9 @@ func migrate(db *sql.DB) error {
 		`ALTER TABLE ip_profiles ADD COLUMN last_error TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE ip_profiles ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE ip_profiles ADD COLUMN next_attempt_at DATETIME`,
+		// Passerelle d'origine d'un ban ('' = ban global : admin, CrowdSec/Fail2Ban centraux)
+		`ALTER TABLE security_bans ADD COLUMN edge_name TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE security_ban_history ADD COLUMN edge_name TEXT NOT NULL DEFAULT ''`,
 	} {
 		db.Exec(s) //nolint:errcheck
 	}

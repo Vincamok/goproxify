@@ -158,6 +158,27 @@ func runSecurityThreat() {
 
 // ── Bans ──────────────────────────────────────────────────────────────────────
 
+// bansListPath ajoute les filtres -edge, -source et -active (true|false) à la liste des bans.
+func bansListPath(args map[string]string) string {
+	q := url.Values{}
+	for flag, param := range map[string]string{"-edge": "edge", "-source": "source", "-active": "active"} {
+		if v := flagValue(args, flag, ""); v != "" {
+			q.Set(param, v)
+		}
+	}
+	if len(q) == 0 {
+		return "/api/v1/security/bans"
+	}
+	return "/api/v1/security/bans?" + q.Encode()
+}
+
+func bansEdgeSuffix(b map[string]any) string {
+	if edge, _ := b["edge_name"].(string); edge != "" {
+		return "  [" + edge + "]"
+	}
+	return ""
+}
+
 func runSecurityBans() {
 	sub := subcommand(os.Args, 3)
 	switch sub {
@@ -169,7 +190,7 @@ func runSecurityBans() {
 			os.Exit(1)
 		}
 		var bans []map[string]any
-		if _, err := client.DoJSON("GET", "/api/v1/security/bans", nil, &bans); err != nil {
+		if _, err := client.DoJSON("GET", bansListPath(args), nil, &bans); err != nil {
 			fmt.Fprintf(os.Stderr, "bans list : %v\n", err)
 			os.Exit(1)
 		}
@@ -182,7 +203,7 @@ func runSecurityBans() {
 			ip, _ := b["ip"].(string)
 			reason, _ := b["reason"].(string)
 			expires, _ := b["expires_at"].(string)
-			line := fmt.Sprintf("%-36s  %-20s  %s", id, ip, reason)
+			line := fmt.Sprintf("%-36s  %-20s  %s%s", id, ip, reason, bansEdgeSuffix(b))
 			if expires != "" {
 				line += "  (exp: " + expires + ")"
 			}

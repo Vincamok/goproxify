@@ -78,6 +78,7 @@ func (s *Server) handleInternalBans(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "JSON invalide", http.StatusBadRequest)
 		return
 	}
+	edgeName := s.callerNodeName(r)
 	for _, b := range batch {
 		src := b.Source
 		if src == "" {
@@ -88,8 +89,8 @@ func (s *Server) handleInternalBans(w http.ResponseWriter, r *http.Request) {
 			exp = b.ExpiresAt
 		}
 		s.db.Exec( //nolint:errcheck
-			`INSERT OR IGNORE INTO security_bans (id, ip, domain, reason, source, expires_at) VALUES (?,?,?,?,?,?)`,
-			fmt.Sprintf("%s-%s-%s", b.IP, b.Domain, b.Source), b.IP, b.Domain, b.Reason, src, exp,
+			`INSERT OR IGNORE INTO security_bans (id, ip, domain, reason, source, expires_at, edge_name) VALUES (?,?,?,?,?,?,?)`,
+			fmt.Sprintf("%s-%s-%s", b.IP, b.Domain, b.Source), b.IP, b.Domain, b.Reason, src, exp, edgeName,
 		)
 	}
 	if s.wsManager != nil {
@@ -143,13 +144,13 @@ func (s *Server) handleInternalThreats(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if res, err := s.db.Exec(
-				`INSERT OR REPLACE INTO security_bans (id, ip, domain, reason, source, expires_at) VALUES (?,?,?,?,?,?)`,
-				id, t.IP, "", reason, "crowdsec", expires,
+				`INSERT OR REPLACE INTO security_bans (id, ip, domain, reason, source, expires_at, edge_name) VALUES (?,?,?,?,?,?,?)`,
+				id, t.IP, "", reason, "crowdsec", expires, edgeName,
 			); err == nil {
 				if rows, _ := res.RowsAffected(); rows > 0 {
 					s.db.Exec( //nolint:errcheck
-						`INSERT INTO security_ban_history (ip, domain, action, reason, source, ban_id) VALUES (?,?,'banned',?,?,?)`,
-						t.IP, "", reason, "crowdsec", id)
+						`INSERT INTO security_ban_history (ip, domain, action, reason, source, ban_id, edge_name) VALUES (?,?,'banned',?,?,?,?)`,
+						t.IP, "", reason, "crowdsec", id, edgeName)
 				}
 				changed = true
 			}

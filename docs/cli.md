@@ -646,7 +646,7 @@ goproxify security threat simulate -file <threat-config.json> [-hours N] [-domai
 # -edge : pour une passerelle membre d'un groupe HA, la config lue/écrite est celle du groupe (poussée à tous les membres)
 
 # Bans
-goproxify security bans list   [-admin-url …] [-token …]
+goproxify security bans list   [-edge <passerelle>] [-source <source>] [-active true|false] [-admin-url …] [-token …]
 goproxify security bans add    -ip <ip> [-reason <raison>] [-ttl <durée>] [-admin-url …] [-token …]
 goproxify security bans delete -id <ban-id> [-admin-url …] [-token …]
 
@@ -659,7 +659,7 @@ goproxify security waf set -proxy <proxy-id> -file <waf-config.json> [-admin-url
 
 **`security threat simulate`** — rejoue les access logs récents (`-hours`, défaut 1, max 24 ; `-domain` pour un seul domaine) contre la config candidate du fichier, surchargée sur la config actuelle, et affiche le résultat en JSON : requêtes bloquées, faux positifs probables (`legit_blocked`), IP et bans, actuel vs candidat. Ne modifie rien. Voir `POST /api/v1/security/threat-config/simulate`.
 
-**`security bans`** — liste, ajoute ou supprime des IPs bannies manuellement. `-ttl` accepte des durées Go (`1h`, `24h`, `7d`).
+**`security bans`** — liste, ajoute ou supprime des IPs bannies manuellement. `-ttl` accepte des durées Go (`1h`, `24h`, `7d`). `list` accepte `-edge` (nom du nœud ou id du token : les bans de cette passerelle et les bans globaux), `-source` et `-active true` (non expirés) ou `false` (expirés) ; la passerelle d’origine est affichée entre crochets.
 
 **`security waf`** — lit (`get`) ou met à jour (`set`) les champs `waf` et `sentinel_whitelist` d'un proxy sans toucher au reste de sa configuration. Le fichier JSON peut contenir uniquement les clés à modifier :
 

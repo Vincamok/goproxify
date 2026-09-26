@@ -16,7 +16,7 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - **MCP — allowlist de destinations backend** : `create_proxy` / `update_proxy` ne peuvent pointer que vers des destinations autorisées (réseaux privés par défaut), contre le détournement de trafic par prompt injection
 - **Tableau de bord en trois vues** : Santé (verdict et actions à mener), Cockpit (indicateurs, courbe 1 h, passerelles, certificats) et Carte (origine du trafic par pays, blocages par couche, latence par passerelle)
 - **Page Trafic** : tuile proxy et vue tableau refaites (hôte en titre, actions secondaires dans un menu ⋯, fonctions en icônes, métriques en ligne) ; modale de proxy unifiée (navigation latérale groupée par intention, section WAF à part avec sélecteur de plateformes applicatives) ; vues « état » (santé, KPIs, courbe) et « maître/détail » ; création de proxy en mode Simple (cartes de protections), lignes dépliables, courbes alimentées par un historique de métriques côté Admin
-- **Page Bans** refonte : tuiles KPI + 3 onglets (actifs / CrowdSec / historique)
+- **Page Bans** refonte : une seule page pour l’Admin et les passerelles (KPI, frise 48 h, pays, sources, liste filtrable avec actions groupées, adaptée au mobile) ; les bans sont rattachés à leur passerelle d’origine
 - **Moteurs IPS** : page unifiée Fail2Ban / CrowdSec avec configuration in-place
 - **Timeouts serveur HTTP/QUIC** : ReadHeader, Read, Write, Idle configurables depuis l’Admin et propagés aux passerelles
 - **Vocabulaire unifié** : « Core » devient « passerelle » (FR) / « Edge » (EN) dans l'interface, la CLI, les variables d'environnement, l'image et le conteneur ; migration automatique des bases et fichiers existants (voir le changelog)
@@ -87,6 +87,7 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - [x] **Dry-run Sentinel via MCP** : `simulate_sentinel_config` rejoue les logs récents contre une config candidate et la compare à l'actuelle
 - [x] **Sentinel — tarpit** : retient la réponse aux IP bloquées ou bannies (délai configurable, nombre de requêtes retenues plafonné, repli sur refus immédiat)
 - [ ] **Sentinel — score cumulatif par IP** (avec décroissance), bans graduels, 4xx pondérés par code (hors 401/403/429) et par route
+- [ ] **Page Bans — bans par CIDR ou ASN** (aperçu de l'impact avant validation), liste blanche, import de liste, filtres enregistrés, ban ciblant une passerelle ou un groupe
 
 Proposer des idées via
 [Discussions](https://github.com/Vincamok/goproxify/discussions) ou une issue

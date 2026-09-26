@@ -583,7 +583,7 @@ Débit et taux viennent des access logs de la dernière minute (`window_sec`), p
 | `errors` | 4 × `error_pct` (25 % d'erreurs = 100) |
 | `resources` | CPU ou mémoire : 0 à 70 %, 100 à 100 % |
 
-`risk_level` : `low` (< 25), `medium` (< 60), `high`. Sous 20 requêtes dans la fenêtre (`low_traffic`), les taux `blocked` et `errors` sont ignorés (bruit statistique). `bans_active` est global (les bans ne sont pas rattachés à une passerelle).
+`risk_level` : `low` (< 25), `medium` (< 60), `high`. Sous 20 requêtes dans la fenêtre (`low_traffic`), les taux `blocked` et `errors` sont ignorés (bruit statistique). `bans_active` est global (il compte tous les bans, sans filtre par passerelle).
 
 ### `DELETE /api/v1/nodes/:id`
 
@@ -724,7 +724,9 @@ Compteurs globaux : `active_bans`, `active_threats`, `open_cves`, `critical_cves
 
 ### `GET /api/v1/security/bans`
 
-Liste les bans. Paramètres : `active=true|false`, `limit`, `source` (`native|fail2ban|crowdsec`).
+Liste les bans (500 au plus, du plus récent au plus ancien). Paramètres : `active=true` (non expirés) ou `active=false` (expirés uniquement), `ip` (sous-chaîne), `domain`, `source` (`native|fail2ban|crowdsec|threat|rules_engine:<nœud>`), `edge` (nom du nœud ou id du token : les bans de cette passerelle **et** les bans globaux). Chaque entrée porte `edge_name`, la passerelle d'origine (vide = ban global : créé depuis l'Admin ou antérieur à cette colonne).
+
+`GET /security/bans/countries`, `GET /security/bans/export` (CSV ou JSON, colonne `edge_name` ajoutée) et `GET /security/bans/intel/{kpis,by-reason,by-source,timeline,top-ips}` acceptent le même paramètre `edge`. `intel/kpis` renvoie `recurring_ips`, le nombre d'IP ayant au moins 3 bans.
 
 ### `POST /api/v1/security/bans`
 

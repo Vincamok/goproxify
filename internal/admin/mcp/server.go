@@ -354,6 +354,7 @@ var tools = []map[string]any{
 			opt("ip", "string", "Filtrer par IP (sous-chaîne)"),
 			opt("source", "string", "Filtrer par source: native, fail2ban, crowdsec"),
 			opt("active_only", "boolean", "Si true, uniquement les bans non expirés"),
+			opt("edge", "string", "Passerelle (nom du nœud ou id du token) : ses bans et les bans globaux"),
 		),
 	},
 	{
@@ -1366,12 +1367,20 @@ func (h *Handler) toolListSecurityBans(r *http.Request, args map[string]any) (an
 	if active, _ := args["active_only"].(bool); active {
 		clauses = append(clauses, "(expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)")
 	}
+	if edge, _ := args["edge"].(string); edge != "" {
+		var node string
+		if h.DB.QueryRowContext(r.Context(), `SELECT node_name FROM tokens WHERE id=? OR node_name=? LIMIT 1`, edge, edge).Scan(&node) == nil && node != "" {
+			edge = node
+		}
+		clauses = append(clauses, "(edge_name=? OR edge_name='')")
+		qargs = append(qargs, edge)
+	}
 	where := ""
 	if len(clauses) > 0 {
 		where = " WHERE " + strings.Join(clauses, " AND ")
 	}
 	rows, err := h.DB.QueryContext(r.Context(),
-		`SELECT id, ip, domain, reason, source, expires_at, created_at FROM security_bans`+where+
+		`SELECT id, ip, domain, reason, source, edge_name, expires_at, created_at FROM security_bans`+where+
 			` ORDER BY created_at DESC LIMIT 200`, qargs...)
 	if err != nil {
 		return nil, err
@@ -1379,15 +1388,15 @@ func (h *Handler) toolListSecurityBans(r *http.Request, args map[string]any) (an
 	defer rows.Close()
 	var out []map[string]any
 	for rows.Next() {
-		var id, ip, domain, reason, source string
+		var id, ip, domain, reason, source, edgeName string
 		var exp sql.NullString
 		var createdAt string
-		if err := rows.Scan(&id, &ip, &domain, &reason, &source, &exp, &createdAt); err != nil {
+		if err := rows.Scan(&id, &ip, &domain, &reason, &source, &edgeName, &exp, &createdAt); err != nil {
 			continue
 		}
 		item := map[string]any{
 			"id": id, "ip": ip, "domain": domain, "reason": reason,
-			"source": source, "created_at": createdAt,
+			"source": source, "edge_name": edgeName, "created_at": createdAt,
 		}
 		if exp.Valid {
 			item["expires_at"] = exp.String

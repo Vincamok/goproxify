@@ -529,14 +529,14 @@ func (m *Manager) handleThreatBan(raw json.RawMessage) {
 	}
 	banID := "threat-" + p.IP
 	m.db.Exec( //nolint:errcheck
-		`INSERT INTO security_bans (id, ip, domain, reason, source, expires_at)
-		 VALUES (?, ?, '', ?, 'threat', ?)
+		`INSERT INTO security_bans (id, ip, domain, reason, source, expires_at, edge_name)
+		 VALUES (?, ?, '', ?, 'threat', ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET reason=excluded.reason, expires_at=excluded.expires_at`,
-		banID, p.IP, p.Reason, expiresAt,
+		banID, p.IP, p.Reason, expiresAt, p.NodeName,
 	)
 	m.db.Exec( //nolint:errcheck
-		`INSERT INTO security_ban_history (ip, domain, action, reason, source, ban_id) VALUES (?,?,'banned',?,?,?)`,
-		p.IP, "", p.Reason, "threat", banID)
+		`INSERT INTO security_ban_history (ip, domain, action, reason, source, ban_id, edge_name) VALUES (?,?,'banned',?,?,?,?)`,
+		p.IP, "", p.Reason, "threat", banID, p.NodeName)
 	if m.alertEngine != nil {
 		m.alertEngine.Emit(alerting.Event{
 			Trigger:  alerting.TriggerSentinelBan,
@@ -560,14 +560,14 @@ func (m *Manager) handleF2BBan(raw json.RawMessage) {
 		expiresAt = p.ExpiresAt
 	}
 	m.db.Exec( //nolint:errcheck
-		`INSERT INTO security_bans (id, ip, domain, reason, source, expires_at)
-		 VALUES (?, ?, '', ?, 'fail2ban', ?)
+		`INSERT INTO security_bans (id, ip, domain, reason, source, expires_at, edge_name)
+		 VALUES (?, ?, '', ?, 'fail2ban', ?, ?)
 		 ON CONFLICT(id) DO NOTHING`,
-		p.ID, p.IP, p.Reason, expiresAt,
+		p.ID, p.IP, p.Reason, expiresAt, p.NodeName,
 	)
 	m.db.Exec( //nolint:errcheck
-		`INSERT INTO security_ban_history (ip, domain, action, reason, source, ban_id) VALUES (?,?,'banned',?,?,?)`,
-		p.IP, "", p.Reason, "fail2ban", p.ID)
+		`INSERT INTO security_ban_history (ip, domain, action, reason, source, ban_id, edge_name) VALUES (?,?,'banned',?,?,?,?)`,
+		p.IP, "", p.Reason, "fail2ban", p.ID, p.NodeName)
 	if m.alertEngine != nil {
 		m.alertEngine.Emit(alerting.Event{
 			Trigger:  alerting.TriggerFail2BanBan,
@@ -1766,10 +1766,10 @@ func (m *Manager) handleCrowdSecDecisions(raw json.RawMessage) {
 		}
 		banID := "crowdsec:" + d.Value
 		m.db.Exec( //nolint:errcheck
-			`INSERT INTO security_bans (id, ip, domain, reason, source, expires_at)
-			 VALUES (?, ?, '', ?, 'crowdsec', NULL)
+			`INSERT INTO security_bans (id, ip, domain, reason, source, expires_at, edge_name)
+			 VALUES (?, ?, '', ?, 'crowdsec', NULL, ?)
 			 ON CONFLICT(id) DO NOTHING`,
-			banID, d.Value, d.Scenario,
+			banID, d.Value, d.Scenario, p.NodeName,
 		)
 		m.db.Exec( //nolint:errcheck
 			`INSERT OR IGNORE INTO security_threats (ip, scenario, origin, type, scope, node_name)
@@ -1847,21 +1847,21 @@ func (m *Manager) handleRuleFired(raw json.RawMessage) {
 				banID := "re:" + node + ":" + ip
 				if expiresAt != "" {
 					m.db.Exec( //nolint:errcheck
-						`INSERT OR REPLACE INTO security_bans (id, ip, domain, reason, source, expires_at)
-						 VALUES (?, ?, '', ?, ?, ?)`,
-						banID, ip, reason, source, expiresAt,
+						`INSERT OR REPLACE INTO security_bans (id, ip, domain, reason, source, expires_at, edge_name)
+						 VALUES (?, ?, '', ?, ?, ?, ?)`,
+						banID, ip, reason, source, expiresAt, p.NodeName,
 					)
 				} else {
 					m.db.Exec( //nolint:errcheck
-						`INSERT OR REPLACE INTO security_bans (id, ip, domain, reason, source)
-						 VALUES (?, ?, '', ?, ?)`,
-						banID, ip, reason, source,
+						`INSERT OR REPLACE INTO security_bans (id, ip, domain, reason, source, edge_name)
+						 VALUES (?, ?, '', ?, ?, ?)`,
+						banID, ip, reason, source, p.NodeName,
 					)
 				}
 				m.db.Exec( //nolint:errcheck
-					`INSERT INTO security_ban_history (ip, domain, action, reason, source, ban_id)
-					 VALUES (?, '', 'banned', ?, ?, ?)`,
-					ip, reason, source, banID,
+					`INSERT INTO security_ban_history (ip, domain, action, reason, source, ban_id, edge_name)
+					 VALUES (?, '', 'banned', ?, ?, ?, ?)`,
+					ip, reason, source, banID, p.NodeName,
 				)
 			}
 		}

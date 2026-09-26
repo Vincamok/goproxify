@@ -21,6 +21,7 @@ type Ban struct {
 	Domain    string    `json:"domain"`
 	Reason    string    `json:"reason"`
 	Source    string    `json:"source"` // fail2ban | crowdsec | native
+	EdgeName  string    `json:"edge_name"`
 	ExpiresAt *string   `json:"expires_at"`
 	CreatedAt time.Time `json:"created_at"`
 }

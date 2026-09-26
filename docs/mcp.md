@@ -473,6 +473,9 @@ Liste les bans IP (Fail2Ban, CrowdSec, natif).
 | `ip`           | string  | —      | Filtrer par IP (sous-chaîne)                     |
 | `source`       | string  | —      | `native`, `fail2ban`, `crowdsec`                 |
 | `active_only`  | boolean | —      | Uniquement les bans non expirés                  |
+| `edge`         | string  | —      | Passerelle (nom du nœud ou id du token) : ses bans et les bans globaux |
+
+Chaque ban renvoyé porte `edge_name` (passerelle d'origine, vide = ban global).
 
 ---
 
