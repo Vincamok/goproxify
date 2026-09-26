@@ -686,7 +686,7 @@ Dry-run Sentinel : rejoue les access logs récents contre une config candidate e
 
 | Paramètre | Type    | Requis | Description |
 |-----------|---------|--------|-------------|
-| `config`  | object  | ✓      | Champs Sentinel à surcharger sur la config actuelle (mêmes noms que `threat-config` : `rate_limit`, `rate_window`, `rate_ban_threshold`, `error_threshold`, `error_window`, `custom_lists`, `whitelist`, `score_threshold`, `ban_duration`) |
+| `config`  | object  | ✓      | Champs Sentinel à surcharger sur la config actuelle (mêmes noms que `threat-config`, config du groupe HA si la passerelle en fait partie : `rate_limit`, `rate_window`, `rate_ban_threshold`, `error_threshold`, `error_window`, `custom_lists`, `whitelist`, `score_threshold`, `ban_duration`) |
 | `hours`   | number  | —      | Fenêtre rejouée (défaut `1`, max `24`) |
 | `domain`  | string  | —      | Limiter le rejeu à un domaine |
 | `edge`    | string  | —      | Passerelle dont la config actuelle sert de base (défaut : config globale) |

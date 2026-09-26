@@ -640,8 +640,9 @@ Sentinel (threat engine global), gestion des bans, config WAF par proxy, et mote
 
 ```
 # Config du moteur Sentinel
-goproxify security threat get  [-edge <id>] [-admin-url …] [-token …]
+goproxify security threat get  [-edge <id>] [-admin-url …] [-token …]   # passerelle d'un groupe HA : config du groupe
 goproxify security threat set  [-edge <id>] -file <threat-config.json> [-admin-url …] [-token …]
+# -edge : pour une passerelle membre d'un groupe HA, la config lue/écrite est celle du groupe (poussée à tous les membres)
 
 # Bans
 goproxify security bans list   [-admin-url …] [-token …]

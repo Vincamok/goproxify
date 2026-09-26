@@ -651,6 +651,10 @@ Rôle admin requis. Retourne le contenu de `architecture.json`, référentiel de
 
 `config.host` est le nom de l'hôte qui porte le nœud ; les nœuds qui partagent un `host` sont posés sur la même machine.
 
+### `GET /api/v1/architecture/groups` `[AUTH]`
+
+Groupes HA déclarés par le wizard (`config.cluster: true` et `config.cluster_group`) : nom du groupe → membres `{id, name}`. Lecture seule, sans secret ; l'UI s'en sert pour indiquer qu'un réglage de sécurité s'applique à tout le groupe.
+
 ### `GET /api/v1/architecture/versions/{name}` `[AUTH]`
 
 Rôle admin requis. Lit une version conservée (même format que `GET /api/v1/architecture`) sans la restaurer. Un nom qui n'est pas une version conservée renvoie `404`.
@@ -749,6 +753,24 @@ Lit ou met à jour la configuration CrowdSec (`enabled`, `api_url`, `api_key`).
 ### `POST /api/v1/security/crowdsec/sync`
 
 Déclenche une synchronisation LAPI immédiate.
+
+### `GET /api/v1/security/threat-config` · `PUT /api/v1/security/threat-config`
+
+Configuration du moteur Sentinel. Paramètre optionnel `edge=<id ou nom>` :
+
+- passerelle **membre d'un groupe HA** (déclaré dans `architecture.json`, `config.cluster` + `config.cluster_group`) : la configuration est **celle du groupe** — lue et écrite une seule fois, poussée à tous les membres, et rejouée à la connexion d'un membre qui la manquait ;
+- passerelle hors groupe : configuration propre à la passerelle ;
+- sans `edge` : configuration globale.
+
+Lecture : valeur du groupe, sinon valeur propre à la passerelle (antérieure aux groupes), sinon globale. Au démarrage, la valeur d'un groupe qui n'en a pas encore est reprise du premier membre (dans l'ordre d'`architecture.json`) qui en avait une ; un désaccord entre membres est signalé dans le log de l'Admin, jamais écrasé.
+
+### `GET /api/v1/security/ips-provider` · `PUT /api/v1/security/ips-provider`
+
+Fournisseur IPS actif (`native|fail2ban|crowdsec`). Même règle de portée que `threat-config`.
+
+### `GET /api/v1/security/server-config` · `PUT /api/v1/security/server-config`
+
+Timeouts HTTP/QUIC (`read_header_seconds`, `read_seconds`, `write_seconds`, `idle_seconds`, redémarrage de la passerelle requis). Même règle de portée que `threat-config` ; une passerelle qui rejoint le groupe reçoit ceux du groupe à sa connexion.
 
 ## Moteur de règles automatiques
 
