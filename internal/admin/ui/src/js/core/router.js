@@ -166,7 +166,8 @@ window.toggleNavGroup = function(ev, groupId) {
 // ── Génération de la sidebar depuis APP_CONFIG ─────────────────────────────
 function renderNavItem(item) {
   const children = item.children || [];
-  const itemLabel = typeof gpxPageLabel === 'function' ? gpxPageLabel(item.page, item.label) : item.label;
+  const lp = item.labelPage || item.page;
+  const itemLabel = typeof gpxPageLabel === 'function' ? gpxPageLabel(lp, item.label) : item.label;
   if (children.length) {
     const gid = `nav-group-${esc(item.page)}`;
     const childPages = children.map(c => c.page).join(',');
@@ -195,97 +196,102 @@ function renderNavItem(item) {
     </div>`;
 }
 
-function renderNav(user) {
-  const navEl = document.getElementById('sidebar-nav');
-  if (!navEl) return;
+// Pages équivalentes entre l'espace Admin et une passerelle : on reste sur la
+// même rubrique quand on change d'espace.
+const SPACE_EQUIV = {
+  'admin-trafic': 'edge-trafic',
+  'admin-observability': 'edge-observability',
+  'logs': 'edge-logs-access',
+  'logs-system': 'edge-logs-system',
+  'prism': 'edge-prism',
+  'security': 'edge-security',
+  'security-bans': 'edge-security-bans',
+  'security-vulns': 'edge-security-vulns',
+};
+const SPACE_EQUIV_REV = Object.fromEntries(Object.entries(SPACE_EQUIV).map(([a, e]) => [e, a]));
 
+let _navUser = null;
+
+function _navItemsFor(edge, user) {
+  if (edge) {
+    const ctx = { hasEdgeScope: Role.hasEdgeScope(edge.node_name || edge.id || '') };
+    return (APP_CONFIG.edgeNav || [])
+      .filter(item => !item.guard || item.guard(ctx))
+      .map(item => item.children?.length
+        ? { ...item, children: item.children.filter(c => !c.guard || c.guard(ctx)) }
+        : item);
+  }
   const raw = APP_CONFIG.nav || [];
   // Compat : ancien format sections { label, items } → aplatit ; nouveau format = liste plate.
   const flat = raw.length && raw[0]?.items
-    ? raw.flatMap(section => {
-        if (section.guard && !section.guard(user)) return [];
-        return (section.items || []);
-      })
+    ? raw.flatMap(section => (section.guard && !section.guard(user)) ? [] : (section.items || []))
     : raw;
+  return flat
+    .filter(item => !item.guard || item.guard(user))
+    .map(item => item.children?.length
+      ? { ...item, children: item.children.filter(c => !c.guard || c.guard(user)) }
+      : item);
+}
 
-  const filterItem = (item) => {
-    if (item.guard && !item.guard(user)) return null;
-    if (!item.children?.length) return item;
-    const children = item.children.filter(c => !c.guard || c.guard(user));
-    return { ...item, children };
-  };
-  const items = flat.map(filterItem).filter(Boolean);
-
-  const infraIdx = items.findIndex(it => it.page === 'infrastructure');
-  const before = infraIdx >= 0 ? items.slice(0, infraIdx + 1) : items.slice(0, 1);
-  const after  = infraIdx >= 0 ? items.slice(infraIdx + 1) : items.slice(1);
-
-  const edgesBlock = `<div class="nav-section nav-edges-section" id="nav-edges-section" hidden>
-      <div class="nav-edges-header" id="nav-edges-header" onclick="onNavEdgesHeaderClick(event)">
-        <div class="nav-label nav-edges-label">
-          <span>${typeof t === 'function' ? t('nav.edges') : 'Passerelles'}</span>
-          <span class="nav-edges-count" id="nav-edges-count"></span>
-        </div>
-        <button type="button" class="nav-edges-toggle" id="nav-edges-toggle"
-          onclick="toggleNavEdgesList(event)" title="${typeof t === 'function' ? t('common.edges_toggle') : 'Show / hide'}" hidden aria-expanded="true">
-          <svg class="nav-item-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3l5 5-5 5"/></svg>
-        </button>
-      </div>
-      <div class="nav-edges-selected" id="nav-edges-selected" hidden></div>
-      <div class="nav-edges-body" id="nav-edges-body">
-        <div class="nav-edges-search-wrap" id="nav-edges-search-wrap" hidden>
-          <input type="search" class="nav-edges-search" id="nav-edges-search"
-            placeholder="${typeof t === 'function' ? t('common.edges_search') : 'Search a passerelle…'}" autocomplete="off"
-            oninput="filterNavEdges(this.value)">
-        </div>
-        <div class="nav-edges-list" id="nav-edges-list"></div>
-        <div class="nav-edges-empty" id="nav-edges-empty" hidden>${typeof t === 'function' ? t('common.edges_none') : 'No passerelle found'}</div>
-      </div>
-    </div>`;
-
-  navEl.innerHTML = [
-    `<div class="nav-section">${before.map(renderNavItem).join('')}</div>`,
-    edgesBlock,
-    after.length ? `<div class="nav-section">${after.map(renderNavItem).join('')}</div>` : '',
+// Rubriques communes d'abord, puis une section nommée (Plateforme / Passerelle).
+function _renderNavSections(items) {
+  const common = items.filter(it => !it.section);
+  const named = [];
+  items.filter(it => it.section).forEach(it => {
+    let grp = named.find(g => g.name === it.section);
+    if (!grp) named.push(grp = { name: it.section, items: [] });
+    grp.items.push(it);
+  });
+  const label = n => typeof gpxNavSectionLabel === 'function' ? gpxNavSectionLabel(n) : n;
+  return [
+    common.length ? `<div class="nav-section">${common.map(renderNavItem).join('')}</div>` : '',
+    ...named.map(g => `<div class="nav-section"><div class="nav-label">${esc(label(g.name))}</div>${g.items.map(renderNavItem).join('')}</div>`),
   ].join('');
+}
 
-  // Section passerelle contextuelle (masquée par défaut) — items de la passerelle sélectionnée
-  navEl.insertAdjacentHTML('beforeend', `
-    <div class="edge-nav-section" id="edge-nav-section" style="display:none">
-      <div class="edge-nav-header">
-        <span id="edge-nav-name" class="edge-nav-name"></span>
-        <button class="edge-nav-close" onclick="deselectEdge()" title="${typeof t === 'function' ? t('common.close') : 'Close'}">✕</button>
-      </div>
-      <div id="edge-nav-items"></div>
-    </div>
-  `);
-
-  if (state.page) syncNavActive(state.page);
-  _navEdgesCollapsed = null;
-  _navEdgesFilter = '';
-  const searchInput = document.getElementById('nav-edges-search');
-  if (searchInput) searchInput.value = '';
+function renderNav(user) {
+  _navUser = user;
+  renderSpaceNav();
   refreshNavEdges();
 }
 
-// ── Liste des passerelles accessibles dans la sidebar ────────────────────────────
+function renderSpaceNav() {
+  const navEl = document.getElementById('sidebar-nav');
+  if (!navEl) return;
+  const edge = state.selectedEdge;
+  navEl.innerHTML = _renderNavSections(_navItemsFor(edge, _navUser));
+
+  const head = document.getElementById('space-head');
+  if (head) {
+    const tr = (k, d) => typeof t === 'function' ? t(k) : d;
+    const name = edge ? (edge.display_name || edge.node_name || edge.id) : tr('nav.section.Administration', 'Administration');
+    const sub = edge ? (edge.status === 'online' ? 'Online' : 'Offline') : tr('nav.all_edges', 'All gateways');
+    head.innerHTML = `<b>${esc(name)}</b><span>${esc(sub)}</span>`;
+  }
+  if (state.page) syncNavActive(state.page);
+  renderSpaceRail();
+}
+
+// ── Rail d'espaces : Admin + une pastille par passerelle accessible ────────────
 let _navEdgesCache = [];
-let _navEdgesFilter = '';
-let _navEdgesCollapsed = null; // null = auto selon overflow / sélection
 
 function _navEdgeKey(edge) {
   return edge?.node_name || edge?.id || '';
 }
 
 function _navEdgesCfg() {
-  return APP_CONFIG.navEdges || { overflowAt: 6, listMaxHeight: 220 };
+  return APP_CONFIG.navEdges || { overflowAt: 6 };
+}
+
+function _edgeInitials(edge) {
+  const name = (edge.display_name || edge.node_name || edge.id || '?').replace(/^edge[-_ ]?/i, '');
+  return (name.replace(/[^\p{L}\p{N}]/gu, '').slice(0, 2) || '?').toUpperCase();
 }
 
 async function refreshNavEdges() {
-  const section = document.getElementById('nav-edges-section');
-  if (!section) return;
   if (!state.token) {
-    section.hidden = true;
+    _navEdgesCache = [];
+    renderSpaceRail();
     return;
   }
   try {
@@ -302,189 +308,87 @@ async function refreshNavEdges() {
     // Garde _edgeNodes à jour pour openEdge / selectEdge depuis d'autres pages
     if (!window._edgeNodes?.length) window._edgeNodes = _navEdgesCache;
   } catch {
-    // Pas de token / erreur réseau : on laisse la section telle quelle
-    if (!_navEdgesCache.length) {
-      section.hidden = true;
-      return;
-    }
+    // Pas de token / erreur réseau : on garde le rail tel quel
   }
-
-  section.hidden = !_navEdgesCache.length;
-  if (!_navEdgesCache.length) return;
-
-  const cfg = _navEdgesCfg();
-  const overflow = _navEdgesCache.length > (cfg.overflowAt || 6);
-  const countEl = document.getElementById('nav-edges-count');
-  if (countEl) countEl.textContent = String(_navEdgesCache.length);
-
-  const searchWrap = document.getElementById('nav-edges-search-wrap');
-  const toggleBtn  = document.getElementById('nav-edges-toggle');
-  if (searchWrap) searchWrap.hidden = !overflow;
-  if (toggleBtn)  toggleBtn.hidden  = !overflow;
-
-  const listEl = document.getElementById('nav-edges-list');
-  if (listEl) {
-    listEl.style.maxHeight = overflow ? `${cfg.listMaxHeight || 220}px` : '';
-    listEl.classList.toggle('nav-edges-list--scroll', overflow);
-  }
-
-  // Collapse auto : si trop de edges et aucune passerelle sélectionnée → replié
-  // pour laisser le menu admin / observabilité visibles d'emblée.
-  if (_navEdgesCollapsed === null) {
-    _navEdgesCollapsed = overflow && !state.selectedEdge;
-  }
-  _applyNavEdgesCollapsed();
-  renderNavEdgesList(_navEdgesFilter);
+  renderSpaceRail();
 }
 
-function _applyNavEdgesCollapsed() {
-  const body = document.getElementById('nav-edges-body');
-  const toggle = document.getElementById('nav-edges-toggle');
-  const section = document.getElementById('nav-edges-section');
-  const collapsed = !!_navEdgesCollapsed;
-  if (body) body.hidden = collapsed;
-  if (toggle) toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-  if (section) section.classList.toggle('nav-edges-collapsed', collapsed);
-  _renderNavEdgesSelectedChip();
-}
-
-function _renderNavEdgesSelectedChip() {
-  const chip = document.getElementById('nav-edges-selected');
-  if (!chip) return;
-  const edge = state.selectedEdge;
-  const show = !!edge && !!_navEdgesCollapsed;
-  chip.hidden = !show;
-  if (!show) { chip.innerHTML = ''; return; }
-  const label = edge.display_name || edge.node_name || edge.id || '—';
-  const online = edge.status === 'online';
-  chip.innerHTML = `
-    <div class="nav-item nav-edge-item selected" title="${esc(label)}"
-         onclick="event.stopPropagation();openNavEdge(${_navEdgesCache.findIndex(c => _navEdgeKey(c) === _navEdgeKey(edge))})">
-      <span class="nav-edge-dot ${online ? 'online' : 'offline'}" aria-hidden="true"></span>
-      <span class="nav-item-label">${esc(label)}</span>
-    </div>`;
-}
-
-window.toggleNavEdgesList = function(ev) {
-  ev?.stopPropagation?.();
-  _navEdgesCollapsed = !_navEdgesCollapsed;
-  _applyNavEdgesCollapsed();
-};
-
-window.onNavEdgesHeaderClick = function(ev) {
-  // Toggle uniquement en mode overflow (bouton visible)
-  const toggle = document.getElementById('nav-edges-toggle');
-  if (!toggle || toggle.hidden) return;
-  if (ev.target.closest('.nav-edges-search')) return;
-  toggleNavEdgesList(ev);
-};
-
-window.filterNavEdges = function(q) {
-  _navEdgesFilter = (q || '').trim().toLowerCase();
-  renderNavEdgesList(_navEdgesFilter);
-};
-
-function renderNavEdgesList(filter) {
-  const listEl = document.getElementById('nav-edges-list');
-  const emptyEl = document.getElementById('nav-edges-empty');
-  if (!listEl) return;
-
+function renderSpaceRail() {
+  const rail = document.getElementById('space-rail');
+  if (!rail) return;
   const selectedKey = _navEdgeKey(state.selectedEdge);
-  let edges = _navEdgesCache;
-  if (filter) {
-    edges = edges.filter(c => {
-      const name = (c.display_name || c.node_name || c.id || '').toLowerCase();
-      return name.includes(filter);
-    });
-  }
-
-  // En mode filtre : garde la passerelle sélectionnée visible en tête s'il matche ou hors filtre
-  if (selectedKey && filter) {
-    const sel = _navEdgesCache.find(c => _navEdgeKey(c) === selectedKey);
-    if (sel && !edges.some(c => _navEdgeKey(c) === selectedKey)) {
-      edges = [sel, ...edges];
-    }
-  }
-
-  if (emptyEl) emptyEl.hidden = edges.length > 0;
-  listEl.innerHTML = edges.map((c, i) => {
-    const key = _navEdgeKey(c);
-    const label = c.display_name || c.node_name || c.id || '—';
-    const online = c.status === 'online';
-    const selected = selectedKey && key === selectedKey;
-    const idx = _navEdgesCache.findIndex(x => _navEdgeKey(x) === key);
-    return `
-      <div class="nav-item nav-edge-item${selected ? ' selected' : ''}"
-           data-edge-key="${esc(key)}"
-           title="${esc(label)}"
-           onclick="openNavEdge(${idx})">
-        <span class="nav-edge-dot ${online ? 'online' : 'offline'}" aria-hidden="true"></span>
-        <span class="nav-item-label">${esc(label)}</span>
-      </div>`;
-  }).join('');
+  const adminLabel = typeof t === 'function' ? t('nav.section.Administration') : 'Administration';
+  const many = _navEdgesCache.length > (_navEdgesCfg().overflowAt || 6);
+  const searchLabel = typeof t === 'function' ? t('nav.search_edge') : 'Search';
+  rail.innerHTML = `
+    <button type="button" class="space-btn${selectedKey ? '' : ' active'}" title="${esc(adminLabel)}" aria-label="${esc(adminLabel)}" onclick="deselectEdge()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+    </button>
+    ${_navEdgesCache.length ? '<div class="space-sep"></div>' : ''}
+    <div class="space-list">
+      ${_navEdgesCache.map((c, i) => {
+        const label = c.display_name || c.node_name || c.id || '—';
+        const sel = selectedKey && _navEdgeKey(c) === selectedKey;
+        return `<button type="button" class="space-btn${sel ? ' active' : ''}" title="${esc(label)}" aria-label="${esc(label)}" onclick="openNavEdge(${i})">
+          ${esc(_edgeInitials(c))}<span class="space-dot ${c.status === 'online' ? 'online' : 'offline'}" aria-hidden="true"></span>
+        </button>`;
+      }).join('')}
+    </div>
+    ${many ? `<button type="button" class="space-btn" title="${esc(searchLabel)}" aria-label="${esc(searchLabel)}" onclick="toggleSpacePicker(event)">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+    </button>` : ''}`;
 }
+
+// ── Recherche d'une passerelle quand le rail devient long ──────────────────────
+window.toggleSpacePicker = function(ev) {
+  ev?.stopPropagation?.();
+  const picker = document.getElementById('space-picker');
+  if (!picker) return;
+  picker.hidden = !picker.hidden;
+  if (!picker.hidden) {
+    const input = document.getElementById('space-picker-input');
+    input.value = '';
+    filterSpacePicker('');
+    input.focus();
+  }
+};
+
+window.filterSpacePicker = function(q) {
+  const list = document.getElementById('space-picker-list');
+  if (!list) return;
+  const f = (q || '').trim().toLowerCase();
+  list.innerHTML = _navEdgesCache
+    .map((c, i) => ({ c, i, label: c.display_name || c.node_name || c.id || '—' }))
+    .filter(x => !f || x.label.toLowerCase().includes(f))
+    .map(x => `<div class="nav-item" onclick="openNavEdge(${x.i});toggleSpacePicker()">
+      <span class="space-dot-inline ${x.c.status === 'online' ? 'online' : 'offline'}" aria-hidden="true"></span>
+      <span class="nav-item-label">${esc(x.label)}</span>
+    </div>`).join('') || `<div class="space-picker-empty">${typeof t === 'function' ? t('common.edges_none') : 'No gateway found'}</div>`;
+};
+
+document.addEventListener('click', (e) => {
+  const picker = document.getElementById('space-picker');
+  if (picker && !picker.hidden && !picker.contains(e.target)) picker.hidden = true;
+});
 
 window.openNavEdge = function(i) {
   const edge = (window._navEdges || _navEdgesCache)[i];
   if (!edge) return;
-  selectEdge(edge);
+  selectEdge(edge, SPACE_EQUIV[state.page]);
 };
 
-function syncNavEdgeSelection() {
-  const selectedKey = _navEdgeKey(state.selectedEdge);
-  document.querySelectorAll('#nav-edges-list .nav-edge-item').forEach(el => {
-    el.classList.toggle('selected', !!selectedKey && el.dataset.edgeKey === selectedKey);
-  });
-  _renderNavEdgesSelectedChip();
-}
-
-// ── Rendu des items passerelle selon le rôle et le scope ────────────────────────
-// Réutilise renderNavItem (groupes children) — même markup que la nav admin.
-function renderEdgeNav(edge) {
-  const el = document.getElementById('edge-nav-items');
-  if (!el) return;
-  // Scope "edge" explicite requis pour WAF, IP filter, Paramètres passerelle
-  const hasEdgeScope = Role.hasEdgeScope(edge?.node_name || edge?.id || '');
-  const ctx = { hasEdgeScope };
-  const items = (APP_CONFIG.edgeNav || []).filter(item => {
-    if (!item.guard) return true;
-    return item.guard(ctx);
-  }).map(item => {
-    if (!item.children?.length) return item;
-    return {
-      ...item,
-      children: item.children.filter(c => !c.guard || c.guard(ctx)),
-    };
-  });
-  el.innerHTML = items.map(renderNavItem).join('');
-}
-
 // ── Sélection / désélection d'une passerelle ─────────────────────────────────────
-// page optionnelle : destination après sélection (défaut Trafic).
+// page optionnelle : destination après sélection (défaut Routage).
 // Évite la course openEdge()+navigate(X) où selectEdge écrasait toujours vers edge-trafic.
 function selectEdge(edge, page) {
   state.selectedEdge = edge;
-  const section = document.getElementById('edge-nav-section');
-  const nameEl  = document.getElementById('edge-nav-name');
-  if (section) section.style.display = '';
-  if (nameEl)  nameEl.textContent = edge.display_name || edge.node_name || edge.id;
-  renderEdgeNav(edge);
-  syncNavEdgeSelection();
+  renderSpaceNav();
   navigate(page || 'edge-trafic');
 }
 
 function deselectEdge() {
+  const target = SPACE_EQUIV_REV[state.page] || 'dashboard';
   state.selectedEdge = null;
-  const section = document.getElementById('edge-nav-section');
-  if (section) section.style.display = 'none';
-  syncNavEdgeSelection();
-  // Repasse en auto : replie si overflow pour libérer le menu admin
-  _navEdgesCollapsed = null;
-  const cfg = _navEdgesCfg();
-  const overflow = _navEdgesCache.length > (cfg.overflowAt || 6);
-  if (overflow) {
-    _navEdgesCollapsed = true;
-    _applyNavEdgesCollapsed();
-  }
-  navigate('infrastructure');
+  renderSpaceNav();
+  navigate(target);
 }

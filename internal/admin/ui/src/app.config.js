@@ -53,13 +53,8 @@ const APP_CONFIG = {
       icon: '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>',
     },
     {
-      page: 'infrastructure',
-      label: 'Infrastructure',
-      icon: '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="4" r="1.5"/><circle cx="3" cy="12" r="1.5"/><circle cx="13" cy="12" r="1.5"/><path d="M8 5.5v3M8 8.5L3 10.5M8 8.5L13 10.5"/></svg>',
-    },
-    {
       page: 'admin-trafic',
-      label: 'Trafic',
+      label: 'Routage',
       icon: '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 8h12M9 4l5 4-5 4"/></svg>',
     },
     {
@@ -114,8 +109,15 @@ const APP_CONFIG = {
       ],
     },
     {
+      page: 'infrastructure',
+      label: 'Infrastructure',
+      section: 'Plateforme',
+      icon: '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="4" r="1.5"/><circle cx="3" cy="12" r="1.5"/><circle cx="13" cy="12" r="1.5"/><path d="M8 5.5v3M8 8.5L3 10.5M8 8.5L13 10.5"/></svg>',
+    },
+    {
       page: 'automation',
       label: 'Automatisation',
+      section: 'Plateforme',
       icon: '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2v-4M9 21H5a2 2 0 01-2-2v-4m0 0h18"/></svg>',
       guard: (u) => u?.role === 'superadmin' || u?.role === 'admin',
       children: [
@@ -142,6 +144,7 @@ const APP_CONFIG = {
     {
       page: 'access',
       label: 'Accès',
+      section: 'Plateforme',
       icon: '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="8" cy="8" r="3"/><path d="M2 18c0-3 2.7-5 6-5"/><path d="M16 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/><path d="M16 14v4M14 16h4"/></svg>',
       guard: (u) => u?.role === 'superadmin' || u?.role === 'admin',
       children: [
@@ -172,6 +175,7 @@ const APP_CONFIG = {
     {
       page: 'settings',
       label: 'Paramètres',
+      section: 'Plateforme',
       icon: '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.2 3.2l1.4 1.4M11.4 11.4l1.4 1.4M3.2 12.8l1.4-1.4M11.4 4.6l1.4-1.4"/></svg>',
       guard: (u) => (u?.role === 'superadmin') || (u?.role === 'admin' && !(u?.effective_scopes?.length > 0)),
     },
@@ -192,12 +196,13 @@ const APP_CONFIG = {
   edgeNav: [
     {
       page: 'edge-trafic',
-      label: 'Trafic',
+      label: 'Routage',
       icon: '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 17h2.5a3 3 0 0 0 2.4-1.2l6.2-8.6A3 3 0 0 1 16.5 6H21"/><path d="m17.5 3 3.5 3-3.5 3"/><path d="M3 7h2.5a3 3 0 0 1 2.4 1.2l1 1.4"/><path d="M14.5 15.4l1 1.4A3 3 0 0 0 17.9 18H21"/><path d="m17.5 15 3.5 3-3.5 3"/></svg>',
     },
     {
       page: 'portal',
       label: 'Portail Access',
+      section: 'Passerelle',
       icon: '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="10" height="8" rx="1"/><path d="M6 13v2M10 13v2M5 9h6"/></svg>',
       guard: ({ hasEdgeScope }) => hasEdgeScope,
       children: [
@@ -254,6 +259,7 @@ const APP_CONFIG = {
     {
       page: 'edge-tunnel',
       label: 'Tunnel L4',
+      section: 'Passerelle',
       icon: '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 12h16M4 12c0-3.3 3.6-6 8-6s8 2.7 8 6M4 12c0 3.3 3.6 6 8 6s8-2.7 8-6"/></svg>',
       guard: ({ hasEdgeScope }) => hasEdgeScope,
     },
@@ -286,7 +292,9 @@ const APP_CONFIG = {
     },
     {
       page: 'edge-settings',
-      label: 'Paramètres passerelle',
+      label: 'Paramètres',
+      labelPage: 'settings',
+      section: 'Passerelle',
       icon: '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.2 3.2l1.4 1.4M11.4 11.4l1.4 1.4M3.2 12.8l1.4-1.4M11.4 4.6l1.4-1.4"/></svg>',
       guard: ({ hasEdgeScope }) => hasEdgeScope,
     },
@@ -297,7 +305,7 @@ const APP_CONFIG = {
     dashboard:          'Dashboard',
     infrastructure:     'Infrastructure',
     architecture:       'Composer la topologie',
-    'admin-trafic':     'Trafic',
+    'admin-trafic':     'Routage',
     logs:               'Logs d\'accès',
     'logs-system':      'Logs système',
     settings:           'Paramètres',
@@ -327,7 +335,7 @@ const APP_CONFIG = {
     backups:            'Sauvegardes',
     import:             'Import / Restore',
     onboarding:         'Assistant d\'intégration',
-    'edge-trafic':      'Trafic',
+    'edge-trafic':      'Routage',
     'edge-certs':       'Certificats TLS',
     'edge-logs-access': 'Logs d\'accès',
     'edge-logs-system': 'Logs système',

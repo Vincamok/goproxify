@@ -130,6 +130,12 @@
 <div id="app" style="display:none">
   <!-- Sidebar -->
   <nav id="sidebar">
+    <div id="space-rail"></div>
+    <div id="space-picker" hidden>
+      <input type="search" id="space-picker-input" data-i18n-placeholder="nav.search_edge" placeholder="Search a gateway…" autocomplete="off" oninput="filterSpacePicker(this.value)">
+      <div id="space-picker-list"></div>
+    </div>
+    <div id="sidebar-panel">
     <div class="sidebar-logo">
       <div class="blueprint" style="width:28px;height:28px;flex:none;display:flex;align-items:center;justify-content:center;color:var(--accent);border:1px solid var(--border);">
         <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
@@ -137,6 +143,8 @@
       </div>
       <span id="sidebar-brand-name" class="sidebar-logo-text"></span>
     </div>
+
+    <div class="space-head" id="space-head"></div>
 
     <div class="sidebar-nav" id="sidebar-nav"></div>
 
@@ -168,6 +176,7 @@
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
         </button>
       </div>
+    </div>
     </div>
   </nav>
 
