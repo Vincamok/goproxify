@@ -4,7 +4,9 @@
 package portal
 
 import (
+	"log/slog"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -238,4 +240,26 @@ func stringsContains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+func TestApplyConfigWarnsWithoutSharedMasterKeyInAHAGroup(t *testing.T) {
+	t.Setenv("GPX_PORTAL_MASTER_KEY", "")
+	t.Setenv("GPX_TOKEN", "x")
+	var logs strings.Builder
+	svc := NewService(slog.New(slog.NewTextHandler(&logs, nil)))
+	_ = svc.ApplyConfig(Config{Enabled: false, HAGroup: "ha-1", HAKey: "k", HAMembers: []string{"a", "b"}, DBPath: filepath.Join(t.TempDir(), "p.gpx")})
+	out := logs.String()
+	if !strings.Contains(out, "sans GPX_PORTAL_MASTER_KEY") {
+		t.Fatalf("avertissement attendu sans clé maître commune: %s", out)
+	}
+	if !strings.Contains(out, "réplication HA active") || strings.Contains(out, "HAKey") || strings.Contains(out, `"k"`) {
+		t.Fatalf("la ligne d'information doit exister et ne jamais contenir la clé: %s", out)
+	}
+
+	logs.Reset()
+	t.Setenv("GPX_PORTAL_MASTER_KEY", "commune")
+	_ = svc.ApplyConfig(Config{Enabled: false, HAGroup: "ha-1", HAKey: "k", DBPath: filepath.Join(t.TempDir(), "p2.gpx")})
+	if strings.Contains(logs.String(), "sans GPX_PORTAL_MASTER_KEY") {
+		t.Fatal("pas d'avertissement quand la clé maître est définie")
+	}
 }

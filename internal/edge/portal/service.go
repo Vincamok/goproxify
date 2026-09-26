@@ -74,6 +74,15 @@ func (s *Service) ApplyConfig(cfg Config) error {
 	defer s.mu.Unlock()
 	cfg.Defaults()
 
+	if cfg.HAGroup != "" && cfg.HAKey != "" {
+		if os.Getenv("GPX_PORTAL_MASTER_KEY") == "" {
+			s.log.Warn("portal: groupe HA sans GPX_PORTAL_MASTER_KEY — les coffres des comptes SSO ne sont déchiffrables sur un autre membre que si la clé maître est identique sur tous les membres",
+				"groupe", cfg.HAGroup)
+		}
+		s.log.Info("portal: réplication HA active", "groupe", cfg.HAGroup, "membres", cfg.HAMembers,
+			"sessions_partagees", cfg.HASharedSess, "en_attente", cfg.HAStandby)
+	}
+
 	if !cfg.Enabled {
 		s.cfg = cfg
 		s.stopLocked()
