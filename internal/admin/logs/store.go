@@ -365,8 +365,15 @@ func buildWhere(p SearchParams) (string, []any) {
 		// NodeID est stable face à un renommage : quand il est fourni, il
 		// prime sur NodeName (qui reste utilisable seul pour retrouver
 		// l'historique d'un nœud renommé/disparu, cf. p.Search ci-dessous).
-		clauses = append(clauses, "node_id=?")
-		args = append(args, p.NodeID)
+		if p.NodeName != "" {
+			// Les logs sans node_id (ingestion HTTP, historique antérieur) restent
+			// rattachés au nœud via node_name.
+			clauses = append(clauses, "(node_id=? OR (node_id='' AND node_name=?))")
+			args = append(args, p.NodeID, p.NodeName)
+		} else {
+			clauses = append(clauses, "node_id=?")
+			args = append(args, p.NodeID)
+		}
 	} else if p.NodeName != "" {
 		clauses = append(clauses, "node_name=?")
 		args = append(args, p.NodeName)
@@ -433,7 +440,7 @@ func matchesFilter(e Entry, p SearchParams) bool {
 		return false
 	}
 	if p.NodeID != "" {
-		if e.NodeID != p.NodeID {
+		if e.NodeID != p.NodeID && !(e.NodeID == "" && p.NodeName != "" && e.NodeName == p.NodeName) {
 			return false
 		}
 	} else if p.NodeName != "" && e.NodeName != p.NodeName {

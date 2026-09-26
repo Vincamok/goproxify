@@ -644,6 +644,7 @@ window.exportProxies = function(fmt) {
 };
 
 window.openProxyModal = async function(id, initialTab, secTab) {
+  if (initialTab === 'protection' && secTab === 'waf') { initialTab = 'waf'; secTab = undefined; }
   let existing = null;
   if (id) {
     try { existing = await api('GET', `/proxies/${encodeURIComponent(id)}`); } catch {}
@@ -665,7 +666,7 @@ window.openProxyModal = async function(id, initialTab, secTab) {
     ['SSO', '#f472b6', 'auth', cfg.sso?.enabled || cfg.sso?.provider],
     ['JWT', '#60a5fa', 'protection', cfg.jwt?.enabled],
     ['mTLS', '#c084fc', 'protection', cfg.mtls?.enabled],
-    ['WAF', '#fb923c', 'protection', cfg.waf?.enabled],
+    ['WAF', '#fb923c', 'waf', cfg.waf?.enabled],
     ['Bots', '#f472b6', 'protection', cfg.bot?.enabled],
     ['Rate limit', '#f59e0b', 'protection', cfg.rate_limit],
     ['IP filter', '#38bdf8', 'protection', cfg.ip_filter?.cidrs],
@@ -685,19 +686,34 @@ window.openProxyModal = async function(id, initialTab, secTab) {
       ${active.map(([label, color, tab]) => `<button type="button" class="pm-chip" style="--c:${color}" onclick="switchProxyTab('${tab}')">${esc(label)}</button>`).join('')}
       ${score ? `<button type="button" class="pm-chip pm-score" style="--c:${gradeColor}" title="Score des en-têtes de sécurité" onclick="switchProxyTab('protection','recap')">Score ${esc(score.grade)}</button>` : ''}
     </div>` : '';
-  const tabDefs = [
-    ['general', 'Général'], ['entetes', 'En-têtes'], ['auth', 'Auth / SSO'], ['protection', 'Protection'],
-    ['resilience', 'Résilience'], ['avance', 'Avancé'], ['yaml', 'YAML'],
+  const wafPlats = (cfg.waf?.exclude_platforms || []).filter(p => p !== 'auto').length;
+  const navIcons = {
+    general: '<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
+    entetes: '<line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="14" y2="18"/>',
+    auth: '<circle cx="8" cy="15" r="4"/><path d="m11 12 9-9m-3 3 3 3"/>',
+    protection: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+    waf: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',
+    resilience: '<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
+    avance: '<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>',
+    yaml: '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
+  };
+  const tabGroups = [
+    ['Trafic', [['general', 'Général'], ['entetes', 'En-têtes'], ['auth', 'Auth / SSO']]],
+    ['Sécurité', [['protection', 'Protection'], ['waf', 'WAF']]],
+    ['Fiabilité', [['resilience', 'Résilience']]],
+    ['Expert', [['avance', 'Avancé'], ['yaml', 'YAML']]],
   ];
-  const tabsHtml = tabDefs.map(([key, label], i) => {
-    const n = tabCount(key);
-    return `<button type="button" class="pm-tab${i === 0 ? ' active' : ''}" data-tab="${key}" onclick="switchProxyTab('${key}')">${label}${n ? `<span class="pm-cnt">${n}</span>` : ''}</button>`;
-  }).join('');
+  const tabsHtml = tabGroups.map(([group, items]) => `<h6>${group}</h6>` + items.map(([key, label]) => {
+    const n = key === 'waf' ? wafPlats : tabCount(key);
+    const badge = key === 'waf' && !n && cfg.waf?.enabled ? '<span class="pm-dot"></span>' : (n ? `<span class="pm-cnt">${n}</span>` : '');
+    return `<button type="button" class="pm-ni${key === 'general' ? ' active' : ''}" data-tab="${key}" onclick="switchProxyTab('${key}')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${navIcons[key]}</svg>${label}${badge}</button>`;
+  }).join('')).join('');
 
   const body = `
     <div class="pm-shell">
       ${summaryHtml}
-      <div id="proxy-tabs" class="pm-tabs">${tabsHtml}</div>
+      <div class="pm-main">
+      <nav id="proxy-tabs" class="pm-nav" aria-label="Sections du proxy">${tabsHtml}</nav>
 
       <!-- Content panels -->
       <div class="pm-content">
@@ -1219,6 +1235,9 @@ window.openProxyModal = async function(id, initialTab, secTab) {
           </div>
         </div>
 
+        <!-- Panel WAF (contenu déplacé ici par _psecMount) -->
+        <div id="ptab-waf" style="display:none;padding:22px 26px 28px;flex-direction:column;gap:14px;"></div>
+
         <!-- Panel YAML brut -->
         <div id="ptab-yaml" style="padding:16px 20px;display:none;flex-direction:column;gap:10px;height:100%;box-sizing:border-box;">
           <div style="display:flex;align-items:center;justify-content:space-between;">
@@ -1241,6 +1260,7 @@ window.openProxyModal = async function(id, initialTab, secTab) {
         </div>
 
       </div><!-- end content area -->
+      </div><!-- end pm-main -->
       ${id ? '' : _pmSimpleHtml()}
 
     </div><!-- end flex container -->`;
@@ -1320,7 +1340,8 @@ window.updateProxyForm = function() {
 };
 
 window.switchProxyTab = function(tab, secTab) {
-  ['general','entetes','auth','protection','resilience','avance','yaml'].forEach(t => {
+  if (tab === 'protection' && secTab === 'waf') { tab = 'waf'; secTab = undefined; }
+  ['general','entetes','auth','protection','waf','resilience','avance','yaml'].forEach(t => {
     const panel = document.getElementById('ptab-' + t);
     if (panel) panel.style.display = t === tab ? (t === 'protection' ? 'block' : 'flex') : 'none';
   });
@@ -2174,7 +2195,7 @@ window.pmSetMode = function(mode) {
   shell.classList.toggle('is-simple', mode === 'simple');
   document.querySelectorAll('.pm-mode button').forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
   try { localStorage.setItem('gpx_proxy_mode', mode); } catch {}
-  if (mode !== 'simple') switchProxyTab(document.querySelector('.pm-tab.active')?.dataset.tab || 'general');
+  if (mode !== 'simple') switchProxyTab(document.querySelector('.pm-ni.active')?.dataset.tab || 'general');
 };
 
 function _buildStreamModalHtml(cfg, enabled, editing) {

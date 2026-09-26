@@ -275,6 +275,52 @@ window.computeProxyHeaderScore = function(cfg) {
   return { score, grade, checks, wafCfg, botCfg, jwtCfg };
 };
 
+const PSEC_WAF_PLATFORMS = [
+  { label: 'CMS et e-commerce', platforms: [
+    { id: 'wordpress',  name: 'WordPress',  desc: 'Gutenberg, REST API, WooCommerce' },
+    { id: 'drupal',     name: 'Drupal',     desc: 'Form tokens, AJAX, éditeur riche' },
+    { id: 'joomla',     name: 'Joomla',     desc: 'Éditeur JCE, composants com_*' },
+    { id: 'magento',    name: 'Magento',    desc: 'Catalogue, checkout, API REST' },
+    { id: 'prestashop', name: 'PrestaShop', desc: 'Boutique, back-office, modules' },
+    { id: 'ghost',      name: 'Ghost',      desc: 'Éditeur Mobiledoc/Lexical, API Content' },
+    { id: 'strapi',     name: 'Strapi',     desc: 'CMS headless, rich content JSON' },
+  ]},
+  { label: 'Frameworks', platforms: [
+    { id: 'nextjs',  name: 'Next.js', desc: 'API routes, Server Actions, JSON' },
+    { id: 'laravel', name: 'Laravel', desc: 'CSRF, Eloquent, Sanctum/Passport' },
+    { id: 'symfony', name: 'Symfony', desc: 'Forms, Doctrine, API Platform' },
+    { id: 'django',  name: 'Django',  desc: 'ORM, forms, DRF' },
+  ]},
+  { label: 'Collaboration et fichiers', platforms: [
+    { id: 'nextcloud',  name: 'Nextcloud',   desc: 'WebDAV, PROPFIND, partage fichiers' },
+    { id: 'dokuwiki',   name: 'DokuWiki',    desc: 'Syntaxe wiki, upload médias' },
+    { id: 'mattermost', name: 'Mattermost',  desc: 'Messages riches, code snippets' },
+    { id: 'discourse',  name: 'Discourse',   desc: 'Éditeur Markdown, BBCode' },
+    { id: 'rocketchat', name: 'Rocket.Chat', desc: 'Messages, fichiers joints' },
+  ]},
+  { label: 'DevOps et infrastructure', platforms: [
+    { id: 'gitea',     name: 'Gitea',     desc: 'Diffs, commits, code dans l\'UI' },
+    { id: 'forgejo',   name: 'Forgejo',   desc: 'Fork Gitea, même profil' },
+    { id: 'portainer', name: 'Portainer', desc: 'Commandes Docker, env vars' },
+    { id: 'proxmox',   name: 'Proxmox',   desc: 'Shell VMs, config hyperviseur' },
+    { id: 'grafana',   name: 'Grafana',   desc: 'PromQL, SQL-like queries' },
+    { id: 'zabbix',    name: 'Zabbix',    desc: 'Triggers SQL-like, items' },
+  ]},
+  { label: 'Outils métier', platforms: [
+    { id: 'odoo',     name: 'Odoo',     desc: 'ERP, formulaires complexes, ORM' },
+    { id: 'n8n',      name: 'n8n',      desc: 'Workflows JSON, expressions JS' },
+    { id: 'keycloak', name: 'Keycloak', desc: 'SSO, tokens OIDC, auth flows' },
+  ]},
+  { label: 'Médias et self-hosted', platforms: [
+    { id: 'jellyfin',    name: 'Jellyfin',    desc: 'Chemins médias, API streaming' },
+    { id: 'immich',      name: 'Immich',      desc: 'Upload photos, EXIF metadata' },
+    { id: 'vaultwarden', name: 'Vaultwarden', desc: 'Champs password, JSON vault' },
+  ]},
+  { label: 'Administration', platforms: [
+    { id: 'cpanel', name: 'cPanel', desc: 'DNS, comptes email, zones WHM' },
+  ]},
+];
+
 window._psecMount = async function(id, initialTab, embedEl) {
   try {
   let existing = null;
@@ -457,7 +503,6 @@ window._psecMount = async function(id, initialTab, embedEl) {
         ${stab('params', 'Paramètres', '<circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>')}
         ${stab('snippets', `Snippets${selectedSnippetIds.length ? ` <span style="display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:99px;background:var(--accent);color:#000;font-size:9px;font-weight:800;margin-left:2px;">${selectedSnippetIds.length}</span>` : ''}`, '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>')}
         ${stab('headers', `Headers${_fixCount > 0 ? ` <span style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:#f59e0b;color:#000;font-size:9px;font-weight:800;margin-left:2px;">${_fixCount}</span>` : ''}`, '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>')}
-        ${stab('waf', `WAF${wafCfg?.enabled ? ` <span style="display:inline-flex;align-items:center;justify-content:center;width:8px;height:8px;border-radius:50%;background:#34d399;margin-left:2px;"></span>` : ''}`, '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>')}
         ${stab('bans', 'Bans & Blocs', '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>')}
         ${stab('timeline', 'Timeline', '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>')}
       </div>
@@ -534,7 +579,7 @@ window._psecMount = async function(id, initialTab, embedEl) {
               </div>
             </div>
           </div>
-          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 16px;cursor:pointer;" onclick="switchSecTab('waf')">
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 16px;cursor:pointer;" onclick="switchProxyTab('waf')">
             <div style="display:flex;align-items:center;justify-content:space-between;">
               <div style="display:flex;align-items:center;gap:8px;">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
@@ -658,117 +703,73 @@ window._psecMount = async function(id, initialTab, embedEl) {
           ${_fixCount > 0 ? `<div style="font-size:11px;color:var(--text3);padding-top:4px;">Les headers cochés seront écrits dans <code>headers</code> et appliqués aux réponses clients par le Edge.</div>` : ''}
         </div>
 
-        <!-- WAF -->
-        <div id="psectab-waf" style="display:none;padding:16px 20px;flex-direction:column;gap:14px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px;">
-            <div style="font-size:13px;font-weight:700;">Web Application Firewall</div>
-            <div style="display:flex;gap:6px;">
-              ${_hasOwnWaf ? `<button type="button" class="btn btn-ghost btn-sm" style="font-size:10px;color:var(--text3);" onclick="psecResetWafToEdge('${esc(id)}')">↩ Hériter du Edge</button>` : ''}
-              <button type="button" class="btn btn-ghost btn-sm" style="font-size:10px;" onclick="psecToggleWAFAdvanced()">Avancé ▾</button>
+        <!-- WAF (déplacé dans l'onglet WAF de la modale par _psecMount) -->
+        <div id="psectab-waf" class="pw" style="display:flex;">
+          <div class="pw-head">
+            <div>
+              <h3>Web Application Firewall</h3>
+              <p>Filtre les attaques applicatives et ajuste les règles à la plateforme derrière ce proxy.</p>
             </div>
+            ${_hasOwnWaf ? `<button type="button" class="btn btn-ghost btn-sm" onclick="psecResetWafToEdge('${esc(id)}')">↩ Hériter du Edge</button>` : ''}
           </div>
           ${!_hasOwnWaf ? `
-          <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;background:color-mix(in srgb,var(--green) 8%,transparent);border:1px solid color-mix(in srgb,var(--green) 25%,var(--border));border-radius:8px;font-size:11.5px;color:var(--text2);">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color:var(--green);flex-shrink:0"><polyline points="20 6 9 17 4 12"/></svg>
-            <span>Hérite de la config WAF du Edge — <button type="button" onclick="psecActivateOwnWaf()" style="background:none;border:none;padding:0;cursor:pointer;color:var(--accent);font-size:11.5px;text-decoration:underline;">Personnaliser pour ce proxy</button></span>
+          <div id="psec-waf-inherit" class="pw-inherit">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            <span>Ce proxy hérite de la configuration WAF du Edge.</span>
+            <button type="button" onclick="psecActivateOwnWaf()">Personnaliser pour ce proxy</button>
           </div>` : ''}
-          <div id="psec-waf-own" style="display:${_hasOwnWaf?'flex':'none'};flex-direction:column;gap:14px;">
-            <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
-              <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:12px;">Activation</div>
-              <div style="display:flex;gap:16px;align-items:flex-start;">
-                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding-top:2px;">
-                  <label class="toggle"><input type="checkbox" id="psec-waf-enabled" ${wafCfg?.enabled?'checked':''}><span class="toggle-slider"></span></label>
-                  <span style="font-size:13px;font-weight:500;">Activé</span>
-                </label>
-                <div class="field" style="flex:1;margin:0;">
-                  <label class="field-label" style="font-size:11px">Mode</label>
-                  <select id="psec-waf-mode" class="input">
-                    <option value="block" ${(wafCfg?.mode||'block')==='block'?'selected':''}>Bloquer (403)</option>
-                    <option value="detect" ${wafCfg?.mode==='detect'?'selected':''}>Détecter (log seul)</option>
-                  </select>
-                </div>
+          <div id="psec-waf-own" class="pw-stack" style="display:${_hasOwnWaf?'flex':'none'};">
+            <div class="pw-card">
+              <div class="pw-hero">
+                <div class="pw-ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg></div>
+                <div class="pw-hero-t"><b>Protection du proxy</b><span>Les requêtes sont analysées avant d'atteindre le backend.</span></div>
+                <label class="toggle"><input type="checkbox" id="psec-waf-enabled" ${wafCfg?.enabled?'checked':''} onchange="psecWafRefresh()"><span class="toggle-slider"></span></label>
+              </div>
+              <div id="psec-waf-modes" class="pw-modes">
+                <button type="button" class="pw-mode" data-mode="block" onclick="psecSetWafMode('block')"><b><i class="pw-radio"></i>Bloquer</b><span>Répond 403 aux requêtes suspectes.</span></button>
+                <button type="button" class="pw-mode" data-mode="detect" onclick="psecSetWafMode('detect')"><b><i class="pw-radio"></i>Détecter</b><span>Journalise sans bloquer.</span></button>
+                <select id="psec-waf-mode" hidden onchange="psecWafRefresh()">
+                  <option value="block" ${(wafCfg?.mode||'block')==='block'?'selected':''}>Bloquer (403)</option>
+                  <option value="detect" ${wafCfg?.mode==='detect'?'selected':''}>Détecter (log seul)</option>
+                </select>
               </div>
             </div>
-            <!-- Exclusions plateforme -->
-            <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
-              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-                <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);">Plateforme applicative</div>
-                ${_detectedPlatform ? `<span style="font-size:10px;padding:2px 7px;border-radius:99px;background:color-mix(in srgb,var(--blue) 12%,transparent);color:var(--blue);border:1px solid color-mix(in srgb,var(--blue) 25%,var(--border));">✦ Détecté : ${_detectedPlatform}</span>` : ''}
+
+            <div id="psec-waf-pcard" class="pw-card">
+              <div class="pw-pk-head">
+                <h4>Plateformes applicatives</h4>
+                <span id="psec-waf-count" class="pw-count">Aucune</span>
+                <button type="button" id="psec-waf-clear" class="btn btn-ghost btn-sm" style="margin-left:auto;" onclick="psecClearPlatforms()">Tout effacer</button>
               </div>
-              <div style="font-size:11px;color:var(--text3);margin-bottom:10px;">Optionnel — sélectionner un CMS exclut les règles WAF connues pour générer des faux positifs sur cette plateforme. Ne rien sélectionner = toutes les règles actives.</div>
-              <div style="margin-bottom:8px;">
-                <label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid ${_autoMode?'var(--accent)':'var(--border)'};border-radius:7px;cursor:pointer;background:${_autoMode?'color-mix(in srgb,var(--accent) 6%,transparent)':'transparent'};" id="psec-pcard-auto" onclick="psecToggleAutoPlatform(this)">
-                  <input type="checkbox" name="psec-platform-auto" id="psec-platform-auto" ${_autoMode?'checked':''} style="accent-color:var(--accent);">
-                  <div>
-                    <div style="font-size:12px;font-weight:500;">Auto-détection${_detectedPlatform ? ` <span style="font-size:10px;color:var(--blue);">(${_detectedPlatform} détecté)</span>` : ' <span style="font-size:10px;color:var(--text3);">(aucune plateforme détectée)</span>'}</div>
-                    <div style="font-size:10px;color:var(--text3);line-height:1.3;">Détermine automatiquement les exclusions depuis l'URL upstream</div>
-                  </div>
-                </label>
+              <p class="pw-help">Une plateforme exclut les règles connues pour déclencher des faux positifs. Sans sélection, toutes les règles restent actives.</p>
+              <label class="pw-auto">
+                <span class="pw-auto-ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></span>
+                <span class="pw-auto-t"><b>Détection automatique</b><span>Déduit les exclusions depuis l'URL du backend. ${_detectedPlatform ? `<em>${_detectedPlatform} détecté.</em>` : 'Aucune plateforme détectée.'}</span></span>
+                <span class="toggle"><input type="checkbox" name="psec-platform-auto" id="psec-platform-auto" ${_autoMode?'checked':''} onchange="psecWafPlatformChange(this)"><span class="toggle-slider"></span></span>
+              </label>
+              <div class="pw-search">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input id="psec-waf-q" type="search" class="input" placeholder="Rechercher une plateforme" autocomplete="off" oninput="psecWafFilter(this.value)">
               </div>
-              <div id="psec-waf-platforms" style="display:flex;flex-direction:column;gap:12px;">
-                ${[
-                  { label: 'CMS & E-commerce', platforms: [
-                    { id: 'wordpress',  name: 'WordPress',  desc: 'Gutenberg, REST API, WooCommerce' },
-                    { id: 'drupal',     name: 'Drupal',     desc: 'Form tokens, AJAX, éditeur riche' },
-                    { id: 'joomla',     name: 'Joomla',     desc: 'Éditeur JCE, composants com_*' },
-                    { id: 'magento',    name: 'Magento',    desc: 'Catalogue, checkout, API REST' },
-                    { id: 'prestashop', name: 'PrestaShop', desc: 'Boutique, back-office, modules' },
-                    { id: 'ghost',      name: 'Ghost',      desc: 'Éditeur Mobiledoc/Lexical, API Content' },
-                    { id: 'strapi',     name: 'Strapi',     desc: 'CMS headless, rich content JSON' },
-                  ]},
-                  { label: 'Frameworks', platforms: [
-                    { id: 'nextjs',  name: 'Next.js', desc: 'API routes, Server Actions, JSON' },
-                    { id: 'laravel', name: 'Laravel', desc: 'CSRF, Eloquent, Sanctum/Passport' },
-                    { id: 'symfony', name: 'Symfony', desc: 'Forms, Doctrine, API Platform' },
-                    { id: 'django',  name: 'Django',  desc: 'ORM, forms, DRF' },
-                  ]},
-                  { label: 'Collaboration & fichiers', platforms: [
-                    { id: 'nextcloud',  name: 'Nextcloud',   desc: 'WebDAV, PROPFIND, partage fichiers' },
-                    { id: 'dokuwiki',   name: 'DokuWiki',    desc: 'Syntaxe wiki, upload médias' },
-                    { id: 'mattermost', name: 'Mattermost',  desc: 'Messages riches, code snippets' },
-                    { id: 'discourse',  name: 'Discourse',   desc: 'Éditeur Markdown, BBCode' },
-                    { id: 'rocketchat', name: 'Rocket.Chat', desc: 'Messages, fichiers joints' },
-                  ]},
-                  { label: 'DevOps & Infra', platforms: [
-                    { id: 'gitea',     name: 'Gitea',     desc: 'Diffs, commits, code dans l\'UI' },
-                    { id: 'forgejo',   name: 'Forgejo',   desc: 'Fork Gitea, même profil' },
-                    { id: 'portainer', name: 'Portainer', desc: 'Commandes Docker, env vars' },
-                    { id: 'proxmox',   name: 'Proxmox',   desc: 'Shell VMs, config hyperviseur' },
-                    { id: 'grafana',   name: 'Grafana',   desc: 'PromQL, SQL-like queries' },
-                    { id: 'zabbix',    name: 'Zabbix',    desc: 'Triggers SQL-like, items' },
-                  ]},
-                  { label: 'Outils métier', platforms: [
-                    { id: 'odoo',     name: 'Odoo',     desc: 'ERP, formulaires complexes, ORM' },
-                    { id: 'n8n',      name: 'n8n',      desc: 'Workflows JSON, expressions JS' },
-                    { id: 'keycloak', name: 'Keycloak', desc: 'SSO, tokens OIDC, auth flows' },
-                  ]},
-                  { label: 'Médias & Selfhosted', platforms: [
-                    { id: 'jellyfin',    name: 'Jellyfin',    desc: 'Chemins médias, API streaming' },
-                    { id: 'immich',      name: 'Immich',      desc: 'Upload photos, EXIF metadata' },
-                    { id: 'vaultwarden', name: 'Vaultwarden', desc: 'Champs password, JSON vault' },
-                  ]},
-                  { label: 'Administration', platforms: [
-                    { id: 'cpanel', name: 'cPanel', desc: 'DNS, comptes email, zones WHM' },
-                  ]},
-                ].map(cat => `
-                  <div>
-                    <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);margin-bottom:6px;">${cat.label}</div>
-                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;">
-                      ${cat.platforms.map(p => {
-                        const active = _activePlatforms.has(p.id);
-                        return `<label style="display:flex;align-items:flex-start;gap:8px;padding:7px 9px;border:1px solid ${active?'var(--accent)':'var(--border)'};border-radius:7px;cursor:pointer;background:${active?'color-mix(in srgb,var(--accent) 6%,transparent)':'transparent'};transition:border-color .15s;" id="psec-pcard-${p.id}" onclick="psecTogglePlatform('${p.id}',this)">
-                          <input type="checkbox" name="psec-platform" value="${p.id}" ${active?'checked':''} style="margin-top:2px;flex-shrink:0;accent-color:var(--accent);">
-                          <div><div style="font-size:11.5px;font-weight:500;">${p.name}</div><div style="font-size:10px;color:var(--text3);line-height:1.3;">${p.desc}</div></div>
-                        </label>`;
-                      }).join('')}
+              <div id="psec-waf-platforms">
+                ${PSEC_WAF_PLATFORMS.map(cat => `
+                  <div class="pw-cat">
+                    <h5>${cat.label}</h5>
+                    <div class="pw-grid">
+                      ${cat.platforms.map(p => `<label class="pw-pf" id="psec-pcard-${p.id}" data-s="${esc((p.name + ' ' + p.desc).toLowerCase())}">
+                        <input type="checkbox" name="psec-platform" value="${p.id}" ${_activePlatforms.has(p.id)?'checked':''} onchange="psecWafPlatformChange(this)">
+                        <span class="pw-cb"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>
+                        <span class="pw-pf-t"><b>${p.name}</b><small>${p.desc}</small></span>
+                      </label>`).join('')}
                     </div>
                   </div>`).join('')}
+                <div id="psec-waf-noresult" class="pw-empty" style="display:none;">Aucune plateforme ne correspond.</div>
               </div>
             </div>
-            <!-- Paramètres avancés WAF -->
-            <div id="psec-waf-advanced" style="display:none;flex-direction:column;gap:10px;">
-              <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:10px;">
-                <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);">Réglages avancés</div>
+
+            <details class="pw-adv">
+              <summary>Paramètres avancés <small>Seuil, règles, analyse comportementale</small><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></summary>
+              <div class="pw-adv-b">
                 <div class="form-row" style="gap:8px;">
                   <div class="field" style="flex:1;margin:0;">
                     <label class="field-label" style="font-size:11px">Score anomalie (0 = premier match)</label>
@@ -789,11 +790,9 @@ window._psecMount = async function(id, initialTab, embedEl) {
                   <div style="font-size:10px;color:var(--text3);margin-bottom:4px;">Targets : uri, args, body, headers, cookies (séparés par +). Severity : critical, high, medium, low.</div>
                   <textarea id="psec-waf-customrules" class="input" rows="4" style="font-family:monospace;font-size:11px;" placeholder="99001|sqli|high|args+body|(?i)evil-payload|Payload interdit">${esc((wafCfg?.custom_rules||[]).map(r => [r.id,r.category,r.severity,(r.targets||[]).join('+'),r.pattern,r.message].join('|')).join('\n'))}</textarea>
                 </div>
-              </div>
-              <!-- Analyse comportementale -->
-              <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:10px;">
-                <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);">Analyse comportementale</div>
-                <div style="font-size:11px;color:var(--text2);">Détecte les attaques fragmentées, les scans et les bots par accumulation de signaux sur une fenêtre glissante par IP.</div>
+                <div class="pw-sep"></div>
+                <div style="font-size:12.5px;font-weight:600;">Analyse comportementale</div>
+                <div style="font-size:11.5px;color:var(--text2);">Détecte les attaques fragmentées, les scans et les bots par accumulation de signaux sur une fenêtre glissante par IP.</div>
                 <div style="display:flex;align-items:center;gap:8px;">
                   <label class="toggle" style="flex-shrink:0;"><input type="checkbox" id="psec-waf-behavior-enabled" ${wafCfg?.behavior_enabled?'checked':''}><span class="toggle-slider"></span></label>
                   <span style="font-size:12px;font-weight:500;">Activé</span>
@@ -816,7 +815,7 @@ window._psecMount = async function(id, initialTab, embedEl) {
                   <div style="font-size:10px;color:var(--text3);margin-top:2px;">IPs/CIDRs dont les headers X-Forwarded-For sont acceptés. Vide = RemoteAddr direct (plus sécurisé).</div>
                 </div>
               </div>
-            </div>
+            </details>
           </div>
         </div>
 
@@ -834,7 +833,11 @@ window._psecMount = async function(id, initialTab, embedEl) {
     </div>`;
 
   embedEl.innerHTML = body;
-  switchSecTab(initialTab && ['recap','params','snippets','headers','waf','bans','timeline'].includes(initialTab) ? initialTab : 'recap');
+  const wafPanel = document.getElementById('psectab-waf');
+  const wafHost = document.getElementById('ptab-waf');
+  if (wafPanel && wafHost) wafHost.appendChild(wafPanel);
+  psecWafRefresh();
+  switchSecTab(initialTab && ['recap','params','snippets','headers','bans','timeline'].includes(initialTab) ? initialTab : 'recap');
   try { psecGeoInit(geoCfg.countries || [], 'psec-geo-picker'); } catch (e) { console.warn('psecGeoInit', e); }
   try {
     const snipList = document.getElementById('psec-snippets-list');
@@ -922,33 +925,71 @@ window.openProxySecModal = function(id, initialTab) {
   return openProxyModal(id, 'protection', initialTab);
 };
 
-window.psecToggleWAFAdvanced = function() {
-  const el = document.getElementById('psec-waf-advanced');
-  if (!el) return;
-  el.style.display = el.style.display === 'none' ? 'flex' : 'none';
-};
-
 window.psecActivateOwnWaf = function() {
   const own = document.getElementById('psec-waf-own');
   if (own) own.style.display = 'flex';
-  const inheritBanner = document.querySelector('[onclick*="psecActivateOwnWaf"]')?.closest('div[style*="background"]');
-  if (inheritBanner) inheritBanner.style.display = 'none';
-  switchSecTab('waf');
+  const inherit = document.getElementById('psec-waf-inherit');
+  if (inherit) inherit.style.display = 'none';
 };
 
-window.psecTogglePlatform = function(id, label) {
-  const card = document.getElementById('psec-pcard-' + id);
-  const cb = card?.querySelector('input[type=checkbox]');
-  if (!card || !cb) return;
-  const active = cb.checked;
-  card.style.borderColor = active ? 'var(--accent)' : 'var(--border)';
-  card.style.background = active ? 'color-mix(in srgb,var(--accent) 6%,transparent)' : 'transparent';
-  if (active) {
-    const autoCb = document.getElementById('psec-platform-auto');
-    if (autoCb) autoCb.checked = false;
-    const autoCard = document.getElementById('psec-pcard-auto');
-    if (autoCard) { autoCard.style.borderColor = 'var(--border)'; autoCard.style.background = 'transparent'; }
+window.psecSetWafMode = function(mode) {
+  const sel = document.getElementById('psec-waf-mode');
+  if (sel) sel.value = mode;
+  psecWafRefresh();
+};
+
+// Met à jour l'état visuel du WAF : mode choisi, compteur de plateformes, zones grisées si désactivé.
+window.psecWafRefresh = function() {
+  const on = document.getElementById('psec-waf-enabled')?.checked;
+  const mode = document.getElementById('psec-waf-mode')?.value || 'block';
+  document.querySelectorAll('#psec-waf-modes .pw-mode').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === mode)));
+  const auto = document.getElementById('psec-platform-auto')?.checked;
+  const n = document.querySelectorAll('input[name="psec-platform"]:checked').length;
+  const count = document.getElementById('psec-waf-count');
+  if (count) {
+    count.textContent = auto ? 'Auto' : n ? `${n} sélectionnée${n > 1 ? 's' : ''}` : 'Aucune';
+    count.classList.toggle('zero', !auto && !n);
   }
+  const clear = document.getElementById('psec-waf-clear');
+  if (clear) clear.style.display = n ? '' : 'none';
+  document.getElementById('psec-waf-modes')?.classList.toggle('pw-off', !on);
+  document.getElementById('psec-waf-pcard')?.classList.toggle('pw-off', !on);
+  document.getElementById('psec-waf-platforms')?.classList.toggle('pw-auto-on', !!auto);
+};
+
+// L'auto-détection et la sélection manuelle s'excluent mutuellement.
+window.psecWafPlatformChange = function(inp) {
+  if (inp.checked) {
+    if (inp.id === 'psec-platform-auto') {
+      document.querySelectorAll('input[name="psec-platform"]').forEach(c => { c.checked = false; });
+    } else {
+      const auto = document.getElementById('psec-platform-auto');
+      if (auto) auto.checked = false;
+    }
+  }
+  psecWafRefresh();
+};
+
+window.psecClearPlatforms = function() {
+  document.querySelectorAll('input[name="psec-platform"]').forEach(c => { c.checked = false; });
+  psecWafRefresh();
+};
+
+window.psecWafFilter = function(q) {
+  const term = (q || '').trim().toLowerCase();
+  let any = false;
+  document.querySelectorAll('#psec-waf-platforms .pw-cat').forEach(cat => {
+    let vis = 0;
+    cat.querySelectorAll('.pw-pf').forEach(p => {
+      const show = !term || p.dataset.s.includes(term);
+      p.style.display = show ? '' : 'none';
+      if (show) vis++;
+    });
+    cat.style.display = vis ? '' : 'none';
+    if (vis) any = true;
+  });
+  const none = document.getElementById('psec-waf-noresult');
+  if (none) none.style.display = any ? 'none' : '';
 };
 
 window.psecResetWafToEdge = async function(id) {
@@ -960,26 +1001,10 @@ window.psecResetWafToEdge = async function(id) {
     delete cfg.waf;
     await api('PUT', `/proxies/${encodeURIComponent(id)}`, { ...existing, config: cfg });
     toast('Config WAF réinitialisée — héritage passerelle active', 'success');
-    await openProxyModal(id, 'protection', 'waf');
+    await openProxyModal(id, 'waf');
   } catch(e) { toast(e.message, 'error'); }
 };
 
-window.psecToggleAutoPlatform = function(label) {
-  const cb = document.getElementById('psec-platform-auto');
-  const card = document.getElementById('psec-pcard-auto');
-  const checked = cb?.checked;
-  if (card) {
-    card.style.borderColor = checked ? 'var(--accent)' : 'var(--border)';
-    card.style.background = checked ? 'color-mix(in srgb,var(--accent) 6%,transparent)' : 'transparent';
-  }
-  if (checked) {
-    document.querySelectorAll('input[name="psec-platform"]').forEach(inp => {
-      inp.checked = false;
-      const c = document.getElementById('psec-pcard-' + inp.value);
-      if (c) { c.style.borderColor = 'var(--border)'; c.style.background = 'transparent'; }
-    });
-  }
-};
 
 window.psecParseCustomRules = function(text) {
   const rules = [];
@@ -1006,7 +1031,7 @@ window.psecParseCustomRules = function(text) {
 };
 
 window.switchSecTab = function(tab) {
-  ['recap','params','snippets','headers','waf','bans','timeline'].forEach(t => {
+  ['recap','params','snippets','headers','bans','timeline'].forEach(t => {
     const panel = document.getElementById('psectab-' + t);
     if (panel) panel.style.display = t === tab ? 'flex' : 'none';
   });

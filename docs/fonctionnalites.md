@@ -64,7 +64,7 @@ The Edge can operate **autonomously** if the Admin is temporarily unreachable:
 | HTTP security headers | HSTS, X-Frame-Options, Content-Security-Policy, etc. |
 | CORS | Configurable origins, methods and headers |
 | Server fingerprint masking | Removal of revealing headers (`Server`, `X-Powered-By`) |
-| WAF | Native Go engine, 13 OWASP CRS-4 rule sets, request **and** response inspection, detect/block mode, custom rules hot-reload — see [docs/security.md](security.md#waf) |
+| WAF | Own section in the proxy modal (mode, application-platform picker with search and auto-detection, advanced settings). Native Go engine, 13 OWASP CRS-4 rule sets, request **and** response inspection, detect/block mode, custom rules hot-reload — see [docs/security.md](security.md#waf) |
 | Sentinel | Per-IP behavioral detection: sliding window, immediate ban on signal, global anti-DDoS RPS, optional bounded **tarpit** (holds the response to blocked IPs) — see [docs/security.md](security.md#sentinel) |
 | Native Go Fail2Ban | Automatic banning after N failures, no external dependency |
 | CrowdSec | LAPI stream bouncer → bans pushed to Edge (403), Docker compatible |

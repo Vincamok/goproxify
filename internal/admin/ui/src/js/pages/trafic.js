@@ -335,7 +335,7 @@ async function renderTraficPage(ctx) {
       return `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer"
         onclick="event.stopPropagation()"
         title="${esc(d)}"
-        style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:${fw};font-size:${fs};color:${col};text-decoration:none;"
+        style="display:block;width:fit-content;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:${fw};font-size:${fs};color:${col};text-decoration:none;"
         onmouseover="this.style.textDecoration='underline'"
         onmouseout="this.style.textDecoration='none'">${esc(d)}</a>`;
     }
@@ -491,6 +491,22 @@ async function renderTraficPage(ctx) {
         ? `<div class="trafic-tile-sub"${style ? ` style="${style}"` : ''}>${aliases.map(d => domainLink(d, false, m.hasTLS)).join('')}${m.chips ? `<div style="display:flex;flex-wrap:wrap;gap:3px">${m.chips}</div>` : ''}</div>`
         : '';
 
+    // Clic sur une zone neutre de la tuile (ni lien, ni bouton, ni champ) → ouvre les paramètres.
+    function tileEditAttrs(m) {
+      if (!Role.canWrite() || m.isAuto) return '';
+      return ` data-edit="${m.isStr ? 'openStreamEditModal' : 'openProxyModal'}" data-id="${esc(m.id)}" style="cursor:pointer"`;
+    }
+    if (!window._traficTileBound) {
+      window._traficTileBound = true;
+      document.addEventListener('click', e => {
+        const tile = e.target.closest('.trafic-tile[data-edit]');
+        if (!tile || e.target.closest('a,button,input,label,.trafic-menu')) return;
+        if (String(window.getSelection())) return;
+        const fn = window[tile.dataset.edit];
+        if (fn) fn(tile.dataset.id);
+      });
+    }
+
     // ── Rendu tuile ──────────────────────────────────────────────────────────
     function buildTile(p, selSet) {
       const m = proxyModel(p, selSet);
@@ -499,7 +515,7 @@ async function renderTraficPage(ctx) {
       const met = metricsInline(m.pm);
       const feats = featureBadges(m.cfg, true);
 
-      return `<div class="trafic-tile${m.isSel ? ' is-selected' : ''}${m.enabled ? '' : ' is-off'}">
+      return `<div class="trafic-tile${m.isSel ? ' is-selected' : ''}${m.enabled ? '' : ' is-off'}"${tileEditAttrs(m)}>
         <div class="trafic-tile-head">
           <input type="checkbox" ${m.isSel ? 'checked' : ''} onchange="traficSelToggle('${esc(m.id)}','${m.stype}')" style="width:14px;height:14px;cursor:pointer;accent-color:var(--accent);flex-shrink:0">
           ${c.toggle}
@@ -630,7 +646,7 @@ async function renderTraficPage(ctx) {
       const [master, ...aliases] = m.allDomains;
       const layers = featureBadges(m.cfg, 'list');
 
-      return `<div class="trafic-tile trafic-card health-${h.level}${m.isSel ? ' is-selected' : ''}${m.enabled ? '' : ' is-off'}">
+      return `<div class="trafic-tile trafic-card health-${h.level}${m.isSel ? ' is-selected' : ''}${m.enabled ? '' : ' is-off'}"${tileEditAttrs(m)}>
         <div class="trafic-tile-head">
           <input type="checkbox" ${m.isSel ? 'checked' : ''} onchange="traficSelToggle('${esc(m.id)}','${m.stype}')" style="width:14px;height:14px;cursor:pointer;accent-color:var(--accent);flex-shrink:0">
           ${c.toggle}

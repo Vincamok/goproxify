@@ -90,11 +90,17 @@ func TestBuildWhereNodeIDPrimeOverNodeName(t *testing.T) {
 	if !strings.Contains(where, "node_id=?") {
 		t.Fatalf("clause attendue sur node_id, got %q", where)
 	}
-	if strings.Contains(where, "node_name=?") {
-		t.Fatalf("node_name ne devrait pas apparaître quand node_id est fourni, got %q", where)
+	if !strings.Contains(where, "node_id='' AND node_name=?") {
+		t.Fatalf("node_name ne doit rattacher que les logs sans node_id, got %q", where)
 	}
-	if len(args) != 1 || args[0] != "token-abc" {
+	if len(args) != 2 || args[0] != "token-abc" || args[1] != "goproxify-edge" {
 		t.Fatalf("args = %#v", args)
+	}
+	if !matchesFilter(Entry{NodeName: "goproxify-edge"}, SearchParams{NodeID: "token-abc", NodeName: "goproxify-edge"}) {
+		t.Fatal("un log sans node_id doit rester rattaché par node_name")
+	}
+	if matchesFilter(Entry{NodeID: "autre", NodeName: "goproxify-edge"}, SearchParams{NodeID: "token-abc", NodeName: "goproxify-edge"}) {
+		t.Fatal("un log estampé d'un autre node_id ne doit pas matcher")
 	}
 }
 

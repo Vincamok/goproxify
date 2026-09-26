@@ -507,7 +507,7 @@ async function loadStaticLogs(beforeID) {
   const params = new URLSearchParams({ page_size: 50 });
   if (beforeID > 0) params.set('before_id', beforeID);
   params.set('kind', logsScope.kind || logsFilters.kind || 'access');
-  if (logsScope.node_id) params.set('node_id', logsScope.node_id);
+  if (logsScope.node_id) { params.set('node_id', logsScope.node_id); if (logsScope.node_name) params.set('node_name', logsScope.node_name); }
   else if (logsScope.node_name) params.set('node_name', logsScope.node_name);
   if (logsScope.lockComp && logsScope.component) params.set('component', logsScope.component);
   else if (logsFilters.component) params.set('component', logsFilters.component);
@@ -662,7 +662,7 @@ function startSSE() {
   const params = new URLSearchParams();
   // Portée menu = source de vérité (kind / nœud / composant passerelle).
   params.set('kind', logsScope.kind || logsFilters.kind || 'access');
-  if (logsScope.node_id) params.set('node_id', logsScope.node_id);
+  if (logsScope.node_id) { params.set('node_id', logsScope.node_id); if (logsScope.node_name) params.set('node_name', logsScope.node_name); }
   else if (logsScope.node_name) params.set('node_name', logsScope.node_name);
 
   const lvl    = document.getElementById('lf-live-level')?.value;
@@ -776,7 +776,7 @@ function httpStatusBadge(code) {
 window.exportLogs = function(fmt) {
   const params = new URLSearchParams({ format: fmt });
   params.set('kind', logsScope.kind || logsFilters.kind || 'access');
-  if (logsScope.node_id) params.set('node_id', logsScope.node_id);
+  if (logsScope.node_id) { params.set('node_id', logsScope.node_id); if (logsScope.node_name) params.set('node_name', logsScope.node_name); }
   else if (logsScope.node_name) params.set('node_name', logsScope.node_name);
   if (logsScope.lockComp && logsScope.component) params.set('component', logsScope.component);
   else if (logsFilters.component) params.set('component', logsFilters.component);
