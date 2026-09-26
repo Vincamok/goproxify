@@ -1396,7 +1396,7 @@ func (m *Manager) pushAllToEntry(ctx context.Context, e *edgeEntry, s Settings) 
 
 	// Portail d'accès (config par passerelle)
 	go func() {
-		cfg := api.LoadPortalConfigForEdge(m.db, e.nodeName)
+		cfg := api.LoadPortalConfigForEdge(m.db, m.groupResolver(), e.nodeName)
 		if err := e.client.PushJSON(edgeWS.TypePushPortal, cfg); err != nil {
 			m.log.Warn("edgews/manager: push portal", "edge", e.nodeName, "err", err)
 		}

@@ -57,6 +57,7 @@ func (s *Server) startInternalAPI() error {
 	mux.HandleFunc("POST /internal/v1/auth-providers", s.handlePushAuthProviders)
 	mux.HandleFunc("POST /internal/v1/ip-profiles", s.handlePushIPProfiles)
 	mux.HandleFunc("POST /internal/v1/bans", s.handlePushBans)
+	mux.HandleFunc("POST /internal/v1/bans/gossip", s.handleBansGossip)
 	mux.HandleFunc("GET /internal/v1/bans", s.handleListBans)
 	mux.HandleFunc("GET /internal/v1/bans/history", s.handleListBanHistory)
 	mux.HandleFunc("DELETE /internal/v1/bans/{id}", s.handleDeleteBan)
@@ -70,6 +71,8 @@ func (s *Server) startInternalAPI() error {
 	mux.HandleFunc("DELETE /internal/v1/waf/behavior/profiles/{ip}", s.handleWAFBehaviorDeleteProfile)
 	mux.HandleFunc("POST /internal/v1/settings", s.handlePushSettings)
 	mux.HandleFunc("POST /internal/v1/portal", s.handlePushPortal)
+	mux.HandleFunc("GET /internal/v1/portal/replica", s.handlePortalReplicaExport)
+	mux.HandleFunc("POST /internal/v1/portal/replica", s.handlePortalReplicaImport)
 	mux.HandleFunc("POST /internal/v1/cluster/peers", s.handlePushClusterPeers)
 	mux.HandleFunc("POST /internal/v1/gateway/peers", s.handlePushGatewayPeers)
 	mux.HandleFunc("POST /internal/v1/gateway/tunnel", s.handleGatewayTunnel)
@@ -461,6 +464,7 @@ func (s *Server) threatBanCallback() threat.BanCallback {
 		s.pendingThreatBans = append(s.pendingThreatBans, b)
 		s.mu.Unlock()
 		s.flushThreatBans()
+		s.gossipBanToPeers(b)
 
 		// Notifier Admin pour persister le ban dans security_bans.
 		payload := edgews.ThreatBanPayload{
@@ -490,6 +494,7 @@ func (s *Server) onF2BBan(b edgef2b.Ban) {
 		ExpiresAt: expires,
 	}
 	s.addBanEvent(b.IP, "fail2ban")
+	s.gossipBanToPeers(rb)
 	if s.bansDB != nil {
 		if err := s.bansDB.UpsertBan(rb.ID, rb.IP, "", rb.Reason, rb.Source, rb.ExpiresAt); err != nil {
 			s.log.Warn("f2b: persistance ban DB échouée", "err", err)
@@ -891,6 +896,13 @@ type portalPushPayload struct {
 	SessionMode          string                 `json:"session_mode"`
 	Catalog              []portal.CatalogTarget `json:"catalog"`
 	Users                []portal.SyncedUser    `json:"users"`
+
+	// Haute disponibilité : voir portal.Config.
+	HAGroup       string   `json:"ha_group"`
+	HAMembers     []string `json:"ha_members"`
+	HASessionMode string   `json:"ha_session_mode"`
+	HAStandby     bool     `json:"ha_standby"`
+	HAKey         string   `json:"ha_key"`
 }
 
 func (s *Server) handlePushPortal(w http.ResponseWriter, r *http.Request) {
@@ -918,12 +930,17 @@ func (s *Server) applyPortalPush(payload portalPushPayload) {
 		Require2FA:           payload.Require2FA,
 		SessionTTLSec:        payload.SessionTTLSec,
 		SessionMode:          payload.SessionMode,
+		HAGroup:              payload.HAGroup,
+		HAMembers:            payload.HAMembers,
+		HAKey:                payload.HAKey,
+		HASharedSess:         payload.HAGroup != "" && payload.HASessionMode == "shared",
+		HAStandby:            payload.HAStandby,
 	}
 	if err := s.portal.ApplyConfig(cfg); err != nil {
 		s.log.Error("portal: apply config", "err", err)
 		return
 	}
-	if payload.Enabled {
+	if payload.Enabled || payload.HAStandby {
 		if payload.Catalog != nil {
 			if err := s.portal.SetCatalog(payload.Catalog); err != nil {
 				s.log.Warn("portal: catalog", "err", err)

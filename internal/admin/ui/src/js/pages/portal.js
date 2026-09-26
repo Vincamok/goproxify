@@ -111,6 +111,7 @@ function renderPortalPage(cfg, edgeName, edgeLabel, metricsData) {
             <option value="multi" ${cfg.session_mode === 'multi' ? 'selected' : ''}>${esc(t('portal.mode_multi') || 'Multi-essai')}</option>
           </select>
         </div>
+        ${haSessionField(cfg)}
       </div>
       <div id="portal-msg" style="margin-top:12px;font-size:13px;min-height:1.2em"></div>
     </div>`;
@@ -128,6 +129,7 @@ function renderPortalPage(cfg, edgeName, edgeLabel, metricsData) {
         http_port: +document.getElementById('portal-http').value || 8444,
         session_ttl_sec: +document.getElementById('portal-ttl').value || 60,
         session_mode: document.getElementById('portal-mode').value || 'one_shot',
+        ha_session_mode: document.getElementById('portal-ha-sessions')?.value || undefined,
         edge_name: edgeName,
       };
       const saved = await api('PUT', '/portal' + q, body);
@@ -223,3 +225,23 @@ pages['portal-audit'] = async function() {
   document.getElementById('portal-audit-refresh').onclick = loadAudit;
   loadAudit();
 };
+
+// haSessionField : dans un groupe HA, la config du portail est celle du groupe ; les sessions web peuvent
+// rester sur la passerelle qui les a émises (sticky, défaut) ou être répliquées entre les membres (shared).
+function haSessionField(cfg) {
+  if (!cfg || !cfg.ha_group) return '';
+  const members = (cfg.ha_members || []).map(esc).join(', ');
+  const mode = cfg.ha_session_mode === 'shared' ? 'shared' : 'sticky';
+  return `
+        <div class="field" style="grid-column:1/-1">
+          <div style="margin-bottom:8px;padding:10px 12px;background:color-mix(in srgb,var(--accent) 7%,transparent);border:1px solid color-mix(in srgb,var(--accent) 22%,transparent);border-radius:6px;font-size:12px;color:var(--text2);">
+            ${t('portal.ha_banner', { group: esc(cfg.ha_group), members })}
+          </div>
+          <label class="field-label">${esc(t('portal.ha_session_mode'))}</label>
+          <select class="input" id="portal-ha-sessions">
+            <option value="sticky" ${mode === 'sticky' ? 'selected' : ''}>${esc(t('portal.ha_session_sticky'))}</option>
+            <option value="shared" ${mode === 'shared' ? 'selected' : ''}>${esc(t('portal.ha_session_shared'))}</option>
+          </select>
+          <div style="margin-top:6px;font-size:12px;color:var(--text3)">${esc(t('portal.ha_session_hint'))}</div>
+        </div>`;
+}

@@ -146,7 +146,9 @@ func (s *Server) Start(ctx context.Context) error {
 	manager.SetSettings(s.runtimeSettings())
 	manager.ConnectFromEnv(ctx)
 	if archStore != nil {
-		api.MigrateGroupSettings(ctx, s.db, archStore, s.log)
+		groups := api.NewGroupResolver(archStore, s.db)
+		api.MigrateGroupSettings(ctx, s.db, groups, s.log)
+		api.MigratePortalGroups(ctx, s.db, groups, s.log)
 	}
 	agentStore := api.NewAgentStore()
 	manager.SetAgentPendingHandler(func(id, name, version string) {
@@ -231,6 +233,9 @@ func (s *Server) Start(ctx context.Context) error {
 	portalPagesH := &api.PortalPageTemplatesHandler{DB: s.db, Log: s.log, Pusher: manager}
 	authProvidersH := &api.AuthProvidersHandler{DB: s.db, Log: s.log, OnChange: syncConfig}
 	portalH := &api.PortalHandler{DB: s.db, Log: s.log, Pusher: manager}
+	if archStore != nil {
+		portalH.Groups = api.NewGroupResolver(archStore, s.db)
+	}
 	// Fallback direct sur les vars d'env si Viper n'a pas résolu les clés imbriquées
 	if !s.cfg.ACME.Enabled {
 		s.cfg.ACME.Enabled = os.Getenv("GPX_ACME_ENABLED") == "true"
@@ -418,7 +423,7 @@ func (s *Server) Start(ctx context.Context) error {
 		},
 	}
 	if archStore != nil {
-		securityH.Groups = archStore
+		securityH.Groups = api.NewGroupResolver(archStore, s.db)
 	}
 	// Moteur de règles : condition → action périodique
 	reEngine := rulesengine.New(s.db, s.log, rulesengine.Deps{

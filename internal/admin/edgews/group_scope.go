@@ -6,6 +6,8 @@ package edgews
 import (
 	"context"
 	"strings"
+
+	"github.com/vincamok/goproxify/internal/admin/api"
 )
 
 const groupScopePrefix = "group:"
@@ -60,4 +62,12 @@ func (m *Manager) scopedSetting(ctx context.Context, base string, e *edgeEntry) 
 		}
 	}
 	return ""
+}
+
+// groupResolver retourne le résolveur de groupes HA de l'Admin (nil sans architecture.json).
+func (m *Manager) groupResolver() api.GroupResolver {
+	if m.archStore == nil {
+		return nil
+	}
+	return api.NewGroupResolver(m.archStore, m.db)
 }

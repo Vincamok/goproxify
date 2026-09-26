@@ -20,30 +20,30 @@ import (
 
 	"github.com/vincamok/goproxify/internal/config"
 	edgeagent "github.com/vincamok/goproxify/internal/edge/agent"
-	edgecache "github.com/vincamok/goproxify/internal/edge/cache"
 	"github.com/vincamok/goproxify/internal/edge/bansdb"
+	edgecache "github.com/vincamok/goproxify/internal/edge/cache"
 	"github.com/vincamok/goproxify/internal/edge/cluster"
-	edgef2b "github.com/vincamok/goproxify/internal/edge/fail2ban"
 	edgecrowdsec "github.com/vincamok/goproxify/internal/edge/crowdsec"
-	edgere "github.com/vincamok/goproxify/internal/edge/rulesengine"
 	"github.com/vincamok/goproxify/internal/edge/errorpages"
+	edgef2b "github.com/vincamok/goproxify/internal/edge/fail2ban"
 	"github.com/vincamok/goproxify/internal/edge/geoip"
 	edgelog "github.com/vincamok/goproxify/internal/edge/logger"
+	"github.com/vincamok/goproxify/internal/edge/metrics"
 	"github.com/vincamok/goproxify/internal/edge/middleware"
 	"github.com/vincamok/goproxify/internal/edge/portal"
-	"github.com/vincamok/goproxify/internal/edge/metrics"
 	"github.com/vincamok/goproxify/internal/edge/proxy"
 	"github.com/vincamok/goproxify/internal/edge/proxypipeline"
 	"github.com/vincamok/goproxify/internal/edge/proxystore"
 	edgequic "github.com/vincamok/goproxify/internal/edge/quic"
 	"github.com/vincamok/goproxify/internal/edge/raft"
 	"github.com/vincamok/goproxify/internal/edge/router"
+	edgere "github.com/vincamok/goproxify/internal/edge/rulesengine"
+	"github.com/vincamok/goproxify/internal/edge/threat"
 	edgetls "github.com/vincamok/goproxify/internal/edge/tls"
 	edgetokens "github.com/vincamok/goproxify/internal/edge/tokens"
 	"github.com/vincamok/goproxify/internal/edge/tracing"
-	"github.com/vincamok/goproxify/internal/edge/waf"
-	"github.com/vincamok/goproxify/internal/edge/threat"
 	"github.com/vincamok/goproxify/internal/edge/tunnel"
+	"github.com/vincamok/goproxify/internal/edge/waf"
 	edgews "github.com/vincamok/goproxify/internal/edge/ws"
 	"github.com/vincamok/goproxify/internal/nodeident"
 )
@@ -55,13 +55,13 @@ type Server struct {
 	log       *edgelog.DynamicLogger
 	accessLog *edgelog.AccessLogger
 
-	table         *router.Table
-	certStore     *edgetls.CertStore
-	snippetStore  *router.SnippetStore
-	providerStore *router.AuthProviderStore
-	profileStore  *router.IPProfileStore
-	banStore      *router.BanStore
-	bansDB        *bansdb.DB
+	table           *router.Table
+	certStore       *edgetls.CertStore
+	snippetStore    *router.SnippetStore
+	providerStore   *router.AuthProviderStore
+	profileStore    *router.IPProfileStore
+	banStore        *router.BanStore
+	bansDB          *bansdb.DB
 	threatEngine    *threat.Engine
 	f2bEngine       *edgef2b.Engine
 	crowdSecBouncer *edgecrowdsec.Bouncer
@@ -71,21 +71,22 @@ type Server struct {
 	// Bans threat : merge avec les bans Admin sans écraser.
 	bansMu            sync.Mutex
 	pendingThreatBans []*router.RuntimeBan
-	cache         *edgecache.Store
-	proxyStore    *proxystore.Store
-	proxyPipe     *proxypipeline.Pipeline
-	health        *proxy.BackendHealth
-	metrics       *proxy.AgentMetricsStore
-	peers         *proxy.PeerRegistry
-	nodeStore     *edgeagent.NodeStore
-	tokenStore    *edgetokens.Store
+	cache             *edgecache.Store
+	proxyStore        *proxystore.Store
+	proxyPipe         *proxypipeline.Pipeline
+	health            *proxy.BackendHealth
+	metrics           *proxy.AgentMetricsStore
+	peers             *proxy.PeerRegistry
+	nodeStore         *edgeagent.NodeStore
+	tokenStore        *edgetokens.Store
 
-	httpSrv  *http.Server
-	httpsSrv *http.Server
-	intSrv   *http.Server // API interne :8000
-	quicSrv  *edgequic.QUICServer
-	wsHub    *edgews.Hub
-	portal   *portal.Service
+	httpSrv    *http.Server
+	httpsSrv   *http.Server
+	intSrv     *http.Server // API interne :8000
+	quicSrv    *edgequic.QUICServer
+	wsHub      *edgews.Hub
+	portal     *portal.Service
+	portalRepl *portalReplicator // réplication du portail vers les pairs du groupe HA
 
 	tracingShutdown func(context.Context) error
 	clusterGroup    *cluster.Group
@@ -109,7 +110,6 @@ type Server struct {
 	dispatchGen      atomic.Uint64
 	dispatchHandlers sync.Map // key -> *cachedDispatch
 }
-
 
 // New initialise la passerelle à partir de la configuration.
 func New(cfg *config.EdgeConfig, cfgPath ...string) (*Server, error) {
@@ -205,6 +205,8 @@ func New(cfg *config.EdgeConfig, cfgPath ...string) (*Server, error) {
 		return threat.SignalFromContext(r.Context())
 	})
 	s.portal = portal.NewService(log.Logger())
+	s.portalRepl = &portalReplicator{}
+	s.portal.SetStoreChangeHook(s.schedulePortalReplicaPush)
 
 	// Token store local — source de vérité pour l'auth de l'API interne.
 	tokensPath := "/etc/goproxify/edge-tokens.db"
@@ -598,7 +600,6 @@ func collectSentinelWhitelists(routes []*router.Route) []string {
 	return out
 }
 
-
 // applySnapshot charge toutes les ressources d'un snapshot en mémoire.
 func (s *Server) applySnapshot(snap *edgecache.Snapshot) {
 	if snap.Routes != nil {
@@ -808,4 +809,3 @@ func (s *Server) startQUIC() error {
 	s.quicSrv = &edgequic.QUICServer{}
 	return s.quicSrv.Start(s.cfg, tracing.Middleware(requestIDMiddleware(s.accessLog.Middleware(s.httpMux()))), s.certStore)
 }
-

@@ -135,3 +135,32 @@ func TestMigrateGroupSettingsAdoptsFirstMemberAndKeepsMemberValues(t *testing.T)
 type discard struct{}
 
 func (discard) Write(p []byte) (int, error) { return len(p), nil }
+
+func TestGroupResolverUnderstandsTokenIDs(t *testing.T) {
+	db, store := groupFixture(t, "grp_tokenid")
+	if _, err := db.Exec(`CREATE TABLE tokens (id TEXT PRIMARY KEY, node_name TEXT, role TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	// le token du Core principal n'a pas l'id de son nœud dans architecture.json
+	_, _ = db.Exec(`INSERT INTO tokens(id, node_name, role) VALUES('ae4e-token','frontal','edge')`)
+	g := api.NewGroupResolver(store, db)
+
+	if got := g.GroupOf("ae4e-token"); got != "ha-1" {
+		t.Fatalf("un id de token doit se résoudre par le nom du nœud, reçu %q", got)
+	}
+	if got := g.GroupOf("frontal"); got != "ha-1" {
+		t.Fatalf("par nom : %q", got)
+	}
+	if got := g.GroupOf("inconnu"); got != "" {
+		t.Fatalf("inconnu : %q", got)
+	}
+
+	// le réglage écrit via l'id du token est celui du groupe
+	h := &api.SecurityHandler{DB: db, Groups: g}
+	if rec := do(h, http.MethodPut, "/api/v1/security/threat-config?edge=ae4e-token", `{"enabled":true}`); rec.Code != http.StatusNoContent {
+		t.Fatalf("PUT: %d", rec.Code)
+	}
+	if got := strings.TrimSpace(do(h, http.MethodGet, "/api/v1/security/threat-config?edge=backup", "").Body.String()); got != `{"enabled":true}` {
+		t.Fatalf("le membre backup doit voir la config écrite via le token de frontal, reçu %q", got)
+	}
+}

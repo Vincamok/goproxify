@@ -8,6 +8,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,6 +40,10 @@ type Snapshot struct {
 	AuthSessions map[string]AuthSession      `json:"auth_sessions,omitempty"`
 	Audit        []AuditEvent                `json:"audit,omitempty"`
 	Favorites    map[string][]string         `json:"favorites,omitempty"` // userID → target IDs (non secret)
+
+	// Réplication HA : dernière modification (ns) et suppression (ns) par clé, voir replica.go.
+	Stamps map[string]int64 `json:"stamps,omitempty"`
+	Tombs  map[string]int64 `json:"tombs,omitempty"`
 }
 
 // Store persiste la base portail (AES-256-GCM, master key).
@@ -47,14 +52,21 @@ type Store struct {
 	path string
 	key  [32]byte
 	snap Snapshot
+
+	onChange  func() // appelé (dans une goroutine) après une modification locale réplicable
+	lastStamp int64
+	stampNode int64 // 0..999, propre au magasin (voir nextStampLocked)
 }
 
 // NewStore crée un store ; secret = master key (GPX_PORTAL_MASTER_KEY ou dérivée).
 func NewStore(path, secret string) *Store {
 	key := sha256.Sum256([]byte(secret))
+	var nb [2]byte
+	_, _ = rand.Read(nb[:])
 	return &Store{
-		path: path,
-		key:  key,
+		path:      path,
+		key:       key,
+		stampNode: int64(binary.BigEndian.Uint16(nb[:])) % 1000,
 		snap: Snapshot{
 			Vaults:       map[string][]byte{},
 			Personal:     map[string][]PersonalTarget{},
@@ -208,7 +220,7 @@ func (s *Store) CreateUser(u UserRecord) error {
 	if s.snap.Personal[u.ID] == nil {
 		s.snap.Personal[u.ID] = []PersonalTarget{}
 	}
-	if err := s.persistLocked(); err != nil {
+	if err := s.persistStampedLocked(userAdminKey(u.ID), userCredKey(u.ID)); err != nil {
 		s.snap.Users = s.snap.Users[:len(s.snap.Users)-1]
 		delete(s.snap.Personal, u.ID)
 		return err
@@ -232,6 +244,7 @@ func (s *Store) SyncUsers(synced []SyncedUser) error {
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
+	changed := false
 	for _, su := range synced {
 		email := strings.ToLower(strings.TrimSpace(su.Email))
 		if su.ID == "" || email == "" {
@@ -270,6 +283,10 @@ func (s *Store) SyncUsers(synced []SyncedUser) error {
 			u.InviteTokenHash = ""
 			u.InviteExpires = ""
 		}
+		if old, existed := byID[su.ID]; !existed || !sameAdminPart(old, u) {
+			s.stampLocked(userAdminKey(u.ID))
+			changed = true
+		}
 		keep = append(keep, u)
 		if s.snap.Personal[u.ID] == nil {
 			s.snap.Personal[u.ID] = []PersonalTarget{}
@@ -277,8 +294,16 @@ func (s *Store) SyncUsers(synced []SyncedUser) error {
 		delete(byID, su.ID)
 	}
 	// Comptes admin absents du push : retirés (byID restants).
+	for id := range byID {
+		s.tombLocked(userAdminKey(id), userCredKey(id))
+		changed = true
+	}
 	s.snap.Users = keep
-	return s.persistLocked()
+	err := s.persistLocked()
+	if changed {
+		s.notify()
+	}
+	return err
 }
 
 // FindUserByInviteHash trouve un compte invité par hash de jeton.
@@ -308,7 +333,7 @@ func (s *Store) CompleteInvite(userID, passwordHash string) error {
 		s.snap.Users[i].Status = UserStatusActive
 		s.snap.Users[i].InviteTokenHash = ""
 		s.snap.Users[i].InviteExpires = ""
-		return s.persistLocked()
+		return s.persistStampedLocked(userAdminKey(userID), userCredKey(userID))
 	}
 	return fmt.Errorf("utilisateur introuvable")
 }
@@ -322,7 +347,7 @@ func (s *Store) UpdateUserStatus(userID, status string) error {
 			continue
 		}
 		s.snap.Users[i].Status = status
-		return s.persistLocked()
+		return s.persistStampedLocked(userAdminKey(userID))
 	}
 	return fmt.Errorf("utilisateur introuvable")
 }
@@ -336,7 +361,7 @@ func (s *Store) UpdateUser2FA(userID string, fn func(*UserRecord)) error {
 			continue
 		}
 		fn(&s.snap.Users[i])
-		return s.persistLocked()
+		return s.persistStampedLocked(userCredKey(userID))
 	}
 	return fmt.Errorf("utilisateur introuvable")
 }
@@ -361,7 +386,7 @@ func (s *Store) PutAuthSession(token string, sess AuthSession) error {
 		s.snap.AuthSessions = map[string]AuthSession{}
 	}
 	s.snap.AuthSessions[token] = sess
-	return s.persistLocked()
+	return s.persistStampedLocked(sessionKey(token))
 }
 
 // GetAuthSession lit un jeton (false si absent/expiré).
@@ -385,7 +410,7 @@ func (s *Store) DeleteAuthSession(token string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.snap.AuthSessions, token)
-	return s.persistLocked()
+	return s.persistTombLocked(sessionKey(token))
 }
 
 // PersonalTargets liste les cibles perso d'un user.
@@ -415,7 +440,7 @@ func (s *Store) UpsertPersonalTarget(userID string, t PersonalTarget) error {
 		list = append(list, t)
 	}
 	s.snap.Personal[userID] = list
-	return s.persistLocked()
+	return s.persistStampedLocked(personalKey(userID))
 }
 
 // DeletePersonalTarget supprime une cible perso.
@@ -430,7 +455,7 @@ func (s *Store) DeletePersonalTarget(userID, targetID string) error {
 		}
 	}
 	s.snap.Personal[userID] = out
-	return s.persistLocked()
+	return s.persistStampedLocked(personalKey(userID))
 }
 
 // FindPersonalTarget retourne une cible perso.
@@ -462,7 +487,7 @@ func (s *Store) SetVaultBlob(userID string, blob []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.snap.Vaults[userID] = blob
-	return s.persistLocked()
+	return s.persistStampedLocked(vaultKey(userID))
 }
 
 // VaultBlob retourne le vault chiffré (copie).
@@ -559,7 +584,7 @@ func (s *Store) SetFavorites(userID string, ids []string) error {
 		clean = append(clean, id)
 	}
 	s.snap.Favorites[userID] = clean
-	return s.persistLocked()
+	return s.persistStampedLocked(favoritesKey(userID))
 }
 
 // ToggleFavorite ajoute ou retire un favori ; retourne true si désormais favori.
@@ -577,11 +602,11 @@ func (s *Store) ToggleFavorite(userID, targetID string) (bool, error) {
 	for i, id := range cur {
 		if id == targetID {
 			s.snap.Favorites[userID] = append(cur[:i], cur[i+1:]...)
-			return false, s.persistLocked()
+			return false, s.persistStampedLocked(favoritesKey(userID))
 		}
 	}
 	s.snap.Favorites[userID] = append(append([]string{}, cur...), targetID)
-	return true, s.persistLocked()
+	return true, s.persistStampedLocked(favoritesKey(userID))
 }
 
 func encryptWithKey(plain []byte, key [32]byte) ([]byte, error) {

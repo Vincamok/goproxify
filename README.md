@@ -251,6 +251,7 @@ Full reference → **[docs/cli.md](docs/cli.md)**
 - **User API tokens (PAT)** — `gpx_pat_*` self-service with scopes (`proxies:read`, …) for scripts and MCP clients; distinct from Edge/Agent pairing tokens
 - **MCP server** — JSON-RPC 2.0 + SSE; **PAT-only** authentication (no session JWT)
 - **Architecture wizard** — host canvas + palette, multi-Edge/HA, QR tickets / `curl|bash` to integrate a host
+- **HA groups** — Sentinel, IPS provider, HTTP timeouts and the access portal are configured once per HA group; the portal store (accounts, 2FA, vaults, optional shared web sessions) and Sentinel reference lists are replicated between Edges, and bans keep flowing between peers when the Admin is down
 - **Guided first start** — initial configuration wizard
 - ACME DNS-01 wildcard management (OVH, Cloudflare, Gandi, Route53, Hetzner)
 - Certificate push to Edge (RAM only, never persisted on Edge side)

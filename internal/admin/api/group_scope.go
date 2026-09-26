@@ -18,6 +18,7 @@ type GroupResolver interface {
 	GroupOf(ref string) string
 	GroupMembers(group string) []archstore.NodeEntry
 	Groups() (names []string, members map[string][]archstore.NodeEntry)
+	NodeOf(ref string) (archstore.NodeEntry, bool)
 }
 
 const groupScopePrefix = "group:"
@@ -142,4 +143,46 @@ func sameJSON(a, b string) bool {
 	ja, _ := json.Marshal(va)
 	jb, _ := json.Marshal(vb)
 	return bytes.Equal(ja, jb)
+}
+
+// NewGroupResolver retourne un résolveur de groupe HA qui comprend aussi les identifiants de token :
+// l'UI désigne une passerelle par l'id de son token, qui n'est pas toujours l'id de son nœud dans
+// architecture.json (nœud du wizard et token créés séparément). Le nom du token sert alors de lien.
+func NewGroupResolver(store *archstore.Store, db *sql.DB) GroupResolver {
+	return tokenAwareGroups{store: store, db: db}
+}
+
+type tokenAwareGroups struct {
+	store *archstore.Store
+	db    *sql.DB
+}
+
+func (g tokenAwareGroups) GroupOf(ref string) string {
+	if name := g.store.GroupOf(ref); name != "" || ref == "" {
+		return name
+	}
+	var nodeName string
+	if err := g.db.QueryRow(`SELECT node_name FROM tokens WHERE id=? AND role='edge'`, ref).Scan(&nodeName); err != nil || nodeName == "" {
+		return ""
+	}
+	return g.store.GroupOf(nodeName)
+}
+
+func (g tokenAwareGroups) GroupMembers(group string) []archstore.NodeEntry {
+	return g.store.GroupMembers(group)
+}
+
+func (g tokenAwareGroups) Groups() ([]string, map[string][]archstore.NodeEntry) {
+	return g.store.Groups()
+}
+
+func (g tokenAwareGroups) NodeOf(ref string) (archstore.NodeEntry, bool) {
+	if n, ok := g.store.NodeOf(ref); ok {
+		return n, true
+	}
+	var nodeName string
+	if err := g.db.QueryRow(`SELECT node_name FROM tokens WHERE id=? AND role='edge'`, ref).Scan(&nodeName); err != nil || nodeName == "" {
+		return archstore.NodeEntry{}, false
+	}
+	return g.store.NodeOf(nodeName)
 }

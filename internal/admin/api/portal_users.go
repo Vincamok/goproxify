@@ -54,7 +54,7 @@ func (h *PortalHandler) handleUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PortalHandler) listPortalUsers(w http.ResponseWriter, r *http.Request) {
-	edge := portalEdgeParam(r)
+	edge := h.scope(portalEdgeParam(r))
 	q := `SELECT id, email, status, tags_json, home_edge, invite_expires, created_at, updated_at FROM portal_users`
 	var rows *sql.Rows
 	var err error
@@ -117,6 +117,7 @@ func (h *PortalHandler) invitePortalUser(w http.ResponseWriter, r *http.Request)
 		writeErr(w, r, http.StatusBadRequest, "api.err.edge_required")
 		return
 	}
+	home = h.scope(home)
 	if !mailer.Load(h.DB).Configured() {
 		http.Error(w, mailer.ErrNotConfigured.Error(), http.StatusBadRequest)
 		return
@@ -237,7 +238,7 @@ func (h *PortalHandler) updatePortalUser(w http.ResponseWriter, r *http.Request,
 	}
 	home := u.HomeEdge
 	if body.HomeEdge != nil && strings.TrimSpace(*body.HomeEdge) != "" {
-		home = strings.TrimSpace(*body.HomeEdge)
+		home = h.scope(strings.TrimSpace(*body.HomeEdge))
 	}
 	tagsJSON, _ := json.Marshal(tags)
 	_, err = h.DB.Exec(`UPDATE portal_users SET tags_json=?, status=?, home_edge=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
@@ -285,11 +286,7 @@ func (h *PortalHandler) sendInviteEmail(email, publicHost, rawToken string) erro
 }
 
 func (h *PortalHandler) pushUsersForEdge(r *http.Request, edge string) {
-	if h.Pusher == nil || edge == "" {
-		return
-	}
-	cfg := loadPortalConfig(h.DB, edge)
-	h.Pusher.PushPortal(r.Context(), edge, cfg)
+	h.pushScope(r.Context(), edge)
 }
 
 func (h *PortalHandler) loadPortalUser(id string) (PortalUser, error) {

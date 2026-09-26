@@ -55,7 +55,7 @@ func (h *PortalHandler) handleDestinations(w http.ResponseWriter, r *http.Reques
 
 // previewDestinations applique le filtre tags R9–R10 comme sur Access (miroir Admin).
 func (h *PortalHandler) previewDestinations(w http.ResponseWriter, r *http.Request) {
-	edge := portalEdgeParam(r)
+	edge := h.scope(portalEdgeParam(r))
 	userTags := normalizeTags(splitCSV(r.URL.Query().Get("tags")))
 	if uid := strings.TrimSpace(r.URL.Query().Get("user_id")); uid != "" {
 		row := h.DB.QueryRow(`SELECT tags_json FROM portal_users WHERE id=?`, uid)
@@ -116,7 +116,7 @@ func splitCSV(s string) []string {
 }
 
 func (h *PortalHandler) listDestinations(w http.ResponseWriter, r *http.Request) {
-	edge := portalEdgeParam(r)
+	edge := h.scope(portalEdgeParam(r))
 	q := `SELECT id, edge_name, kind, name, host, port, agent_name, container, tags_json, enabled
 		FROM portal_destinations`
 	var rows *sql.Rows
@@ -163,6 +163,7 @@ func (h *PortalHandler) createDestination(w http.ResponseWriter, r *http.Request
 		writeErr(w, r, http.StatusBadRequest, "api.err.bad_json")
 		return
 	}
+	body.EdgeName = h.scope(strings.TrimSpace(body.EdgeName))
 	if err := validateDestination(&body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -194,6 +195,7 @@ func (h *PortalHandler) updateDestination(w http.ResponseWriter, r *http.Request
 		return
 	}
 	body.ID = id
+	body.EdgeName = h.scope(strings.TrimSpace(body.EdgeName))
 	if err := validateDestination(&body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -243,11 +245,7 @@ func (h *PortalHandler) deleteDestination(w http.ResponseWriter, r *http.Request
 }
 
 func (h *PortalHandler) pushCatalogForEdge(r *http.Request, edge string) {
-	if h.Pusher == nil || edge == "" {
-		return
-	}
-	cfg := loadPortalConfig(h.DB, edge)
-	h.Pusher.PushPortal(r.Context(), edge, cfg)
+	h.pushScope(r.Context(), edge)
 }
 
 func validateDestination(d *PortalDestination) error {

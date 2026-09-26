@@ -17,6 +17,13 @@ type Config struct {
 	Require2FA           bool   `json:"require_2fa"`            // off par défaut (KTD3)
 	SessionTTLSec        int    `json:"session_ttl_sec"`        // défaut 60 (KTD1)
 	SessionMode          string `json:"session_mode"`           // one_shot | multi
+
+	// Haute disponibilité (poussés par l'Admin) : réplication du magasin entre les passerelles du groupe.
+	HAGroup      string   `json:"ha_group,omitempty"`
+	HAMembers    []string `json:"ha_members,omitempty"`
+	HAKey        string   `json:"-"`                            // jamais persistée ni journalisée
+	HASharedSess bool     `json:"ha_shared_sessions,omitempty"` // sessions web répliquées (mode shared)
+	HAStandby    bool     `json:"ha_standby,omitempty"`         // réplique sans écouter (nœud sans portail)
 }
 
 // Defaults applique les valeurs par défaut.
@@ -96,19 +103,19 @@ type SyncedUser struct {
 
 // UserRecord est un compte portail local.
 type UserRecord struct {
-	ID               string   `json:"id"`
-	Username         string   `json:"username"`
-	PasswordHash     string   `json:"password_hash"` // bcrypt
-	CreatedAt        string   `json:"created_at"`
-	Status           string   `json:"status,omitempty"`
-	Tags             []string `json:"tags,omitempty"`
-	InviteTokenHash  string   `json:"invite_token_hash,omitempty"`
-	InviteExpires    string   `json:"invite_expires,omitempty"`
-	AdminManaged     bool     `json:"admin_managed,omitempty"`
-	TOTPSecret       string   `json:"totp_secret,omitempty"`
-	TOTPEnabled      bool     `json:"totp_enabled,omitempty"`
-	TOTPPendingSecret string  `json:"totp_pending_secret,omitempty"`
-	EmailOTPEnabled  bool     `json:"email_otp_enabled,omitempty"`
+	ID                string   `json:"id"`
+	Username          string   `json:"username"`
+	PasswordHash      string   `json:"password_hash"` // bcrypt
+	CreatedAt         string   `json:"created_at"`
+	Status            string   `json:"status,omitempty"`
+	Tags              []string `json:"tags,omitempty"`
+	InviteTokenHash   string   `json:"invite_token_hash,omitempty"`
+	InviteExpires     string   `json:"invite_expires,omitempty"`
+	AdminManaged      bool     `json:"admin_managed,omitempty"`
+	TOTPSecret        string   `json:"totp_secret,omitempty"`
+	TOTPEnabled       bool     `json:"totp_enabled,omitempty"`
+	TOTPPendingSecret string   `json:"totp_pending_secret,omitempty"`
+	EmailOTPEnabled   bool     `json:"email_otp_enabled,omitempty"`
 }
 
 // DefaultSessionTTL durée de vie d'un UUID non consommé (KTD1).

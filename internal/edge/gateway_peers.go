@@ -192,6 +192,8 @@ func (s *Server) syncPeer(ctx context.Context, p proxy.PeerInfo) {
 	// Profils comportementaux WAF
 	s.syncWAFBehaviorFromPeer(ctx, client, p)
 	s.syncThreatListsFromPeer(ctx, client, p)
+	s.syncPortalReplicaFromPeer(ctx, client, p)
+	s.syncBansFromPeer(ctx, client, p)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.Endpoint+"/internal/v1/agent/containers", nil)
 	if err != nil {

@@ -30,6 +30,7 @@ type Service struct {
 	sendEmailOTP      func(email, code string) error
 	onAudit           func(AuditEvent)
 	pageTemplates     *TemplateStore
+	onStoreChange     func()
 }
 
 // NewService prépare le service (pas encore démarré).
@@ -76,6 +77,14 @@ func (s *Service) ApplyConfig(cfg Config) error {
 	if !cfg.Enabled {
 		s.cfg = cfg
 		s.stopLocked()
+		if cfg.HAStandby && cfg.HAKey != "" {
+			if err := s.ensureStandbyStoreLocked(); err != nil {
+				s.log.Warn("portal: magasin de réplication indisponible", "err", err)
+			} else {
+				s.log.Info("portal: en attente (réplique du groupe HA, sans écouter)", "groupe", cfg.HAGroup)
+				return nil
+			}
+		}
 		s.log.Info("portal: désactivé")
 		return nil
 	}
@@ -92,6 +101,8 @@ func (s *Service) ApplyConfig(cfg Config) error {
 		s.cfg.Require2FA = cfg.Require2FA
 		s.cfg.SessionTTLSec = cfg.SessionTTLSec
 		s.cfg.SessionMode = cfg.SessionMode
+		s.cfg.HAGroup, s.cfg.HAMembers, s.cfg.HAKey = cfg.HAGroup, cfg.HAMembers, cfg.HAKey
+		s.cfg.HASharedSess, s.cfg.HAStandby = cfg.HASharedSess, cfg.HAStandby
 		s.cfg.Enabled = true
 		s.log.Info("portal: config à chaud", "public_host", s.cfg.PublicHost, "users", s.store.UserCount(),
 			"allow_personal", s.cfg.AllowPersonalTargets, "require_2fa", s.cfg.Require2FA,
@@ -143,6 +154,7 @@ func (s *Service) startLocked() error {
 	s.store = store
 	s.sessions = NewSessionManager()
 	s.masterSecret = secret
+	store.SetOnChange(s.onStoreChange)
 
 	baseLog := AuditLogger(s.log)
 	s.audit = func(e AuditEvent) {
@@ -260,4 +272,46 @@ func resolveMasterKey() string {
 		return k
 	}
 	return edgecache.ResolveSecret("")
+}
+
+// SetStoreChangeHook enregistre le rappel déclenché par une modification locale réplicable du magasin
+// (envoi immédiat aux passerelles du groupe HA).
+func (s *Service) SetStoreChangeHook(fn func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onStoreChange = fn
+	if s.store != nil {
+		s.store.SetOnChange(fn)
+	}
+}
+
+// ensureStandbyStoreLocked charge le magasin sans démarrer les écoutes : une passerelle sans portail
+// garde ainsi une copie à jour et peut le reprendre.
+func (s *Service) ensureStandbyStoreLocked() error {
+	if s.store != nil {
+		return nil
+	}
+	secret := resolveMasterKey()
+	if secret == "" {
+		return fmt.Errorf("portal: master key manquante (GPX_PORTAL_MASTER_KEY ou token passerelle)")
+	}
+	store := NewStore(s.cfg.DBPath, secret)
+	if err := store.Load(); err != nil {
+		return fmt.Errorf("portal store load: %w", err)
+	}
+	store.SetOnChange(s.onStoreChange)
+	s.store = store
+	s.masterSecret = secret
+	return nil
+}
+
+// ReplicaInfo retourne le magasin et les paramètres de réplication HA, ou ok=false hors groupe
+// ou tant que la clé du groupe n'est pas connue.
+func (s *Service) ReplicaInfo() (store *Store, key string, members []string, sharedSessions, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.store == nil || s.cfg.HAGroup == "" || s.cfg.HAKey == "" {
+		return nil, "", nil, false, false
+	}
+	return s.store, s.cfg.HAKey, append([]string(nil), s.cfg.HAMembers...), s.cfg.HASharedSess, true
 }

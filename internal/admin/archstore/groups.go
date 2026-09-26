@@ -85,3 +85,35 @@ func (s *Store) Groups() (names []string, members map[string][]NodeEntry) {
 func (s *Store) IsInGroup(ref, group string) bool {
 	return group != "" && s.GroupOf(ref) == group
 }
+
+// PortalFlag lit `config.portal` du wizard : le nœud héberge-t-il le portail d'accès ?
+// declared est faux quand le wizard ne dit rien (le portail suit alors la config du groupe).
+func (n NodeEntry) PortalFlag() (enabled, declared bool) {
+	if len(n.Config) == 0 {
+		return false, false
+	}
+	var cfg struct {
+		Portal *bool `json:"portal"`
+	}
+	if json.Unmarshal(n.Config, &cfg) != nil || cfg.Portal == nil {
+		return false, false
+	}
+	return *cfg.Portal, true
+}
+
+// NodeOf retourne le nœud désigné par ref (id ou nom).
+func (s *Store) NodeOf(ref string) (NodeEntry, bool) {
+	if ref == "" {
+		return NodeEntry{}, false
+	}
+	nodes, err := s.List()
+	if err != nil {
+		return NodeEntry{}, false
+	}
+	for _, n := range nodes {
+		if n.ID == ref || n.Name == ref {
+			return n, true
+		}
+	}
+	return NodeEntry{}, false
+}

@@ -772,6 +772,27 @@ Fournisseur IPS actif (`native|fail2ban|crowdsec`). Même règle de portée que 
 
 Timeouts HTTP/QUIC (`read_header_seconds`, `read_seconds`, `write_seconds`, `idle_seconds`, redémarrage de la passerelle requis). Même règle de portée que `threat-config` ; une passerelle qui rejoint le groupe reçoit ceux du groupe à sa connexion.
 
+## Portail d'accès — `/api/v1/portal`
+
+Le paramètre `edge=<id ou nom>` désigne une passerelle. Dans un **groupe HA** (`config.cluster` + `config.cluster_group` dans `architecture.json`), la configuration du portail est **celle du groupe** : lue et écrite une seule fois, poussée à tous les membres (config, destinations, utilisateurs invités). L'activation reste une propriété du nœud : un membre qui n'héberge pas le portail (`config.portal: false`) reçoit la config du groupe **en attente** (`ha_standby`), sans écouter, et réplique le magasin pour pouvoir prendre le relais.
+
+### `GET /api/v1/portal?edge=` · `PUT /api/v1/portal?edge=`
+
+Config du portail (`enabled`, `ssh_port`, `http_port`, `public_host`, `auth_provider_id`, `allow_personal_targets`, `require_2fa`, `session_ttl_sec`, `session_mode`, catalogue, utilisateurs). Pour une passerelle membre d'un groupe HA, la réponse ajoute :
+
+| Champ | Description |
+|-------|-------------|
+| `ha_group`, `ha_members` | Groupe et membres (calculés, non modifiables) |
+| `ha_session_mode` | `sticky` (défaut : une session web reste sur la passerelle qui l'a émise, affinité à assurer sur le répartiteur) ou `shared` (sessions répliquées entre les membres ; à choisir avec un DNS round-robin) |
+
+La clé de réplication du groupe (`ha_key`) n'est jamais renvoyée : l'Admin la génère, la conserve scellée et ne la pousse qu'aux passerelles du groupe.
+
+### `POST /api/v1/portal/push?edge=`
+
+Repousse la config du portail à la passerelle (à tous les membres du groupe HA).
+
+Les destinations (`/api/v1/portal/destinations`) et les utilisateurs (`/api/v1/portal/users`) suivent la même règle : rattachés au groupe, visibles et modifiables depuis n'importe quel membre. Au démarrage, les données propres aux membres d'avant les groupes sont rattachées au groupe (config du premier membre, destinations en double retirées, un désaccord de config est signalé dans le log, jamais écrasé).
+
 ## Moteur de règles automatiques
 
 ### `GET /api/v1/rules-engine/rules`
@@ -879,6 +900,18 @@ Soumission des métriques d'un Agent.
 ### `POST /internal/v1/discovery`
 
 Soumission d'un proxy découvert par labels (depuis un Agent).
+
+### `GET|POST /internal/v1/portal/replica`
+
+Réplication du magasin du portail entre passerelles d'un même groupe HA (comptes, mot de passe et 2FA, coffres, cibles perso, favoris, et sessions web en mode `shared`). L'état échangé est **chiffré (AES-256-GCM) par la clé du groupe** poussée par l'Admin : il ne circule jamais en clair et une clé différente ne déchiffre rien. Fusion « dernier écrit gagne » par clé avec suppressions propagées ; envoi immédiat à chaque modification locale et tirage toutes les 15 s. Répond `204` hors groupe. Sans `GPX_PORTAL_MASTER_KEY` identique sur les membres, les coffres des comptes SSO répliqués ne sont pas déchiffrables ailleurs (un avertissement est journalisé).
+
+### `POST /internal/v1/bans/gossip`
+
+Un ban décidé localement (Sentinel, Fail2Ban) est transmis aux passerelles pairs sans passer par l'Admin ; chaque passerelle récupère aussi périodiquement les bans actifs de ses pairs (`GET /internal/v1/bans`). Les bans expirés, sans IP ou déjà connus (même identifiant ou même IP) sont ignorés ; un ban reçu d'un pair n'est jamais réémis. Ce circuit prend le relais quand l'Admin est indisponible.
+
+### `GET /internal/v1/threat-lists/export` · `POST /internal/v1/threat-lists/sync`
+
+Listes de référence Sentinel (`ua.txt`, `paths.txt`, `ips.txt`) : échangées entre passerelles pairs à chaque cycle de synchronisation, la plus récente l'emporte.
 
 > **Note de migration :** Ces endpoints HTTP sont conservés pour la rétrocompatibilité pendant la migration. La nouvelle architecture utilise les tunnels WebSocket décrits ci-dessous.
 

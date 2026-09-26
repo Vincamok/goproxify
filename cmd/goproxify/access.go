@@ -180,6 +180,13 @@ func runAccessConfig() {
 		if v := flagValue(args, "-session-mode", ""); v != "" {
 			cur["session_mode"] = v
 		}
+		if v := flagValue(args, "-ha-session-mode", ""); v != "" {
+			if v != "sticky" && v != "shared" {
+				fmt.Fprintln(os.Stderr, "-ha-session-mode : sticky ou shared")
+				os.Exit(1)
+			}
+			cur["ha_session_mode"] = v
+		}
 		var out any
 		if _, err := client.DoJSON("PUT", "/api/v1/portal?edge="+edge, cur, &out); err != nil {
 			fmt.Fprintf(os.Stderr, "access config set : %v\n", err)

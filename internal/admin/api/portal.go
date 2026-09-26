@@ -33,6 +33,13 @@ type PortalConfig struct {
 	Catalog              []portal.CatalogTarget `json:"catalog"`
 	Users                []portal.SyncedUser    `json:"users,omitempty"`
 	EdgeName             string                 `json:"edge_name,omitempty"` // Passerelle cible (echo)
+
+	// Haute disponibilité : la config est celle du groupe HA de la passerelle (voir portal_group.go).
+	HAGroup       string   `json:"ha_group,omitempty"`        // calculé
+	HAMembers     []string `json:"ha_members,omitempty"`      // calculé
+	HAStandby     bool     `json:"ha_standby,omitempty"`      // calculé : réplique sans écouter (nœud sans portail)
+	HASessionMode string   `json:"ha_session_mode,omitempty"` // sticky (défaut) | shared
+	HAKey         string   `json:"ha_key,omitempty"`          // poussé aux passerelles, jamais renvoyé à l'UI
 }
 
 // PortalPusher pousse la config portail vers une passerelle précis.
@@ -46,6 +53,8 @@ type PortalHandler struct {
 	DB     *sql.DB
 	Log    *slog.Logger
 	Pusher PortalPusher
+	// Groups (optionnel) : groupes HA ; la config du portail est alors celle du groupe.
+	Groups GroupResolver
 }
 
 func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -91,7 +100,16 @@ func (h *PortalHandler) get(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusBadRequest, "api.err.edge_required")
 		return
 	}
-	cfg := loadPortalConfig(h.DB, edge)
+	scope := h.scope(edge)
+	cfg := loadPortalConfig(h.DB, scope)
+	cfg.EdgeName = edge
+	if group, ok := strings.CutPrefix(scope, groupScopePrefix); ok {
+		cfg.HAGroup = group
+		cfg.HAMembers = memberNames(h.Groups, group)
+		if cfg.HASessionMode != HASessionShared {
+			cfg.HASessionMode = HASessionSticky
+		}
+	}
 	jsonOK(w, cfg)
 }
 
@@ -101,31 +119,38 @@ func (h *PortalHandler) put(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusBadRequest, "api.err.edge_required")
 		return
 	}
+	scope := h.scope(edge)
 	var cfg PortalConfig
 	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
 		writeErr(w, r, http.StatusBadRequest, "api.err.bad_json")
 		return
 	}
-	cfg.EdgeName = edge
+	// Champs calculés ou secrets : jamais acceptés du client.
+	cfg.HAGroup, cfg.HAMembers, cfg.HAStandby, cfg.HAKey = "", nil, false, ""
+	if cfg.HASessionMode != HASessionShared {
+		cfg.HASessionMode = HASessionSticky
+	}
+	if !strings.HasPrefix(scope, groupScopePrefix) {
+		cfg.HASessionMode = ""
+	}
+	cfg.EdgeName = scope
 	normalizePortalConfig(&cfg)
 	// Ne plus accepter catalog JSON comme source de vérité : synchro table → settings.
-	migrateLegacyCatalogIntoDestinations(h.DB, edge, cfg.Catalog)
-	cfg.Catalog = listDestinationsAsCatalog(h.DB, edge)
+	migrateLegacyCatalogIntoDestinations(h.DB, scope, cfg.Catalog)
+	cfg.Catalog = listDestinationsAsCatalog(h.DB, scope)
 	raw, err := json.Marshal(cfg)
 	if err != nil {
 		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
 		return
 	}
-	if err := admindb.SetSetting(h.DB, settingPortalConfigPrefix+edge, string(raw)); err != nil {
+	if err := admindb.SetSetting(h.DB, settingPortalConfigPrefix+scope, string(raw)); err != nil {
 		h.Log.Error("portal: save", "edge", edge, "err", err)
 		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
 		return
 	}
-	_ = admindb.WriteAudit(h.DB, adminauth.ActorFromContext(r.Context()), "update", "portal", edge)
-	if h.Pusher != nil {
-		h.Pusher.PushPortal(r.Context(), edge, cfg)
-	}
-	jsonOK(w, cfg)
+	_ = admindb.WriteAudit(h.DB, adminauth.ActorFromContext(r.Context()), "update", "portal", scope)
+	h.pushScope(r.Context(), scope)
+	h.get(w, r)
 }
 
 func (h *PortalHandler) push(w http.ResponseWriter, r *http.Request) {
@@ -134,10 +159,10 @@ func (h *PortalHandler) push(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusBadRequest, "api.err.edge_required")
 		return
 	}
-	cfg := loadPortalConfig(h.DB, edge)
-	if h.Pusher != nil {
-		h.Pusher.PushPortal(r.Context(), edge, cfg)
-	}
+	scope := h.scope(edge)
+	h.pushScope(r.Context(), scope)
+	cfg := loadPortalConfig(h.DB, scope)
+	cfg.EdgeName = edge
 	jsonOK(w, map[string]any{"pushed": true, "config": cfg})
 }
 
@@ -179,24 +204,27 @@ func loadPortalConfig(db *sql.DB, edgeName string) PortalConfig {
 }
 
 // handleEnabled retourne {edges: {edgeName: true/false}} pour toutes les passerelles configurées.
+// La config d'un groupe HA vaut pour chacun de ses membres, dont l'activation dépend du nœud.
 func (h *PortalHandler) handleEnabled(w http.ResponseWriter, r *http.Request) {
 	all := admindb.ListSettingsByPrefix(h.DB, settingPortalConfigPrefix)
 	result := map[string]bool{}
 	prefix := settingPortalConfigPrefix
 	for key, raw := range all {
-		edgeName := strings.TrimPrefix(key, prefix)
-		if edgeName == "" {
+		scope := strings.TrimPrefix(key, prefix)
+		if scope == "" {
 			continue
 		}
 		var cfg PortalConfig
-		if err := json.Unmarshal([]byte(raw), &cfg); err == nil {
-			result[edgeName] = cfg.Enabled
+		if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+			continue
 		}
+		if group, ok := strings.CutPrefix(scope, groupScopePrefix); ok && h.Groups != nil {
+			for _, name := range memberNames(h.Groups, group) {
+				result[name] = BuildPortalPayload(h.DB, h.Groups, name).Enabled
+			}
+			continue
+		}
+		result[scope] = cfg.Enabled
 	}
 	jsonOK(w, map[string]any{"edges": result})
-}
-
-// LoadPortalConfigForEdge expose la config pour le full_sync WS.
-func LoadPortalConfigForEdge(db *sql.DB, edgeName string) PortalConfig {
-	return loadPortalConfig(db, edgeName)
 }
