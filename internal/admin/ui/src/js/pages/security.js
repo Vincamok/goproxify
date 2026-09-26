@@ -411,7 +411,7 @@ async function renderSecurityOverview(ctx) {
         const wafProfiles = mSec.waf?.profiles_active ?? '—';
         const pipeline = mSec.pipeline || [];
         const top3 = [...pipeline].sort((a,b)=>(b.blocked_total||0)-(a.blocked_total||0)).slice(0,3);
-        return `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
+        return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));gap:12px;margin-bottom:16px">
           <div class="card blueprint" style="padding:14px 16px">
             <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
             <div style="font-size:10px;opacity:.5;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Fail2Ban</div>
@@ -448,7 +448,7 @@ async function renderSecurityOverview(ctx) {
         </div>
       </div>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr));gap:16px;margin-bottom:20px">
         <div class="card blueprint">
           <div class="card-header"><span class="card-title"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:6px"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>${t('security.overview_bans_by_source')||'Bans actifs par source'}</span></div>
           <div style="padding:12px 16px 16px">${secBansBySourceHTML(filteredBans.length ? filteredBans : (bansRaw || []))}</div>
@@ -473,6 +473,229 @@ async function renderSecurityOverview(ctx) {
   } catch(e) { toast(e.message,'error'); }
 }
 
+// ── PAGE PARTAGÉE: Vulnérabilités (vue Parc / vue Liste + tiroir de détail) ───────
+// Admin : une carte par passerelle. Passerelle : une carte par backend. Même code, seule
+// l'unité de regroupement et la colonne « Passerelle » changent.
+
+const VS_VIEW_KEY = 'gpx_vulns_view';
+const _vs = { view: 'parc', sev: '', st: 'open', q: '', gw: '', open: null, sel: null, cves: [], mode: 'admin' };
+try { _vs.view = localStorage.getItem(VS_VIEW_KEY) === 'list' ? 'list' : 'parc'; } catch (_) {}
+
+function vsSev(score) {
+  const s = Number(score) || 0;
+  return s >= 9 ? 'crit' : s >= 7 ? 'high' : s >= 4 ? 'med' : 'low';
+}
+
+function vsIsOpen(c) { return c.status === 'open'; }
+
+// 100 = rien d'ouvert ; chaque CVE ouverte retire des points selon sa gravité.
+function vsRiskScore(list) {
+  let penalty = 0;
+  for (const c of list) if (vsIsOpen(c)) penalty += vsSev(c.cvss_score) === 'crit' ? 14 : vsSev(c.cvss_score) === 'high' ? 7 : 3;
+  return Math.max(0, 100 - penalty);
+}
+
+function vsUnitKey(c) { return _vs.mode === 'admin' ? (c.edge_name || '—') : (c.backend_url || '—'); }
+function vsCveKey(c) { return String(c.id); }
+
+function vsFiltered() {
+  const q = _vs.q.trim().toLowerCase();
+  return _vs.cves.filter(c => {
+    if (_vs.st && c.status !== _vs.st) return false;
+    if (_vs.sev && vsSev(c.cvss_score) !== _vs.sev) return false;
+    if (_vs.gw && (c.edge_name || '—') !== _vs.gw) return false;
+    if (q && !(`${c.cve_id} ${c.backend_url} ${c.description} ${c.edge_name || ''}`.toLowerCase().includes(q))) return false;
+    return true;
+  }).sort((a, b) => (b.cvss_score || 0) - (a.cvss_score || 0));
+}
+
+function vsSevBar(list) {
+  const open = list.filter(vsIsOpen);
+  if (!open.length) return '<div class="vs-bar" aria-hidden="true"></div>';
+  const seg = ['crit', 'high', 'med', 'low'].map(s => {
+    const n = open.filter(c => vsSev(c.cvss_score) === s).length;
+    return n ? `<i class="vs-${s}" style="flex:${n}"></i>` : '';
+  }).join('');
+  return `<div class="vs-bar" aria-hidden="true">${seg}</div>`;
+}
+
+function vsRing(score, size) {
+  const color = score >= 80 ? 'var(--green)' : score >= 55 ? 'var(--yellow)' : 'var(--red)';
+  const inner = size - 12;
+  return `<div class="vs-ring" style="--p:${score};--c:${color};width:${size}px;height:${size}px" role="img" aria-label="${esc(t('security.vs.risk'))} ${score}/100"><div style="width:${inner}px;height:${inner}px"><b>${score}</b></div></div>`;
+}
+
+function vsStatusTag(status) {
+  const cls = status === 'open' ? 'tag-yellow' : status === 'fixed' ? 'tag-green' : 'tag-neutral';
+  const label = t('security.vulns.f_' + status);
+  return `<span class="tag ${cls}">${esc(label === 'security.vulns.f_' + status ? status : label)}</span>`;
+}
+
+function vsRowHTML(c, showGw) {
+  const sev = vsSev(c.cvss_score);
+  return `<button type="button" class="vs-row${_vs.sel === vsCveKey(c) ? ' sel' : ''}" onclick="vsSelect('${esc(vsCveKey(c))}')" aria-label="${esc(c.cve_id)}">
+    <span class="vs-c-cve mono">${esc(c.cve_id)}</span>
+    <span class="vs-c-score"><span class="vs-score vs-${sev}">${(Number(c.cvss_score) || 0).toFixed(1)}</span></span>
+    <span class="vs-c-be mono" title="${esc(c.backend_url)}">${esc(c.backend_url)}</span>
+    ${showGw ? `<span class="vs-c-gw">${esc(c.edge_name || '—')}</span>` : ''}
+    <span class="vs-c-desc" title="${esc(c.description)}">${esc(c.description)}</span>
+    <span class="vs-c-st">${vsStatusTag(c.status)}</span>
+  </button>`;
+}
+
+function vsListHTML(list, showGw) {
+  if (!list.length) return `<div class="empty"><p>${esc(t('security.no_cves'))}</p></div>`;
+  return `<div class="vs-list${showGw ? ' vs-with-gw' : ''}" role="list">
+    <div class="vs-head" aria-hidden="true"><span>CVE</span><span>CVSS</span><span>${esc(t('security.col.backend'))}</span>${showGw ? `<span>${esc(t('security.col.edge'))}</span>` : ''}<span>${esc(t('security.col.description'))}</span><span>${esc(t('security.col.status'))}</span></div>
+    ${list.map(c => vsRowHTML(c, showGw)).join('')}
+  </div>`;
+}
+
+function vsUnits(list) {
+  const map = new Map();
+  for (const c of list) {
+    const k = vsUnitKey(c);
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(c);
+  }
+  return [...map.entries()].map(([k, l]) => ({ k, l, score: vsRiskScore(l) })).sort((a, b) => a.score - b.score || b.l.length - a.l.length);
+}
+
+function vsUnitCardHTML(u) {
+  const open = u.l.filter(vsIsOpen);
+  const n = s => open.filter(c => vsSev(c.cvss_score) === s).length;
+  const expanded = _vs.open === u.k;
+  const meta = _vs.mode === 'admin'
+    ? t('security.vs.backends_n', { n: new Set(u.l.map(c => c.backend_url)).size })
+    : t('security.vs.cves_n', { n: u.l.length });
+  return `<button type="button" class="vs-unit" data-unit="${esc(u.k)}" aria-expanded="${expanded}" onclick="vsToggleUnit(this.dataset.unit)">
+    <span class="vs-unit-top">
+      <span class="vs-unit-id"><span class="vs-unit-name mono">${esc(u.k)}</span><span class="vs-unit-meta">${esc(meta)}</span></span>
+      ${vsRing(u.score, 52)}
+    </span>
+    ${vsSevBar(u.l)}
+    <span class="vs-counts"><span class="vs-crit-t">${n('crit')} ${esc(t('security.vs.s_crit'))}</span><span class="vs-high-t">${n('high')} ${esc(t('security.vs.s_high'))}</span><span class="vs-med-t">${n('med')} ${esc(t('security.vs.s_med'))}</span><span class="vs-low-t">${n('low')} ${esc(t('security.vs.s_low'))}</span></span>
+  </button>`;
+}
+
+function vsDrawerHTML() {
+  const c = _vs.cves.find(x => vsCveKey(x) === _vs.sel);
+  if (!c) return `<aside class="vs-drawer" id="vs-drawer" aria-live="polite"><div class="vs-drawer-empty">${esc(t('security.vs.detail_empty'))}</div></aside>`;
+  const sev = vsSev(c.cvss_score);
+  const rows = [
+    [t('security.col.backend'), c.backend_url],
+    _vs.mode === 'admin' ? [t('security.col.edge'), c.edge_name || '—'] : null,
+    c.published_at ? [t('security.vulns.published'), fmtDate(c.published_at)] : null,
+    c.updated_at ? [t('security.vulns.updated'), fmtDate(c.updated_at)] : null,
+  ].filter(Boolean);
+  return `<aside class="vs-drawer open" id="vs-drawer" aria-live="polite">
+    <div class="vs-drawer-head">
+      <a class="mono vs-drawer-cve" href="https://nvd.nist.gov/vuln/detail/${esc(c.cve_id)}" target="_blank" rel="noopener">${esc(c.cve_id)}</a>
+      <span class="vs-score vs-${sev}">${(Number(c.cvss_score) || 0).toFixed(1)}</span>
+      <button type="button" class="btn btn-ghost btn-icon btn-sm vs-drawer-close" onclick="vsSelect(null)" aria-label="${esc(t('common.close'))}">✕</button>
+    </div>
+    <div>${vsStatusTag(c.status)}</div>
+    <p class="vs-drawer-desc">${esc(c.description)}</p>
+    <dl class="vs-dl">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd class="mono">${esc(v)}</dd>`).join('')}</dl>
+    <div class="vs-acts">
+      ${c.status !== 'fixed' ? `<button type="button" class="btn btn-primary btn-sm" onclick="vsSetStatus(${Number(c.id)},'fixed')">${esc(t('security.cve_fixed'))}</button>` : ''}
+      ${c.status !== 'ignored' ? `<button type="button" class="btn btn-secondary btn-sm" onclick="vsSetStatus(${Number(c.id)},'ignored')">${esc(t('security.cve_ignore'))}</button>` : ''}
+      ${c.status !== 'open' ? `<button type="button" class="btn btn-secondary btn-sm" onclick="vsSetStatus(${Number(c.id)},'open')">${esc(t('security.cve_reopen'))}</button>` : ''}
+      <a class="btn btn-ghost btn-sm" href="https://nvd.nist.gov/vuln/detail/${esc(c.cve_id)}" target="_blank" rel="noopener">${esc(t('security.vs.nvd'))}</a>
+    </div>
+  </aside>`;
+}
+
+function vsBodyHTML() {
+  const list = vsFiltered();
+  const showGw = _vs.mode === 'admin';
+  if (!list.length) return `<div class="vs-main"><div class="empty"><p>${esc(t('security.no_cves'))}</p></div></div>${vsDrawerHTML()}`;
+  if (_vs.view === 'list') {
+    return `<div class="vs-main">${vsListHTML(list, showGw)}<div class="vs-hint">${esc(t('security.vs.results', { n: list.length }))}</div></div>${vsDrawerHTML()}`;
+  }
+  const units = vsUnits(list);
+  const opened = units.find(u => u.k === _vs.open);
+  return `<div class="vs-main">
+      <div class="vs-cards">${units.map(vsUnitCardHTML).join('')}</div>
+      ${opened
+        ? `<div class="vs-unit-detail card blueprint"><div class="vs-unit-detail-head"><b class="mono">${esc(opened.k)}</b><span class="vs-hint">${esc(t('security.vs.results', { n: opened.l.length }))}</span></div>${vsListHTML(opened.l, false)}</div>`
+        : `<div class="vs-hint">${esc(t(showGw ? 'security.vs.hint_parc_admin' : 'security.vs.hint_parc_edge'))}</div>`}
+    </div>${vsDrawerHTML()}`;
+}
+
+function vsChipsHTML() {
+  const open = _vs.cves.filter(vsIsOpen);
+  const chips = [['', t('security.vs.f_all'), null], ['crit', t('security.vulns.f_critical'), 'crit'], ['high', t('security.vulns.f_high'), 'high'], ['med', t('security.vs.s_med_full'), 'med'], ['low', t('security.vs.s_low_full'), 'low']];
+  return chips.map(([k, label, sev]) => {
+    const n = sev ? open.filter(c => vsSev(c.cvss_score) === sev).length : null;
+    return `<button type="button" class="chip${_vs.sev === k ? ' active' : ''}" aria-pressed="${_vs.sev === k}" onclick="vsSetSev('${k}')">${esc(label)}${n != null ? `<span class="chip-n">${n}</span>` : ''}</button>`;
+  }).join('');
+}
+
+function vsPaint() {
+  const body = document.getElementById('vs-body');
+  if (body) body.innerHTML = vsBodyHTML();
+  const chips = document.getElementById('vs-chips');
+  if (chips) chips.innerHTML = vsChipsHTML();
+  const scrim = document.getElementById('vs-scrim');
+  if (scrim) scrim.classList.toggle('open', !!_vs.sel);
+  document.querySelectorAll('.vs-view-btn').forEach(b => {
+    const on = b.dataset.view === _vs.view;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+}
+
+window.vsSetView = function(v) {
+  _vs.view = v;
+  try { localStorage.setItem(VS_VIEW_KEY, v); } catch (_) {}
+  vsPaint();
+};
+window.vsSetSev = function(v) { _vs.sev = v; vsPaint(); };
+window.vsSetStatusFilter = function(v) { _vs.st = v; vsPaint(); };
+window.vsSetGw = function(v) { _vs.gw = v; vsPaint(); };
+window.vsSetQuery = function(v) { _vs.q = v; vsPaint(); };
+window.vsToggleUnit = function(k) {
+  _vs.open = _vs.open === k ? null : k;
+  _vs.sel = null;
+  vsPaint();
+  if (_vs.open) document.querySelector('.vs-unit-detail')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+};
+window.vsSelect = function(id) {
+  _vs.sel = id && _vs.sel !== id ? id : (id ? _vs.sel : null);
+  vsPaint();
+};
+window.vsSetStatus = async function(id, status) {
+  try {
+    await api('PATCH', `/security/cves/${id}`, { status });
+    const c = _vs.cves.find(x => Number(x.id) === Number(id));
+    if (c) c.status = status;
+    toast(t('security.cve_updated'), 'success');
+    vsPaint();
+    vsPaintKpis();
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+function vsKpisHTML() {
+  const cves = _vs.cves;
+  const open = cves.filter(vsIsOpen);
+  const crit = open.filter(c => vsSev(c.cvss_score) === 'crit').length;
+  const high = open.filter(c => vsSev(c.cvss_score) === 'high').length;
+  const units = new Set(open.map(vsUnitKey)).size;
+  const score = vsRiskScore(cves);
+  const scoreColor = score >= 80 ? 'var(--green)' : score >= 55 ? 'var(--yellow)' : 'var(--red)';
+  return `
+    <div class="sec-tile vs-kpi" style="border-left:3px solid var(--red)"><div class="sec-tile-label">${esc(t('security.vulns.kpi_critical'))}</div><div class="sec-tile-value" style="color:${crit ? 'var(--red)' : 'var(--green)'}">${crit}</div><div class="sec-tile-sub">CVSS ≥ 9.0</div></div>
+    <div class="sec-tile vs-kpi" style="border-left:3px solid var(--yellow)"><div class="sec-tile-label">${esc(t('security.vulns.kpi_high'))}</div><div class="sec-tile-value" style="color:${high ? 'var(--yellow)' : 'var(--green)'}">${high}</div><div class="sec-tile-sub">CVSS 7.0 – 8.9</div></div>
+    <div class="sec-tile vs-kpi" style="border-left:3px solid var(--accent)"><div class="sec-tile-label">${esc(t('security.vulns.kpi_open'))}</div><div class="sec-tile-value" style="color:${open.length ? 'var(--accent)' : 'var(--green)'}">${open.length}</div><div class="sec-tile-sub">${esc(t('security.vulns.kpi_open_sub'))}</div></div>
+    <div class="sec-tile vs-kpi"><div class="sec-tile-label">${esc(t(_vs.mode === 'admin' ? 'security.vs.kpi_gw' : 'security.vulns.kpi_backends'))}</div><div class="sec-tile-value" style="color:${units ? 'var(--yellow)' : 'var(--green)'}">${units}</div><div class="sec-tile-sub">${esc(t('security.vs.risk'))} <b style="color:${scoreColor}">${score}/100</b></div></div>`;
+}
+
+function vsPaintKpis() {
+  const el = document.getElementById('vs-kpis');
+  if (el) el.innerHTML = vsKpisHTML();
+}
+
 async function renderSecurityVulns(ctx) {
   const mode = ctx?.mode || 'admin';
   const isAdmin = mode === 'admin';
@@ -493,222 +716,53 @@ async function renderSecurityVulns(ctx) {
       api('GET', '/security/vulnscan').catch(() => null),
       api('GET', '/security/vulnscan/config').catch(() => null),
     ]);
-    const cves = filterSecCVEs(cvesRaw || [], edgeCtx);
     const vsState = filterVulnscanState(vsStateRaw, edgeCtx);
     window._secEdgeCtx = edgeCtx;
     window._secMode = mode;
     window._vsConfig = vsConfigRaw || {};
-    window._secCVEs = cves;
-    window._vulnTab = window._vulnTab || 'list';
-    window._vulnFilter = window._vulnFilter || '';
 
-    const critical = cves.filter(c => (c.cvss_score||0) >= 9);
-    const high     = cves.filter(c => (c.cvss_score||0) >= 7 && (c.cvss_score||0) < 9);
-    const open     = cves.filter(c => c.status === 'open');
-    const backends = new Set(cves.map(c => c.backend_url)).size;
+    const scope = mode + ':' + (edgeCtx?.edgeRef || '');
+    if (_vs.scope !== scope) Object.assign(_vs, { scope, sev: '', st: 'open', q: '', gw: '', open: null, sel: null });
+    _vs.mode = mode;
+    _vs.cves = filterSecCVEs(cvesRaw || [], edgeCtx);
+    if (_vs.sel && !_vs.cves.some(c => vsCveKey(c) === _vs.sel)) _vs.sel = null;
+
+    const gateways = [...new Set(_vs.cves.map(c => c.edge_name || '—'))].sort();
+    const sub = isAdmin
+      ? t('security.vs.sub_admin', { n: gateways.length })
+      : t('security.vs.sub_edge', { name: esc(edgeCtx?.edgeLabel || '') });
+    const lastScan = vsState?.last_scan && vsState.last_scan !== '0001-01-01T00:00:00Z' ? fmtDate(vsState.last_scan) : '';
+    const statuses = [['open', t('security.vulns.f_open')], ['fixed', t('security.vulns.f_fixed')], ['ignored', t('security.vulns.f_ignored')], ['', t('security.vs.st_all')]].filter(s => s[1]);
 
     content.innerHTML = `
       ${securityEdgeBanner(edgeCtx)}
-
-      <div class="sec-grid" style="margin-bottom:20px">
-        <div class="sec-tile" style="border-left:3px solid var(--red)">
-          <div class="sec-tile-label">${t('security.vulns.kpi_critical')||'Critiques (≥9)'}</div>
-          <div class="sec-tile-value" style="color:${critical.length?'var(--red)':'var(--green)'}">${critical.length}</div>
-          <div class="sec-tile-sub">CVSS ≥ 9.0</div>
-        </div>
-        <div class="sec-tile" style="border-left:3px solid var(--yellow)">
-          <div class="sec-tile-label">${t('security.vulns.kpi_high')||'Élevées (7–9)'}</div>
-          <div class="sec-tile-value" style="color:${high.length?'var(--yellow)':'var(--green)'}">${high.length}</div>
-          <div class="sec-tile-sub">CVSS 7.0 – 8.9</div>
-        </div>
-        <div class="sec-tile" style="border-left:3px solid var(--accent)">
-          <div class="sec-tile-label">${t('security.vulns.kpi_open')||'À corriger'}</div>
-          <div class="sec-tile-value" style="color:${open.length?'var(--accent)':'var(--green)'}">${open.length}</div>
-          <div class="sec-tile-sub">${t('security.vulns.kpi_open_sub')||'statut open'}</div>
-        </div>
-        <div class="sec-tile">
-          <div class="sec-tile-label">${t('security.vulns.kpi_backends')||'Backends affectés'}</div>
-          <div class="sec-tile-value" style="color:${backends?'var(--yellow)':'var(--green)'}">${backends}</div>
-          <div class="sec-tile-sub">${t('security.vulns.kpi_backends_sub')||'avec au moins 1 CVE'}</div>
-        </div>
+      <div class="vs-page-head">
+        <div><h2 class="vs-title">${esc(t('page.' + (isAdmin ? 'security-vulns' : 'edge-security-vulns')))}</h2><div class="vs-sub">${sub}${lastScan ? ` · ${esc(t('security.vulnscan.last_scan'))} ${esc(lastScan)}` : ''}</div></div>
+        ${!isAdmin ? `<div class="vs-head-acts">${vsState?.running ? `<span class="tag tag-yellow">${esc(t('security.vulnscan.running'))}</span>` : ''}<button id="vulnscan-btn" class="btn btn-primary btn-sm" onclick="triggerVulnscan()" ${vsState?.running ? 'disabled' : ''}>${esc(t('security.scan_now'))}</button></div>` : ''}
       </div>
-
-      <div class="card blueprint" style="margin-bottom:20px">
-        <div class="card-header" style="flex-wrap:wrap;gap:8px">
-          <span class="card-title">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:6px"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-            ${t('security.vulns_title')}
-          </span>
-          <div style="display:flex;gap:4px;margin-left:auto">
-            ${['list','backends'].map(v => `<button type="button" onclick="setVulnTab('${v}')" id="vulntab-${v}" style="font-size:11px;padding:3px 10px;border-radius:99px;border:1px solid ${window._vulnTab===v?'var(--accent)':'var(--border)'};background:${window._vulnTab===v?'color-mix(in srgb,var(--accent) 12%,transparent)':'transparent'};color:${window._vulnTab===v?'var(--accent)':'var(--text2)'};cursor:pointer">${v==='list'?(t('security.vulns.tab_list')||'Par CVE'):(t('security.vulns.tab_backends')||'Par backend')}</button>`).join('')}
-          </div>
+      <div class="sec-grid vs-kpis" id="vs-kpis">${vsKpisHTML()}</div>
+      <div class="vs-toolbar">
+        <div class="vs-view" role="group" aria-label="${esc(t('security.vs.view'))}">
+          <button type="button" class="vs-view-btn" data-view="parc" onclick="vsSetView('parc')">${esc(t('security.vs.view_parc'))}</button>
+          <button type="button" class="vs-view-btn" data-view="list" onclick="vsSetView('list')">${esc(t('security.vs.view_list'))}</button>
         </div>
-        <div style="padding:8px 14px 4px;display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border)">
-          ${[['','Tous'],['open',t('security.vulns.f_open')||'Ouvertes'],['critical',t('security.vulns.f_critical')||'Critiques'],['high',t('security.vulns.f_high')||'Élevées'],['fixed',t('security.vulns.f_fixed')||'Corrigées'],['ignored',t('security.vulns.f_ignored')||'Ignorées']].map(([v,l]) => `
-            <button type="button" onclick="setVulnFilter('${v}')" id="vulnf-${v||'all'}" style="font-size:11px;padding:2px 9px;border-radius:99px;border:1px solid ${window._vulnFilter===v?'var(--accent)':'var(--border)'};background:${window._vulnFilter===v?'color-mix(in srgb,var(--accent) 12%,transparent)':'transparent'};color:${window._vulnFilter===v?'var(--accent)':'var(--text2)'};cursor:pointer">${l}</button>`).join('')}
-        </div>
-        <div id="vulns-body">${renderVulnsBody()}</div>
+        <input type="search" class="input vs-search" id="vs-q" placeholder="${esc(t('security.vs.search_ph'))}" aria-label="${esc(t('security.vs.search_ph'))}" value="${esc(_vs.q)}" oninput="vsSetQuery(this.value)">
+        <select class="input vs-select" id="vs-st" aria-label="${esc(t('security.col.status'))}" onchange="vsSetStatusFilter(this.value)">${statuses.map(([v, l]) => `<option value="${v}" ${_vs.st === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+        ${isAdmin ? `<select class="input vs-select" id="vs-gw" aria-label="${esc(t('security.col.edge'))}" onchange="vsSetGw(this.value)"><option value="">${esc(t('security.vs.all_gw'))}</option>${gateways.map(g => `<option ${_vs.gw === g ? 'selected' : ''}>${esc(g)}</option>`).join('')}</select>` : ''}
+        <div class="vs-chips" id="vs-chips">${vsChipsHTML()}</div>
       </div>
+      <div class="vs-split" id="vs-body">${vsBodyHTML()}</div>
+      <div class="vs-scrim${_vs.sel ? ' open' : ''}" id="vs-scrim" onclick="vsSelect(null)"></div>
 
-      ${!isAdmin ? `<div class="card blueprint">
-        <div class="card-header">
-          <span class="card-title">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:6px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            ${t('security.scanner_title')}
-          </span>
-          <div style="display:flex;align-items:center;gap:8px">
-            ${vsState?.running ? '<span class="tag tag-yellow">' + (t('security.vulnscan.running')||'En cours') + '</span>' : (vsState?.last_scan && vsState.last_scan !== '0001-01-01T00:00:00Z' ? '<span style="font-size:11px;color:var(--text3)">' + (t('security.vulnscan.last_scan')||'Dernier scan') + ' ' + fmtDate(vsState.last_scan) + '</span>' : '')}
-            <button id="vulnscan-btn" class="btn btn-primary btn-sm" onclick="triggerVulnscan()" ${vsState?.running?'disabled':''}>${t('security.scan_now')}</button>
-          </div>
-        </div>
+      ${!isAdmin ? `<details class="card blueprint vs-scanner">
+        <summary>${esc(t('security.scanner_title'))}</summary>
         <div class="card-body" id="vulnscan-body">${vulnscanPanelV2(vsState, window._vsConfig, true)}</div>
-      </div>` : ''}`;
+      </details>` : ''}`;
 
+    vsPaint();
     if (!isAdmin && vsState?.running) startVulnscanPoll();
   } catch(e) { toast(e.message,'error'); }
 }
-
-function renderVulnsBody() {
-  const cves = window._secCVEs || [];
-  const tab = window._vulnTab || 'list';
-  const filter = window._vulnFilter || '';
-
-  const filtered = cves.filter(c => {
-    if (filter === 'open') return c.status === 'open';
-    if (filter === 'fixed') return c.status === 'fixed';
-    if (filter === 'ignored') return c.status === 'ignored';
-    if (filter === 'critical') return (c.cvss_score||0) >= 9;
-    if (filter === 'high') return (c.cvss_score||0) >= 7 && (c.cvss_score||0) < 9;
-    return true;
-  }).sort((a, b) => (b.cvss_score||0) - (a.cvss_score||0));
-
-  if (!filtered.length) return '<div class="empty"><p>' + (t('security.no_cves')||'Aucune CVE') + '</p></div>';
-
-  if (tab === 'backends') return cveByBackendHTML(filtered);
-  return cveListHTML(filtered);
-}
-
-function cveScoreBadge(score) {
-  const s = Number(score) || 0;
-  const cls = s >= 9 ? 'tag-red' : s >= 7 ? 'tag-yellow' : s >= 4 ? 'tag-neutral' : 'tag-green';
-  return `<span class="tag ${cls}" style="min-width:36px;text-align:center;font-variant-numeric:tabular-nums">${s.toFixed(1)}</span>`;
-}
-
-function cveListHTML(cves) {
-  const showEdge = window._secMode === 'admin';
-  const cols = showEdge ? 7 : 6;
-  return `<div class="table-wrap"><table>
-    <thead><tr>
-      <th>CVE</th><th>CVSS</th>
-      <th>${t('security.col.backend')}</th>
-      ${showEdge ? `<th>${t('security.col.edge')||'Passerelle'}</th>` : ''}
-      <th>${t('security.col.description')}</th>
-      <th>${t('security.col.status')}</th>
-      <th></th>
-    </tr></thead>
-    <tbody>${cves.map(c => `
-      <tr id="cve-row-${c.id}" style="cursor:pointer" onclick="toggleCveDetail(${c.id})">
-        <td><a href="https://nvd.nist.gov/vuln/detail/${esc(c.cve_id)}" target="_blank" style="color:var(--accent)" onclick="event.stopPropagation()">${esc(c.cve_id)}</a></td>
-        <td>${cveScoreBadge(c.cvss_score)}</td>
-        <td class="mono" style="font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(c.backend_url)}">${esc(c.backend_url)}</td>
-        ${showEdge ? `<td style="font-size:12px;color:var(--text2)">${esc(c.edge_name || '—')}</td>` : ''}
-        <td style="font-size:12px;color:var(--text2);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(c.description)}">${esc(c.description)}</td>
-        <td><span class="tag ${c.status==='open'?'tag-yellow':c.status==='fixed'?'tag-green':'tag-neutral'}">${esc(c.status)}</span></td>
-        <td style="white-space:nowrap">
-          ${c.status!=='ignored'?`<button type="button" class="btn btn-ghost btn-icon btn-sm" onclick="event.stopPropagation();updateCVE(${c.id},'ignored')" title="${esc(t('security.cve_ignore'))}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg></button>`:''}
-          ${c.status!=='fixed'?`<button type="button" class="btn btn-ghost btn-icon btn-sm" onclick="event.stopPropagation();updateCVE(${c.id},'fixed')" title="${esc(t('security.cve_fixed'))}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></button>`:''}
-          ${c.status!=='open'?`<button type="button" class="btn btn-ghost btn-icon btn-sm" onclick="event.stopPropagation();updateCVE(${c.id},'open')" title="${t('security.cve_reopen')||'Réouvrir'}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.36"/></svg></button>`:''}
-        </td>
-      </tr>
-      <tr id="cve-detail-${c.id}" style="display:none;background:var(--bg2)">
-        <td colspan="${cols}" style="padding:10px 16px 12px">
-          <div style="font-size:12.5px;color:var(--text1);line-height:1.6;margin-bottom:8px">${esc(c.description)}</div>
-          <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--text3)">
-            <span><b style="color:var(--text2)">${t('security.col.backend')}</b> <span class="mono">${esc(c.backend_url)}</span></span>
-            ${c.published_at ? `<span><b style="color:var(--text2)">${t('security.vulns.published')||'Publié'}</b> ${fmtDate(c.published_at)}</span>` : ''}
-            ${c.updated_at ? `<span><b style="color:var(--text2)">${t('security.vulns.updated')||'Mis à jour'}</b> ${fmtDate(c.updated_at)}</span>` : ''}
-          </div>
-        </td>
-      </tr>`).join('')}
-    </tbody>
-  </table></div>`;
-}
-
-function cveByBackendHTML(cves) {
-  const map = new Map();
-  for (const c of cves) {
-    if (!map.has(c.backend_url)) map.set(c.backend_url, []);
-    map.get(c.backend_url).push(c);
-  }
-  const backends = [...map.entries()].sort((a, b) => {
-    const maxA = Math.max(...a[1].map(c => c.cvss_score||0));
-    const maxB = Math.max(...b[1].map(c => c.cvss_score||0));
-    return maxB - maxA;
-  });
-
-  return backends.map(([url, bcves]) => {
-    const maxScore = Math.max(...bcves.map(c => c.cvss_score||0));
-    const openCount = bcves.filter(c => c.status === 'open').length;
-    return `
-      <details style="border-bottom:1px solid var(--border)">
-        <summary style="padding:10px 16px;cursor:pointer;list-style:none;display:flex;align-items:center;gap:10px;user-select:none">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;transition:transform .15s"><polyline points="9 18 15 12 9 6"/></svg>
-          <span class="mono" style="font-size:12px;flex:1;color:var(--text1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(url)}</span>
-          <span style="display:flex;gap:6px;align-items:center;flex-shrink:0">
-            ${cveScoreBadge(maxScore)}
-            <span class="tag ${openCount?'tag-yellow':'tag-neutral'}" style="font-size:10px">${openCount} ${t('security.vulns.open_short')||'open'}</span>
-            <span style="font-size:11px;color:var(--text3)">${bcves.length} CVE${bcves.length>1?'s':''}</span>
-          </span>
-        </summary>
-        <div class="table-wrap" style="margin:0;border-radius:0">
-          <table style="margin:0">
-            <thead><tr><th>CVE</th><th>CVSS</th><th>${t('security.col.description')}</th><th>${t('security.col.status')}</th><th></th></tr></thead>
-            <tbody>${bcves.map(c => `<tr>
-              <td><a href="https://nvd.nist.gov/vuln/detail/${esc(c.cve_id)}" target="_blank" style="color:var(--accent)">${esc(c.cve_id)}</a></td>
-              <td>${cveScoreBadge(c.cvss_score)}</td>
-              <td style="font-size:12px;color:var(--text2);max-width:320px">${esc(c.description)}</td>
-              <td><span class="tag ${c.status==='open'?'tag-yellow':c.status==='fixed'?'tag-green':'tag-neutral'}">${esc(c.status)}</span></td>
-              <td style="white-space:nowrap">
-                ${c.status!=='ignored'?`<button type="button" class="btn btn-ghost btn-icon btn-sm" onclick="updateCVE(${c.id},'ignored')" title="${esc(t('security.cve_ignore'))}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg></button>`:''}
-                ${c.status!=='fixed'?`<button type="button" class="btn btn-ghost btn-icon btn-sm" onclick="updateCVE(${c.id},'fixed')" title="${esc(t('security.cve_fixed'))}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></button>`:''}
-                ${c.status!=='open'?`<button type="button" class="btn btn-ghost btn-icon btn-sm" onclick="updateCVE(${c.id},'open')" title="${t('security.cve_reopen')||'Réouvrir'}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.36"/></svg></button>`:''}
-              </td>
-            </tr>`).join('')}
-            </tbody>
-          </table>
-        </div>
-      </details>`;
-  }).join('');
-}
-
-window.toggleCveDetail = function(id) {
-  const row = document.getElementById('cve-detail-' + id);
-  if (row) row.style.display = row.style.display === 'none' ? '' : 'none';
-};
-window.setVulnTab = function(v) {
-  window._vulnTab = v;
-  document.getElementById('vulns-body').innerHTML = renderVulnsBody();
-  ['list','backends'].forEach(k => {
-    const btn = document.getElementById('vulntab-' + k);
-    if (!btn) return;
-    const on = k === v;
-    btn.style.borderColor = on ? 'var(--accent)' : 'var(--border)';
-    btn.style.background = on ? 'color-mix(in srgb,var(--accent) 12%,transparent)' : 'transparent';
-    btn.style.color = on ? 'var(--accent)' : 'var(--text2)';
-  });
-};
-window.setVulnFilter = function(v) {
-  window._vulnFilter = v;
-  document.getElementById('vulns-body').innerHTML = renderVulnsBody();
-  [['','all'],['open','open'],['critical','critical'],['high','high'],['fixed','fixed'],['ignored','ignored']].forEach(([val, key]) => {
-    const btn = document.getElementById('vulnf-' + key);
-    if (!btn) return;
-    const on = v === val;
-    btn.style.borderColor = on ? 'var(--accent)' : 'var(--border)';
-    btn.style.background = on ? 'color-mix(in srgb,var(--accent) 12%,transparent)' : 'transparent';
-    btn.style.color = on ? 'var(--accent)' : 'var(--text2)';
-  });
-};
 
 function vulnscanPanelV2(st, cfg, isAdmin) {
   if (!st) return '<p style="color:var(--text2);padding:12px 16px">' + t('common.not_available') + '</p>';
@@ -820,6 +874,7 @@ async function renderSecurityPosture(ctx) {
 
 pages.security = () => renderAdminSecurityOverview();
 pages['security-vulns'] = () => renderSecurityVulns({ mode: 'admin' });
+pages['security-posture'] = () => renderSecurityPosture({ mode: 'admin' });
 pages['security-threats'] = () => renderAdminSecurityThreats();
 pages['security-rules'] = () => renderSecurityRules();
 pages['edge-security-ips-engines'] = () => renderSecurityIpsEngines({ mode: 'edge' });
@@ -894,14 +949,14 @@ async function renderAdminSecurityOverview() {
     }).join('');
 
     content.innerHTML = `
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));gap:12px;margin-bottom:20px">
         ${kpiRow('<circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>', activeBans, 'Bans actifs (toutes les passerelles)', activeBans > 0 ? 'var(--red)' : 'var(--green)')}
         ${kpiRow('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>', activeThreats, 'Décisions CrowdSec', activeThreats > 0 ? 'var(--red)' : 'var(--green)')}
         ${kpiRow('<path d="M7 1.5L1.2 12a1 1 0 00.9 1.5h11.8a1 1 0 00.9-1.5L8.8 1.5a1 1 0 00-1.8 0z"/><path d="M7 5.5v3.5M7 11h.01"/>', critCVEs, `CVEs critiques (${openCVEs} ouvertes)`, critCVEs > 0 ? 'var(--red)' : 'var(--green)')}
         ${kpiRow('<rect x="2" y="7" width="12" height="7" rx="1.5"/><path d="M4.5 7V4.5a2.5 2.5 0 015 0V7"/>', avgScore + '/100', 'Score posture moyen', avgScore >= 80 ? 'var(--green)' : avgScore >= 50 ? 'var(--yellow)' : 'var(--red)')}
       </div>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr));gap:16px;margin-bottom:20px">
         <div class="card blueprint" style="padding:14px 16px">
           <div style="font-size:13px;font-weight:600;margin-bottom:10px">Moteurs IPS — état global</div>
           <div style="display:flex;flex-direction:column;gap:6px">
@@ -931,7 +986,7 @@ async function renderAdminSecurityOverview() {
         </div>
       </div>
 
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));gap:12px">
         <div class="card blueprint" style="padding:12px 14px;cursor:pointer" onclick="navigate('security-bans')">
           <div style="font-size:12px;font-weight:600;margin-bottom:4px">Bans →</div>
           <div style="font-size:11px;color:var(--text2)">Voir tous les bans actifs toutes les passerelles</div>
@@ -983,7 +1038,7 @@ async function renderAdminSecurityThreats() {
     </tr>`).join('');
 
     content.innerHTML = `
-      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:20px">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));gap:12px;margin-bottom:20px">
         <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px 16px">
           <div style="font-size:22px;font-weight:700;color:${events.length>0?'var(--accent)':'var(--text)'}">${events.length}</div>
           <div style="font-size:11px;color:var(--text2)">Événements (derniers 100)</div>
@@ -1070,7 +1125,7 @@ async function renderSecurityIpsEngines({ mode } = {}) {
       <div style="max-width:900px">
         <p style="font-size:13px;color:var(--text2);margin:0 0 16px">${t('security.ips_engines.multi_hint')}</p>
 
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:16px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));gap:16px;margin-bottom:16px">
 
           <div class="card blueprint" id="engine-card-f2b" style="border-color:${f2bOn?'var(--green)':'var(--border)'}">
             <div class="card-header" style="gap:6px">
@@ -1138,7 +1193,7 @@ function enginesConfigHTML(f2bCfg, csCfg, threatCfg, isEdge) {
     <div class="card-header"><span class="card-title">${t('security.engines_status')||'Moteurs de sécurité'}</span></div>
     <div style="padding:0 16px 16px">
       <p style="font-size:12px;color:var(--text2);margin:12px 0">${t('security.ips_engines.multi_hint')||''}</p>
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));gap:16px">
         <div class="card blueprint" id="engine-card-f2b" style="border-color:${f2bOn?'var(--green)':'var(--border)'}">
           <div class="card-header" style="gap:6px"><span class="card-title">${svgWrench} Fail2Ban ${dot(f2bOn)}${lbl(f2bOn)}</span>${tog('toggle-f2b',f2bOn,'toggleEngineF2B')}</div>
           <div style="padding:0 16px 16px"><p style="font-size:12px;color:var(--text2);margin:0 0 12px">${t('security.ips_engines.f2b_desc')||''}</p>
@@ -1193,7 +1248,7 @@ function enginesStatusHTML(f2bCfg, csCfg, threatCfg, navBans, navSentinel, activ
   ];
   return `<div class="card blueprint" style="margin-bottom:20px">
     <div class="card-header"><span class="card-title">${t('security.engines_status') || 'Moteurs de sécurité'}</span></div>
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;padding:12px">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));gap:12px;padding:12px">
       ${engines.map(e => `
         <div onclick="navigate('${e.nav}')" style="cursor:pointer;display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:8px;background:var(--bg2);border:1px solid ${e.active ? 'var(--green)' : 'var(--border)'};transition:border-color .15s">
           <span style="margin-top:2px;width:8px;height:8px;min-width:8px;border-radius:50%;background:${e.active ? 'var(--green)' : 'var(--text3)'}"></span>

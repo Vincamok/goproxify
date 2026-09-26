@@ -9,7 +9,7 @@ const BN_SRC_COLORS = { fail2ban: 'var(--orange,#d97706)', crowdsec: 'var(--blue
 
 const _bn = {
   mode: 'admin', edgeCtx: null, tab: 'actifs',
-  bans: [], history: [], kpis: {}, timeline: [], byReason: [], countries: [], rec: new Map(),
+  edgeNames: new Map(), bans: [], history: [], kpis: {}, timeline: [], byReason: [], countries: [], rec: new Map(),
   q: '', src: '', exp: '', edge: '', sort: 'created_desc', shown: BN_PAGE, sel: new Set(),
 };
 
@@ -34,6 +34,7 @@ function bnTime(s) {
 }
 
 const bnExpiry = b => bnTime(b.expires_at);
+const bnEdge = name => _bn.edgeNames.get(name) || name;
 const bnSrc = b => String(b.source || 'native').split(':')[0];
 
 function bnRemaining(ms) {
@@ -66,7 +67,8 @@ async function bnLoad(mode) {
   window._secMode = mode;
   window._secEdgeQ = q ? '?' + q : '';
   const url = base => q ? `${base}${base.includes('?') ? '&' : '?'}${q}` : base;
-  const [bans, history, threats, kpis, byReason, timeline, countries, topIPs] = await Promise.all([
+  const [nodes, bans, history, threats, kpis, byReason, timeline, countries, topIPs] = await Promise.all([
+    api('GET', '/nodes').catch(() => []),
     api('GET', url('/security/bans?active=true')),
     api('GET', url('/security/bans?active=false')).catch(() => []),
     api('GET', '/security/threats?limit=300').catch(() => []),
@@ -80,6 +82,7 @@ async function bnLoad(mode) {
   window._secThreatsShowEdge = mode === 'admin';
   return {
     edgeCtx,
+    edgeNames: new Map((nodes || []).filter(n => n.node_name && n.display_name).map(n => [n.node_name, n.display_name])),
     bans: filterSecBans(bans || [], edgeCtx),
     history: filterSecBans(history || [], edgeCtx),
     kpis: kpis || {}, byReason: byReason || [], timeline: timeline || [], countries: countries || [],
@@ -101,7 +104,7 @@ function bnFiltered() {
     if (exp === 'temporary' && e == null) return false;
     if (exp === 'soon' && !(e != null && e - now <= 3600000)) return false;
     if (exp === 'recurring' && !_bn.rec.has(b.ip)) return false;
-    if (needle && !`${b.ip} ${b.domain || ''} ${b.reason || ''} ${b.edge_name || ''}`.toLowerCase().includes(needle)) return false;
+    if (needle && !`${b.ip} ${b.domain || ''} ${b.reason || ''} ${b.edge_name || ''} ${bnEdge(b.edge_name || '')}`.toLowerCase().includes(needle)) return false;
     return true;
   });
   const [col, dir] = sort.split('_');
@@ -196,7 +199,7 @@ function bnAnalysisHTML() {
   })), 'Aucun ban actif.');
   const where = admin
     ? bnRankHTML(bnCountBy(_bn.bans, b => b.edge_name || '__global').slice(0, 6).map(([k, n]) => ({
-      label: k === '__global' ? 'Global' : k, n, color: 'var(--red)', onclick: `bnSetEdge('${esc(k)}')`,
+      label: k === '__global' ? 'Global' : bnEdge(k), n, color: 'var(--red)', onclick: `bnSetEdge('${esc(k)}')`,
     })), 'Aucun ban actif.')
     : bnRankHTML(bnCountBy(_bn.bans, b => b.domain || '(tous les domaines)').slice(0, 6).map(([k, n]) => ({
       label: k, n, color: 'var(--red)',
@@ -235,7 +238,7 @@ function bnEdgeSelectHTML() {
   return `<select id="bn-edge" class="input" style="height:30px;width:auto;font-size:12px;padding:0 8px" onchange="bnSetEdge(this.value)" aria-label="Passerelle">
     <option value="">Toutes les passerelles</option>
     <option value="__global"${_bn.edge === '__global' ? ' selected' : ''}>Global</option>
-    ${names.map(n => `<option value="${esc(n)}"${_bn.edge === n ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>`;
+    ${names.map(n => `<option value="${esc(n)}"${_bn.edge === n ? ' selected' : ''}>${esc(bnEdge(n))}</option>`).join('')}</select>`;
 }
 
 function bnThSort(col, label) {
@@ -253,7 +256,7 @@ function bnRowHTML(b) {
     <td class="bn-c-sel"><input type="checkbox" ${_bn.sel.has(b.id) ? 'checked' : ''} onchange="bnToggle('${id}',this.checked)" aria-label="Sélectionner ${ip}"></td>
     <td class="mono bn-c-ip">${ip}${rec ? ` <span class="tag tag-yellow" title="${rec} bans sur l'historique">×${rec}</span>` : ''}</td>
     <td data-label="Source"><span class="tag tag-neutral"><i class="sent-dot" style="background:${BN_SRC_COLORS[bnSrc(b)] || 'var(--text3)'};margin-right:5px"></i>${esc(_secSourceLabel(bnSrc(b)))}</span></td>
-    ${admin ? `<td data-label="Passerelle">${b.edge_name ? esc(b.edge_name) : '<span class="tag tag-neutral">Global</span>'}</td>` : `<td data-label="Domaine" style="color:var(--text2)">${esc(b.domain || '—')}</td>`}
+    ${admin ? `<td data-label="Passerelle" style="font-size:12px">${b.edge_name ? esc(bnEdge(b.edge_name)) : '<span class="tag tag-neutral">Global</span>'}</td>` : `<td data-label="Domaine" style="color:var(--text2)">${esc(b.domain || '—')}</td>`}
     <td data-label="Raison" style="color:var(--text2);font-size:12px;max-width:260px" title="${esc(b.reason || '')}">${esc(b.reason || '—')}</td>
     <td data-label="Restant">${bnTtlCell(b)}</td>
     <td class="bn-actions">
@@ -303,7 +306,7 @@ function bnHistoryTableHTML() {
     <tbody>${list.map(b => `<tr>
       <td class="mono bn-c-ip">${esc(b.ip)}</td>
       <td data-label="Source"><span class="tag tag-neutral">${esc(_secSourceLabel(bnSrc(b)))}</span></td>
-      ${admin ? `<td data-label="Passerelle">${b.edge_name ? esc(b.edge_name) : '<span class="tag tag-neutral">Global</span>'}</td>` : `<td data-label="Domaine" style="color:var(--text2)">${esc(b.domain || '—')}</td>`}
+      ${admin ? `<td data-label="Passerelle" style="font-size:12px">${b.edge_name ? esc(bnEdge(b.edge_name)) : '<span class="tag tag-neutral">Global</span>'}</td>` : `<td data-label="Domaine" style="color:var(--text2)">${esc(b.domain || '—')}</td>`}
       <td data-label="Raison" style="color:var(--text2);font-size:12px">${esc(b.reason || '—')}</td>
       <td data-label="Expiré le" style="font-size:11px">${fmtDate(b.expires_at)}</td>
       <td data-label="Créé le" style="font-size:11px;color:var(--text3)">${fmtDate(b.created_at)}</td></tr>`).join('')}</tbody></table></div>`;

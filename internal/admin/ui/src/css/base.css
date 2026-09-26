@@ -148,6 +148,9 @@ input,select,textarea{font-family:inherit;font-size:inherit}
 }
 .topbar-actions{display:flex;align-items:center;gap:10px;flex-shrink:0;max-width:50%;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
 .topbar-actions::-webkit-scrollbar{display:none}
+.page-tabs{display:flex;gap:2px;padding:0 40px;background:var(--bg2);border-bottom:1px solid var(--border);overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;flex-shrink:0}
+.page-tabs::-webkit-scrollbar{display:none}
+.page-tabs .tab{padding:11px 14px;border-radius:0;font-size:13px}
 #content{flex:1;min-width:0;overflow-y:auto;overflow-x:hidden;padding:32px 40px}
 #content > *{min-width:0;max-width:100%}
 #logs-tab-content{min-width:0;max-width:100%}
@@ -186,6 +189,8 @@ input,select,textarea{font-family:inherit;font-size:inherit}
   #app.sidebar-open #content{overflow:hidden}
   .sidebar-toggle{display:inline-flex}
   #content{padding:20px 16px}
+  .page-tabs{padding:0 8px}
+  .page-tabs .tab{padding:12px 12px;min-height:44px}
   #topbar{padding:0 12px;gap:8px}
   .topbar-actions{max-width:46%;gap:6px}
   .form-row,.gp-split-2{grid-template-columns:1fr}

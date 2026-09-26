@@ -32,7 +32,7 @@ const EDGE_PAGES = new Set([
   'portal','portal-audit','edge-portal-catalog','edge-portal-users','snippets',
 ]);
 const SECURITY_PAGES = new Set([
-  'security','security-bans','security-vulns','security-threats','security-rules','automation','rules-store',
+  'security','security-bans','security-vulns','security-threats','security-sentinel','security-posture','security-rules','automation','rules-store',
   'edge-security','edge-security-vulns','edge-security-posture','edge-security-bans','edge-security-sentinel',
 ]);
 
@@ -101,6 +101,7 @@ function navigate(page) {
   if (window.innerWidth <= SIDEBAR_MQ) closeSidebar();
 
   syncNavActive(page);
+  renderPageTabs(page);
 
   // Titre de page depuis la config
   const titles = APP_CONFIG.pageTitles || {};
@@ -136,9 +137,28 @@ window.addEventListener('hashchange', () => {
   if (page && page !== state.page) navigate(page);
 });
 
+function pageTabGroup(page) {
+  return (APP_CONFIG.pageTabs || []).find(g => g.tabs.some(tab => tab.page === page)) || null;
+}
+
+function renderPageTabs(page) {
+  const el = document.getElementById('page-tabs');
+  if (!el) return;
+  const group = pageTabGroup(page);
+  if (!group) { el.hidden = true; el.innerHTML = ''; return; }
+  el.hidden = false;
+  el.innerHTML = group.tabs.map(tab => {
+    const label = t('sec.tab.' + tab.key);
+    const active = tab.page === page;
+    return `<button type="button" class="tab${active ? ' active' : ''}" role="tab" aria-selected="${active}" onclick="navigate('${esc(tab.page)}')">${esc(label === 'sec.tab.' + tab.key ? tab.label : label)}</button>`;
+  }).join('');
+  el.querySelector('.tab.active')?.scrollIntoView({ inline: 'center', block: 'nearest' });
+}
+
 function syncNavActive(page) {
+  const navPage = pageTabGroup(page)?.root || page;
   document.querySelectorAll('.nav-item').forEach(el => {
-    el.classList.toggle('active', el.dataset.page === page);
+    el.classList.toggle('active', el.dataset.page === navPage);
     el.classList.remove('parent-active');
   });
   // Ouvre le groupe parent si on est sur une page enfant (ou le parent lui-même)
@@ -207,6 +227,8 @@ const SPACE_EQUIV = {
   'security': 'edge-security',
   'security-bans': 'edge-security-bans',
   'security-vulns': 'edge-security-vulns',
+  'security-sentinel': 'edge-security-sentinel',
+  'security-posture': 'edge-security-posture',
 };
 const SPACE_EQUIV_REV = Object.fromEntries(Object.entries(SPACE_EQUIV).map(([a, e]) => [e, a]));
 
