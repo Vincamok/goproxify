@@ -65,7 +65,7 @@ The Edge can operate **autonomously** if the Admin is temporarily unreachable:
 | CORS | Configurable origins, methods and headers |
 | Server fingerprint masking | Removal of revealing headers (`Server`, `X-Powered-By`) |
 | WAF | Own section in the proxy modal (mode, application-platform picker with search and auto-detection, advanced settings). Native Go engine, 13 OWASP CRS-4 rule sets, request **and** response inspection, detect/block mode, custom rules hot-reload — see [docs/security.md](security.md#waf) |
-| Sentinel | Per-IP behavioral detection: sliding window, immediate ban on signal, global anti-DDoS RPS, optional bounded **tarpit** (holds the response to blocked IPs) — see [docs/security.md](security.md#sentinel) |
+| Sentinel | Per-IP behavioral detection: sliding window, immediate ban on signal, global anti-DDoS RPS, optional bounded **tarpit** (holds the response to blocked IPs) — see [docs/security.md](security.md#sentinel). The Sentinel page has three tabs (overview, detections, lists and exceptions) and a side settings drawer, with a **dry-run simulation** on recent access logs before saving |
 | Native Go Fail2Ban | Automatic banning after N failures, no external dependency |
 | CrowdSec | LAPI stream bouncer → bans pushed to Edge (403), Docker compatible |
 | Automatic rules engine | Event-driven conditions (critical CVE, ban spike, silent engine, error rate, repeat offender IP, node offline, cert expiring) → actions (disable proxy, ban IP, alert, strict mode, webhook call, trigger backup); cooldown, dry-run, history — see [docs/security.md](security.md#automatic-rules-engine) |
@@ -532,7 +532,7 @@ goproxify <command> [options]
 | `ip-profile list/get/create/update/delete` | IP profiles (CIDR allowlist/blocklist, GeoIP) |
 | `containers list` | Discovered Docker containers (read-only) |
 | `me get/update/passwd + me tokens` | Current profile + personal API tokens (PAT) |
-| `security threat/bans/waf` | Security: Sentinel, IP bans, WAF per proxy |
+| `security threat/bans/waf` | Security: Sentinel (including `threat simulate`, a dry-run on recent logs), IP bans, WAF per proxy |
 | `status` | Cluster state (nodes, versions, health) |
 | `access` | GoProxify Access (config, catalogue, users, templates, audit) |
 | `nodes` | List / live health-throughput-risk (`nodes live`) / accept / reject nodes (Infrastructure) |

@@ -1817,3 +1817,27 @@ textarea.input { resize: vertical; min-height: 80px; }
 .prism-bantech>span:first-child{flex:1;min-width:0}
 .prism-verdict{font-size:11px;font-weight:700;padding:2px 9px;border-radius:99px;color:var(--v);background:color-mix(in srgb,var(--v) 14%,transparent)}
 .is-spinning svg{animation:spin .8s linear infinite}
+
+/* ── Sentinel : puces de config, tiroir de réglages ───────────────────────── */
+.sent-chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+.sent-chip{display:flex;align-items:center;gap:8px;background:var(--bg2);border:1px solid var(--border);border-radius:99px;padding:5px 12px;font-size:12px;color:var(--text2);cursor:pointer}
+.sent-chip:hover{border-color:var(--accent)}
+.sent-chip b{font-weight:600;color:var(--text)}
+.sent-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px}
+.sent-row{display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--border);font-size:13px}
+.sent-entry{font-family:monospace;font-size:11px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:1px 6px}
+.sent-bar{flex:1;height:6px;border-radius:3px;background:var(--bg2);overflow:hidden;min-width:50px}
+.sent-bar i{display:block;height:100%;background:var(--red)}
+.sent-drawer{position:fixed;top:0;right:0;bottom:0;width:min(460px,100vw);background:var(--bg);border-left:1px solid var(--border);box-shadow:var(--shadow);z-index:150;display:flex;flex-direction:column;transform:translateX(100%);transition:transform .2s ease;visibility:hidden}
+.sent-drawer.open{transform:none;visibility:visible}
+.sent-drawer-head{padding:14px 16px 8px;border-bottom:1px solid var(--border)}
+.sent-drawer-nav{display:flex;gap:4px;margin-top:10px;overflow-x:auto;scrollbar-width:none}
+.sent-drawer-nav button{background:none;border:1px solid var(--border);border-radius:99px;padding:3px 10px;font-size:11px;color:var(--text2);cursor:pointer;white-space:nowrap}
+.sent-drawer-nav button:hover{border-color:var(--accent);color:var(--text)}
+.sent-drawer-body{flex:1;overflow-y:auto;padding:4px 16px 16px}
+.sent-sec{padding-top:14px}
+.sent-sec h4{margin:0 0 10px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text2)}
+.sent-drawer-foot{display:flex;align-items:center;gap:8px;padding:10px 16px;border-top:1px solid var(--border)}
+.sent-sim{margin-top:16px;padding:12px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius)}
+@media(min-width:1100px){#sent-root.sent-shifted{margin-right:480px}}
+@media(max-width:800px){.sent-two{grid-template-columns:1fr!important}}

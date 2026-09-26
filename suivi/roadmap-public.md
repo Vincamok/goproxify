@@ -25,6 +25,7 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - **Logs** : corrélation exacte par `request_id`, keyset pagination, vue live mobile
 - **Prism** : taux d’erreurs et IPs bannies par pays ; bouton accès rapide depuis la table des bans
 - **Prism** : refonte « centre de commande » (carte zoomable, anomalies détectées, onglets) — livré
+- [x] **Sentinel — page en onglets et tiroir de réglages** : vue d'ensemble, détections, listes et exceptions ; simulation sur les logs récents avant d'enregistrer (`POST /security/threat-config/simulate`, `goproxify security threat simulate`)
 
 ### v0.2 — Architecture distribuée _(juillet – août 2026)_
 

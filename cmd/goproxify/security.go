@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 )
 
 func runSecurity() {
@@ -32,6 +33,7 @@ Sous-commandes :
 
 goproxify security threat get  [-edge <id>] [-admin-url …] [-token …]
 goproxify security threat set  [-edge <id>] -file <config.json> [-admin-url …] [-token …]
+goproxify security threat simulate -file <config.json> [-hours N] [-domain <d>] [-edge <id>]
 
 goproxify security bans list   [-admin-url …] [-token …]
 goproxify security bans add    -ip <ip> [-reason <raison>] [-ttl <durée>] [-admin-url …] [-token …]
@@ -111,6 +113,42 @@ func runSecurityThreat() {
 			os.Exit(1)
 		}
 		fmt.Println("Config Sentinel mise à jour.")
+
+	case "simulate":
+		args := parseFlags(os.Args[4:])
+		file := flagValue(args, "-file", "")
+		if file == "" {
+			fmt.Fprintln(os.Stderr, "usage: goproxify security threat simulate -file <config.json> [-hours N] [-domain <d>] [-edge <id>]")
+			os.Exit(1)
+		}
+		data, err := os.ReadFile(file)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "lecture fichier : %v\n", err)
+			os.Exit(1)
+		}
+		var cfg json.RawMessage
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "JSON invalide : %v\n", err)
+			os.Exit(1)
+		}
+		hours, _ := strconv.Atoi(flagValue(args, "-hours", "1"))
+		client, err := newAdminClient(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+			os.Exit(1)
+		}
+		path := "/api/v1/security/threat-config/simulate"
+		if edgeID := flagValue(args, "-edge", ""); edgeID != "" {
+			path += "?edge=" + url.QueryEscape(edgeID)
+		}
+		body := map[string]any{"config": cfg, "hours": hours, "domain": flagValue(args, "-domain", "")}
+		var res json.RawMessage
+		if _, err := client.DoJSON("POST", path, body, &res); err != nil {
+			fmt.Fprintf(os.Stderr, "threat simulate : %v\n", err)
+			os.Exit(1)
+		}
+		out, _ := json.MarshalIndent(res, "", "  ")
+		fmt.Println(string(out))
 
 	default:
 		fmt.Fprintf(os.Stderr, "sous-commande threat inconnue : %q\n", sub)

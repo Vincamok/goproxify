@@ -764,6 +764,21 @@ Configuration du moteur Sentinel. Paramètre optionnel `edge=<id ou nom>` :
 
 Lecture : valeur du groupe, sinon valeur propre à la passerelle (antérieure aux groupes), sinon globale. Au démarrage, la valeur d'un groupe qui n'en a pas encore est reprise du premier membre (dans l'ordre d'`architecture.json`) qui en avait une ; un désaccord entre membres est signalé dans le log de l'Admin, jamais écrasé.
 
+### `POST /api/v1/security/threat-config/simulate`
+
+Dry-run Sentinel depuis l'interface (bouton « Simuler » du tiroir de réglages) : rejoue les access logs récents contre une config candidate et la compare à la config actuelle, **sans rien enregistrer ni pousser**. Même moteur et même réponse que l'outil MCP `simulate_sentinel_config`. Paramètre optionnel `edge=<id ou nom>` (même règle de portée que `threat-config` : la config actuelle est celle du groupe HA si la passerelle en fait partie).
+
+Corps :
+
+```json
+{ "config": { "rate_limit": 20, "custom_lists": { "paths": ["/wp-admin"] } }, "hours": 6, "domain": "app.example.com" }
+```
+
+- `config` (requis) : champs Sentinel surchargés sur la config actuelle, mêmes noms que `threat-config` ;
+- `hours` : fenêtre rejouée, défaut `1`, max `24` ; `domain` : limite le rejeu à un domaine.
+
+Réponse `200` : `current` et `candidate` (`events`, `blocked`, `blocked_by_ban`, `legit_blocked`, `blocked_ips`, `by_reason`, `bans`, `top_ips`), `delta` (candidat − actuel), `events_replayed`, `truncated`, `skipped_unattributable_ip`, `not_simulated`, `note`. `400` si `config` est absent ou invalide. Non simulé : listes par défaut, `global_rps`, règles User-Agent, WAF.
+
 ### `GET /api/v1/security/ips-provider` · `PUT /api/v1/security/ips-provider`
 
 Fournisseur IPS actif (`native|fail2ban|crowdsec`). Même règle de portée que `threat-config`.

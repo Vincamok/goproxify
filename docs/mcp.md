@@ -696,6 +696,7 @@ Réponse : `current` et `candidate` (`events`, `blocked`, `blocked_by_ban`, `leg
 - Le rejeu utilise le moteur Sentinel réel sur l'horloge des logs, en mode `block` ; une IP bannie pendant le rejeu reste bloquée pour la durée du ban.
 - `legit_blocked` compte les requêtes bloquées qui avaient reçu un statut `< 400` : indicateur de faux positifs, pas une certitude.
 - **Non simulé** : listes par défaut (UA/path/IP téléchargées), `global_rps`, règles User-Agent (l'UA n'est pas conservé dans les logs Admin) et WAF (ni en-têtes ni corps conservés). Les IP pseudonymisées (RGPD) sont ignorées.
+- Équivalent REST (bouton « Simuler » de la page Sentinel) : `POST /api/v1/security/threat-config/simulate`, voir `docs/api_specs.md`. Équivalent CLI : `goproxify security threat simulate`.
 
 ---
 

@@ -123,6 +123,8 @@ func (h *SecurityHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.getThreatConfig(w, r)
 	case r.Method == http.MethodPut && sub == "threat-config":
 		h.putThreatConfig(w, r)
+	case r.Method == http.MethodPost && sub == "threat-config" && id == "simulate":
+		h.simulateThreat(w, r)
 	// Timeouts HTTP/QUIC (statiques — redémarrage passerelle requise)
 	case r.Method == http.MethodGet && sub == "server-config":
 		h.getServerConfig(w, r)
