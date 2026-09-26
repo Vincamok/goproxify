@@ -196,7 +196,11 @@ Endpoint `https://<admin>:9443/mcp` — MCP protocol `2025-03-26`, JSON-RPC 2.0 
 
 ### Architecture wizard
 
-The **Infrastructure → + Add** entry opens an **architecture canvas** (hosts + palette): Edge / Agent / Admin placement, Access / Portainer / K8s options, multi-Edge and HA groups. For each host, copy-paste install packs + bootstrap ticket (QR / `/i/{token}` link / `curl|bash`) anchored to the Edge. Nodes declared from the canvas can be **auto-accepted** on connection.
+The **Infrastructure** page and the wizard share one **architecture schema**, drawn top to bottom: Internet, Edges (HA group with leader and quorum), the Admin linked to the Edges by a "manages" link, Agents linked over WebSocket, plus a summary strip (req/s, nodes online, HA quorum, alert). Each node is a card (role icon, status, host, capabilities, throughput, session availability strip). The schema is responsive (single column on mobile). Its model (host → role → capability) comes from **`architecture.json`** (`GET /api/v1/architecture`); live state is only an overlay.
+
+**Infrastructure → Edit architecture** opens the same schema in edit mode: add nodes with the "+ Add" buttons, pick one to edit its host, capabilities (Access, HA, TLS, Docker, Podman, Portainer, K8s), domains and delegations in the inspector. A single **Save** button writes `architecture.json`; nothing is created or approved on save.
+
+Each host has a **Configuration** modal: *Formats* (Compose, `.env`, command line, network flows, declared JSON, install ticket), *Differences* (declared vs. what the node reports) and *Versions* (the 50 kept versions of `architecture.json`: view, diff against the current state, restore). The install ticket (QR / `/i/{token}` link / `curl|bash`, 24 h) and the pre-approval of the host's agents are only created when you click **Generate a ticket**. Nodes declared this way can be **auto-accepted** on connection.
 
 The canvas state lives in **`architecture.json`** (Admin `state/` folder), the reference file of the architecture: declared nodes, Edges, RBAC scopes. The Admin reconnects the Edges it describes at startup (address taken from `endpoint`, or from the node's `reachable_host`), aligns its database on the file, and keeps the previous **50 versions** of the file (`goproxify architecture versions|restore`, `GET /api/v1/architecture/versions`). Edges of an HA group announce their Raft peers in their heartbeat, so the Admin discovers the other members without extra configuration.
 

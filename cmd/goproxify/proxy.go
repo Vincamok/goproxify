@@ -70,6 +70,35 @@ func runProxy() {
 		out, _ := json.MarshalIndent(proxy, "", "  ")
 		fmt.Println(string(out))
 
+	case "metrics":
+		args := parseFlags(os.Args[3:])
+		client, err := newAdminClient(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+			os.Exit(1)
+		}
+		var res struct {
+			Proxies []struct {
+				Host      string  `json:"host"`
+				RPS       float64 `json:"requests_per_second"`
+				ErrorRate float64 `json:"error_rate"`
+				P95ms     float64 `json:"p95_ms"`
+			} `json:"proxies"`
+		}
+		if _, err := client.DoJSON("GET", "/api/v1/metrics/proxies?points=1", nil, &res); err != nil {
+			fmt.Fprintf(os.Stderr, "proxy metrics : %v\n", err)
+			os.Exit(1)
+		}
+		if len(res.Proxies) == 0 {
+			fmt.Println("(aucune mesure — l'Admin relève les passerelles toutes les 10 s)")
+			return
+		}
+		fmt.Printf("%-40s  %10s  %8s  %10s\n", "HOST", "REQ/S", "ERREURS", "P95")
+		fmt.Println(strings.Repeat("-", 74))
+		for _, p := range res.Proxies {
+			fmt.Printf("%-40s  %10.2f  %7.1f%%  %7.0f ms\n", p.Host, p.RPS, p.ErrorRate*100, p.P95ms)
+		}
+
 	case "enable", "disable":
 		enabled := sub == "enable"
 		args := parseFlags(os.Args[3:])
@@ -137,11 +166,13 @@ Sous-commandes :
   enable  Active un proxy
   disable Désactive un proxy
   delete  Supprime un proxy
+  metrics Débit, erreurs et p95 par host (dernier relevé)
 
 goproxify proxy list   [-admin-url …] [-token …]
 goproxify proxy get    <id> [-admin-url …] [-token …]
 goproxify proxy enable <id> [-admin-url …] [-token …]
 goproxify proxy disable <id> [-admin-url …] [-token …]
+goproxify proxy metrics [-admin-url …] [-token …]
 goproxify proxy delete <id> [-y] [-admin-url …] [-token …]
   -y  Confirmation automatique (skip prompt)
 `)

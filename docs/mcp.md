@@ -250,6 +250,30 @@ Retourne les KPIs de trafic des dernières 24 heures.
 
 ---
 
+### `get_proxy_metrics`
+
+Retourne, par host, le débit, le taux d'erreurs 5xx et le p95 du dernier relevé, avec la série de
+débit récente. L'Admin relève les passerelles toutes les 10 s et garde 1 h d'historique en mémoire
+(vide juste après un démarrage de l'Admin). Scope requis : `metrics:read`.
+
+| Paramètre | Type   | Requis | Description                                              |
+|-----------|--------|--------|----------------------------------------------------------|
+| `host`    | string | —      | Host à filtrer (laisser vide = tous)                     |
+| `points`  | number | —      | Points de la série, un toutes les 10 s (défaut 60, max 360) |
+
+**Réponse exemple :**
+```json
+{
+  "interval_s": 10,
+  "sampled_at": "2026-09-26T13:11:37+02:00",
+  "proxies": [
+    { "host": "myapp.example.fr", "requests_per_second": 3.8, "error_rate": 0.002, "p95_ms": 9.3, "series": [3.7, 4.0, 3.8] }
+  ]
+}
+```
+
+---
+
 ### `list_backups`
 
 Liste les 20 derniers snapshots de sauvegarde.
@@ -678,6 +702,18 @@ Réponse : `current` et `candidate` (`events`, `blocked`, `blocked_by_ban`, `leg
 ## Infrastructure / wizard architecture
 
 Scopes PAT : `nodes:read` (lecture) / `nodes:write` (écriture). Alignés sur `/api/v1/declared-nodes`, `/api/v1/bootstrap-tickets`, `/api/v1/nodes/{id}/accept|reject`.
+
+### `get_architecture`
+
+Architecture déclarée (`architecture.json`, référentiel de la topologie) : nœuds passerelle / Agent avec leur hôte (`config.host`), région et capacités (HA, TLS, Docker, Portainer…), plus les domaines. Scope : `nodes:read`.
+
+| Paramètre | Type   | Requis | Description |
+|-----------|--------|--------|-------------|
+| `version` | string | —      | Nom d'une version conservée (`architecture-….json`, voir `goproxify architecture versions`) ; vide = version courante |
+
+Retourne `{schema_version, nodes, domains}` (même format que `GET /api/v1/architecture`). Une version qui n'existe pas renvoie une erreur ; rien n'est restauré.
+
+---
 
 ### `get_topology_live`
 

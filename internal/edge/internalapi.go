@@ -1028,22 +1028,7 @@ func (s *Server) handleMetricsSummary(w http.ResponseWriter, _ *http.Request) {
 				buckets[b.GetUpperBound()] += float64(b.GetCumulativeCount())
 			}
 		}
-		if sumCount == 0 {
-			return 0
-		}
-		target := q * sumCount
-		var prevBound, prevCount float64
-		for _, bound := range sortedBounds(buckets) {
-			count := buckets[bound]
-			if count >= target {
-				if count == prevCount {
-					return bound
-				}
-				return prevBound + (bound-prevBound)*(target-prevCount)/(count-prevCount)
-			}
-			prevBound, prevCount = bound, count
-		}
-		return sumSum / sumCount
+		return bucketQuantile(buckets, sumCount, sumSum, q)
 	}
 
 	// Backends uniques avec leur taux d'erreur
@@ -1098,6 +1083,10 @@ func (s *Server) handleMetricsSummary(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	// Proxies breakdown par host
+	type latencyBucket struct {
+		Le    float64 `json:"le"`
+		Count float64 `json:"count"`
+	}
 	type proxyStat struct {
 		Host         string  `json:"host"`
 		Requests     float64 `json:"requests"`
@@ -1108,6 +1097,11 @@ func (s *Server) handleMetricsSummary(w http.ResponseWriter, _ *http.Request) {
 		BytesIn      float64 `json:"bytes_in"`
 		BytesOut     float64 `json:"bytes_out"`
 		BlockedTotal float64 `json:"blocked_total"`
+		// Données brutes de l'histogramme de latence : permettent à l'Admin de calculer
+		// un p95 sur une fenêtre (différence entre deux relevés).
+		DurationSumS   float64         `json:"duration_sum_s"`
+		DurationCount  float64         `json:"duration_count"`
+		LatencyBuckets []latencyBucket `json:"latency_buckets,omitempty"`
 	}
 	proxyMap := map[string]*proxyStat{}
 	ensureProxy := func(host string) *proxyStat {
@@ -1141,8 +1135,11 @@ func (s *Server) handleMetricsSummary(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 	if mf, ok := idx["gpx_edge_request_duration_seconds"]; ok {
-		type hstat struct{ sum, count float64 }
-		durByHost := map[string]hstat{}
+		type hstat struct {
+			sum, count float64
+			buckets    map[float64]float64
+		}
+		durByHost := map[string]*hstat{}
 		for _, m := range mf.GetMetric() {
 			host := labelVal(m.GetLabel(), "host")
 			if host == "" {
@@ -1150,13 +1147,26 @@ func (s *Server) handleMetricsSummary(w http.ResponseWriter, _ *http.Request) {
 			}
 			h := m.GetHistogram()
 			e := durByHost[host]
+			if e == nil {
+				e = &hstat{buckets: map[float64]float64{}}
+				durByHost[host] = e
+			}
 			e.sum += h.GetSampleSum()
 			e.count += float64(h.GetSampleCount())
-			durByHost[host] = e
+			for _, b := range h.GetBucket() {
+				e.buckets[b.GetUpperBound()] += float64(b.GetCumulativeCount())
+			}
 		}
 		for host, e := range durByHost {
-			if e.count > 0 {
-				ensureProxy(host).P95ms = (e.sum / e.count) * 1000
+			if e.count == 0 {
+				continue
+			}
+			ps := ensureProxy(host)
+			ps.P95ms = bucketQuantile(e.buckets, e.count, e.sum, 0.95) * 1000
+			ps.DurationSumS = e.sum
+			ps.DurationCount = e.count
+			for _, bound := range sortedBounds(e.buckets) {
+				ps.LatencyBuckets = append(ps.LatencyBuckets, latencyBucket{Le: bound, Count: e.buckets[bound]})
 			}
 		}
 	}
@@ -1328,4 +1338,25 @@ func (s *Server) reconfigureTracing(endpoint string) {
 			old(ctx) //nolint:errcheck
 		}()
 	}
+}
+
+// bucketQuantile estime le quantile q (en secondes) d'un histogramme Prometheus à
+// buckets cumulatifs ; retombe sur la moyenne si la cible dépasse le dernier bucket.
+func bucketQuantile(buckets map[float64]float64, count, sum, q float64) float64 {
+	if count == 0 {
+		return 0
+	}
+	target := q * count
+	var prevBound, prevCount float64
+	for _, bound := range sortedBounds(buckets) {
+		c := buckets[bound]
+		if c >= target {
+			if c == prevCount {
+				return bound
+			}
+			return prevBound + (bound-prevBound)*(target-prevCount)/(c-prevCount)
+		}
+		prevBound, prevCount = bound, c
+	}
+	return sum / count
 }

@@ -14,7 +14,7 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - **Page admin "Accès MCP"** : allowlist d'IP sources pour `/mcp` (réseaux privés par défaut), vue des utilisateurs porteurs d'un token, catalogue de scopes ↔ outils
 - **IP client fiable** : les en-têtes `X-Forwarded-For` / `CF-Connecting-IP` / `X-Real-IP` ne sont crus que depuis un proxy de confiance (`GPX_TRUSTED_PROXIES`) — fin du contournement Fail2Ban/Sentinel par IP forgée
 - **MCP — allowlist de destinations backend** : `create_proxy` / `update_proxy` ne peuvent pointer que vers des destinations autorisées (réseaux privés par défaut), contre le détournement de trafic par prompt injection
-- **Page Trafic** : tuile proxy et vue tableau refaites (hôte en titre, actions secondaires dans un menu ⋯, fonctions en icônes, métriques en ligne) ; modale de proxy unifiée (configuration + sécurité en onglets) ; vues « état » (santé, KPIs, courbe) et « maître/détail »
+- **Page Trafic** : tuile proxy et vue tableau refaites (hôte en titre, actions secondaires dans un menu ⋯, fonctions en icônes, métriques en ligne) ; modale de proxy unifiée (configuration + sécurité en onglets) ; vues « état » (santé, KPIs, courbe) et « maître/détail » ; création de proxy en mode Simple (cartes de protections), lignes dépliables, courbes alimentées par un historique de métriques côté Admin
 - **Page Bans** refonte : tuiles KPI + 3 onglets (actifs / CrowdSec / historique)
 - **Moteurs IPS** : page unifiée Fail2Ban / CrowdSec avec configuration in-place
 - **Timeouts serveur HTTP/QUIC** : ReadHeader, Read, Write, Idle configurables depuis l’Admin et propagés aux passerelles
@@ -77,6 +77,7 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - [x] **Profils IP — résilience** : backoff exponentiel sur les feeds en échec, état (`last_error`, `consecutive_failures`, `next_attempt_at`) exposé API/MCP/CLI/UI, garde-fou contre les listes vidées ou tronquées
 - [x] **Profils IP — alerte** : déclencheur `ip_profile_refresh_failed` après N échecs consécutifs (défaut 3, réglage `ipprofile.alert_after_failures`)
 - [x] **OpenTelemetry** : propagation W3C `traceparent` jusqu'au backend, span par appel backend, décisions Sentinel/ban en événements, échantillonnage configurable, endpoint OTLP poussé par Admin appliqué à chaud
+- [x] **Schéma d'architecture** : la page Infrastructure et le wizard partagent un schéma Internet → passerelles (HA) → Admin → agents lu depuis `architecture.json`, responsive, avec modale Configuration (formats, écarts, versions) ; `GET /api/v1/architecture`, `goproxify architecture show`, outil MCP `get_architecture`
 - [x] **Topologie temps réel** : carte Admin → passerelles → Agents rafraîchie toutes les 5 s (santé, débit req/s, score de risque 0-100 avec facteur dominant) ; `GET /api/v1/nodes/live`, `goproxify nodes live`, outil MCP `get_topology_live`
 - [x] **Dry-run Sentinel via MCP** : `simulate_sentinel_config` rejoue les logs récents contre une config candidate et la compare à l'actuelle
 - [x] **Sentinel — tarpit** : retient la réponse aux IP bloquées ou bannies (délai configurable, nombre de requêtes retenues plafonné, repli sur refus immédiat)

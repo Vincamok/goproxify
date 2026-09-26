@@ -4,6 +4,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -34,6 +35,25 @@ func runArchitecture() {
 			fmt.Printf("%-48v  %-25v  %v\n", v["name"], v["saved_at"], v["size"])
 		}
 
+	case "show":
+		args := parseFlags(os.Args[3:])
+		path := "/api/v1/architecture"
+		if v := flagValue(args, "-version", ""); v != "" {
+			path += "/versions/" + v
+		}
+		client, err := newAdminClient(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+			os.Exit(1)
+		}
+		var arch map[string]any
+		if _, err := client.DoJSON("GET", path, nil, &arch); err != nil {
+			fmt.Fprintf(os.Stderr, "architecture show : %v\n", err)
+			os.Exit(1)
+		}
+		out, _ := json.MarshalIndent(arch, "", "  ")
+		fmt.Println(string(out))
+
 	case "restore":
 		args := parseFlags(os.Args[3:])
 		name := flagValue(args, "-name", "")
@@ -54,7 +74,7 @@ func runArchitecture() {
 		fmt.Printf("architecture.json restauré depuis %s (l'état précédent est conservé).\n", name)
 
 	default:
-		fmt.Fprintln(os.Stderr, "usage: goproxify architecture versions | restore -name <version>")
+		fmt.Fprintln(os.Stderr, "usage: goproxify architecture show [-version <nom>] | versions | restore -name <version>")
 		os.Exit(1)
 	}
 }

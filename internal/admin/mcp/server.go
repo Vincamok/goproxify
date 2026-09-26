@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/vincamok/goproxify/internal/admin/archstore"
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
 	"github.com/vincamok/goproxify/internal/admin/edgeproxy"
@@ -60,6 +61,9 @@ type Handler struct {
 	RulesEngine  RulesEvaluator
 	CertDeployer CertDeployerIface   // optionnel — déclenche les déploiements de certs
 	InternalCA   *internalca.Manager // optionnel — CA interne (émission de certs hors ACME)
+	ArchStore    *archstore.Store    // optionnel — architecture.json (outil get_architecture)
+	// ProxyMetrics (optionnel) — série de débit/erreurs/p95 par host relevée par l'Admin (outil get_proxy_metrics).
+	ProxyMetrics func(points int) (entries any, sampledAt any)
 }
 
 // RulesEvaluator est implémenté par rulesengine.Engine (évite l'import direct).
@@ -279,6 +283,11 @@ var tools = []map[string]any{
 		"name":        "get_metrics",
 		"description": "Retourne les KPIs de trafic des dernières 24h (requêtes, erreurs, latence).",
 		"inputSchema": schema(opt("proxy", "string", "Filtrer par domaine proxy (laisser vide pour tout le trafic)")),
+	},
+	{
+		"name":        "get_proxy_metrics",
+		"description": "Retourne, par host, le débit (req/s), le taux d'erreurs 5xx (0..1) et le p95 (ms) du dernier relevé, avec la série de débit récente (un point toutes les 10 s). Vide juste après un démarrage de l'Admin.",
+		"inputSchema": schema(opt("host", "string", "Filtrer sur un host (laisser vide pour tous)"), opt("points", "number", "Nombre de points de la série (défaut 60, max 360)")),
 	},
 	// Sauvegardes
 	{
@@ -534,6 +543,10 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 	case "get_metrics":
 		proxy, _ := p.Arguments["proxy"].(string)
 		result, toolErr = h.toolGetMetrics(r, proxy)
+	case "get_proxy_metrics":
+		host, _ := p.Arguments["host"].(string)
+		points, _ := p.Arguments["points"].(float64)
+		result, toolErr = h.toolGetProxyMetrics(host, int(points))
 	case "list_backups":
 		result, toolErr = h.toolListBackups(r)
 	case "list_users":
@@ -629,6 +642,8 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 		result, toolErr = h.toolGetTopologyLive(r)
 	case "list_declared_nodes":
 		result, toolErr = h.toolListDeclaredNodes(r)
+	case "get_architecture":
+		result, toolErr = h.toolGetArchitecture(p.Arguments)
 	case "create_declared_node":
 		result, toolErr = h.toolCreateDeclaredNode(r, p.Arguments)
 	case "delete_declared_node":
@@ -1991,4 +2006,29 @@ func (h *Handler) serveSSE(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+func (h *Handler) toolGetProxyMetrics(host string, points int) (any, error) {
+	if h.ProxyMetrics == nil {
+		return nil, fmt.Errorf("relevé des métriques indisponible")
+	}
+	entries, sampledAt := h.ProxyMetrics(points)
+	if host != "" {
+		raw, err := json.Marshal(entries)
+		if err != nil {
+			return nil, err
+		}
+		var all []map[string]any
+		if err := json.Unmarshal(raw, &all); err != nil {
+			return nil, err
+		}
+		filtered := make([]map[string]any, 0, 1)
+		for _, e := range all {
+			if e["host"] == host {
+				filtered = append(filtered, e)
+			}
+		}
+		entries = filtered
+	}
+	return map[string]any{"interval_s": 10, "sampled_at": sampledAt, "proxies": entries}, nil
 }

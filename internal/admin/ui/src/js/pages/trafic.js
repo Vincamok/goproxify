@@ -46,7 +46,7 @@ async function renderTraficPage(ctx) {
       isAdmin ? api('GET', '/nodes').catch(() => []) : Promise.resolve([]),
       isAdmin ? api('GET', '/domains').catch(() => []) : Promise.resolve([]),
       isAdmin ? api('GET', '/tokens?role=edge').catch(() => []) : Promise.resolve([]),
-      api('GET', '/internal/v1/metrics/summary').catch(() => null),
+      api('GET', '/metrics/proxies?points=60').catch(() => null),
     ]);
     const _metricsMap = {};
     for (const mp of (metricsSum?.proxies || [])) {
@@ -514,17 +514,30 @@ async function renderTraficPage(ctx) {
     }
 
     // ── Rendu ligne tableau ──────────────────────────────────────────────────
+    // Lignes dépliables du tableau : l'état d'ouverture survit aux re-rendus (santé backends toutes les 30 s).
+    window._trOpen = window._trOpen || new Set();
+    window.traficRowToggle = (id) => {
+      if (window._trOpen.has(id)) window._trOpen.delete(id); else window._trOpen.add(id);
+      renderPage();
+    };
+
     function buildRow(p, selSet) {
       const m = proxyModel(p, selSet);
       const c = proxyControls(m);
+      const h = proxyHealth(m);
       const [master, ...aliases] = m.allDomains;
       const met = metricsInline(m.pm);
       const none = '<span style="color:var(--text3);font-size:11px">—</span>';
+      const open = window._trOpen.has(m.id);
+      const layers = featureBadges(m.cfg, 'list');
+      const id = esc(m.id);
+      const host = esc(m.host);
 
-      return `<tr class="trafic-row${m.isSel ? ' is-selected' : ''}${m.enabled ? '' : ' is-off'}">
+      return `<tr class="trafic-row${m.isSel ? ' is-selected' : ''}${m.enabled ? '' : ' is-off'}${open ? ' is-open' : ''}">
         <td style="padding:8px 10px;white-space:nowrap">
           <div style="display:flex;align-items:center;gap:6px">
-            <input type="checkbox" ${m.isSel ? 'checked' : ''} onchange="traficSelToggle('${esc(m.id)}','${m.stype}')" style="width:13px;height:13px;cursor:pointer;accent-color:var(--accent)">
+            <button type="button" class="trafic-chev" aria-expanded="${open}" title="${esc(t('trafic.details'))}" onclick="traficRowToggle('${id}')">${ico('<path d="m9 6 6 6-6 6"/>', 13)}</button>
+            <input type="checkbox" ${m.isSel ? 'checked' : ''} onchange="traficSelToggle('${id}','${m.stype}')" style="width:13px;height:13px;cursor:pointer;accent-color:var(--accent)">
             ${c.toggle}
           </div>
         </td>
@@ -536,14 +549,37 @@ async function renderTraficPage(ctx) {
         <td style="padding:8px 10px"><div class="trafic-feats">${featureBadges(m.cfg, true) || none}</div></td>
         <td style="padding:8px 10px"><div class="trafic-tile-met" style="flex-wrap:wrap">${met || none}</div></td>
         <td style="padding:8px 10px;white-space:nowrap;text-align:right">${c.secWarn}${c.edit}${c.more}</td>
-      </tr>`;
+      </tr>
+      <tr class="trafic-row-detail"><td colspan="6">
+        <div class="trafic-md-cols" style="grid-template-columns:1fr 1fr 1fr">
+          <div class="trafic-md-box">
+            <h4>${esc(t('trafic.domain'))}</h4>
+            ${m.allDomains.map((d, i) => domainLink(d, i === 0, m.hasTLS)).join('')}
+            ${m.chips ? `<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:6px">${m.chips}</div>` : ''}
+          </div>
+          <div class="trafic-md-box">
+            <h4>${esc(t('trafic.backends'))} <span>${h.total ? esc(t('trafic.backends_up', { up: h.up, total: h.total })) : ''}</span></h4>
+            <div class="trafic-md-backends">${m.allBackends.length ? m.allBackends.map(b => backendChip(b, 0)).join('') : '—'}</div>
+          </div>
+          <div class="trafic-md-box">
+            <h4>${esc(t('trafic.layers'))}</h4>
+            <div class="trafic-md-layers">${layers.length
+              ? layers.map(l => `<span class="trafic-md-layer" style="--c:${l.color}">${ico(l.svg, 12)}${esc(l.label)}</span>`).join('')
+              : `<span style="color:var(--text3);font-size:12px">${esc(t('trafic.no_layers'))}</span>`}</div>
+            <div class="trafic-md-quickrow" style="margin-top:10px">
+              <button type="button" class="btn btn-secondary btn-sm trafic-md-quick" onclick="logsFilters.domain='${host}';navigate('logs')">${ico(ICO.logs, 13)}<span>${esc(t('trafic.access_logs'))}</span></button>
+              <button type="button" class="btn btn-secondary btn-sm trafic-md-quick" onclick="openPrismForProxy('${host}','${esc(m.p.node_id || m.p.edge_id || '')}')">${ico(ICO.prism, 13)}<span>Prism</span></button>
+              <button type="button" class="btn btn-secondary btn-sm trafic-md-quick" onclick="openTrafficFlowModal('proxy','${id}')">${ico(ICO.flow, 13)}<span>${esc(t('trafic.flow_title'))}</span></button>
+            </div>
+          </div>
+        </div>
+      </td></tr>`;
     }
 
     // ── Vues « état » (C) et « maître / détail » (D) ─────────────────────────
-    // Pas d'historique côté API : la courbe se construit ici, à chaque relevé (5 s) de
-    // /metrics/summary, et se conserve le temps de la session.
+    // La courbe vient de l'Admin (GET /metrics/proxies) : il relève les passerelles toutes les 10 s
+    // et garde 1 h de série par host en mémoire — vide quelques secondes après un démarrage de l'Admin.
     window._traficSeries = window._traficSeries || {};
-    const SERIES_MAX = 60;
 
     function proxyHealth(m) {
       if (!m.enabled) return { level: 'off', label: t('trafic.health_off'), up: 0, total: 0 };
@@ -939,15 +975,14 @@ async function renderTraficPage(ctx) {
     // ── window.* handlers ────────────────────────────────────────────────────
     window.renderPage = renderPage;
 
-    // Relevé périodique des métriques (vues état / détail) : alimente les courbes, mise à jour en place.
-    const pushSample = (summary) => {
+    // Métriques par host (GET /metrics/proxies) : débit/erreurs/p95 + série de débit tenue par l'Admin.
+    // En vues état / détail, rafraîchies en place toutes les 10 s (cadence du relevé côté Admin).
+    const applyMetrics = (summary) => {
       for (const mp of (summary?.proxies || [])) {
         if (!mp.host) continue;
         const k = mp.host.toLowerCase();
         _metricsMap[k] = mp;
-        const s = window._traficSeries[k] || (window._traficSeries[k] = []);
-        s.push(mp.requests_per_second || 0);
-        if (s.length > SERIES_MAX) s.shift();
+        window._traficSeries[k] = mp.series || [];
       }
     };
     const paintLive = () => {
@@ -955,21 +990,16 @@ async function renderTraficPage(ctx) {
         el.innerHTML = liveBlockHtml(el.dataset.host, el.dataset.big === '1');
       });
     };
-    if (!window._traficSeriesAt || Date.now() - window._traficSeriesAt > 4000) {
-      pushSample(metricsSum);
-      window._traficSeriesAt = Date.now();
-    }
+    applyMetrics(metricsSum);
     if (window._tv === 'etat' || window._tv === 'detail') {
       window._traficLive = setInterval(async () => {
         if (!document.getElementById('trafic-proxies-section')) { clearInterval(window._traficLive); return; }
-        const s = await api('GET', '/internal/v1/metrics/summary').catch(() => null);
+        const s = await api('GET', '/metrics/proxies?points=60').catch(() => null);
         if (!s) return;
-        pushSample(s);
-        window._traficSeriesAt = Date.now();
+        applyMetrics(s);
         paintLive();
-      }, 5000);
+      }, 10000);
     }
-
     window.traficFilter = (key, val) => {
       window._tf[key] = val;
       content.querySelectorAll('[onclick*="traficFilter"]').forEach(btn => {

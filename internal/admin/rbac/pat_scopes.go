@@ -92,10 +92,10 @@ func ScopeCatalog() []ScopeMeta {
 // la carte scope → outils sans dupliquer ToolRequiredScope.
 var mcpTools = []string{
 	"list_proxies", "get_proxy", "create_proxy", "update_proxy", "set_proxy_enabled", "delete_proxy",
-	"list_nodes", "list_agents", "list_declared_nodes", "get_topology_live",
+	"list_nodes", "list_agents", "list_declared_nodes", "get_topology_live", "get_architecture",
 	"approve_agent", "revoke_agent", "create_declared_node", "delete_declared_node",
 	"create_bootstrap_ticket", "accept_node", "reject_node",
-	"list_alerts", "get_metrics", "list_backups", "list_users", "list_snippets",
+	"list_alerts", "get_metrics", "get_proxy_metrics", "list_backups", "list_users", "list_snippets",
 	"list_domains", "list_certs", "list_logs", "simulate_sentinel_config", "list_teams",
 	"get_audit_log", "get_security_overview", "list_security_bans", "list_security_threats", "list_security_cves",
 	"create_security_ban", "delete_security_ban",
@@ -199,7 +199,7 @@ func ToolRequiredScope(tool string) string {
 		return ScopeProxiesWrite
 	case "delete_proxy":
 		return ScopeProxiesDelete
-	case "list_nodes", "list_agents", "list_declared_nodes", "get_topology_live":
+	case "list_nodes", "list_agents", "list_declared_nodes", "get_topology_live", "get_architecture":
 		return ScopeNodesRead
 	case "approve_agent", "revoke_agent",
 		"create_declared_node", "delete_declared_node",
@@ -207,7 +207,7 @@ func ToolRequiredScope(tool string) string {
 		return ScopeNodesWrite
 	case "list_alerts":
 		return ScopeAlertsRead
-	case "get_metrics":
+	case "get_metrics", "get_proxy_metrics":
 		return ScopeMetricsRead
 	case "list_backups":
 		return ScopeBackupsRead
@@ -285,7 +285,8 @@ func RequiredScopeForRequest(r *http.Request) string {
 		return ScopeNodesWrite
 	case strings.HasPrefix(path, "/api/v1/alert"):
 		return ScopeAlertsRead
-	case strings.HasPrefix(path, "/api/v1/prism"):
+	case strings.HasPrefix(path, "/api/v1/prism"),
+		strings.HasPrefix(path, "/api/v1/metrics/proxies"):
 		return ScopeMetricsRead
 	case strings.HasPrefix(path, "/api/v1/backups"):
 		return ScopeBackupsRead

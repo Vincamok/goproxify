@@ -1241,6 +1241,7 @@ window.openProxyModal = async function(id, initialTab, secTab) {
         </div>
 
       </div><!-- end content area -->
+      ${id ? '' : _pmSimpleHtml()}
 
     </div><!-- end flex container -->`;
 
@@ -1251,12 +1252,19 @@ window.openProxyModal = async function(id, initialTab, secTab) {
     <button class="btn btn-secondary" onclick="closeModal()">Annuler</button>
     <button class="btn btn-primary" onclick="saveProxy('${esc(id||'')}')">Enregistrer</button>`;
 
-  const headerRight = `<label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:400;cursor:pointer;">
+  const modeSwitch = id ? '' : `<div class="pm-mode"><button type="button" data-mode="simple" onclick="pmSetMode('simple')">Simple</button><button type="button" data-mode="advanced" onclick="pmSetMode('advanced')">Avancé</button></div>`;
+  const headerRight = modeSwitch + `<label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:400;cursor:pointer;">
     <label class="toggle"><input type="checkbox" id="p-enabled" ${existing?.enabled!==false?'checked':''}><span class="toggle-slider"></span></label>
     <span style="color:var(--text2);">Activé</span>
   </label>`;
   modal(id ? 'Modifier le proxy' : 'Nouveau proxy', body, footer, true, headerRight);
   document.querySelector('#modal-overlay .dialog')?.classList.add('pm-dialog');
+  if (!id) {
+    let mode = 'simple';
+    try { mode = localStorage.getItem('gpx_proxy_mode') === 'advanced' ? 'advanced' : 'simple'; } catch {}
+    pmSetMode(mode);
+    pmSimpleTLS('https'); // nouveau proxy : HTTPS (certificat automatique) par défaut, dans les deux modes
+  }
   if (initialTab) switchProxyTab(initialTab);
   updateProxyForm();
   // Peupler le sélecteur de certificats
@@ -1304,6 +1312,7 @@ window.openProxyModal = async function(id, initialTab, secTab) {
     });
   }
   await _psecMount(id || '', secTab || (id ? 'recap' : 'params'), document.getElementById('ptab-protection'));
+  if (!id) _pmSimpleApply();
 };
 
 window.updateProxyForm = function() {
@@ -2033,6 +2042,141 @@ window.saveProxy = async function(id, opts = {}) {
 };
 
 
+// ── Mode Simple (création d'un proxy) ─────────────────────────────────────────
+// Le panneau Simple n'a pas d'état propre : il lit et écrit les vrais champs du formulaire
+// (masqués en mode Simple), donc Simple ↔ Avancé ne perd rien et saveProxy() reste unique.
+const PM_SIMPLE_CARDS = [
+  { k: 'waf', title: 'WAF', desc: 'Filtre les attaques web courantes (OWASP CRS).',
+    icon: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+    fields: `<select id="pms-waf-mode" class="input" onchange="pmSimpleChange()"><option value="block">Bloquer (403)</option><option value="detect">Détecter (log seul)</option></select>` },
+  { k: 'hdr', title: 'En-têtes de sécurité', desc: 'HSTS, X-Frame-Options et masquage de l\'en-tête Server.',
+    icon: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>' },
+  { k: 'rl', title: 'Limite de débit', desc: 'Freine les abus par adresse IP.',
+    icon: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+    fields: `<div class="pm-row"><label>Req/s<input id="pms-rl-rps" type="number" min="1" class="input" value="10" onchange="pmSimpleChange()"></label><label>Rafale<input id="pms-rl-burst" type="number" min="1" class="input" value="20" onchange="pmSimpleChange()"></label></div>` },
+  { k: 'bot', title: 'Anti-bots', desc: 'Bloque ou défie les robots malveillants.',
+    icon: '<rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V4M9 14h.01M15 14h.01"/>',
+    fields: `<select id="pms-bot-mode" class="input" onchange="pmSimpleChange()"><option value="block">Bloquer</option><option value="challenge">Défi JavaScript</option><option value="log">Journaliser</option></select>` },
+  { k: 'ipf', title: 'Filtre IP', desc: 'Autorise ou bloque des adresses / plages CIDR.',
+    icon: '<circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/>',
+    fields: `<select id="pms-ipf-mode" class="input" onchange="pmSimpleChange()"><option value="deny">Bloquer ces adresses</option><option value="allow">N'autoriser que ces adresses</option></select><textarea id="pms-ipf-cidrs" class="input" rows="3" placeholder="10.0.0.0/8&#10;203.0.113.10/24" oninput="pmSimpleChange()"></textarea>` },
+  { k: 'cb', title: 'Coupe-circuit', desc: 'Écarte un backend défaillant le temps qu\'il récupère.',
+    icon: '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>' },
+  { k: 'ws', title: 'WebSocket', desc: 'Autorise les connexions temps réel.',
+    icon: '<path d="M5 12h14M12 5l7 7-7 7"/>' },
+];
+
+function _pmSimpleHtml() {
+  const cards = PM_SIMPLE_CARDS.map(c => `
+    <div class="pm-card" data-k="${c.k}">
+      <div class="pm-card-head" onclick="pmCardToggle('${c.k}')">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${c.icon}</svg>
+        <span class="pm-card-title">${c.title}</span><span class="pm-sw"></span>
+      </div>
+      <p>${c.desc}</p>
+      ${c.fields ? `<div class="pm-card-fields">${c.fields}</div>` : ''}
+    </div>`).join('');
+  return `<div id="pm-simple" class="pm-simple">
+    <div class="pm-simple-grid2">
+      <div class="field"><label class="field-label">Domaine</label>
+        <input id="pms-domain" class="input" placeholder="app.mondomaine.fr" oninput="pmSimpleChange()"></div>
+      <div class="field"><label class="field-label">Backend</label>
+        <input id="pms-backend" class="input" placeholder="http://10.0.0.5:8080" oninput="pmSimpleChange()"></div>
+    </div>
+    <div class="field"><label class="field-label">Accès</label>
+      <div class="pm-seg" id="pms-tls">
+        <button type="button" data-v="https" onclick="pmSimpleTLS('https')">HTTPS (certificat automatique)</button>
+        <button type="button" data-v="http" onclick="pmSimpleTLS('http')">HTTP seul</button>
+      </div></div>
+    <div class="pm-simple-title">Ajouter des protections</div>
+    <div class="pm-cards">${cards}</div>
+    <div class="pm-simple-more">Authentification, cache, en-têtes, résilience détaillée, YAML… <button type="button" class="btn btn-ghost btn-sm" onclick="pmSetMode('advanced')">Mode avancé →</button></div>
+  </div>`;
+}
+
+window.pmSimpleChange = function() { _pmSimpleApply(); };
+
+window.pmCardToggle = function(k) {
+  document.querySelector(`.pm-card[data-k="${k}"]`)?.classList.toggle('on');
+  _pmSimpleApply();
+};
+
+window.pmSimpleTLS = function(v) {
+  document.querySelectorAll('#pms-tls button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+  _pmSimpleApply();
+};
+
+// Simple → formulaire complet
+window._pmSimpleApply = function() {
+  const q = id => document.getElementById(id);
+  if (!q('pm-simple')) return;
+  const set = (id, prop, v) => {
+    const el = q(id);
+    if (!el || el[prop] === v) return;
+    el[prop] = v;
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  const on = k => !!document.querySelector(`.pm-card[data-k="${k}"].on`);
+
+  const dom = document.querySelector('.p-domain-val');
+  if (dom) dom.value = q('pms-domain').value.trim();
+  const be = document.querySelector('.p-backend-url');
+  if (be) {
+    const v = q('pms-backend').value.trim();
+    be.value = v && !/^[a-z][a-z0-9+.-]*:\/\//i.test(v) ? 'http://' + v : v;
+  }
+  const https = document.querySelector('#pms-tls button[data-v="https"]')?.classList.contains('on');
+  set('p-https', 'checked', !!https);
+  if (https && q('p-cert') && q('p-cert').value) q('p-cert').value = '';
+
+  set('psec-waf-enabled', 'checked', on('waf'));
+  if (on('waf')) set('psec-waf-mode', 'value', q('pms-waf-mode').value);
+  set('psec-hsts', 'checked', on('hdr'));
+  set('psec-hide-server', 'checked', on('hdr'));
+  set('psec-xfo', 'value', on('hdr') ? 'DENY' : '');
+  set('psec-rl-enabled', 'checked', on('rl'));
+  if (on('rl')) { set('psec-rl-rps', 'value', q('pms-rl-rps').value); set('psec-rl-burst', 'value', q('pms-rl-burst').value); }
+  set('psec-bot-enabled', 'checked', on('bot'));
+  if (on('bot')) set('psec-bot-mode', 'value', q('pms-bot-mode').value);
+  const cidrs = q('pms-ipf-cidrs').value;
+  set('psec-ipf-enabled', 'checked', on('ipf') && cidrs.trim() !== '');
+  if (on('ipf')) { set('psec-ipf-mode', 'value', q('pms-ipf-mode').value); set('psec-ipf-cidrs', 'value', cidrs); }
+  set('p-cb-enabled', 'checked', on('cb'));
+  set('p-ws', 'checked', on('ws'));
+};
+
+// Formulaire complet → Simple
+window._pmSimpleRefresh = function() {
+  const q = id => document.getElementById(id);
+  if (!q('pm-simple')) return;
+  const card = (k, v) => document.querySelector(`.pm-card[data-k="${k}"]`)?.classList.toggle('on', !!v);
+  q('pms-domain').value = document.querySelector('.p-domain-val')?.value || '';
+  q('pms-backend').value = document.querySelector('.p-backend-url')?.value || '';
+  const https = !!q('p-https')?.checked;
+  document.querySelectorAll('#pms-tls button').forEach(b => b.classList.toggle('on', b.dataset.v === (https ? 'https' : 'http')));
+  card('waf', q('psec-waf-enabled')?.checked);
+  if (q('psec-waf-mode')) q('pms-waf-mode').value = q('psec-waf-mode').value;
+  card('hdr', q('psec-hsts')?.checked);
+  card('rl', q('psec-rl-enabled')?.checked);
+  if (q('psec-rl-rps')) { q('pms-rl-rps').value = q('psec-rl-rps').value; q('pms-rl-burst').value = q('psec-rl-burst').value; }
+  card('bot', q('psec-bot-enabled')?.checked);
+  if (q('psec-bot-mode')) q('pms-bot-mode').value = q('psec-bot-mode').value;
+  card('ipf', q('psec-ipf-enabled')?.checked);
+  if (q('psec-ipf-mode')) { q('pms-ipf-mode').value = q('psec-ipf-mode').value; q('pms-ipf-cidrs').value = q('psec-ipf-cidrs').value; }
+  card('cb', q('p-cb-enabled')?.checked);
+  card('ws', q('p-ws')?.checked);
+};
+
+window.pmSetMode = function(mode) {
+  const shell = document.querySelector('.pm-shell');
+  if (!shell || !document.getElementById('pm-simple')) return;
+  if (mode === 'simple') _pmSimpleRefresh(); else _pmSimpleApply();
+  shell.classList.toggle('is-simple', mode === 'simple');
+  document.querySelectorAll('.pm-mode button').forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
+  try { localStorage.setItem('gpx_proxy_mode', mode); } catch {}
+  if (mode !== 'simple') switchProxyTab(document.querySelector('.pm-tab.active')?.dataset.tab || 'general');
+};
+
 function _buildStreamModalHtml(cfg, enabled, editing) {
   const proto = cfg.type || 'tcp';
   const backends = (cfg.backends||[]).length ? cfg.backends : [{}];
@@ -2042,7 +2186,7 @@ function _buildStreamModalHtml(cfg, enabled, editing) {
       <button type="button" class="btn-icon" title="Supprimer" onclick="this.closest('.sp-backend-row').remove();if(!document.querySelectorAll('.sp-backend-row').length)_addStreamBackend()">×</button>
     </div>`).join('');
   return `
-    <div style="display:flex;flex-direction:column;gap:16px;padding-top:4px;">
+    <div style="display:flex;flex-direction:column;gap:16px;padding-top:4px;" oninput="_spSummary()" onchange="_spSummary()">
       <div class="field">
         <label class="field-label">Nom</label>
         <input class="input" id="sp-name" placeholder="Redis cache, DNS, …" value="${esc(cfg.host||'')}">
@@ -2066,10 +2210,7 @@ function _buildStreamModalHtml(cfg, enabled, editing) {
         <div id="sp-backends-list">${backendsHtml}</div>
         <button type="button" class="btn btn-secondary" style="margin-top:2px;height:28px;padding:0 10px;font-size:12px" onclick="_addStreamBackend()">+ Ajouter un backend</button>
       </div>
-      <label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer;padding:10px 14px;background:var(--bg3);border-radius:var(--radius);border:1px solid var(--border);">
-        <label class="toggle"><input type="checkbox" id="sp-enabled" ${enabled!==false?'checked':''}><span class="toggle-slider"></span></label>
-        <span style="font-weight:500">Actif</span>
-      </label>
+      <div id="sp-summary" class="pm-flow"></div>
     </div>`;
 }
 
@@ -2084,12 +2225,29 @@ window._addStreamBackend = function() {
   row.querySelector('input')?.focus();
 };
 
+const _spHeaderRight = (enabled) => `<label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:400;cursor:pointer;">
+    <label class="toggle"><input type="checkbox" id="sp-enabled" ${enabled!==false?'checked':''}><span class="toggle-slider"></span></label>
+    <span style="color:var(--text2);">Activé</span>
+  </label>`;
+
+// Résumé du chemin : Client → :port/proto → backends
+window._spSummary = function() {
+  const el = document.getElementById('sp-summary');
+  if (!el) return;
+  const port = document.getElementById('sp-port')?.value || '…';
+  const proto = (document.querySelector('input[name="sp-proto"]:checked')?.value || 'tcp');
+  const protoLbl = proto === 'both' ? 'TCP+UDP' : proto.toUpperCase();
+  const bes = [...document.querySelectorAll('.sp-backend-url')].map(i => i.value.trim()).filter(Boolean);
+  el.innerHTML = `<span>Client</span><i>→</i><b>:${esc(port)} ${protoLbl}</b><i>→</i><span>${bes.length ? bes.map(esc).join(', ') : '…'}</span>`;
+};
+
 window.openStreamProxyModal = function() {
   const bodyHtml = _buildStreamModalHtml({}, true, false);
   const footerHtml = `
     <button class="btn btn-secondary" onclick="closeModal()">Annuler</button>
     <button class="btn btn-primary" onclick="saveStreamProxy()">Créer le flux</button>`;
-  modal('Nouveau flux TCP/UDP', bodyHtml, footerHtml);
+  modal('Nouveau flux TCP/UDP', bodyHtml, footerHtml, false, _spHeaderRight(true));
+  _spSummary();
   setTimeout(() => document.getElementById('sp-name')?.focus(), 50);
 };
 
@@ -2103,7 +2261,9 @@ window.openStreamEditModal = async function(id) {
       onclick="confirm_('Supprimer ce flux ?',async()=>{try{await api('DELETE','/proxies/${esc(id)}');closeModal();toast('Flux supprimé','success');refreshProxies();}catch(e){toast(e.message,'error');}})">Supprimer</button>
     <button class="btn btn-secondary" onclick="closeModal()">Annuler</button>
     <button class="btn btn-primary" onclick="saveStreamEdit('${esc(id)}')">Enregistrer</button>`;
-  modal('Modifier le flux', bodyHtml, footerHtml);
+  modal('Modifier le flux', bodyHtml, footerHtml, false, _spHeaderRight(existing.enabled));
+  window._openStreamCfg = cfg;
+  _spSummary();
   setTimeout(() => document.getElementById('sp-name')?.focus(), 50);
 };
 
@@ -2137,7 +2297,7 @@ window.saveStreamEdit = async function(id) {
   const { name, port, proto, enabled, backends } = _collectStreamForm();
   if (!port || port < 1 || port > 65535) { toast("Port d'écoute invalide", 'error'); return; }
   if (!backends.length) { toast('Au moins un backend requis', 'error'); return; }
-  const config = { type: proto, host: name || (proto + '_' + port), listen_port: port, backends };
+  const config = { ...(window._openStreamCfg || {}), type: proto, host: name || (proto + '_' + port), listen_port: port, backends };
   try {
     await api('PUT', `/proxies/${encodeURIComponent(id)}`, { config, enabled });
     toast('Flux mis à jour', 'success');

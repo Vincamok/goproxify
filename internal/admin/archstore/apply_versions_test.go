@@ -286,3 +286,27 @@ func TestEnsureEdgeNeverDuplicates(t *testing.T) {
 		t.Fatalf("aucune version attendue pour un contenu inchangé (%d → %d)", len(before), len(after))
 	}
 }
+
+func TestGetAndVersionReadWithoutRestoring(t *testing.T) {
+	s := New(t.TempDir())
+	if arch, err := s.Get(); err != nil || len(arch.Nodes) != 0 {
+		t.Fatalf("fichier absent : architecture vide attendue, reçu %+v err %v", arch, err)
+	}
+	if err := s.Upsert(NodeEntry{ID: "a", Role: "edge", Name: "un", Endpoint: "http://un:8000"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Upsert(NodeEntry{ID: "b", Role: "edge", Name: "deux", Endpoint: "http://deux:8000"}); err != nil {
+		t.Fatal(err)
+	}
+	vs, _ := s.Versions()
+	old, err := s.Version(vs[0].Name)
+	if err != nil || len(old.Nodes) != 1 || old.Nodes[0].ID != "a" {
+		t.Fatalf("la version conservée doit contenir seulement a : %+v err %v", old, err)
+	}
+	if cur, _ := s.Get(); len(cur.Nodes) != 2 {
+		t.Fatalf("consulter une version ne doit pas modifier le fichier courant : %+v", cur)
+	}
+	if _, err := s.Version("../architecture.json"); err == nil {
+		t.Fatal("un nom hors format doit être refusé")
+	}
+}

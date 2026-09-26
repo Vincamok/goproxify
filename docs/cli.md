@@ -183,6 +183,7 @@ goproxify proxy list    [-admin-url …] [-token …]
 goproxify proxy get     <id> [-admin-url …] [-token …]
 goproxify proxy enable  <id> [-admin-url …] [-token …]
 goproxify proxy disable <id> [-admin-url …] [-token …]
+goproxify proxy metrics [-admin-url …] [-token …]
 goproxify proxy delete  <id> [-y] [-admin-url …] [-token …]
   -y  Confirmation automatique
 ```
@@ -192,6 +193,7 @@ Exemples :
 ```bash
 goproxify proxy list
 goproxify proxy get app.example.fr
+goproxify proxy metrics
 goproxify proxy disable app.example.fr
 goproxify proxy delete app.example.fr -y
 ```
@@ -222,17 +224,22 @@ goproxify cert delete old.example.fr
 
 ### `goproxify architecture`
 
-Historique de `architecture.json` (fichier de vérité de l'architecture : nœuds du wizard, Passerelles, périmètres). Chaque écriture qui change le fichier en conserve la version précédente.
+Contenu et historique de `architecture.json` (fichier de vérité de l'architecture : nœuds du wizard avec leur hôte et leurs capacités, Passerelles, périmètres, domaines). Chaque écriture qui change le fichier en conserve la version précédente.
 
 ```
+goproxify architecture show [-version <nom>]
 goproxify architecture versions
 goproxify architecture restore -name <version>
 ```
 
+`show` affiche l'architecture courante en JSON, ou une version conservée avec `-version` (sans la restaurer).
+
 Exemple :
 
 ```bash
+goproxify architecture show
 goproxify architecture versions
+goproxify architecture show -version architecture-20260926T070623359846127Z.json
 goproxify architecture restore -name architecture-20260926T070623359846127Z.json
 ```
 

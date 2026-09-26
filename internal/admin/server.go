@@ -489,6 +489,8 @@ func (s *Server) Start(ctx context.Context) error {
 	workspacesH := &api.WorkspacesHandler{DB: s.db, Log: s.log}
 	discoveredH := &api.DiscoveredContainersHandler{DB: s.db, Log: s.log}
 	backendsHealthH := &api.BackendsHealthHandler{DB: s.db, Log: s.log}
+	proxyMetricsH := api.NewProxyMetricsSampler(s.db, s.log)
+	go proxyMetricsH.Run(ctx)
 	domainsH := &api.DomainsHandler{DB: s.db, Log: s.log, Pusher: manager, OnChange: syncArch}
 	agentsH := &api.AgentsHandler{
 		Log:   s.log,
@@ -661,11 +663,13 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/api/v1/nodes/", protected(nodesH))
 	mux.Handle("/api/v1/declared-nodes", protected(declaredNodesH))
 	mux.Handle("/api/v1/declared-nodes/", protected(declaredNodesH))
+	mux.Handle("/api/v1/architecture", adminOnly(architectureH))
 	mux.Handle("/api/v1/architecture/", adminOnly(architectureH))
 	mux.Handle("POST /api/v1/bootstrap-tickets", protected(http.HandlerFunc(bootstrapH.ServeCreate)))
 	mux.Handle("/api/v1/node-events", protected(nodeEventsH))
 	mux.Handle("/api/v1/discovered-containers", protected(discoveredH))
 	mux.Handle("/api/v1/backends/health", protected(backendsHealthH))
+	mux.Handle("/api/v1/metrics/proxies", protected(proxyMetricsH))
 	mux.Handle("/api/v1/audit", protected(auditH))
 	mux.Handle("/api/v1/audit/", protected(auditH))
 	mux.Handle("/api/v1/alert-channels", protected(channelsH))
@@ -740,6 +744,8 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// MCP server — PAT utilisateur uniquement (pas de JWT session)
 	mcpH := &mcp.Handler{
+		ProxyMetrics: func(points int) (any, any) { return proxyMetricsH.Snapshot(points) },
+		ArchStore:    archStore,
 		DB: s.db, Log: s.log, Pusher: manager,
 		Access: manager, AccessTemplates: manager,
 		ResolvePublicURL: bootstrapH.ResolvePublicURL,

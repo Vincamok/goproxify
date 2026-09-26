@@ -213,6 +213,40 @@ curl -s "https://admin.example.com/api/v1/cert-bundle?token=TOKEN&format=fullcha
 
 ---
 
+### `GET /api/v1/metrics/proxies`
+
+Débit, erreurs et latence **par host**, avec un historique récent. L'Admin relève toutes les
+passerelles actives toutes les 10 s (`GET /internal/v1/metrics/summary`), calcule la différence
+entre deux relevés successifs (une remise à zéro des compteurs après redémarrage est détectée),
+additionne les passerelles et garde 1 h de série par host **en mémoire** : la série repart de zéro
+au redémarrage de l'Admin. Scope PAT : `metrics:read`.
+
+| Paramètre | Description |
+|-----------|-------------|
+| `points`  | Nombre de points de la série (défaut 60, max 360 ; un point = 10 s) |
+
+**Réponse 200 :**
+```json
+{
+  "interval_s": 10,
+  "sampled_at": "2026-09-26T13:11:37+02:00",
+  "proxies": [
+    {
+      "host": "myapp.example.fr",
+      "requests_per_second": 3.8,
+      "error_rate": 0.002,
+      "p95_ms": 9.3,
+      "series": [3.7, 4.0, 3.8]
+    }
+  ]
+}
+```
+
+`error_rate` est une **fraction** (0..1) de réponses 5xx sur le dernier intervalle ; `p95_ms` est le
+p95 de la latence sur ce même intervalle ; `series` est le débit (req/s) des derniers relevés, du
+plus ancien au plus récent. `proxies` est vide (et `sampled_at` nul) tant qu'aucune passerelle n'a
+été relevée deux fois.
+
 ### `GET /api/v1/proxies/:id/revisions`
 
 Liste les révisions sauvegardées d'un proxy. Réponse : `[{"revision":"<uuid>","status":"production|draft","updated_at":"...","created_by":"..."}]`.
@@ -566,6 +600,28 @@ Déclare un nœud (`role`: `edge`|`agent`, `name`, `region`, `environment`, `con
 ### `DELETE /api/v1/declared-nodes/:id`
 
 Supprime un nœud déclaré.
+
+### `GET /api/v1/architecture` `[AUTH]`
+
+Rôle admin requis. Retourne le contenu de `architecture.json`, référentiel de la topologie : c'est la source de la vue Infrastructure et du wizard (l'état live n'est qu'une surcouche). Fichier absent = architecture vide.
+
+**Réponse :**
+```json
+{
+  "schema_version": 1,
+  "nodes": [
+    {"id": "dn_1", "role": "edge", "name": "edge-1", "region": "eu-west",
+     "config": {"host": "vps-paris", "internet_exposed": true, "cluster": true, "cluster_group": "ha-1"}}
+  ],
+  "domains": []
+}
+```
+
+`config.host` est le nom de l'hôte qui porte le nœud ; les nœuds qui partagent un `host` sont posés sur la même machine.
+
+### `GET /api/v1/architecture/versions/{name}` `[AUTH]`
+
+Rôle admin requis. Lit une version conservée (même format que `GET /api/v1/architecture`) sans la restaurer. Un nom qui n'est pas une version conservée renvoie `404`.
 
 ### `GET /api/v1/architecture/versions` `[AUTH]`
 

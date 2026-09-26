@@ -115,6 +115,14 @@ func (s *Store) List() ([]NodeEntry, error) {
 	return arch.Nodes, nil
 }
 
+// Get retourne le contenu complet du fichier d'architecture : référentiel unique de la topologie
+// (nœuds, hôtes, capacités, domaines). Fichier absent = architecture vide.
+func (s *Store) Get() (*Architecture, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.readLocked()
+}
+
 // EdgeEndpoints retourne les nœuds passerelle du fichier qui portent un endpoint joignable par l'Admin.
 func (s *Store) EdgeEndpoints() ([]NodeEntry, error) {
 	nodes, err := s.List()

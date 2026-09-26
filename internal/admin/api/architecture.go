@@ -15,9 +15,11 @@ import (
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
 )
 
-// ArchitectureHandler expose l'historique de architecture.json et sa restauration.
+// ArchitectureHandler expose architecture.json (référentiel de la topologie), son historique et sa restauration.
 //
+//	GET  /api/v1/architecture
 //	GET  /api/v1/architecture/versions
+//	GET  /api/v1/architecture/versions/{name}
 //	POST /api/v1/architecture/restore   {"name": "architecture-….json"}
 type ArchitectureHandler struct {
 	DB    *sql.DB
@@ -34,6 +36,10 @@ func (h *ArchitectureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	}
 	sub := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/architecture"), "/")
 	switch {
+	case r.Method == http.MethodGet && sub == "":
+		h.get(w, r)
+	case r.Method == http.MethodGet && strings.HasPrefix(sub, "versions/"):
+		h.version(w, r, strings.TrimPrefix(sub, "versions/"))
 	case r.Method == http.MethodGet && sub == "versions":
 		h.versions(w, r)
 	case r.Method == http.MethodPost && sub == "restore":
@@ -41,6 +47,25 @@ func (h *ArchitectureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (h *ArchitectureHandler) get(w http.ResponseWriter, r *http.Request) {
+	arch, err := h.Store.Get()
+	if err != nil {
+		h.Log.Error("architecture: lecture", "err", err)
+		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
+		return
+	}
+	jsonOK(w, arch)
+}
+
+func (h *ArchitectureHandler) version(w http.ResponseWriter, r *http.Request, name string) {
+	arch, err := h.Store.Version(name)
+	if err != nil {
+		writeErr(w, r, http.StatusNotFound, "api.err.not_found")
+		return
+	}
+	jsonOK(w, arch)
 }
 
 func (h *ArchitectureHandler) versions(w http.ResponseWriter, r *http.Request) {

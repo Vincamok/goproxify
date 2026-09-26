@@ -105,6 +105,27 @@ func (s *Store) Versions() ([]VersionInfo, error) {
 	return s.listVersions()
 }
 
+// Version lit une version conservée sans la restaurer (consultation).
+func (s *Store) Version(name string) (*Architecture, error) {
+	if !versionNameRe.MatchString(name) {
+		return nil, fmt.Errorf("archstore: nom de version invalide %q", name)
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	data, err := os.ReadFile(filepath.Join(s.versionsDir(), name))
+	if err != nil {
+		return nil, fmt.Errorf("archstore: version %q introuvable: %w", name, err)
+	}
+	var arch Architecture
+	if err := json.Unmarshal(data, &arch); err != nil {
+		return nil, fmt.Errorf("archstore: version %q illisible: %w", name, err)
+	}
+	if arch.Nodes == nil {
+		arch.Nodes = []NodeEntry{}
+	}
+	return &arch, nil
+}
+
 // Restore remet en place une version conservée. Le fichier courant est lui-même
 // conservé avant d'être remplacé : une restauration est réversible.
 func (s *Store) Restore(name string) error {

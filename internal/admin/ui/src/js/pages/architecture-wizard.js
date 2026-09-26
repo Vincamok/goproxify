@@ -1,18 +1,17 @@
-// Wizard architecture : toile hôtes + palette → packs + checklist réseau.
-// Dépend de shared/infra-config.js et pages/infrastructure.js (_wiz helpers, _build*, declared-nodes).
+// Wizard architecture : édition du schéma (hôtes → rôles → capacités) et enregistrement dans architecture.json.
+// Dépend de shared/infra-config.js, shared/arch-schema.js et pages/infrastructure.js (_wiz helpers, _build*).
 
 const _arch = {
-  step: 'canvas', // canvas | handoff
   hosts: [],
   haGroups: [], // [{id:'ha-1', members:['svc-id-a','svc-id-b']}, ...] — N groupes HA possibles
   selectedSvcId: null,
   selectedHostId: null,
   loading: false,
-  packs: [], // { hostId, hostName, html, flows, bootstrapUrl }
   pairingSecret: '',
   jwtSecret: '',
   edgeList: [],
-  declaredNodes: [],
+  declaredNodes: [], // nœuds de architecture.json
+  nodes: [],         // état live (/nodes)
   onlineEdgeEndpoint: '',
   existingCount: 0,
   acmeProviders: [],
@@ -163,8 +162,8 @@ function _archHydrateFromExisting(nodes, declared) {
     if (!cName) continue;
     const d = declByName[cName] || declByName[c.display_name];
     const cfg = _archParseCfg(d && d.config);
-    const host = ensureHost('edge:' + cName, {
-      name: c.display_name || cName,
+    const host = ensureHost(cfg.host ? 'host:' + cfg.host : 'edge:' + cName, {
+      name: cfg.host || c.display_name || cName,
       region: (d && d.region) || c.region || '',
       internet: !!cfg.internet_exposed,
     });
@@ -194,7 +193,10 @@ function _archHydrateFromExisting(nodes, declared) {
     const colocate = (placement === 'colocated' && effectiveEdgeKey)
       || (placement !== 'remote' && effectiveEdgeKey && _archLooksColocatedTarget(cfg.target_edge || '', effectiveEdgeKey))
       || (edges.length === 1 && agents.length === 1 && !placement && !!effectiveEdgeKey);
-    if (colocate && hostByKey.has('edge:' + effectiveEdgeKey)) {
+    if (cfg.host) {
+      // L'hôte est déclaré dans architecture.json : pas d'heuristique de co-location.
+      host = ensureHost('host:' + cfg.host, { name: cfg.host, region: (d && d.region) || a.region || '', internet: !!cfg.internet_exposed });
+    } else if (colocate && hostByKey.has('edge:' + effectiveEdgeKey)) {
       host = hostByKey.get('edge:' + effectiveEdgeKey);
       if ((d && d.region) || a.region) {
         if (!host.region) host.region = (d && d.region) || a.region || '';
@@ -209,7 +211,10 @@ function _archHydrateFromExisting(nodes, declared) {
     }
     const svc = _archSvcFromExisting('agent', a, cfg);
     if (effectiveEdgeKey && edgeSvcByName.has(effectiveEdgeKey)) svc.targetEdgeId = edgeSvcByName.get(effectiveEdgeKey).id;
-    if (colocate) svc.placement = 'colocated';
+    const hostEdge = host.services.find(s => s.type === 'edge');
+    if (cfg.host) {
+      if (hostEdge) { svc.placement = 'colocated'; svc.targetEdgeId = hostEdge.id; } else if (!svc.placement) svc.placement = 'remote';
+    } else if (colocate) svc.placement = 'colocated';
     else if (!svc.placement) svc.placement = 'remote';
     host.services.push(svc);
   }
@@ -296,30 +301,11 @@ function _archSvcCaps(svc) {
   });
 }
 
-function _archMarkPendingDeploy(name) {
-  try {
-    const s = JSON.parse(localStorage.getItem('gpx_pending_deploy') || '{}');
-    s[name] = { savedAt: new Date().toISOString() };
-    localStorage.setItem('gpx_pending_deploy', JSON.stringify(s));
-  } catch {}
-}
-
-window.archMarkDeployed = function(name) {
-  try {
-    const s = JSON.parse(localStorage.getItem('gpx_pending_deploy') || '{}');
-    delete s[name];
-    localStorage.setItem('gpx_pending_deploy', JSON.stringify(s));
-  } catch {}
-  navigate('infrastructure');
-};
-
 function openArchWizard() {
-  _arch.step = 'canvas';
   _arch.hosts = [_archEmptyHost(1)];
   _arch.haGroups = [];
   _arch.selectedSvcId = null;
   _arch.selectedHostId = null;
-  _arch.packs = [];
   _arch.pairingSecret = '';
   _arch.edgeList = [];
   _arch.declaredNodes = [];
@@ -330,26 +316,18 @@ function openArchWizard() {
   navigate('architecture');
 }
 
-function _archGoToCanvas() {
-  _arch.step = 'canvas';
-  if (!_arch.hosts.length || (_arch.hosts.length === 1 && !_arch.hosts[0].services.length)) {
-    _arch.loading = true;
-    _archLoad();
-  } else {
-    _archRender();
-  }
-}
-
 function _archLoad() {
   return Promise.all([
     api('GET', '/pairing-secret').catch(() => null),
     api('GET', '/nodes').catch(() => null),
     api('GET', '/tokens?role=edge').catch(() => null),
-    api('GET', '/declared-nodes').catch(() => null),
+    api('GET', '/architecture').catch(() => null),
     api('GET', '/portal/enabled').catch(() => null),
     api('GET', '/domains').catch(() => null),
     api('GET', '/acme/providers').catch(() => []),
-  ]).then(([sec, nodes, tokens, declared, portalEnabled, domains, acmeProviders]) => {
+  ]).then(([sec, nodes, tokens, archFile, portalEnabled, domains, acmeProviders]) => {
+    const declared = archFile && Array.isArray(archFile.nodes) ? archFile.nodes : null;
+    _arch.nodes = Array.isArray(nodes) ? nodes : [];
     _arch.acmeProviders = Array.isArray(acmeProviders) ? acmeProviders : [];
     const portalEdges = portalEnabled?.edges || {};
     _arch.pairingSecret = sec?.secret || '';
@@ -466,7 +444,7 @@ async function _archSaveTopology() {
 
   const saved = [];
   for (const { svc, host } of allSvcs) {
-    const cfg = { internet_exposed: !!host.internet, reachable_host: svc.reachable || '' };
+    const cfg = { host: host.name, internet_exposed: !!host.internet, reachable_host: svc.reachable || '' };
     if (svc.nodeId) cfg.node_id = svc.nodeId; // UUID stable du nœud live
     if (svc.type === 'edge') {
       cfg.portal        = !!svc.access;
@@ -541,7 +519,8 @@ async function _archSaveTopology() {
   }
 
   // Recharge declaredNodes pour refléter l'état persisté
-  const fresh = await api('GET', '/declared-nodes').catch(() => null);
+  const freshFile = await api('GET', '/architecture').catch(() => null);
+  const fresh = freshFile && Array.isArray(freshFile.nodes) ? freshFile.nodes : null;
   if (fresh) { _arch.declaredNodes = fresh; _wiz.declaredNodes = fresh; }
 
   toast(t('common.saved') || 'Enregistré', 'success');
@@ -559,247 +538,39 @@ pages.architecture = function() {
 function _archRender() {
   const content = document.getElementById('content');
   if (!content || state.page !== 'architecture') return;
-  content.innerHTML = _arch.step === 'handoff' ? _archHandoffHTML() : _archCanvasHTML();
+  content.innerHTML = _archCanvasHTML();
 };
 
-// ── Bibliothèque (rail gauche) ────────────────────────────────────────────
-
-function _archRoleSourceHTML(type) {
-  const r = _ARCH_ROLES[type];
-  return `<div draggable="true" data-arch-type="${type}" ondragstart="_archDragStart(event)"
-    class="arch-role-src" style="--arch-accent:${r.accent};" title="${t('arch.drag_role_hint')}">
-    <span class="arch-glyph">${_ARCH_ICONS[type]}</span>
-    <span style="min-width:0;">
-      <span class="arch-role-src-name">${esc(t(r.label))}</span>
-      <span class="arch-role-src-desc" style="display:block;">${esc(t(r.desc))}</span>
-    </span>
-  </div>`;
-}
-
-function _archCapLegendHTML() {
-  return `<div class="arch-cap-legend">${_ARCH_CAPS.map(c => `
-    <div class="arch-cap-legend-row">
-      <span class="arch-cap-dot" style="--arch-accent:${_archRoleAccent(c.role)};"></span>
-      <strong>${esc(t(c.label))}</strong>
-      <span class="arch-cap-scope">${esc(t(_ARCH_ROLES[c.role].label))}</span>
-    </div>`).join('')}</div>`;
-}
-
-function _archLibraryHTML() {
-  // Raccourci "Ajouter un agent" quand une passerelle est déjà présent sur la toile
-  const hasEdges = _arch.hosts.some(h => (h.services || []).some(s => s.type === 'edge'));
-  const quickAddHTML = hasEdges ? `
-    <div class="arch-panel">
-      <div class="arch-panel-head">
-        <div class="arch-panel-title">${t('infra.add_agent')}</div>
-        <div class="arch-panel-sub">${t('arch.lib.quickadd_sub') || 'Ajouter un agent à l\'infrastructure existante'}</div>
-      </div>
-      <div class="arch-panel-body">
-        <button class="btn btn-primary btn-sm" style="width:100%;justify-content:center;" onclick="_archQuickAddAgent()">${t('arch.add_host') ? (t('infra.add_agent')) : 'Ajouter un agent'}</button>
-      </div>
-    </div>` : '';
-
-  return `${quickAddHTML}
-    <div class="arch-panel">
-      <div class="arch-panel-head">
-        <div class="arch-panel-title">${t('arch.palette.hosts')}</div>
-        <div class="arch-panel-sub">${t('arch.lib.hosts_sub')}</div>
-      </div>
-      <div class="arch-panel-body">
-        <button class="btn btn-secondary btn-sm" style="width:100%;justify-content:center;" onclick="_archAddHost()">${t('arch.add_host')}</button>
-      </div>
-    </div>
-
-    <div class="arch-panel">
-      <div class="arch-panel-head">
-        <div class="arch-panel-title">${t('arch.palette.roles')}</div>
-        <div class="arch-panel-sub">${t('arch.lib.roles_sub')}</div>
-      </div>
-      <div class="arch-panel-body">
-        ${_archRoleSourceHTML('edge')}
-        ${_archRoleSourceHTML('agent')}
-        ${_archRoleSourceHTML('admin')}
-      </div>
-    </div>
-
-    <div class="arch-panel">
-      <div class="arch-panel-head">
-        <div class="arch-panel-title">${t('arch.palette.caps')}</div>
-        <div class="arch-panel-sub">${t('arch.lib.caps_sub')}</div>
-      </div>
-      <div class="arch-panel-body">${_archCapLegendHTML()}</div>
-    </div>`;
-}
-
-/** Ajoute un agent sur le premier hôte qui contient une passerelle (ou un nouvel hôte), et ouvre l'inspecteur. */
-function _archQuickAddAgent() {
-  // Cherche un hôte avec une passerelle pour co-localiser l'agent, sinon crée un hôte dédié
-  let host = _arch.hosts.find(h => (h.services || []).some(s => s.type === 'edge'));
-  if (!host) {
-    host = _archEmptyHost(_arch.hosts.length + 1);
-    _arch.hosts.push(host);
-  }
-  _archAddService(host.id, 'agent');
-}
-
-// ── Toile ─────────────────────────────────────────────────────────────────
-
-function _archLegendHTML() {
-  const step = (level, glyph, name, desc) => `
-    <div class="arch-legend-step" data-level="${level}">
-      <span class="arch-legend-glyph">${glyph}</span>
-      <span style="min-width:0;">
-        <span class="arch-legend-name">${esc(name)}</span>
-        <span class="arch-legend-desc" style="display:block;">${esc(desc)}</span>
-      </span>
-    </div>`;
-  return `<div class="arch-legend">
-    ${step('host', _ARCH_ICONS.host, t('arch.level.host'), t('arch.level.host_desc'))}
-    ${step('role', _ARCH_ICONS.edge, t('arch.level.role'), t('arch.level.role_desc'))}
-    ${step('cap',  _ARCH_ICONS.cap,  t('arch.level.cap'),  t('arch.level.cap_desc'))}
-  </div>`;
-}
-
-function _archZoneHTML(zone, title, hint, hosts, emptyKey) {
-  const body = hosts.length
-    ? hosts.map(h => _archHostCard(h)).join('')
-    : `<div class="arch-zone-empty">${t(emptyKey)}</div>`;
-  return `<section class="arch-zone" data-zone="${zone}">
-    <div class="arch-zone-head">
-      <span class="arch-zone-title">${esc(title)}</span>
-      <span class="arch-zone-hint">${esc(hint)}</span>
-      <span class="arch-zone-count">${hosts.length}</span>
-    </div>
-    <div class="arch-zone-body">${body}</div>
-  </section>`;
-}
-
-function _archCountsHTML() {
-  const roles = _arch.hosts.flatMap(h => h.services || []);
-  const caps = roles.reduce((n, s) => n + _archSvcCaps(s).length, 0);
-  return `<div class="arch-summary">
-    <span><b>${_arch.hosts.length}</b> ${esc(t('arch.count.hosts'))}</span>
-    <span><b>${roles.length}</b> ${esc(t('arch.count.roles'))}</span>
-    <span><b>${caps}</b> ${esc(t('arch.count.caps'))}</span>
-  </div>`;
-}
-
+/** Wizard : le schéma d'architecture en mode édition + inspecteur. Enregistrer écrit architecture.json. */
 function _archCanvasHTML() {
-  if (_arch.loading) {
-    return `<p style="color:var(--text2)">${t('common.loading')}</p>`;
-  }
-  const edgeHosts = _arch.hosts.filter(h => h.internet);
-  const privateHosts = _arch.hosts.filter(h => !h.internet);
+  if (_arch.loading) return `<p style="color:var(--text2)">${t('common.loading')}</p>`;
+  window._asEdit = true;
   const err = _archValidate() || '';
   const haNote = _archAccessHANote();
-
   return `<div class="arch-page">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
       <div style="min-width:0;">
         <div class="card-kicker">${t('arch.kicker')}</div>
         <h2 style="font-family:var(--font-heading);font-size:20px;font-weight:700;margin:0;letter-spacing:-.01em;">${t('arch.title')}</h2>
-        <p style="font-size:12.5px;color:var(--text2);margin-top:5px;max-width:52rem;line-height:1.5;">${t('arch.subtitle_map')}</p>
-        ${_arch.existingCount ? `<p style="font-size:12px;color:var(--text2);margin-top:4px;">${t('arch.existing_loaded', { n: _arch.existingCount })}</p>` : ''}
+        <p style="font-size:12.5px;color:var(--text2);margin-top:5px;max-width:52rem;line-height:1.5;">${t('as.wizard_sub')}</p>
       </div>
-      <button class="btn btn-ghost btn-sm" onclick="closeArchWizard()">${t('arch.back_infra')}</button>
-    </div>
-
-    ${_archLegendHTML()}
-
-    <div class="arch-layout">
-      <aside class="arch-rail">${_archLibraryHTML()}</aside>
-
-      <div style="min-width:0;">
-        ${_archZoneHTML('edge', t('arch.zone.internet'), t('arch.zone.internet_hint'), edgeHosts, 'arch.zone.internet_empty')}
-        ${_archZoneHTML('private', t('arch.zone.private'), t('arch.zone.private_hint'), privateHosts, 'arch.zone.private_empty')}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-ghost btn-sm" onclick="asOpenConfig(null,'v')">${esc(t('as.history'))}</button>
+        <button class="btn btn-ghost btn-sm" onclick="closeArchWizard()">${t('arch.back_infra')}</button>
       </div>
-
-      <aside class="arch-rail arch-rail-right">${_archInspectorHTML()}</aside>
     </div>
-
+    <div class="as-wz">
+      ${asSchemaHTML(_arch, { edit: true, selectedId: _arch.selectedSvcId })}
+      <aside>${asInspectorHTML()}</aside>
+    </div>
     ${haNote ? `<div class="arch-msg" data-tone="warn">${esc(haNote)}</div>` : ''}
     ${err ? `<div class="arch-msg" data-tone="error">${esc(err)}</div>` : ''}
-    <div class="arch-msg" data-tone="info">${t('arch.labels_elsewhere')}</div>
-
     <div class="arch-actionbar">
-      ${_archCountsHTML()}
+      <div class="arch-summary"><span><b>${_asAllSvcs(_arch).length}</b> ${esc(t('as.nodes'))}</span></div>
       <div class="arch-actionbar-btns">
-        ${_arch.packs.length
-          ? ''
-          : `<button class="btn btn-ghost" onclick="closeArchWizard()">${t('common.cancel') || 'Annuler'}</button>`
-        }
-        <button class="btn btn-ghost" onclick="_archSaveTopology()" ${err ? 'disabled' : ''}>${t('arch.save_topology') || 'Enregistrer'}</button>
-        <button class="btn btn-primary" onclick="_archGoHandoff()" ${err ? 'disabled' : ''}>${t('arch.continue')}</button>
+        <button class="btn btn-ghost" onclick="closeArchWizard()">${t('common.cancel') || 'Annuler'}</button>
+        <button class="btn btn-primary" onclick="_archSaveTopology()" ${err ? 'disabled' : ''}>${t('arch.save_topology') || 'Enregistrer'}</button>
       </div>
-    </div>
-  </div>`;
-}
-
-function _archRoleCardHTML(host, svc) {
-  const accent = _archRoleAccent(svc.type);
-  const sel = svc.id === _arch.selectedSvcId;
-  const caps = _archSvcCaps(svc);
-  const chips = caps.map(c =>
-    `<span class="arch-chip">${esc(c.chip)}</span>`
-  ).join('');
-  const state = [];
-  if (svc.existing) state.push(svc.status === 'online' ? t('arch.badge.online') : t('arch.badge.declared'));
-  if (svc.type === 'agent' && svc.placement === 'colocated') state.push(t('arch.badge.colocated'));
-  const stateChips = state.map(s => `<span class="arch-chip" data-kind="state">${esc(s)}</span>`).join('');
-
-  return `<div draggable="true" data-arch-svc="${svc.id}" ondragstart="_archDragStart(event)"
-    onclick="event.stopPropagation();_archSelectSvc('${svc.id}')"
-    class="arch-role${sel ? ' selected' : ''}" style="--arch-accent:${accent};"
-    title="${t('arch.drag_move_hint')}">
-    <span class="arch-glyph">${_ARCH_ICONS[svc.type] || ''}</span>
-    <span class="arch-role-main">
-      <span class="arch-role-id">
-        <span class="arch-role-kind">${esc(t(_ARCH_ROLES[svc.type].label))}</span>
-        <span class="arch-role-name">${esc(svc.name)}</span>
-      </span>
-      ${(chips || stateChips)
-        ? `<span class="arch-role-caps">${chips}${stateChips}</span>`
-        : `<span class="arch-role-nocap">${t('arch.role.no_cap')}</span>`}
-    </span>
-    <button class="arch-role-del" title="${t('common.delete') || 'Supprimer'}"
-      onclick="event.stopPropagation();_archRemoveSvc('${host.id}','${svc.id}')">${_ARCH_ICONS.trash}</button>
-  </div>`;
-}
-
-function _archHostCard(host) {
-  const inet = !!host.internet;
-  const sel = host.id === _arch.selectedHostId && !_arch.selectedSvcId;
-  const roles = (host.services || []).map(s => _archRoleCardHTML(host, s)).join('');
-  const addBtn = type => `<button class="arch-addrole" style="--arch-accent:${_archRoleAccent(type)};"
-    onclick="event.stopPropagation();_archAddService('${host.id}','${type}')">+ ${esc(t(_ARCH_ROLES[type].label))}</button>`;
-
-  return `<div class="arch-host${sel ? ' selected' : ''}" data-host-id="${host.id}"
-    onclick="_archSelectHost('${host.id}')"
-    ondragover="event.preventDefault();this.classList.add('drop-active')"
-    ondragleave="this.classList.remove('drop-active')"
-    ondrop="this.classList.remove('drop-active');_archDrop(event,'${host.id}')">
-    <div class="arch-host-head">
-      <span class="arch-host-glyph">${_ARCH_ICONS.host}</span>
-      <input class="arch-host-name" value="${esc(host.name)}" aria-label="${t('arch.host.name')}"
-        onclick="event.stopPropagation()" onchange="_archRenameHost('${host.id}',this.value)">
-    </div>
-    <div class="arch-host-meta">
-      <button type="button" class="arch-host-zonetag" data-on="${inet ? 1 : 0}" aria-pressed="${inet}"
-        title="${t('arch.host.internet_hint')}"
-        onclick="event.stopPropagation();_archSetHostInternet('${host.id}',${!inet})">
-        ${inet ? _ARCH_ICONS.globe : _ARCH_ICONS.lock}${esc(inet ? t('arch.host.internet') : t('arch.host.private'))}
-      </button>
-      <input class="arch-host-region" value="${esc(host.region || '')}" placeholder="${t('arch.host.region_ph')}"
-        aria-label="${t('arch.host.region')}"
-        onclick="event.stopPropagation()" onchange="_archSetHostRegion('${host.id}',this.value)">
-    </div>
-    <div class="arch-host-slot">
-      ${roles || `<div class="arch-host-drop">${t('arch.drop_here')}</div>`}
-    </div>
-    <div class="arch-host-foot">
-      ${addBtn('edge')}${addBtn('agent')}${addBtn('admin')}
-      ${_arch.hosts.length > 1 ? `<button class="btn-icon arch-host-del" style="color:var(--red);" title="${t('arch.host.remove')}"
-        onclick="event.stopPropagation();_archRemoveHost('${host.id}')">${_ARCH_ICONS.trash}</button>` : ''}
     </div>
   </div>`;
 }
@@ -832,46 +603,6 @@ function _archGroup(title, bodyHTML) {
 
 function _archField(label, inputHTML) {
   return `<div class="arch-field"><span class="arch-field-label">${label}</span>${inputHTML}</div>`;
-}
-
-function _archInspectorHTML() {
-  const svc = _arch.selectedSvcId ? _archFindSvc(_arch.selectedSvcId) : null;
-  if (svc) return _archInspectRole(svc);
-  const host = _arch.selectedHostId ? _arch.hosts.find(h => h.id === _arch.selectedHostId) : null;
-  if (host) return _archInspectHost(host);
-  return `<div class="arch-panel">
-    <div class="arch-panel-head"><div class="arch-panel-title">${t('arch.inspector')}</div></div>
-    <div class="arch-insp-empty">${t('arch.inspector_empty')}</div>
-  </div>`;
-}
-
-function _archInspectHost(host) {
-  const inet = !!host.internet;
-  const roles = host.services || [];
-  const rolesHTML = roles.length
-    ? roles.map(s => `<button class="arch-addrole" style="--arch-accent:${_archRoleAccent(s.type)};display:block;width:100%;text-align:left;margin-bottom:5px;"
-        onclick="_archSelectSvc('${s.id}')">${esc(t(_ARCH_ROLES[s.type].label))} · ${esc(s.name)}</button>`).join('')
-    : `<div class="arch-cap-desc">${t('arch.host.no_role')}</div>`;
-
-  return `<div class="arch-panel">
-    <div class="arch-insp-head">
-      <div class="arch-insp-level">${t('arch.level.host')}</div>
-      <div class="arch-insp-name">${esc(host.name)}</div>
-      <div class="arch-insp-note">${t('arch.host.insp_note')}</div>
-    </div>
-    <div class="arch-insp-body">
-      ${_archGroup(t('arch.group.identity'),
-        _archField(t('arch.host.name'), `<input class="arch-input" value="${esc(host.name)}" onchange="_archRenameHost('${host.id}',this.value);_archRender()">`) +
-        _archField(t('arch.host.region'), `<input class="arch-input" value="${esc(host.region || '')}" placeholder="eu-west-1" onchange="_archSetHostRegion('${host.id}',this.value)">`)
-      )}
-      ${_archGroup(t('arch.group.network'),
-        _archCapRow(inet, t('arch.host.internet'), t('arch.host.internet_hint'),
-          `_archSetHostInternet('${host.id}',this.checked)`)
-      )}
-      ${_archGroup(t('arch.group.roles_on_host'), rolesHTML)}
-      ${_arch.hosts.length > 1 ? `<button class="btn btn-ghost btn-sm" style="color:var(--red);align-self:flex-start;" onclick="_archRemoveHost('${host.id}')">${t('arch.host.remove')}</button>` : ''}
-    </div>
-  </div>`;
 }
 
 function _archInspectRole(svc) {
@@ -1622,69 +1353,9 @@ function _archBuildPacks() {
   return packs;
 }
 
-async function _archPersistDeclared() {
-  for (const pack of _arch.packs) {
-    const roles = [];
-    if (pack.edgeOpts) roles.push({ role: 'edge', opts: pack.edgeOpts, svc: pack.services.find(s => s.type === 'edge') });
-    if (pack.agentOpts) roles.push({ role: 'agent', opts: pack.agentOpts, svc: pack.services.find(s => s.type === 'agent') });
-    for (const r of roles) {
-      try {
-        const hostMeta = _arch.hosts.find(h => h.id === pack.hostId);
-        const placement = r.role === 'agent'
-          ? ((r.svc && r.svc.placement) || (pack.edgeOpts && pack.agentOpts ? 'colocated' : 'remote'))
-          : undefined;
-        const cfg = {
-          image: r.opts.image,
-          env_vars: r.opts.envVars,
-          restart: r.opts.restart,
-          docker: !!(r.svc && r.svc.docker),
-          podman: !!(r.svc && r.svc.podman),
-          k8s: !!(r.svc && r.svc.k8s),
-          portainer: !!(r.svc && r.svc.portainer),
-          portainer_url: (r.svc && r.svc.portainerUrl) || '',
-          portainer_key: (r.svc && r.svc.portainerKey) || '',
-          domains: (r.svc && r.svc.domains) || '',
-          acme: !!(r.svc && r.svc.acme),
-          acme_email: (r.svc && r.svc.acmeEmail) || '',
-          dns_provider: (r.svc && r.svc.dnsProvider) || 'none',
-          placement,
-          target_edge: r.role === 'agent' ? ((pack.agentOpts.envVars || []).find(e => e.k === 'GPX_CONTROL_PLANE_EDGE_ENDPOINT') || {}).v : undefined,
-          reachable_host: (r.svc && r.svc.reachable) || '',
-          internet_exposed: !!(hostMeta && hostMeta.internet),
-          cluster: _archInHA(r.svc && r.svc.id),
-          cluster_group: (() => { const g = _archGroupOfSvc(r.svc && r.svc.id); return g ? g.id : ''; })(),
-          portal: !!(r.svc && r.svc.access),
-          arch_bootstrap: pack.bootstrapUrl,
-          auto_accept: true,
-        };
-        await api('POST', '/declared-nodes', {
-          role: r.role,
-          name: r.opts.name,
-          region: (hostMeta && hostMeta.region) || '',
-          environment: '',
-          config: cfg,
-        });
-        _archMarkPendingDeploy(r.opts.name);
-      } catch (e) {
-        console.warn('declared-nodes save failed:', e.message);
-      }
-    }
-  }
-}
 
-async function _archGoHandoff() {
-  const err = _archValidate();
-  if (err) { toast(err, 'error'); return; }
-  _arch.packs = _archBuildPacks();
-  await _archPersistDeclared();
-  await _archCreateTickets();
-  try { localStorage.setItem('gpx_last_packs', JSON.stringify(_arch.packs)); } catch {}
-  _arch.step = 'handoff';
-  _archRender();
-}
-
-async function _archCreateTickets() {
-  for (const p of _arch.packs) {
+async function _archCreateTickets(packs) {
+  for (const p of packs) {
     try {
       const nodeNames = [];
       if (p.edgeOpts && p.edgeOpts.name) nodeNames.push(p.edgeOpts.name);
@@ -1720,301 +1391,4 @@ async function _archCreateTickets() {
       console.warn('bootstrap-tickets failed:', e.message);
     }
   }
-}
-
-// ── Handoff : édition inline des paramètres sans regénérer les tickets ───────
-
-function _archHandoffSetField(packIdx, role, field, value) {
-  const p = _arch.packs[packIdx];
-  if (!p) return;
-  const svc = (p.services || []).find(s => s.type === role);
-  if (svc) {
-    // Mémoriser le nom original avant la première modification de nom
-    if (field === 'name' && role === 'edge' && !p._prevEdgeName && svc.name !== value) {
-      p._prevEdgeName = svc.name;
-    }
-    if (field === 'name' && role === 'agent' && !p._prevAgentName && svc.name !== value) {
-      p._prevAgentName = svc.name;
-    }
-    svc[field] = value;
-  }
-  // Sync aussi dans _arch.hosts pour cohérence toile ↔ handoff
-  for (const h of _arch.hosts) {
-    const hs = (h.services || []).find(s => s.type === role && (role === 'edge'
-      ? (p.edgeOpts && s.name === p.edgeOpts.name) || s.id === (svc && svc.id)
-      : (p.agentOpts && s.name === p.agentOpts.name) || s.id === (svc && svc.id)));
-    if (hs) hs[field] = value;
-  }
-}
-
-async function _archHandoffSave(packIdx) {
-  const p = _arch.packs[packIdx];
-  if (!p) return;
-  // Rebuild opts + textes pour ce pack uniquement
-  const host = _arch.hosts.find(h => h.id === p.hostId);
-  if (!host) return;
-  const edges = host.services.filter(s => s.type === 'edge');
-  const agents = host.services.filter(s => s.type === 'agent');
-  const admins = host.services.filter(s => s.type === 'admin');
-  if (edges[0]) {
-    const c = edges[0];
-    const cGroup = _archGroupOfSvc(c.id);
-    const inHA = !!cGroup && cGroup.members.length >= 2;
-    const haLeader = inHA ? _archFindSvc(cGroup.members[0]) : null;
-    p.edgeOpts = _buildEdgeOpts({
-      wc_name: c.name,
-      wc_cluster: inHA,
-      wc_cluster_node_id: c.name,
-      wc_cluster_group: cGroup ? cGroup.id : 'ha-1',
-      wc_cluster_peers: inHA ? _archHAPeersCSV(c.id) : '',
-      wc_raft_leader: inHA && haLeader && haLeader.id !== c.id ? haLeader.name : '',
-      wc_portal: !!c.access,
-      wc_http3: false,
-    });
-  }
-  if (agents[0]) {
-    const a = agents[0];
-    const ep = _archResolveEdgeEndpoint(host, a);
-    p.agentOpts = _buildAgentOpts({
-      wa_name: a.name,
-      wa_edge_url: ep,
-      wa_edge_container_name: edges[0] ? edges[0].name : '',
-      wa_region: (host.region || '').trim(),
-      wa_docker: !!a.docker && !a.podman,
-      wa_podman: !!a.podman,
-      wa_runtime: a.podman ? 'podman' : (a.docker ? 'docker' : ''),
-      wa_k8s: !!a.k8s,
-      wa_portainer: !!a.portainer,
-      wa_portainer_url: a.portainerUrl || '',
-      wa_portainer_key: a.portainerKey || '',
-      wa_placement: edges[0] ? 'colocated' : 'remote',
-    });
-  }
-  let adminOpts = null;
-  if (admins.length && p.edgeOpts) {
-    adminOpts = _buildAdminOpts({
-      wa_edge_name: p.edgeOpts.name,
-      wa_jwt_secret: _arch.jwtSecret,
-      wa_admin_email: (admins[0].acmeEmail || '').trim() || 'admin@example.com',
-      wa_admin_password: 'CHANGE_ME',
-    });
-  }
-  if (p.edgeOpts && p.agentOpts && adminOpts) {
-    p.composeText = _cfgComposeTextFullAdmin(p.edgeOpts, p.agentOpts, adminOpts, 'env_file');
-    p.envText = _cfgEnvFileTextFull(p.edgeOpts, p.agentOpts) + '\n' + adminOpts.envVars.map(({k,v}) => `${k}=${v}`).join('\n');
-    p.cliText = _cfgCliText(p.edgeOpts) + '\n\n' + _cfgCliText(p.agentOpts) + '\n\n' + _cfgCliText(adminOpts);
-  } else if (p.edgeOpts && p.agentOpts) {
-    p.composeText = _cfgComposeTextFull(p.edgeOpts, p.agentOpts, 'env_file');
-    p.envText = _cfgEnvFileTextFull(p.edgeOpts, p.agentOpts);
-    p.cliText = _cfgCliText(p.edgeOpts) + '\n\n' + _cfgCliText(p.agentOpts);
-  } else if (p.edgeOpts && adminOpts) {
-    p.composeText = _cfgComposeTextAdmin(p.edgeOpts, adminOpts, 'env_file');
-    p.envText = [...p.edgeOpts.envVars, ...adminOpts.envVars].map(({k,v}) => `${k}=${v}`).join('\n');
-    p.cliText = _cfgCliText(p.edgeOpts) + '\n\n' + _cfgCliText(adminOpts);
-  } else if (p.edgeOpts) {
-    p.composeText = _cfgComposeText(p.edgeOpts, 'env_file');
-    p.envText = _cfgEnvFileText(p.edgeOpts);
-    p.cliText = _cfgCliText(p.edgeOpts);
-  } else if (p.agentOpts) {
-    p.composeText = _cfgComposeText(p.agentOpts, 'env_file');
-    p.envText = _cfgEnvFileText(p.agentOpts);
-    p.cliText = _cfgCliText(p.agentOpts);
-  }
-  try { localStorage.setItem('gpx_last_packs', JSON.stringify(_arch.packs)); } catch {}
-  // Persistance declared-nodes avec les nouvelles valeurs
-  try {
-    if (p.edgeOpts) {
-      const c = edges[0];
-      const cfg = {
-        reachable_host: (c && c.reachable) || '',
-        docker: !!(c && c.docker), podman: !!(c && c.podman),
-        portal: !!(c && c.access),
-        cluster: _archInHA(c && c.id),
-        cluster_group: (() => { const g = _archGroupOfSvc(c && c.id); return g ? g.id : ''; })(),
-        internet_exposed: !!(host && host.internet),
-        auto_accept: true,
-      };
-      // Supprimer l'ancienne entrée si le nom a changé (évite doublon)
-      if (p._prevEdgeName && p._prevEdgeName !== p.edgeOpts.name) {
-        const old = (_arch.declaredNodes || []).find(n => n.role === 'edge' && n.name === p._prevEdgeName);
-        if (old && old.id && !old.id.startsWith('cfg:')) {
-          await api('DELETE', '/declared-nodes/' + old.id).catch(() => {});
-        }
-        p._prevEdgeName = null;
-      }
-      await api('POST', '/declared-nodes', { role: 'edge', name: p.edgeOpts.name, region: (host && host.region) || '', environment: '', config: cfg }).catch(() => {});
-    }
-  } catch {}
-  toast(t('common.saved') || 'Enregistré', 'success');
-  _archRender();
-}
-
-function _archHandoffShowConfig(packIdx) {
-  const p = _arch.packs[packIdx];
-  if (!p) return;
-  const tabs = [
-    { id: 'compose', label: 'docker-compose.yml', text: p.composeText || '' },
-    { id: 'env',     label: '.env',               text: p.envText || '' },
-    { id: 'cli',     label: 'CLI',                text: p.cliText || '' },
-  ].filter(tab => tab.text.trim());
-
-  const tabsHTML = tabs.map((tab, i) =>
-    `<button class="btn ${i === 0 ? 'btn-primary' : 'btn-ghost'} btn-sm" id="arch-cfg-tab-${i}"
-      onclick="_archHandoffSwitchTab(${packIdx},${i})">${esc(tab.label)}</button>`
-  ).join('');
-
-  const contentsHTML = tabs.map((tab, i) =>
-    `<div id="arch-cfg-body-${i}" style="${i !== 0 ? 'display:none;' : ''}position:relative;">
-      <button class="btn btn-ghost btn-sm" style="position:absolute;top:6px;right:6px;"
-        onclick="navigator.clipboard.writeText(${JSON.stringify(tab.text)}).then(()=>toast(t('common.copied')||'Copié','success'))">${t('dockerlbl.copy') || 'Copier'}</button>
-      <pre style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:14px 12px;font-size:11px;overflow:auto;max-height:400px;white-space:pre;tab-size:2;">${esc(tab.text)}</pre>
-    </div>`
-  ).join('');
-
-  const modalHTML = `<div id="arch-cfg-modal" style="position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.5);"
-    onclick="if(event.target===this)this.remove()">
-    <div style="background:var(--bg2,var(--surface));border:1px solid var(--border);border-radius:10px;padding:20px;width:min(720px,95vw);max-height:85vh;overflow-y:auto;display:flex;flex-direction:column;gap:12px;" onclick="event.stopPropagation()">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
-        <strong style="font-size:14px;">${esc(p.hostName)} — ${t('arch.show_config') || 'Configuration'}</strong>
-        <button class="btn btn-ghost btn-sm" onclick="document.getElementById('arch-cfg-modal').remove()">✕</button>
-      </div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;">${tabsHTML}</div>
-      ${contentsHTML}
-    </div>
-  </div>`;
-  document.body.insertAdjacentHTML('beforeend', modalHTML);
-}
-
-window._archHandoffSwitchTab = function(packIdx, tabIdx) {
-  let i = 0;
-  while (document.getElementById('arch-cfg-body-' + i)) {
-    document.getElementById('arch-cfg-body-' + i).style.display = i === tabIdx ? '' : 'none';
-    const btn = document.getElementById('arch-cfg-tab-' + i);
-    if (btn) { btn.className = 'btn btn-sm ' + (i === tabIdx ? 'btn-primary' : 'btn-ghost'); }
-    i++;
-  }
-};
-
-function _archCopyBootstrap(i) {
-  const p = _arch.packs[i];
-  if (!p) return;
-  navigator.clipboard.writeText(p.bootstrapUrl).then(() => toast(t('common.copied') || 'Copié', 'success'));
-}
-
-function _archCopyInstall(i) {
-  const p = _arch.packs[i];
-  if (!p || !p.installCmd) return;
-  navigator.clipboard.writeText(p.installCmd).then(() => toast(t('common.copied') || 'Copié', 'success'));
-}
-
-function _archHandoffHTML() {
-  const flows = _archNetworkFlows();
-  const flowRows = flows.map(f => `
-    <tr>
-      <td style="padding:6px 10px;font-size:12px;">${esc(f.from)}</td>
-      <td style="padding:6px 10px;font-size:12px;">${esc(f.to)}</td>
-      <td style="padding:6px 10px;font-size:12px;color:var(--text2);">${esc(f.dir)}</td>
-      <td style="padding:6px 10px;font-size:12px;color:var(--text2);">${esc(f.why)}</td>
-    </tr>`).join('');
-
-  const packsHTML = _arch.packs.map((p, i) => {
-    const roleChips = (p.services || []).map(s =>
-      `<span class="arch-chip" style="--arch-accent:${_archRoleAccent(s.type)};">${esc(t(_ARCH_ROLES[s.type].label))} · ${esc(s.name)}</span>`
-    ).join('');
-    const edgeSvc = (p.services || []).find(s => s.type === 'edge');
-    const agentSvc = (p.services || []).find(s => s.type === 'agent');
-    const paramFields = `
-      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;">
-        ${edgeSvc ? `
-        <div class="arch-field">
-          <span class="arch-field-label">${t('arch.role.name')} (Edge)</span>
-          <input class="arch-input" value="${esc(edgeSvc.name)}" oninput="_archHandoffSetField(${i},'edge','name',this.value)">
-        </div>
-        <div class="arch-field">
-          <span class="arch-field-label">${t('arch.opt.reachable')}</span>
-          <input class="arch-input" value="${esc(edgeSvc.reachable || '')}" placeholder="edge.example.com" oninput="_archHandoffSetField(${i},'edge','reachable',this.value)">
-        </div>` : ''}
-        ${agentSvc ? `
-        <div class="arch-field">
-          <span class="arch-field-label">${t('arch.role.name')} (Agent)</span>
-          <input class="arch-input" value="${esc(agentSvc.name)}" oninput="_archHandoffSetField(${i},'agent','name',this.value)">
-        </div>` : ''}
-      </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
-        <button class="btn btn-primary btn-sm" onclick="_archHandoffSave(${i})">${t('common.save') || 'Enregistrer'}</button>
-        <button class="btn btn-secondary btn-sm" onclick="_archHandoffShowConfig(${i})">${t('arch.show_config') || 'Voir la configuration'}</button>
-      </div>`;
-    return `
-    <div class="arch-panel" style="margin-bottom:14px;">
-      <div class="arch-panel-head" style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;">
-        <span class="arch-host-glyph">${_ARCH_ICONS.host}</span>
-        <span style="font-size:13.5px;font-weight:700;">${esc(p.hostName)}</span>
-        <span style="display:flex;gap:4px;flex-wrap:wrap;margin-left:auto;">${roleChips}</span>
-      </div>
-      <div class="arch-panel-body" style="gap:14px;">
-        ${paramFields}
-        <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">
-          ${p.qrCode ? `<img src="${esc(p.qrCode)}" alt="QR" width="150" height="150" style="background:#fff;padding:8px;border:1px solid var(--border);">` : ''}
-          <div style="flex:1;min-width:220px;">
-            ${p.installCmd ? `
-            <div class="arch-field-label">${t('arch.install_label')}</div>
-            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
-              <code style="font-size:11px;word-break:break-all;flex:1 1 220px;background:var(--bg);padding:8px 9px;border:1px solid var(--border);">${esc(p.installCmd)}</code>
-              <button class="btn btn-primary btn-sm" onclick="_archCopyInstall(${i})">${t('dockerlbl.copy') || 'Copier'}</button>
-            </div>` : ''}
-            <div class="arch-field-label">${t('arch.bootstrap_label')}</div>
-            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-              <code style="font-size:11px;word-break:break-all;flex:1 1 220px;background:var(--bg);padding:8px 9px;border:1px solid var(--border);">${esc(p.bootstrapUrl)}</code>
-              <button class="btn btn-ghost btn-sm" onclick="_archCopyBootstrap(${i})">${t('dockerlbl.copy') || 'Copier'}</button>
-              <a class="btn btn-secondary btn-sm" href="${esc(p.bootstrapUrl)}" target="_blank" rel="noopener">${t('arch.open_ticket')}</a>
-            </div>
-            <div class="arch-cap-desc" style="margin-top:8px;">${t('arch.qr_hint')}</div>
-          </div>
-        </div>
-      </div>
-    </div>`;
-  }).join('');
-
-  const inetHosts = _arch.hosts.filter(h => h.internet);
-  const inetBanner = inetHosts.length
-    ? `<div class="arch-msg" data-tone="info">${t('arch.inet.handoff', { names: inetHosts.map(h => h.name).join(', ') })}</div>`
-    : `<div class="arch-msg">${t('arch.inet.handoff_none')}</div>`;
-  const haNote = _archAccessHANote();
-
-  return `<div class="arch-page">
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-      <div style="min-width:0;">
-        <div class="card-kicker">${t('arch.kicker')}</div>
-        <h2 style="font-family:var(--font-heading);font-size:20px;font-weight:700;margin:0;letter-spacing:-.01em;">${t('arch.handoff_title')}</h2>
-        <p style="font-size:12.5px;color:var(--text2);margin-top:5px;max-width:52rem;line-height:1.5;">${t('arch.handoff_sub')}</p>
-      </div>
-      <button class="btn btn-ghost btn-sm" onclick="_archGoToCanvas()">${t('arch.edit_topology') || 'Modifier la topologie'}</button>
-    </div>
-
-    ${inetBanner}
-    ${haNote ? `<div class="arch-msg" data-tone="warn">${esc(haNote)}</div>` : ''}
-
-    <div class="arch-panel">
-      <div class="arch-panel-head"><div class="arch-panel-title">${t('arch.flows_title')}</div></div>
-      <div class="table-wrap"><table style="width:100%;border-collapse:collapse;">
-        <thead><tr style="background:var(--bg3);">
-          <th style="padding:7px 10px;font-size:11px;text-align:left;">${t('arch.flow.from')}</th>
-          <th style="padding:7px 10px;font-size:11px;text-align:left;">${t('arch.flow.to')}</th>
-          <th style="padding:7px 10px;font-size:11px;text-align:left;">${t('arch.flow.dir')}</th>
-          <th style="padding:7px 10px;font-size:11px;text-align:left;">${t('arch.flow.why')}</th>
-        </tr></thead>
-        <tbody>${flowRows || `<tr><td colspan="4" style="padding:10px;font-size:12px;color:var(--text2);">${t('arch.flows_none')}</td></tr>`}</tbody>
-      </table></div>
-    </div>
-
-    ${packsHTML}
-
-    <div class="arch-actionbar">
-      <div class="arch-summary"><span>${t('arch.handoff_packs', { n: _arch.packs.length })}</span></div>
-      <div class="arch-actionbar-btns">
-        <button class="btn btn-ghost" onclick="_archGoToCanvas()">${t('arch.edit_topology') || 'Modifier la topologie'}</button>
-        <button class="btn btn-primary" onclick="navigate('infrastructure')">${t('arch.done')}</button>
-      </div>
-    </div>
-  </div>`;
 }

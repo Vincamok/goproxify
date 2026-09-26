@@ -43,6 +43,13 @@ func infraTools() []map[string]any {
 			"inputSchema": schema(),
 		},
 		{
+			"name":        "get_architecture",
+			"description": "Architecture déclarée (architecture.json, référentiel de la topologie) : nœuds passerelle/Agent avec leur hôte, région et capacités (HA, TLS, Docker, Portainer…), plus les domaines. Sans argument : l'architecture courante ; avec `version` : une version conservée (voir `goproxify architecture versions`).",
+			"inputSchema": schema(
+				opt("version", "string", "Nom d'une version conservée (architecture-….json) ; vide = version courante"),
+			),
+		},
+		{
 			"name":        "list_declared_nodes",
 			"description": "Liste les nœuds déclarés (wizard architecture / Infrastructure) pas encore connectés.",
 			"inputSchema": schema(),
@@ -90,6 +97,16 @@ func infraTools() []map[string]any {
 
 func (h *Handler) toolListDeclaredNodes(r *http.Request) (any, error) {
 	return h.callDeclared(r, http.MethodGet, "/api/v1/declared-nodes", nil)
+}
+
+func (h *Handler) toolGetArchitecture(args map[string]any) (any, error) {
+	if h.ArchStore == nil {
+		return nil, fmt.Errorf("architecture.json indisponible (persistance disque désactivée)")
+	}
+	if v := argStr(args, "version"); v != "" {
+		return h.ArchStore.Version(v)
+	}
+	return h.ArchStore.Get()
 }
 
 func (h *Handler) toolCreateDeclaredNode(r *http.Request, args map[string]any) (any, error) {

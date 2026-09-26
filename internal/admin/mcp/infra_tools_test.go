@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vincamok/goproxify/internal/admin/archstore"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
 )
 
@@ -21,7 +22,7 @@ func TestInfraToolsRegistered(t *testing.T) {
 		found[name] = true
 	}
 	for _, name := range []string{
-		"list_declared_nodes", "get_topology_live", "create_declared_node", "delete_declared_node",
+		"list_declared_nodes", "get_topology_live", "get_architecture", "create_declared_node", "delete_declared_node",
 		"create_bootstrap_ticket", "accept_node", "reject_node",
 	} {
 		if !found[name] {
@@ -113,5 +114,25 @@ func TestDeclaredResourceList(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("resource declared-nodes manquante")
+	}
+}
+
+func TestGetArchitectureToolReadsCurrentAndVersion(t *testing.T) {
+	h := &Handler{}
+	if _, err := h.toolGetArchitecture(nil); err == nil {
+		t.Fatal("sans store, l'outil doit signaler que architecture.json est indisponible")
+	}
+	store := archstore.New(t.TempDir())
+	if err := store.Upsert(archstore.NodeEntry{ID: "a", Role: "edge", Name: "un"}); err != nil {
+		t.Fatal(err)
+	}
+	h.ArchStore = store
+	out, err := h.toolGetArchitecture(map[string]any{})
+	arch, ok := out.(*archstore.Architecture)
+	if err != nil || !ok || len(arch.Nodes) != 1 || arch.Nodes[0].Name != "un" {
+		t.Fatalf("architecture courante attendue : %+v err %v", out, err)
+	}
+	if _, err := h.toolGetArchitecture(map[string]any{"version": "../x"}); err == nil {
+		t.Fatal("un nom de version invalide doit être refusé")
 	}
 }
