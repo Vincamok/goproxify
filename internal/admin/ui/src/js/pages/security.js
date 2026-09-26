@@ -87,20 +87,37 @@ async function resolveSecurityEdgeCtx(mode) {
   if (!edgeRef) return { missing: true };
   const proxies = await api('GET', `/proxies?edge=${encodeURIComponent(edgeRef)}`).catch(() => []);
   const filter = _secBuildEdgeFilter(proxies);
+  const groups = await api('GET', '/architecture/groups').catch(() => null);
+  const group = _secFindHAGroup(groups, [edgeRef, edge.node_name, edge.id]);
   return {
     edge,
     edgeRef,
     edgeLabel: edge.display_name || edge.node_name || edge.id || '—',
     proxies: proxies || [],
+    group,
     ...filter,
   };
 }
 
+// _secFindHAGroup : groupe HA (déclaré dans architecture.json) qui contient la passerelle, ou null.
+function _secFindHAGroup(groups, refs) {
+  for (const [name, members] of Object.entries(groups || {})) {
+    const list = members || [];
+    if (list.some(m => refs.includes(m.id) || refs.includes(m.name))) {
+      return { name, members: list.map(m => m.name) };
+    }
+  }
+  return null;
+}
+
 function securityEdgeBanner(edgeCtx) {
   if (!edgeCtx?.edgeLabel) return '';
+  const groupNote = edgeCtx.group
+    ? `<div style="margin-top:6px;">${t('security.edge_group_note', { group: esc(edgeCtx.group.name), members: edgeCtx.group.members.map(esc).join(', ') })}</div>`
+    : '';
   return `<div style="margin-bottom:14px;padding:10px 12px;background:color-mix(in srgb,var(--accent) 7%,transparent);border:1px solid color-mix(in srgb,var(--accent) 22%,transparent);border-radius:6px;font-size:12px;color:var(--text2);">
     <strong style="color:var(--text1);">${t('security.edge_banner_title')}</strong> —
-    ${t('security.edge_banner_body', { name: esc(edgeCtx.edgeLabel) })}
+    ${t('security.edge_banner_body', { name: esc(edgeCtx.edgeLabel) })}${groupNote}
   </div>`;
 }
 

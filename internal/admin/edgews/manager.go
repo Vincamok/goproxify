@@ -1410,9 +1410,15 @@ func (m *Manager) pushAllToEntry(ctx context.Context, e *edgeEntry, s Settings) 
 
 	// Config Sentinel (threat engine) — poussée après le full_sync
 	go func() {
-		if cfg := m.loadThreatConfig(ctx, e.id); cfg != nil {
+		if cfg := m.loadThreatConfig(ctx, e); cfg != nil {
 			if err := e.client.PushJSON(edgeWS.TypePushThreatConfig, cfg); err != nil {
 				m.log.Warn("edgews/manager: push threat config", "edge", e.nodeName, "err", err)
+			}
+		}
+		// Timeouts HTTP/QUIC : une passerelle qui rejoint le groupe reçoit ceux du groupe.
+		if cfg := m.loadServerConfig(ctx, e); cfg != nil {
+			if err := e.client.PushJSON(edgeWS.TypePushServerConfig, cfg); err != nil {
+				m.log.Warn("edgews/manager: push server config", "edge", e.nodeName, "err", err)
 			}
 		}
 	}()
@@ -1691,27 +1697,31 @@ func (m *Manager) loadActiveBans(ctx context.Context) ([]router.RuntimeBan, erro
 	return list, nil
 }
 
-// loadThreatConfig charge la config du Sentinel depuis la DB pour une passerelle donné.
-func (m *Manager) loadThreatConfig(ctx context.Context, edgeID string) json.RawMessage {
-	key := "threat_engine_config"
-	if edgeID != "" {
-		key = "threat_engine_config:" + edgeID
+// loadThreatConfig charge la config du Sentinel qui s'applique à la passerelle (groupe HA, puis
+// valeur propre, puis globale).
+func (m *Manager) loadThreatConfig(ctx context.Context, e *edgeEntry) json.RawMessage {
+	if val := m.scopedSetting(ctx, "threat_engine_config", e); val != "" {
+		return json.RawMessage(val)
 	}
-	var val string
-	_ = m.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key=?`, key).Scan(&val)
-	if val == "" {
-		return nil
-	}
-	return json.RawMessage(val)
+	return nil
 }
 
-// PushServerConfig envoie les timeouts HTTP/QUIC à toutes les passerelles via WS.
-func (m *Manager) PushServerConfig(ctx context.Context, cfg any) {
+// loadServerConfig charge les timeouts HTTP/QUIC qui s'appliquent à la passerelle.
+func (m *Manager) loadServerConfig(ctx context.Context, e *edgeEntry) json.RawMessage {
+	if val := m.scopedSetting(ctx, "server_config", e); val != "" {
+		return json.RawMessage(val)
+	}
+	return nil
+}
+
+// PushServerConfig envoie les timeouts HTTP/QUIC à la portée visée (passerelle, groupe HA "group:<nom>"
+// ou toutes si vide).
+func (m *Manager) PushServerConfig(ctx context.Context, scope string, cfg any) {
 	body, err := json.Marshal(cfg)
 	if err != nil {
 		return
 	}
-	for _, e := range m.allEntries() {
+	for _, e := range m.entriesFor(scope) {
 		e := e
 		go func() {
 			if err := e.client.PushJSON(edgeWS.TypePushServerConfig, json.RawMessage(body)); err != nil {
@@ -1947,16 +1957,14 @@ func (m *Manager) PushTunnelConfig(ctx context.Context, nodeID string) {
 	}
 }
 
-// PushThreatConfig envoie la config du Sentinel à la passerelle edgeRef (nom ou id), ou à tous si vide.
-func (m *Manager) PushThreatConfig(ctx context.Context, edgeRef string, cfg any) {
+// PushThreatConfig envoie la config du Sentinel à la portée visée : une passerelle (nom ou id),
+// les membres d'un groupe HA ("group:<nom>"), ou toutes si la portée est vide.
+func (m *Manager) PushThreatConfig(ctx context.Context, scope string, cfg any) {
 	body, err := json.Marshal(cfg)
 	if err != nil {
 		return
 	}
-	for _, e := range m.allEntries() {
-		if edgeRef != "" && e.nodeName != edgeRef && e.id != edgeRef {
-			continue
-		}
+	for _, e := range m.entriesFor(scope) {
 		e := e
 		go func() {
 			if err := e.client.PushJSON(edgeWS.TypePushThreatConfig, json.RawMessage(body)); err != nil {

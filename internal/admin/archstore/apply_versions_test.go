@@ -310,3 +310,37 @@ func TestGetAndVersionReadWithoutRestoring(t *testing.T) {
 		t.Fatal("un nom hors format doit être refusé")
 	}
 }
+
+func TestGroupsComeFromWizardConfig(t *testing.T) {
+	s := New(t.TempDir())
+	for _, n := range []NodeEntry{
+		{ID: "dn_f", Role: "edge", Name: "frontal", Config: json.RawMessage(`{"cluster": true, "cluster_group": "ha-1"}`)},
+		{ID: "dn_b", Role: "edge", Name: "backup", Config: json.RawMessage(`{"cluster": true, "cluster_group": "ha-1"}`)},
+		{ID: "dn_x", Role: "edge", Name: "seul", Config: json.RawMessage(`{"cluster": false, "cluster_group": "ha-1"}`)},
+		{ID: "dn_y", Role: "edge", Name: "autre", Config: json.RawMessage(`{"cluster": true, "cluster_group": "ha-2"}`)},
+		{ID: "dn_a", Role: "agent", Name: "agent", Config: json.RawMessage(`{"cluster": true, "cluster_group": "ha-1"}`)},
+		{ID: "c1", Role: "edge", Name: "sans-config", Endpoint: "http://c:8000"},
+	} {
+		if err := s.Upsert(n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if g := s.GroupOf("backup"); g != "ha-1" {
+		t.Fatalf("GroupOf(backup) = %q", g)
+	}
+	if g := s.GroupOf("dn_f"); g != "ha-1" {
+		t.Fatalf("GroupOf par id = %q", g)
+	}
+	for _, ref := range []string{"seul", "sans-config", "agent", "inconnu", ""} {
+		if g := s.GroupOf(ref); g != "" {
+			t.Errorf("GroupOf(%q) = %q, attendu aucun groupe", ref, g)
+		}
+	}
+	names, members := s.Groups()
+	if len(names) != 2 || names[0] != "ha-1" || names[1] != "ha-2" || len(members["ha-1"]) != 2 {
+		t.Fatalf("groupes %v %v", names, members)
+	}
+	if !s.IsInGroup("frontal", "ha-1") || s.IsInGroup("autre", "ha-1") {
+		t.Fatal("IsInGroup incohérent")
+	}
+}

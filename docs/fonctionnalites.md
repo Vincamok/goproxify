@@ -325,7 +325,7 @@ Supported formats: nginx, HAProxy, Traefik YAML, Traefik TOML, Traefik Labels, C
 
 ### Web interface
 
-- Dashboard: cluster state, real-time metrics
+- Dashboard in three tabs sharing one dataset — Health (status verdict, to-do list, services), Cockpit (KPIs, 1 h traffic chart, edges, busiest hosts, certificate expiry), Map (traffic origin by country, blocks per layer, p95 per edge); the chosen tab is remembered
 - Unified proxy list view (HTTP/HTTPS + TCP + UDP) — Docker labels greyed out read-only
 - Adaptive create/edit form by proxy type
 - Interactive Docker Compose label generator (HTTP, TCP, UDP)

@@ -32,13 +32,15 @@ type SecurityHandler struct {
 	VulnScan   *vulnscan.Scanner
 	CrowdSec   *crowdsec.Bouncer
 	ScanCtx    context.Context
+	// Groups donne le groupe HA d'une passerelle : sa config de sécurité est alors celle du groupe.
+	Groups GroupResolver
 	// OnBansChange notifie un changement de bans (push vers les passerelles).
 	OnBansChange func()
-	// OnThreatConfigChange envoie la config du moteur de détection à la passerelle visée
-	// (edgeRef vide = toutes les passerelles).
-	OnThreatConfigChange func(edgeRef string, cfg any)
-	// OnServerConfigChange envoie les timeouts HTTP/QUIC aux passerelles (redémarrage requis).
-	OnServerConfigChange func(cfg any)
+	// OnThreatConfigChange envoie la config du moteur de détection à la portée visée (groupe HA ou passerelle)
+	// (scope vide = toutes les passerelles).
+	OnThreatConfigChange func(scope string, cfg any)
+	// OnServerConfigChange envoie les timeouts HTTP/QUIC à la portée visée (redémarrage requis).
+	OnServerConfigChange func(scope string, cfg any)
 }
 
 func (h *SecurityHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -776,40 +778,35 @@ func (h *SecurityHandler) putCrowdSecConfig(w http.ResponseWriter, r *http.Reque
 
 // ── IPS Provider ─────────────────────────────────────────────────────────────
 
-// ipsProviderKey retourne la clé settings pour une passerelle donné.
-func ipsProviderKey(edgeID string) string {
-	if edgeID == "" {
-		return "ips_provider"
-	}
-	return "ips_provider:" + edgeID
+// ipsProviderKey retourne la clé settings pour une portée (groupe, passerelle ou "" = global).
+func ipsProviderKey(scope string) string { return settingKey("ips_provider", scope) }
+
+// threatConfigKey retourne la clé settings pour une portée (groupe, passerelle ou "" = global).
+func threatConfigKey(scope string) string { return settingKey("threat_engine_config", scope) }
+
+// serverConfigKey retourne la clé settings pour une portée (groupe, passerelle ou "" = global).
+func serverConfigKey(scope string) string { return settingKey("server_config", scope) }
+
+// scope retourne la portée d'un réglage pour la passerelle demandée (?edge=) : le groupe HA
+// auquel elle appartient, sinon elle-même.
+func (h *SecurityHandler) scope(r *http.Request) (scope, ref string) {
+	ref = r.URL.Query().Get("edge")
+	return scopeFor(h.Groups, ref), ref
 }
 
-// threatConfigKey retourne la clé settings pour une passerelle donné.
-func threatConfigKey(edgeID string) string {
-	if edgeID == "" {
-		return "threat_engine_config"
-	}
-	return "threat_engine_config:" + edgeID
-}
-
-// getIPSProvider retourne le fournisseur IPS actif pour la passerelle demandé.
+// getIPSProvider retourne le fournisseur IPS actif pour la passerelle demandée (ou son groupe).
 func (h *SecurityHandler) getIPSProvider(w http.ResponseWriter, r *http.Request) {
-	edgeID := r.URL.Query().Get("edge")
-	key := ipsProviderKey(edgeID)
-	row := h.DB.QueryRowContext(r.Context(), `SELECT value FROM settings WHERE key=?`, key)
-	var provider string
-	if err := row.Scan(&provider); err != nil {
-		provider = "native"
-	}
+	scope, ref := h.scope(r)
+	provider, _ := readScopedSetting(r.Context(), h.DB, "ips_provider", scope, ref)
 	if provider == "" || provider == "none" {
 		provider = "native"
 	}
 	jsonOK(w, map[string]string{"provider": provider})
 }
 
-// putIPSProvider enregistre le fournisseur choisi pour la passerelle demandé.
+// putIPSProvider enregistre le fournisseur choisi pour la passerelle demandée (ou son groupe).
 func (h *SecurityHandler) putIPSProvider(w http.ResponseWriter, r *http.Request) {
-	edgeID := r.URL.Query().Get("edge")
+	scope, _ := h.scope(r)
 	var req struct {
 		Provider string `json:"provider"`
 	}
@@ -830,7 +827,7 @@ func (h *SecurityHandler) putIPSProvider(w http.ResponseWriter, r *http.Request)
 	_, err := h.DB.ExecContext(r.Context(),
 		`INSERT INTO settings (key, value) VALUES (?, ?)
 		 ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
-		ipsProviderKey(edgeID), provider)
+		ipsProviderKey(scope), provider)
 	if err != nil {
 		secJSONErr(w, err, http.StatusInternalServerError)
 		return
@@ -841,11 +838,9 @@ func (h *SecurityHandler) putIPSProvider(w http.ResponseWriter, r *http.Request)
 // ── Threat Config ─────────────────────────────────────────────────────────────
 
 func (h *SecurityHandler) getThreatConfig(w http.ResponseWriter, r *http.Request) {
-	edgeID := r.URL.Query().Get("edge")
-	row := h.DB.QueryRowContext(r.Context(),
-		`SELECT value FROM settings WHERE key=?`, threatConfigKey(edgeID))
-	var raw string
-	if err := row.Scan(&raw); err != nil {
+	scope, ref := h.scope(r)
+	raw, ok := readScopedSetting(r.Context(), h.DB, "threat_engine_config", scope, ref)
+	if !ok {
 		jsonOK(w, map[string]any{"enabled": false})
 		return
 	}
@@ -854,7 +849,7 @@ func (h *SecurityHandler) getThreatConfig(w http.ResponseWriter, r *http.Request
 }
 
 func (h *SecurityHandler) putThreatConfig(w http.ResponseWriter, r *http.Request) {
-	edgeID := r.URL.Query().Get("edge")
+	scope, _ := h.scope(r)
 	var cfg json.RawMessage
 	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
 		writeErr(w, r, http.StatusBadRequest, "api.err.json")
@@ -863,32 +858,23 @@ func (h *SecurityHandler) putThreatConfig(w http.ResponseWriter, r *http.Request
 	_, err := h.DB.ExecContext(r.Context(),
 		`INSERT INTO settings (key, value) VALUES (?, ?)
 		 ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
-		threatConfigKey(edgeID), string(cfg))
+		threatConfigKey(scope), string(cfg))
 	if err != nil {
 		secJSONErr(w, err, http.StatusInternalServerError)
 		return
 	}
 	if h.OnThreatConfigChange != nil {
-		h.OnThreatConfigChange(edgeID, cfg)
+		h.OnThreatConfigChange(scope, cfg)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // ── Server Config (timeouts HTTP/QUIC) ───────────────────────────────────────
 
-func serverConfigKey(edgeID string) string {
-	if edgeID == "" {
-		return "server_config"
-	}
-	return "server_config:" + edgeID
-}
-
 func (h *SecurityHandler) getServerConfig(w http.ResponseWriter, r *http.Request) {
-	edgeID := r.URL.Query().Get("edge")
-	row := h.DB.QueryRowContext(r.Context(),
-		`SELECT value FROM settings WHERE key=?`, serverConfigKey(edgeID))
-	var raw string
-	if err := row.Scan(&raw); err != nil {
+	scope, ref := h.scope(r)
+	raw, ok := readScopedSetting(r.Context(), h.DB, "server_config", scope, ref)
+	if !ok {
 		jsonOK(w, map[string]any{})
 		return
 	}
@@ -897,7 +883,7 @@ func (h *SecurityHandler) getServerConfig(w http.ResponseWriter, r *http.Request
 }
 
 func (h *SecurityHandler) putServerConfig(w http.ResponseWriter, r *http.Request) {
-	edgeID := r.URL.Query().Get("edge")
+	scope, _ := h.scope(r)
 	var cfg json.RawMessage
 	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
 		writeErr(w, r, http.StatusBadRequest, "api.err.json")
@@ -906,13 +892,13 @@ func (h *SecurityHandler) putServerConfig(w http.ResponseWriter, r *http.Request
 	_, err := h.DB.ExecContext(r.Context(),
 		`INSERT INTO settings (key, value) VALUES (?, ?)
 		 ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
-		serverConfigKey(edgeID), string(cfg))
+		serverConfigKey(scope), string(cfg))
 	if err != nil {
 		secJSONErr(w, err, http.StatusInternalServerError)
 		return
 	}
 	if h.OnServerConfigChange != nil {
-		h.OnServerConfigChange(cfg)
+		h.OnServerConfigChange(scope, cfg)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

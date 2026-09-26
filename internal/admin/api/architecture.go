@@ -40,6 +40,8 @@ func (h *ArchitectureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		h.get(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(sub, "versions/"):
 		h.version(w, r, strings.TrimPrefix(sub, "versions/"))
+	case r.Method == http.MethodGet && sub == "groups":
+		h.groups(w, r)
 	case r.Method == http.MethodGet && sub == "versions":
 		h.versions(w, r)
 	case r.Method == http.MethodPost && sub == "restore":
@@ -103,4 +105,23 @@ func (h *ArchitectureHandler) restore(w http.ResponseWriter, r *http.Request) {
 		h.OnRestore()
 	}
 	jsonOK(w, map[string]any{"restored": req.Name, "applied": rep})
+}
+
+// groups retourne les groupes HA déclarés dans architecture.json : nom → membres (id, nom).
+// Lecture seule, sans secret : l'UI s'en sert pour indiquer qu'un réglage s'applique au groupe.
+func (h *ArchitectureHandler) groups(w http.ResponseWriter, r *http.Request) {
+	type member struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	names, members := h.Store.Groups()
+	out := make(map[string][]member, len(names))
+	for _, g := range names {
+		list := make([]member, 0, len(members[g]))
+		for _, n := range members[g] {
+			list = append(list, member{ID: n.ID, Name: n.Name})
+		}
+		out[g] = list
+	}
+	jsonOK(w, out)
 }

@@ -145,6 +145,9 @@ func (s *Server) Start(ctx context.Context) error {
 	s.wsManager = manager
 	manager.SetSettings(s.runtimeSettings())
 	manager.ConnectFromEnv(ctx)
+	if archStore != nil {
+		api.MigrateGroupSettings(ctx, s.db, archStore, s.log)
+	}
 	agentStore := api.NewAgentStore()
 	manager.SetAgentPendingHandler(func(id, name, version string) {
 		agentStore.Upsert(id, name, version, "pending")
@@ -403,16 +406,19 @@ func (s *Server) Start(ctx context.Context) error {
 		CrowdSec:     csBouncer,
 		ScanCtx:      ctx,
 		OnBansChange: pushBans,
-		OnThreatConfigChange: func(edgeRef string, cfg any) {
+		OnThreatConfigChange: func(scope string, cfg any) {
 			if manager != nil {
-				go manager.PushThreatConfig(context.Background(), edgeRef, cfg)
+				go manager.PushThreatConfig(context.Background(), scope, cfg)
 			}
 		},
-		OnServerConfigChange: func(cfg any) {
+		OnServerConfigChange: func(scope string, cfg any) {
 			if manager != nil {
-				go manager.PushServerConfig(context.Background(), cfg)
+				go manager.PushServerConfig(context.Background(), scope, cfg)
 			}
 		},
+	}
+	if archStore != nil {
+		securityH.Groups = archStore
 	}
 	// Moteur de règles : condition → action périodique
 	reEngine := rulesengine.New(s.db, s.log, rulesengine.Deps{
@@ -664,6 +670,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/api/v1/declared-nodes", protected(declaredNodesH))
 	mux.Handle("/api/v1/declared-nodes/", protected(declaredNodesH))
 	mux.Handle("/api/v1/architecture", adminOnly(architectureH))
+	mux.Handle("GET /api/v1/architecture/groups", protected(architectureH))
 	mux.Handle("/api/v1/architecture/", adminOnly(architectureH))
 	mux.Handle("POST /api/v1/bootstrap-tickets", protected(http.HandlerFunc(bootstrapH.ServeCreate)))
 	mux.Handle("/api/v1/node-events", protected(nodeEventsH))

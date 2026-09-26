@@ -55,7 +55,7 @@ func (h *Handler) toolSimulateSentinel(r *http.Request, args map[string]any) (an
 
 	var current threat.Config
 	var raw string
-	if err := h.DB.QueryRowContext(r.Context(), `SELECT value FROM settings WHERE key=?`, api.ThreatConfigKey(edgeID)).Scan(&raw); err == nil {
+	if err := h.DB.QueryRowContext(r.Context(), `SELECT value FROM settings WHERE key=?`, h.threatConfigKey(edgeID)).Scan(&raw); err == nil {
 		if err := json.Unmarshal([]byte(raw), &current); err != nil {
 			return nil, fmt.Errorf("config Sentinel actuelle illisible: %w", err)
 		}
@@ -127,4 +127,12 @@ func (h *Handler) toolSimulateSentinel(r *http.Request, args map[string]any) (an
 func parseableIP(ip string) bool {
 	_, err := netip.ParseAddr(ip)
 	return err == nil
+}
+
+// threatConfigKey retourne la clé de la config Sentinel qui s'applique à la passerelle : celle de son groupe HA, sinon la sienne.
+func (h *Handler) threatConfigKey(edgeID string) string {
+	if h.ArchStore == nil {
+		return api.ThreatConfigKey(edgeID)
+	}
+	return api.ThreatConfigKeyFor(h.ArchStore, edgeID)
 }
