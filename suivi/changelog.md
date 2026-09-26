@@ -13,6 +13,8 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ### Ajouté
 
+- **Prism — Analyse repensé en « centre de commande »** : barre de filtres collante (plage rapide 15 min ajoutée), KPI avec sparklines, grande carte du monde avec zoom moulinet, déplacement, recentrage, légende de dégradé et style Zones ou Bulles proportionnelles, panneau latéral « Anomalies détectées » (pic d’erreurs, IP dominante, pays ou backend en erreur, part de bots élevée, avec actions directes) et « Top pays » cliquable qui ouvre un détail du pays. Les tableaux (chemins, IP, bots, référents, pays, backends, bans) passent en onglets. Interface uniquement, aucune modification d’API. (Admin `0.31.0`)
+
 - **Modale « Modifier le proxy » — navigation latérale et section WAF à part** : les onglets horizontaux laissent place à un menu à gauche regroupé par intention (Trafic, Sécurité, Fiabilité, Expert). Le WAF, auparavant enfoui dans Protection puis dans son sous-menu, devient une section de premier niveau : carte d'état avec interrupteur, choix du mode en deux cartes (Bloquer / Détecter), bandeau d'héritage du Edge, puis les **plateformes applicatives** en cartes cochables avec recherche, compteur, « Tout effacer » et détection automatique ; les réglages avancés (seuil, règles, analyse comportementale) sont repliés. Le menu affiche le nombre de plateformes sélectionnées. Changement d'interface uniquement : mêmes champs, même format de configuration, aucun changement d'API. (Admin `0.30.0`)
 
 - **HA — le portail d'accès est partagé par le groupe, ses données sont répliquées entre passerelles, les bans circulent sans l'Admin (phases 2 et 3)** :

@@ -8,6 +8,7 @@
 let _worldSvgCache = null;
 let _prismAbortCtrl = null;
 let _prismLiveTimer = null;
+let _geoWinHandlers = null;
 
 /** Portée posée par le menu (conservée pendant toute la visite de la page). */
 let prismScope = { node_name: '', lockNode: false };
@@ -313,20 +314,80 @@ async function renderPrismPage() {
     startLiveMap();
   }
 
+  const PRISM_TABS = [
+    ['paths', 'Chemins', 'px-paths'], ['ips', 'IP', 'px-ips'], ['agents', 'Composants / Bots', 'px-agents'],
+    ['refs', 'Référents', 'px-refs'], ['countries', 'Pays', 'px-countries'],
+    ['berrs', 'Backends', 'px-berrs'], ['bans', 'Bans', 'px-bans'],
+  ];
+  let activeTab = 'paths';
+
+  function tabsHtml() {
+    return `<div class="prism-tabs" id="prism-tabs">${PRISM_TABS.map(([k, l]) =>
+      `<button type="button" class="${k === activeTab ? 'on' : ''}" data-prism="tab" data-tab="${k}">${l}</button>`).join('')}</div>
+      ${PRISM_TABS.map(([k, , id]) => `<div class="prism-pane" id="${id}" ${k === activeTab ? '' : 'hidden'}>${spin}</div>`).join('')}`;
+  }
+
+  function setTab(k) {
+    activeTab = k;
+    document.querySelectorAll('#prism-tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === k));
+    PRISM_TABS.forEach(([key, , id]) => { const el = document.getElementById(id); if (el) el.hidden = key !== k; });
+  }
+
   function prismBodyHtml(kpis, timeline, status) {
     return `
-      ${kpisHtml(kpis)}
-      <div class="prism-grid">
-        <div class="prism-panel prism-col-2">${timelineHtml(timeline)}</div>
-        <div class="prism-panel">${statusHtml(status)}</div>
-        <div class="prism-panel prism-grid-wide" id="prism-geo-panel" style="min-height:80px">${spin}</div>
-        <div class="prism-panel" id="px-refs">${spin}</div>
-        <div class="prism-panel prism-col-2" id="px-paths">${spin}</div>
-        <div class="prism-panel prism-col-2" id="px-ips">${spin}</div>
-        <div class="prism-panel" id="px-agents">${spin}</div>
-        <div class="prism-panel prism-grid-wide" id="px-berrs">${spin}</div>
-        <div class="prism-panel prism-grid-wide" id="px-bans">${spin}</div>
-      </div>`;
+      <div id="px-kpis">${kpisHtml(kpis)}</div>
+      <div class="prism-hero">
+        <div class="prism-panel prism-mapcard" id="prism-geo-panel" style="min-height:80px">${spin}</div>
+        <div class="prism-rail">
+          <div class="prism-panel"><div class="prism-panel-title">Anomalies détectées</div><div id="px-anoms"><p class="prism-muted">Analyse…</p></div></div>
+          <div class="prism-panel"><div class="prism-panel-title">Top pays</div><div id="px-topc"><p class="prism-muted">…</p></div></div>
+        </div>
+      </div>
+      <div class="prism-two">
+        <div class="prism-panel" id="px-timeline">${timelineHtml(timeline)}</div>
+        <div class="prism-panel" id="px-status">${statusHtml(status)}</div>
+      </div>
+      <div class="prism-panel prism-tabcard">${tabsHtml()}</div>`;
+  }
+
+  // Données mises en cache pour la détection d'anomalies
+  const anomData = { timeline: [], geo: [], ips: [], berrs: [], kpis: {} };
+
+  function renderAnomalies() {
+    const el = document.getElementById('px-anoms');
+    if (!el) return;
+    const items = [];
+    const tl = anomData.timeline || [];
+    if (tl.length >= 4) {
+      const errs = tl.map(p => p.errors || 0);
+      const mean = errs.reduce((s, v) => s + v, 0) / errs.length;
+      const sd = Math.sqrt(errs.reduce((s, v) => s + (v - mean) ** 2, 0) / errs.length);
+      const peak = tl.reduce((m, p) => ((p.errors || 0) > (m.errors || 0) ? p : m), tl[0]);
+      if ((peak.errors || 0) >= 10 && peak.errors > mean + 2.5 * sd) {
+        items.push({ lvl: 'r', ico: '!', title: 'Pic d\'erreurs', sub: `${fmtNum(peak.errors)} erreurs à ${esc(peak.bucket.replace('T', ' ').slice(5, 16))} (moy. ${mean.toFixed(0)})`, act: `data-prism="bucket" data-bucket="${esc(peak.bucket)}"`, actLabel: 'Zoomer' });
+      }
+    }
+    const totalReq = (anomData.ips || []).reduce((s, i) => s + i.requests, 0);
+    const topIp = (anomData.ips || [])[0];
+    if (topIp && totalReq > 0 && topIp.requests / totalReq >= 0.2 && topIp.requests >= 50) {
+      const banned = bannedIPs.has(topIp.ip);
+      items.push({ lvl: 'y', ico: '⚑', title: `IP dominante ${esc(topIp.ip)}`, sub: `${(topIp.requests / totalReq * 100).toFixed(0)}% du trafic du top IP · ${fmtNum(topIp.requests)} req`, act: banned ? '' : `data-prism="ban" data-ip="${esc(topIp.ip)}"`, actLabel: 'Bannir' });
+    }
+    (anomData.geo || []).filter(g => g.requests >= 50 && (g.error_rate || 0) >= 10).slice(0, 2).forEach(g => {
+      items.push({ lvl: 'y', ico: '◎', title: `${esc(g.country_name)} : erreurs élevées`, sub: `${(g.error_rate || 0).toFixed(1)}% d'erreurs sur ${fmtNum(g.requests)} req`, act: `data-prism="country" data-cc="${esc(g.country_code)}"`, actLabel: 'Détail' });
+    });
+    (anomData.berrs || []).filter(r => r.total >= 20 && r.error_rate > 10).slice(0, 2).forEach(r => {
+      items.push({ lvl: 'r', ico: '⛌', title: `Backend en difficulté : ${esc(r.domain || r.name)}`, sub: `${r.error_rate.toFixed(1)}% d'erreurs · ${esc(r.backend_url || '')}`, act: `data-prism="tab" data-tab="berrs"`, actLabel: 'Voir' });
+    });
+    if ((Number(anomData.kpis.bot_share) || 0) >= 30) {
+      items.push({ lvl: 'y', ico: '🤖', title: 'Part de bots élevée', sub: `${Number(anomData.kpis.bot_share).toFixed(0)}% du trafic`, act: 'data-prism="tab" data-tab="agents"', actLabel: 'Voir' });
+    }
+    el.innerHTML = items.length ? items.slice(0, 5).map(i => `
+      <div class="prism-ins">
+        <span class="prism-ins-ico ${i.lvl}">${i.ico}</span>
+        <div class="prism-ins-txt"><b>${i.title}</b><span>${i.sub}</span></div>
+        ${i.act ? `<button type="button" class="btn btn-ghost btn-sm" ${i.act}>${i.actLabel}</button>` : ''}
+      </div>`).join('') : `<p class="prism-muted">✓ Aucune anomalie sur la période.</p>`;
   }
 
   function fetchSecondaryPanels(q, signal) {
@@ -357,16 +418,18 @@ async function renderPrismPage() {
     ])
       .then(([ips, bans]) => {
         bannedIPs = new Set((bans || []).map(b => b.ip).filter(Boolean));
+        anomData.ips = ips || [];
         upd('px-ips', ipsHtml(ips));
+        renderAnomalies();
       })
       .catch(guard(() => upd('px-ips', ipsHtml([]))));
 
     apiP('GET', '/prism/backend-errors?' + q, signal)
-      .then(d => upd('px-berrs', backendErrorsHtml(d)))
+      .then(d => { anomData.berrs = d || []; upd('px-berrs', backendErrorsHtml(d)); renderAnomalies(); })
       .catch(guard(() => upd('px-berrs', backendErrorsHtml([]))));
 
     apiP('GET', '/prism/geo?' + q, signal)
-      .then(d => { upd('prism-geo-panel', geoHtml(d)); renderChoropleth(d); })
+      .then(d => { anomData.geo = d || []; upd('prism-geo-panel', geoHtml(d)); renderChoropleth(d); renderAnomalies(); })
       .catch(guard(() => upd('prism-geo-panel', geoHtml([]))));
 
     // Section bans : timeline + by-source + top IPs
@@ -411,6 +474,8 @@ async function renderPrismPage() {
     }
 
     if (freshProxies && Array.isArray(freshProxies)) proxies = freshProxies;
+    anomData.timeline = Array.isArray(timeline) ? timeline : [];
+    anomData.kpis = kpis && !Array.isArray(kpis) ? kpis : {};
 
     const root = document.getElementById('prism-root');
     if (!root) return;
@@ -418,18 +483,9 @@ async function renderPrismPage() {
     if (soft) {
       const body = document.getElementById('prism-body');
       if (body) {
-        const oldKpis = body.querySelector('.prism-kpis');
-        const newKpis = kpisHtml(kpis);
-        if (oldKpis && newKpis) {
-          const wrap = document.createElement('div');
-          wrap.innerHTML = newKpis;
-          if (wrap.firstElementChild) oldKpis.replaceWith(wrap.firstElementChild);
-        }
-        const grid = body.querySelector('.prism-grid');
-        if (grid) {
-          if (grid.children[0]) grid.children[0].innerHTML = timelineHtml(timeline);
-          if (grid.children[1]) grid.children[1].innerHTML = statusHtml(status);
-        }
+        upd('px-kpis', kpisHtml(kpis));
+        upd('px-timeline', timelineHtml(timeline));
+        upd('px-status', statusHtml(status));
       }
       const chips = document.getElementById('prism-filter-chips');
       if (chips) chips.outerHTML = prismFilterChipsHtml();
@@ -443,6 +499,7 @@ async function renderPrismPage() {
         <div id="prism-body">${prismBodyHtml(kpis, timeline, status)}</div>`;
       syncFilterLiveState();
       if (compareOpen) showCompare(true);
+      root.insertAdjacentHTML('beforeend', '<aside class="prism-drawer" id="prism-drawer"></aside>');
       const btn = document.getElementById('prism-refresh-btn');
       if (btn) { btn.disabled = false; btn.textContent = 'Actualiser'; }
     }
@@ -477,7 +534,7 @@ async function renderPrismPage() {
         </select>`;
     const icoCompare = `<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M8 3L4 7l4 4"/><path d="M4 7h16"/><path d="M16 21l4-4-4-4"/><path d="M20 17H4"/></svg>`;
     const icoLive = `<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>`;
-    const quickBtns = [['1h',3600000],['6h',21600000],['24h',86400000],['7j',604800000]].map(([lbl,ms])=>
+    const quickBtns = [['15 min',900000],['1h',3600000],['6h',21600000],['24h',86400000],['7j',604800000]].map(([lbl,ms])=>
       `<button type="button" class="btn btn-secondary btn-sm" data-prism="quick" data-ms="${ms}"${liveMode ? ' disabled' : ''}>${lbl}</button>`
     ).join('');
     return `
@@ -534,8 +591,17 @@ async function renderPrismPage() {
     const icoIp  = `<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>`;
     const icoLat = `<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
     const icoBot = `<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="2" x2="9" y2="4"/><line x1="15" y1="2" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="22"/><line x1="15" y1="20" x2="15" y2="22"/><line x1="20" y1="9" x2="22" y2="9"/><line x1="20" y1="14" x2="22" y2="14"/><line x1="2" y1="9" x2="4" y2="9"/><line x1="2" y1="14" x2="4" y2="14"/></svg>`;
-    const card = (icon, label, val, foot) => `
-      <div class="prism-kpi">
+    const tl = anomData.timeline || [];
+    const spark = (vals, color) => {
+      if (vals.length < 3) return '';
+      const mx = Math.max(...vals), mn = Math.min(...vals), rng = (mx - mn) || 1;
+      const pts = vals.map((v, i) => `${(i / (vals.length - 1) * 100).toFixed(1)},${(34 - (v - mn) / rng * 28).toFixed(1)}`).join(' ');
+      return `<svg class="prism-spark" viewBox="0 0 100 38" preserveAspectRatio="none"><polygon points="0,38 ${pts} 100,38" fill="${color}" opacity=".12"/><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.4" vector-effect="non-scaling-stroke"/></svg>`;
+    };
+    const sparkReq = spark(tl.map(p => p.requests || 0), 'var(--accent)');
+    const sparkErr = spark(tl.map(p => p.requests ? (p.errors || 0) / p.requests * 100 : 0), 'var(--red)');
+    const card = (icon, label, val, foot, sp = '') => `
+      <div class="prism-kpi">${sp}
         <div class="prism-kpi-top">
           <span class="prism-kpi-ico">${icon}</span>
           <span class="prism-kpi-label">${label}</span>
@@ -544,9 +610,9 @@ async function renderPrismPage() {
         <div class="prism-kpi-foot">${foot}</div>
       </div>`;
     return `<div class="prism-kpis">
-      ${card(icoReq, t('prism.requests'), fmtNum(k.requests), delta(k.requests_delta, false))}
+      ${card(icoReq, t('prism.requests'), fmtNum(k.requests), delta(k.requests_delta, false), sparkReq)}
       ${card(icoBw, t('prism.bandwidth'), fmtBytes(k.bandwidth), delta(k.bandwidth_delta, false))}
-      ${card(icoErr, t('prism.error_rate'), errRate.toFixed(1) + '%', delta(k.error_rate_delta, true))}
+      ${card(icoErr, t('prism.error_rate'), errRate.toFixed(1) + '%', delta(k.error_rate_delta, true), sparkErr)}
       ${card(icoIp, t('prism.unique_ips'), `<span id="prism-kpi-unique-ips">${uniqueVal}</span>`, '')}
       ${card(icoLat, t('prism.latency'), avgLat.toFixed(0) + ' ms', '')}
       ${card(icoBot, t('prism.bot_share'), botShare.toFixed(1) + '%', '')}
@@ -782,6 +848,9 @@ async function renderPrismPage() {
 
   // Mode actif de la choroplèthe : 'requests' | 'error_rate' | 'banned_ips'
   let geoViewMode = 'requests';
+  let geoStyle = 'zones';
+  let selCountry = '';
+  const GEO_LABELS = { requests: 'Requêtes', error_rate: 'Taux d\'erreur (%)', banned_ips: 'IPs bannies' };
 
   function geoHtml(geo) {
     const liveFeedHtml = liveMode ? `
@@ -797,13 +866,19 @@ async function renderPrismPage() {
     return `
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;flex-wrap:wrap">
         <span class="prism-panel-title" style="margin:0">Trafic par pays${liveMode ? ' <span class="logs-live-dot" style="margin-left:6px"></span>' : ''}</span>
-        <div class="btn-group" role="group" aria-label="Vue">
-          <button type="button" class="btn btn-xs geo-mode-btn ${geoViewMode==='requests'?'active':''}" data-geo-mode="requests">Requêtes</button>
-          <button type="button" class="btn btn-xs geo-mode-btn ${geoViewMode==='error_rate'?'active':''}" data-geo-mode="error_rate">Tx erreurs</button>
-          <button type="button" class="btn btn-xs geo-mode-btn ${geoViewMode==='banned_ips'?'active':''}" data-geo-mode="banned_ips">IPs bannies</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <div class="btn-group" role="group" aria-label="Vue">
+            <button type="button" class="btn btn-xs geo-mode-btn ${geoViewMode==='requests'?'active':''}" data-geo-mode="requests">Requêtes</button>
+            <button type="button" class="btn btn-xs geo-mode-btn ${geoViewMode==='error_rate'?'active':''}" data-geo-mode="error_rate">Tx erreurs</button>
+            <button type="button" class="btn btn-xs geo-mode-btn ${geoViewMode==='banned_ips'?'active':''}" data-geo-mode="banned_ips">IPs bannies</button>
+          </div>
+          <div class="btn-group" role="group" aria-label="Style">
+            <button type="button" class="btn btn-xs ${geoStyle==='zones'?'active':''}" data-prism="geo-style" data-style="zones">Zones</button>
+            <button type="button" class="btn btn-xs ${geoStyle==='bubbles'?'active':''}" data-prism="geo-style" data-style="bubbles">Bulles</button>
+          </div>
         </div>
       </div>
-      <div id="prism-geo-map" class="wm-wrap" style="min-height:200px"><div class="spinner" style="margin:80px auto"></div></div>
+      <div id="prism-geo-map" class="wm-wrap prism-mapbox" style="min-height:200px"><div class="spinner" style="margin:80px auto"></div></div>
       ${liveFeedHtml}`;
   }
 
@@ -841,16 +916,55 @@ async function renderPrismPage() {
     if (svgEl && maxVal > 0) {
       const paths = svgEl.querySelectorAll('.wm-countries path');
       for (const p of paths) {
+        p.classList.toggle('sel', p.id === selCountry);
         const entry = byCC[p.id];
-        if (entry) {
+        if (entry && geoStyle === 'zones') {
           const v = _geoValue(entry, mode);
-          const alpha = v > 0 ? (0.12 + (v / maxVal) * 0.83).toFixed(2) : '0.06';
+          const alpha = v > 0 ? (0.12 + Math.pow(v / maxVal, 0.55) * 0.83).toFixed(2) : '0.06';
           p.setAttribute('fill', `rgba(${r},${g},${b},${alpha})`);
         }
       }
+      svgEl.querySelector('.geo-bubbles')?.remove();
+      if (geoStyle === 'bubbles') {
+        const layer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        layer.classList.add('geo-bubbles');
+        layer.style.pointerEvents = 'none';
+        const k = svgEl.viewBox.baseVal.width / 960;
+        let html = '';
+        for (const entry of geo) {
+          const path = svgEl.querySelector(`.wm-countries path[id="${entry.country_code}"]`);
+          const v = _geoValue(entry, mode);
+          if (!path || v <= 0) continue;
+          const bb = path.getBBox();
+          html += `<circle cx="${bb.x + bb.width / 2}" cy="${bb.y + bb.height / 2}" r="${((2.5 + Math.sqrt(v / maxVal) * 17) * k).toFixed(2)}" fill="rgb(${r},${g},${b})" fill-opacity=".38" stroke="rgb(${r},${g},${b})" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
+        }
+        layer.innerHTML = html;
+        svgEl.insertBefore(layer, svgEl.querySelector('.live-dot'));
+      }
+      const lg = container.querySelector('.prism-legend');
+      if (lg) {
+        lg.querySelector('.lg-title').textContent = GEO_LABELS[mode];
+        lg.querySelector('.lg-grad').style.background = `linear-gradient(90deg,rgba(${r},${g},${b},.1),rgba(${r},${g},${b},1))`;
+        lg.querySelector('.lg-max').textContent = mode === 'error_rate' ? maxVal.toFixed(1) + '%' : fmtNum(Math.round(maxVal));
+      }
     }
 
-    const oldTable = container.querySelector('.geo-stats-table');
+    const topEl = document.getElementById('px-topc');
+    if (topEl) {
+      const flagOf = cc => (!cc || cc.length !== 2 || cc === 'XX' || cc === 'LO') ? '🌐' : String.fromCodePoint(0x1F1E6 + cc.charCodeAt(0) - 65, 0x1F1E6 + cc.charCodeAt(1) - 65);
+      const top = [...geo].sort((a, b) => _geoValue(b, mode) - _geoValue(a, mode)).filter(e => _geoValue(e, mode) > 0).slice(0, 8);
+      topEl.innerHTML = top.length ? top.map(e => {
+        const v = _geoValue(e, mode);
+        const label = mode === 'error_rate' ? v.toFixed(1) + '%' : fmtNum(v);
+        return `<button type="button" class="prism-toprow${e.country_code === selCountry ? ' sel' : ''}" data-prism="country" data-cc="${esc(e.country_code)}">
+          <span class="prism-toprow-flag">${flagOf(e.country_code)}</span>
+          <span class="prism-toprow-main"><span class="prism-toprow-head"><span>${esc(e.country_name)}</span><b>${label}</b></span>
+          <span class="prism-bar-bg"><span class="prism-bar-fill" style="width:${(v / maxVal * 100).toFixed(1)}%;background:rgb(${r},${g},${b})"></span></span></span>
+        </button>`;
+      }).join('') : '<p class="prism-muted">Aucune donnée.</p>';
+    }
+
+    const oldTable = document.querySelector('.geo-stats-table');
     if (oldTable) oldTable.remove();
 
     const flag = cc => {
@@ -882,7 +996,41 @@ async function renderPrismPage() {
         }).join('')}
         </tbody>
       </table>`;
-    container.appendChild(tableWrap);
+    const pane = document.getElementById('px-countries');
+    if (pane) { pane.innerHTML = '<div class="prism-panel-title">Trafic par pays</div>'; pane.appendChild(tableWrap); }
+  }
+
+  // Panneau détail pays (données du /prism/geo déjà chargées)
+  function openCountry(cc) {
+    const e = (_lastGeoData || []).find(g => g.country_code === cc);
+    const dr = document.getElementById('prism-drawer');
+    if (!e || !dr) return;
+    selCountry = cc;
+    const c = document.getElementById('prism-geo-map');
+    if (c) _applyGeoMode(c, _lastGeoData);
+    const flagOf = (!cc || cc.length !== 2 || cc === 'XX' || cc === 'LO') ? '🌐' : String.fromCodePoint(0x1F1E6 + cc.charCodeAt(0) - 65, 0x1F1E6 + cc.charCodeAt(1) - 65);
+    const stat = (l, v, warn) => `<div class="prism-dstat"><span>${l}</span><b${warn ? ' style="color:var(--red)"' : ''}>${v}</b></div>`;
+    dr.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <span class="prism-panel-title" style="margin:0">Détail pays</span>
+        <button type="button" class="btn btn-ghost btn-sm" data-prism="close-drawer">✕</button>
+      </div>
+      <div style="font-size:36px;line-height:1">${flagOf}</div>
+      <div style="font-size:22px;font-weight:700;letter-spacing:-.02em;margin:4px 0">${esc(e.country_name)} <span style="font-size:12px;color:var(--text3);font-weight:500">${esc(cc)}</span></div>
+      <div style="color:var(--text3);margin-bottom:14px">${fmtNum(e.requests)} requêtes · ${(e.pct || 0).toFixed(1)}% du trafic</div>
+      <div class="prism-dstats">
+        ${stat('Erreurs', fmtNum(e.errors || 0))}
+        ${stat('Taux d\'erreur', (e.error_rate || 0).toFixed(1) + '%', (e.error_rate || 0) >= 10)}
+        ${stat('IPs bannies', fmtNum(e.banned_ips || 0), (e.banned_ips || 0) > 0)}
+      </div>`;
+    dr.classList.add('open');
+  }
+
+  function closeCountry() {
+    selCountry = '';
+    document.getElementById('prism-drawer')?.classList.remove('open');
+    const c = document.getElementById('prism-geo-map');
+    if (c && _lastGeoData) _applyGeoMode(c, _lastGeoData);
   }
 
   // ── Live map ────────────────────────────────────────────────────────────
@@ -1005,6 +1153,8 @@ async function renderPrismPage() {
 
     if (!geo || geo.length === 0) {
       container.innerHTML = `<p style="color:var(--text3);font-size:13px;padding:16px">${t('prism.wait_geo')}<br><span style="font-size:11px">${t('prism.geo_bg')}</span></p>`;
+      upd('px-topc', '<p class="prism-muted">Aucune donnée.</p>');
+      upd('px-countries', '<p class="prism-muted">Aucune donnée.</p>');
       return;
     }
 
@@ -1077,9 +1227,72 @@ async function renderPrismPage() {
       if (p && p._fill) p.setAttribute('fill', p._fill);
     });
 
-    container.innerHTML = '';
+    svgEl.style.cssText = 'display:block;width:100%;height:100%';
+    svgEl.removeAttribute('width');
+    svgEl.removeAttribute('height');
+    container.innerHTML = `
+      <div class="prism-map-tools">
+        <button type="button" data-z="in" title="Zoom +">+</button>
+        <button type="button" data-z="out" title="Zoom −">−</button>
+        <button type="button" data-z="reset" title="Recentrer">⌖</button>
+      </div>
+      <div class="prism-legend"><div class="lg-title"></div><div class="lg-grad"></div><div class="lg-scale"><span>0</span><span class="lg-max"></span></div></div>`;
     container.style.minHeight = '';
     container.appendChild(svgEl);
+
+    // Zoom / déplacement : on manipule le viewBox (le rendu vectoriel reste net)
+    const VB0 = [0, 0, 960, 500];
+    let vb = [...VB0];
+    const applyVB = () => svgEl.setAttribute('viewBox', vb.map(n => +n.toFixed(1)).join(' '));
+    const clampVB = () => {
+      vb[0] = Math.max(0, Math.min(960 - vb[2], vb[0]));
+      vb[1] = Math.max(0, Math.min(500 - vb[3], vb[1]));
+    };
+    const zoomBy = (f, fx = .5, fy = .5) => {
+      const w = Math.min(960, Math.max(80, vb[2] * f)), h = w * 500 / 960;
+      vb = [vb[0] + (vb[2] - w) * fx, vb[1] + (vb[3] - h) * fy, w, h];
+      clampVB(); applyVB(); _applyGeoMode(container, geo);
+    };
+    container.addEventListener('wheel', e => {
+      e.preventDefault();
+      const r = container.getBoundingClientRect();
+      zoomBy(e.deltaY > 0 ? 1.2 : 1 / 1.2, (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
+    }, { passive: false });
+    container.querySelector('.prism-map-tools').addEventListener('click', e => {
+      const z = e.target.closest('button')?.dataset.z;
+      if (z === 'in') zoomBy(1 / 1.5);
+      else if (z === 'out') zoomBy(1.5);
+      else if (z === 'reset') { vb = [...VB0]; applyVB(); _applyGeoMode(container, geo); }
+    });
+    let drag = null;
+    container.addEventListener('pointerdown', e => {
+      if (e.target.closest('.prism-map-tools')) return;
+      drag = { x: e.clientX, y: e.clientY, vb: [...vb], moved: false };
+    });
+    if (_geoWinHandlers) { window.removeEventListener('pointermove', _geoWinHandlers.move); window.removeEventListener('pointerup', _geoWinHandlers.up); }
+    const onMove = e => {
+      if (!drag) return;
+      const r = container.getBoundingClientRect(), dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      if (Math.abs(dx) + Math.abs(dy) > 3) { drag.moved = true; container.classList.add('drag'); }
+      if (!drag.moved) return;
+      vb[0] = drag.vb[0] - dx / r.width * vb[2];
+      vb[1] = drag.vb[1] - dy / r.height * vb[3];
+      clampVB(); applyVB();
+    };
+    const onUp = () => {
+      container.classList.remove('drag');
+      const moved = drag?.moved;
+      setTimeout(() => { drag = null; }, 0);
+      if (moved) _applyGeoMode(container, geo);
+    };
+    _geoWinHandlers = { move: onMove, up: onUp };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    svgEl.addEventListener('click', e => {
+      if (drag?.moved) return;
+      const p = e.target.closest && e.target.closest('path[data-cc]');
+      if (p) openCountry(p.dataset.cc);
+    });
 
     _applyGeoMode(container, geo);
 
@@ -1386,6 +1599,10 @@ async function renderPrismPage() {
       if (!el || !prismRoot.contains(el)) return;
       const act = el.getAttribute('data-prism');
       if (act === 'refresh') { e.preventDefault(); doRefresh(); }
+      else if (act === 'tab') { e.preventDefault(); setTab(el.getAttribute('data-tab') || 'paths'); }
+      else if (act === 'country') { e.preventDefault(); openCountry(el.getAttribute('data-cc') || ''); }
+      else if (act === 'close-drawer') { e.preventDefault(); closeCountry(); }
+      else if (act === 'geo-style') { e.preventDefault(); geoStyle = el.dataset.style || 'zones'; if (_lastGeoData) renderChoropleth(_lastGeoData); }
       else if (act === 'quick') { e.preventDefault(); applyQuickRange(parseInt(el.getAttribute('data-ms'), 10) || 3600000); }
       else if (act === 'path-search') { e.preventDefault(); searchPath(); }
       else if (act === 'path-prev') { e.preventDefault(); pathOffset = Math.max(0, pathOffset - pathLimit); loadPaths(); }

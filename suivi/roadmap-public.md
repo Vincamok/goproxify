@@ -24,6 +24,7 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - **Politiques d’accès centralisées** : vue unifiée IP/GeoIP/Bot par proxy dans l’Admin
 - **Logs** : corrélation exacte par `request_id`, keyset pagination, vue live mobile
 - **Prism** : taux d’erreurs et IPs bannies par pays ; bouton accès rapide depuis la table des bans
+- **Prism** : refonte « centre de commande » (carte zoomable, anomalies détectées, onglets) — livré
 
 ### v0.2 — Architecture distribuée _(juillet – août 2026)_
 

@@ -332,7 +332,7 @@ Supported formats: nginx, HAProxy, Traefik YAML, Traefik TOML, Traefik Labels, C
 - TLS certificate, snippet, token, user, team management
 - Integrations: Prism (traffic analysis), Security dashboard, Backups, Import
 - **Logs**: aggregated view (access + system + audit), filters, pagination, live mode via WebSocket
-- **Prism**: KPIs, time series, GeoIP map, HTTP codes, top IPs/paths/referrers, CSV/JSON/HTML/PDF exports
+- **Prism**: command-center layout, KPIs with sparklines, zoomable GeoIP map (zones/bubbles), anomaly detection, country drill-down, time series, HTTP codes, top IPs/paths/referrers, CSV/JSON/HTML/PDF exports
 
 ---
 

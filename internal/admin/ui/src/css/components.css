@@ -1759,3 +1759,49 @@ textarea.input { resize: vertical; min-height: 80px; }
 .pw-adv[open] summary svg { transform: rotate(90deg); }
 .pw-adv-b { display: flex; flex-direction: column; gap: 12px; padding: 2px 18px 18px; }
 .pw-sep { height: 1px; background: var(--border); margin: 4px 0; }
+
+/* ── Prism : centre de commande ───────────────────────────────────────── */
+.prism-filters{position:sticky;top:0;z-index:20;box-shadow:0 4px 14px rgba(0,0,0,.05)}
+.prism-muted{color:var(--text3);font-size:12px;margin:0}
+.prism-kpi{position:relative;overflow:hidden}
+.prism-spark{position:absolute;right:0;bottom:0;width:55%;height:38px;pointer-events:none}
+.prism-hero{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:16px;margin-bottom:16px}
+.prism-rail{display:flex;flex-direction:column;gap:16px;min-width:0}
+.prism-rail .prism-panel:last-child{flex:1}
+.prism-two{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(0,1fr);gap:16px;margin-bottom:16px}
+.prism-mapcard{overflow:hidden}
+.prism-mapbox{position:relative;height:440px;border-radius:8px;overflow:hidden;background:var(--bg3);border:1px solid var(--border);cursor:grab;touch-action:none}
+.prism-mapbox.drag{cursor:grabbing}
+.prism-mapbox .country-path,.prism-mapbox .wm-countries path.sel{stroke:var(--text);stroke-width:1.6;vector-effect:non-scaling-stroke}
+.prism-mapbox .wm-countries path[data-cc]:hover{stroke:var(--accent);stroke-width:1.2;vector-effect:non-scaling-stroke}
+.prism-map-tools{position:absolute;right:10px;top:10px;display:flex;flex-direction:column;gap:4px;z-index:3}
+.prism-map-tools button{width:28px;height:28px;border-radius:7px;border:1px solid var(--border);background:var(--bg2);color:var(--text);cursor:pointer;font-size:15px;line-height:1}
+.prism-map-tools button:hover{border-color:var(--accent)}
+.prism-legend{position:absolute;left:12px;bottom:12px;z-index:3;background:color-mix(in srgb,var(--bg2) 90%,transparent);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:10.5px;color:var(--text3);pointer-events:none}
+.prism-legend .lg-grad{height:6px;width:150px;border-radius:3px;margin:4px 0 2px}
+.prism-legend .lg-scale{display:flex;justify-content:space-between}
+.prism-ins{display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-bottom:1px solid var(--border)}
+.prism-ins:last-child{border-bottom:0}
+.prism-ins-ico{width:24px;height:24px;border-radius:7px;display:grid;place-items:center;flex-shrink:0;font-size:12px;font-weight:700}
+.prism-ins-ico.r{background:color-mix(in srgb,var(--red) 15%,transparent);color:var(--red)}
+.prism-ins-ico.y{background:color-mix(in srgb,#f59e0b 18%,transparent);color:#b45309}
+.prism-ins-txt{flex:1;min-width:0;display:flex;flex-direction:column;font-size:12px}
+.prism-ins-txt span{color:var(--text3);font-size:11px}
+.prism-toprow{display:flex;align-items:center;gap:9px;width:100%;padding:6px 6px;border:0;background:none;color:var(--text);cursor:pointer;border-radius:6px;text-align:left;font:inherit}
+.prism-toprow:hover,.prism-toprow.sel{background:var(--bg3)}
+.prism-toprow-flag{font-size:17px}
+.prism-toprow-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;font-size:12px}
+.prism-toprow-head{display:flex;justify-content:space-between;gap:8px}
+.prism-tabcard{padding:0;overflow:hidden}
+.prism-tabs{display:flex;gap:2px;padding:0 12px;border-bottom:1px solid var(--border);overflow-x:auto}
+.prism-tabs button{border:0;background:none;padding:12px 12px;color:var(--text2);font:inherit;font-weight:500;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap}
+.prism-tabs button.on{color:var(--text);border-bottom-color:var(--accent)}
+.prism-pane{padding:16px 18px;overflow-x:auto}
+.prism-pane[hidden]{display:none}
+.prism-drawer{position:fixed;right:0;top:0;bottom:0;width:340px;max-width:100%;background:var(--bg2);border-left:1px solid var(--border);box-shadow:-8px 0 30px rgba(0,0,0,.12);z-index:60;transform:translateX(105%);transition:transform .22s;padding:18px;overflow:auto}
+.prism-drawer.open{transform:none}
+.prism-dstats{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.prism-dstat{background:var(--bg3);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;font-size:11px;color:var(--text3)}
+.prism-dstat b{font-size:18px;color:var(--text)}
+@media(max-width:1100px){.prism-hero,.prism-two{grid-template-columns:1fr}}
+@media(max-width:640px){.prism-mapbox{height:300px}}
