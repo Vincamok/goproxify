@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vincamok/goproxify/internal/sqltime"
 	_ "modernc.org/sqlite"
 )
 
@@ -220,7 +221,7 @@ func (s *Store) insert(name, rawToken string, role Role, exp *time.Time) (string
 	h := hash(rawToken)
 	_, err := s.db.Exec(
 		`INSERT INTO tokens(id, name, token_hash, role, expires_at) VALUES(?,?,?,?,?)`,
-		id, name, h, string(role), exp,
+		id, name, h, string(role), sqltime.Nullable(exp), // comparée à CURRENT_TIMESTAMP (HasActiveAgent)
 	)
 	return id, err
 }

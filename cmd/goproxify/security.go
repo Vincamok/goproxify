@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func runSecurity() {
@@ -204,6 +205,23 @@ func runSecurityThreat() {
 
 // ── Bans ──────────────────────────────────────────────────────────────────────
 
+// bansAddPayload construit le corps de POST /security/bans. L'API ne connaît que expires_at :
+// -ttl (durée Go ou « 7d ») y est converti par rapport à now.
+func bansAddPayload(args map[string]string, now time.Time) (map[string]any, error) {
+	payload := map[string]any{"ip": flagValue(args, "-ip", "")}
+	if r := flagValue(args, "-reason", ""); r != "" {
+		payload["reason"] = r
+	}
+	if ttl := flagValue(args, "-ttl", ""); ttl != "" {
+		d, err := parseDurationDays(ttl)
+		if err != nil || d <= 0 {
+			return nil, fmt.Errorf("-ttl invalide %q : durée positive attendue (ex. 30m, 24h, 7d)", ttl)
+		}
+		payload["expires_at"] = now.Add(d).UTC().Format(time.RFC3339)
+	}
+	return payload, nil
+}
+
 // bansListPath ajoute les filtres -edge, -source et -active (true|false) à la liste des bans.
 func bansListPath(args map[string]string) string {
 	q := url.Values{}
@@ -263,17 +281,15 @@ func runSecurityBans() {
 			fmt.Fprintln(os.Stderr, "usage: goproxify security bans add -ip <ip> [-reason …] [-ttl …]")
 			os.Exit(1)
 		}
+		payload, err := bansAddPayload(args, time.Now())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "bans add : %v\n", err)
+			os.Exit(1)
+		}
 		client, err := newAdminClient(args)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
 			os.Exit(1)
-		}
-		payload := map[string]any{"ip": ip}
-		if r := flagValue(args, "-reason", ""); r != "" {
-			payload["reason"] = r
-		}
-		if ttl := flagValue(args, "-ttl", ""); ttl != "" {
-			payload["ttl"] = ttl
 		}
 		var result map[string]any
 		if _, err := client.DoJSON("POST", "/api/v1/security/bans", payload, &result, 200, 201); err != nil {

@@ -21,6 +21,7 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/security"
 	"github.com/vincamok/goproxify/internal/admin/vulnscan"
 	"github.com/vincamok/goproxify/internal/edge/router"
+	"github.com/vincamok/goproxify/internal/sqltime"
 )
 
 // SecurityHandler expose le dashboard sécurité.
@@ -36,6 +37,9 @@ type SecurityHandler struct {
 	Groups GroupResolver
 	// OnBansChange notifie un changement de bans (push vers les passerelles).
 	OnBansChange func()
+	// OnUnban lève les bans d'une IP sur les passerelles, y compris ceux qu'elles ont posés elles-mêmes,
+	// puis leur renvoie la liste des bans (remplace OnBansChange pour un déban).
+	OnUnban func(ip string)
 	// OnThreatConfigChange envoie la config du moteur de détection à la portée visée (groupe HA ou passerelle)
 	// (scope vide = toutes les passerelles).
 	OnThreatConfigChange func(scope string, cfg any)
@@ -222,9 +226,9 @@ func (h *SecurityHandler) listBans(w http.ResponseWriter, r *http.Request) {
 	}
 	switch q.Get("active") {
 	case "true":
-		clauses = append(clauses, "(expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)")
+		clauses = append(clauses, "(expires_at IS NULL OR datetime(expires_at) > CURRENT_TIMESTAMP)")
 	case "false":
-		clauses = append(clauses, "(expires_at IS NOT NULL AND expires_at <= CURRENT_TIMESTAMP)")
+		clauses = append(clauses, "datetime(expires_at) <= CURRENT_TIMESTAMP")
 	}
 	if c, a := h.banEdgeClause(r, "edge_name"); c != "" {
 		clauses = append(clauses, c)
@@ -279,6 +283,14 @@ func (h *SecurityHandler) createBan(w http.ResponseWriter, r *http.Request) {
 	if body.Source == "" {
 		body.Source = "native"
 	}
+	if body.ExpiresAt != nil {
+		exp, err := security.NormalizeBanExpiry(*body.ExpiresAt)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		body.ExpiresAt = exp
+	}
 	id := uuid.New().String()
 	_, err := h.DB.ExecContext(r.Context(),
 		`INSERT INTO security_bans (id, ip, domain, reason, source, expires_at) VALUES (?, ?, ?, ?, ?, ?)`,
@@ -308,7 +320,8 @@ func (h *SecurityHandler) updateBan(w http.ResponseWriter, r *http.Request, id s
 		writeErr(w, r, http.StatusBadRequest, "api.err.json")
 		return
 	}
-	// permanent=true (ou expires_at null explicite) → ban sans expiration
+	// permanent=true ou expires_at "" → ban sans expiration. Un expires_at null se décode comme un
+	// champ absent : seul, il donne 400.
 	if body.Permanent != nil && *body.Permanent {
 		if _, err := h.DB.ExecContext(r.Context(), `UPDATE security_bans SET expires_at=NULL WHERE id=?`, id); err != nil {
 			secJSONErr(w, err, http.StatusInternalServerError)
@@ -321,16 +334,14 @@ func (h *SecurityHandler) updateBan(w http.ResponseWriter, r *http.Request, id s
 		return
 	}
 	if body.ExpiresAt != nil {
-		if *body.ExpiresAt == "" {
-			if _, err := h.DB.ExecContext(r.Context(), `UPDATE security_bans SET expires_at=NULL WHERE id=?`, id); err != nil {
-				secJSONErr(w, err, http.StatusInternalServerError)
-				return
-			}
-		} else {
-			if _, err := h.DB.ExecContext(r.Context(), `UPDATE security_bans SET expires_at=? WHERE id=?`, *body.ExpiresAt, id); err != nil {
-				secJSONErr(w, err, http.StatusInternalServerError)
-				return
-			}
+		exp, err := security.NormalizeBanExpiry(*body.ExpiresAt)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if _, err := h.DB.ExecContext(r.Context(), `UPDATE security_bans SET expires_at=? WHERE id=?`, exp, id); err != nil {
+			secJSONErr(w, err, http.StatusInternalServerError)
+			return
 		}
 		if h.OnBansChange != nil {
 			h.OnBansChange()
@@ -353,7 +364,9 @@ func (h *SecurityHandler) deleteBan(w http.ResponseWriter, r *http.Request, id s
 			ip, domain, reason, source, id,
 		)
 	}
-	if h.OnBansChange != nil {
+	if ip != "" && h.OnUnban != nil {
+		h.OnUnban(ip)
+	} else if h.OnBansChange != nil {
 		h.OnBansChange()
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -391,7 +404,7 @@ func (h *SecurityHandler) listBanHistory(w http.ResponseWriter, r *http.Request)
 
 // bansByCountry retourne le nombre de bans actifs par pays (joint geoip_cache).
 func (h *SecurityHandler) bansByCountry(w http.ResponseWriter, r *http.Request) {
-	where := "(b.expires_at IS NULL OR b.expires_at = '' OR b.expires_at > CURRENT_TIMESTAMP)"
+	where := "(b.expires_at IS NULL OR b.expires_at = '' OR datetime(b.expires_at) > CURRENT_TIMESTAMP)"
 	var args []any
 	if c, a := h.banEdgeClause(r, "b.edge_name"); c != "" {
 		where += " AND " + c
@@ -1172,8 +1185,8 @@ func (h *SecurityHandler) intelTimeline(w http.ResponseWriter, r *http.Request) 
 			hours = n
 		}
 	}
-	since := time.Now().UTC().Add(-time.Duration(hours) * time.Hour).Format("2006-01-02T15:04:05Z")
-	args := []any{since}
+	// created_at est au format de CURRENT_TIMESTAMP : une borne RFC3339 écarterait le premier jour de la fenêtre.
+	args := []any{sqltime.Format(time.Now().Add(-time.Duration(hours) * time.Hour))}
 	and := ""
 	if bc, ba := h.banEdgeClause(r, "edge_name"); bc != "" {
 		and = " AND " + bc

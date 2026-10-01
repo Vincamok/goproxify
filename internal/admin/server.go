@@ -383,6 +383,11 @@ func (s *Server) Start(ctx context.Context) error {
 			go manager.PushBans(context.Background())
 		}
 	}
+	pushUnban := func(ip string) {
+		if manager != nil {
+			go manager.PushUnban(context.Background(), []string{ip})
+		}
+	}
 	f2bEngine.OnBan = func(ip, reason string) {
 		if s.alertingEngine != nil {
 			s.alertingEngine.Emit(alerting.Event{
@@ -419,6 +424,7 @@ func (s *Server) Start(ctx context.Context) error {
 		CrowdSec:     csBouncer,
 		ScanCtx:      ctx,
 		OnBansChange: pushBans,
+		OnUnban:      pushUnban,
 		OnThreatConfigChange: func(scope string, cfg any) {
 			if manager != nil {
 				go manager.PushThreatConfig(context.Background(), scope, cfg)
@@ -664,6 +670,9 @@ func (s *Server) Start(ctx context.Context) error {
 		})))
 	}
 	adminOnly := func(h http.Handler) http.Handler { return protected(rbac.RequireAdmin(s.db)(h)) }
+	// Lecture pour tout authentifié ; mutations réservées admin (ou operator), JWT comme PAT.
+	adminWrites := func(h http.Handler) http.Handler { return protected(rbac.RequireAdminForWrites(s.db)(h)) }
+	operatorWrites := func(h http.Handler) http.Handler { return protected(rbac.RequireOperatorForWrites(s.db)(h)) }
 	userTokensH := &api.UserTokensHandler{DB: s.db, Log: s.log, OnChange: syncUsers}
 
 	// Routes proxies : lecture pour tous les authentifiés (filtrée par scope dans le handler),
@@ -679,8 +688,8 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/api/v1/teams/", adminOnly(teamsH))
 	mux.Handle("/api/v1/workspaces", adminOnly(workspacesH))
 	mux.Handle("/api/v1/workspaces/", adminOnly(workspacesH))
-	mux.Handle("/api/v1/snippets", protected(snippetsH))
-	mux.Handle("/api/v1/snippets/", protected(snippetsH))
+	mux.Handle("/api/v1/snippets", operatorWrites(snippetsH))
+	mux.Handle("/api/v1/snippets/", operatorWrites(snippetsH))
 	mux.Handle("/api/v1/error-page-templates", adminOnly(errorPagesH))
 	mux.Handle("/api/v1/error-page-templates/", adminOnly(errorPagesH))
 	mux.Handle("/api/v1/portal-page-templates", adminOnly(portalPagesH))
@@ -691,8 +700,8 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/api/v1/portal/", adminOnly(portalH))
 	mcpAccessH := &api.McpAccessHandler{DB: s.db, Log: s.log}
 	mux.Handle("/api/v1/mcp-access/", adminOnly(mcpAccessH))
-	mux.Handle("/api/v1/certs", protected(certsH))
-	mux.Handle("/api/v1/certs/", protected(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/api/v1/certs", adminWrites(certsH))
+	mux.Handle("/api/v1/certs/", adminWrites(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/api/v1/certs/")
 		parts := strings.SplitN(path, "/", 3)
 		if len(parts) >= 2 && (parts[1] == "deploy-targets" || parts[1] == "pull-tokens") {
@@ -719,13 +728,13 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/api/v1/metrics/summary", protected(http.HandlerFunc(proxyMetricsH.ServeSummary)))
 	mux.Handle("/api/v1/audit", protected(auditH))
 	mux.Handle("/api/v1/audit/", protected(auditH))
-	mux.Handle("/api/v1/alert-channels", protected(channelsH))
-	mux.Handle("/api/v1/alert-channels/", protected(channelsH))
+	mux.Handle("/api/v1/alert-channels", adminWrites(channelsH))
+	mux.Handle("/api/v1/alert-channels/", adminWrites(channelsH))
 	alertEventsH := &api.AlertEventsHandler{DB: s.db}
-	mux.Handle("/api/v1/alert-events", protected(alertEventsH))
-	mux.Handle("/api/v1/alert-events/", protected(alertEventsH))
-	mux.Handle("/api/v1/alert-rules", protected(rulesH))
-	mux.Handle("/api/v1/alert-rules/", protected(rulesH))
+	mux.Handle("/api/v1/alert-events", adminWrites(alertEventsH))
+	mux.Handle("/api/v1/alert-events/", adminWrites(alertEventsH))
+	mux.Handle("/api/v1/alert-rules", adminWrites(rulesH))
+	mux.Handle("/api/v1/alert-rules/", adminWrites(rulesH))
 	mux.Handle("/api/v1/logs", protected(logsH))
 	mux.Handle("/api/v1/logs/", protected(logsH))
 	mux.Handle("/api/v1/security", adminOnly(securityH))
@@ -760,10 +769,10 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/api/v1/backups", adminOnly(backupH))
 	mux.Handle("/api/v1/backups/", adminOnly(backupH))
 	mux.Handle("/api/v1/prism/", protected(prismH))
-	mux.Handle("/api/v1/ip-profiles", protected(ipProfilesH))
-	mux.Handle("/api/v1/ip-profiles/", protected(ipProfilesH))
-	mux.Handle("/api/v1/domains", protected(domainsH))
-	mux.Handle("/api/v1/domains/", protected(domainsH))
+	mux.Handle("/api/v1/ip-profiles", adminWrites(ipProfilesH))
+	mux.Handle("/api/v1/ip-profiles/", adminWrites(ipProfilesH))
+	mux.Handle("/api/v1/domains", adminWrites(domainsH))
+	mux.Handle("/api/v1/domains/", adminWrites(domainsH))
 	mux.Handle("/api/v1/agents", adminOnly(agentsH))
 	mux.Handle("/api/v1/agents/", adminOnly(agentsH))
 
@@ -823,6 +832,7 @@ func (s *Server) Start(ctx context.Context) error {
 			agentStore.Upsert(agentID, agentID, "", "revoked")
 		},
 		OnBansChange: pushBans,
+		OnUnban:      pushUnban,
 		RulesEngine:  s.rulesEngine,
 		Scheduler:    s.schedEngine,
 		Playbooks:    s.pbEngine,

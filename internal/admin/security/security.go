@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/vincamok/goproxify/internal/admin/edgeproxy"
@@ -24,6 +25,21 @@ type Ban struct {
 	EdgeName  string    `json:"edge_name"`
 	ExpiresAt *string   `json:"expires_at"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// NormalizeBanExpiry valide une expiration RFC3339 reçue d'un client et la ramène en UTC à la
+// seconde. Une date illisible serait stockée telle quelle : datetime(expires_at) vaudrait NULL et
+// le ban ne serait jamais actif. "" → nil (ban permanent).
+func NormalizeBanExpiry(s string) (*string, error) {
+	if s == "" {
+		return nil, nil
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return nil, fmt.Errorf("expires_at invalide %q : date RFC3339 attendue (ex. 2026-12-31T23:59:59Z)", s)
+	}
+	out := t.UTC().Format(time.RFC3339)
+	return &out, nil
 }
 
 // BanEvent représente une entrée dans l'historique des bans d'une IP.
@@ -146,7 +162,7 @@ func New(db *sql.DB) *Store { return &Store{db: db} }
 // GetOverview calcule le résumé complet.
 func (s *Store) GetOverview(proxies []proxyRow) Overview {
 	var ov Overview
-	s.db.QueryRow(`SELECT COUNT(*) FROM security_bans WHERE (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)`).Scan(&ov.ActiveBans)                 //nolint:errcheck
+	s.db.QueryRow(`SELECT COUNT(*) FROM security_bans WHERE (expires_at IS NULL OR datetime(expires_at) > CURRENT_TIMESTAMP)`).Scan(&ov.ActiveBans)       //nolint:errcheck
 	s.db.QueryRow(`SELECT COUNT(*) FROM security_threats`).Scan(&ov.ActiveThreats)                                                                        //nolint:errcheck
 	s.db.QueryRow(`SELECT COUNT(*) FROM security_cves WHERE status='open'`).Scan(&ov.OpenCVEs)                                                            //nolint:errcheck
 	s.db.QueryRow(`SELECT COUNT(*) FROM security_cves WHERE status='open' AND cvss_score>=7`).Scan(&ov.CriticalCVEs)                                      //nolint:errcheck

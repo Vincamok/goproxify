@@ -14,6 +14,7 @@ import (
 
 	"github.com/vincamok/goproxify/internal/admin/analytics"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
+	"github.com/vincamok/goproxify/internal/sqltime"
 )
 
 // PrismHandler sert les endpoints d'analyse Prism.
@@ -409,9 +410,8 @@ func (h *PrismHandler) bansTimeline(w http.ResponseWriter, r *http.Request) {
 		WHERE action = 'banned'
 		  AND created_at >= ? AND created_at <= ?
 		GROUP BY ts ORDER BY ts ASC`,
-		groupFmt,
-		p.From.UTC().Format("2006-01-02T15:04:05Z"),
-		p.To.UTC().Format("2006-01-02T15:04:05Z"),
+		// created_at est au format de CURRENT_TIMESTAMP : une borne RFC3339 écarterait le premier jour de la fenêtre.
+		groupFmt, sqltime.Format(p.From), sqltime.Format(p.To),
 	)
 	if err != nil {
 		prismJSONErr(w, err, http.StatusInternalServerError)
@@ -439,7 +439,7 @@ func (h *PrismHandler) bansBySource(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.DB.QueryContext(r.Context(), `
 		SELECT source, COUNT(*) AS cnt
 		FROM security_bans
-		WHERE expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP
+		WHERE expires_at IS NULL OR datetime(expires_at) > CURRENT_TIMESTAMP
 		GROUP BY source ORDER BY cnt DESC`)
 	if err != nil {
 		prismJSONErr(w, err, http.StatusInternalServerError)

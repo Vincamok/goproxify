@@ -9,6 +9,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
+
+	"github.com/vincamok/goproxify/internal/sqltime"
 )
 
 // backupTables liste, dans l'ordre de restauration, les tables de configuration
@@ -117,6 +120,10 @@ func exportTables(db *sql.DB) map[string][]map[string]any {
 			row := make(map[string]any, len(cols))
 			for i, c := range cols {
 				v := vals[i]
+				if t, ok := v.(time.Time); ok {
+					// encoding/json écrirait du RFC3339, que SQLite compare mal à CURRENT_TIMESTAMP.
+					v = sqltime.Format(t)
+				}
 				if b, ok := v.([]byte); ok {
 					if blobColumns[table+"."+c] {
 						v = base64.StdEncoding.EncodeToString(b)
@@ -190,8 +197,13 @@ func applyTables(db *sql.DB, tables map[string][]map[string]any, overwrite bool)
 			var args []any
 			var ph []string
 			for c, v := range row {
-				if !valid[c] {
+				typ, ok := valid[c]
+				if !ok {
 					continue
+				}
+				// Sauvegardes antérieures : dates exportées en RFC3339.
+				if s, ok := v.(string); ok && isDateType(typ) {
+					v = sqltime.Text(s)
 				}
 				if s, ok := v.(string); ok && blobColumns[table+"."+c] {
 					if b, err := base64.StdEncoding.DecodeString(s); err == nil {
@@ -221,19 +233,25 @@ func applyTables(db *sql.DB, tables map[string][]map[string]any, overwrite bool)
 	return written, skipped
 }
 
-func tableColumns(db *sql.DB, table string) map[string]bool {
+func isDateType(typ string) bool {
+	typ = strings.ToUpper(typ)
+	return strings.Contains(typ, "DATE") || strings.Contains(typ, "TIME")
+}
+
+// tableColumns retourne les colonnes de table et leur type déclaré.
+func tableColumns(db *sql.DB, table string) map[string]string {
 	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
 	if err != nil {
 		return nil
 	}
 	defer rows.Close()
-	cols := map[string]bool{}
+	cols := map[string]string{}
 	for rows.Next() {
 		var cid, notnull, pk int
 		var name, typ string
 		var dflt sql.NullString
 		if rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk) == nil {
-			cols[name] = true
+			cols[name] = typ
 		}
 	}
 	return cols

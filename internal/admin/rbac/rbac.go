@@ -595,3 +595,28 @@ func RequireOperator(db *sql.DB) func(http.Handler) http.Handler {
 		})
 	}
 }
+
+// RequireAdminForWrites laisse passer les GET et applique RequireAdmin aux autres méthodes.
+// EnforcePATScope ne couvre que les PAT : sans ce garde, une session UI (JWT) d'un user
+// pourrait muter certificats, domaines, alertes ou profils IP.
+func RequireAdminForWrites(db *sql.DB) func(http.Handler) http.Handler {
+	return writesOnly(RequireAdmin(db))
+}
+
+// RequireOperatorForWrites laisse passer les GET et applique RequireOperator aux autres méthodes.
+func RequireOperatorForWrites(db *sql.DB) func(http.Handler) http.Handler {
+	return writesOnly(RequireOperator(db))
+}
+
+func writesOnly(guard func(http.Handler) http.Handler) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		guarded := guard(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet {
+				next.ServeHTTP(w, r)
+				return
+			}
+			guarded.ServeHTTP(w, r)
+		})
+	}
+}

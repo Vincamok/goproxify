@@ -78,7 +78,7 @@ Chaque message WS est une enveloppe JSON :
 - **Séquence** : compteur `seq` par connexion ; full-sync automatique si trous détectés
 - **Comportement passerelle en cas de coupure** :
   - Admin déconnecté → passerelle conserve la configuration en cache ; aucune interruption du trafic
-  - Agent déconnecté → backends de cet Agent marqués `unhealthy` après 90 s d'absence de heartbeat
+  - Agent déconnecté → Agent affiché hors ligne après 90 s sans heartbeat ; ses routes restent actives et le trafic continue vers ses conteneurs (voir ADR-0006)
 
 ---
 

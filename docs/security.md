@@ -163,6 +163,13 @@ Les compteurs (rate, erreurs 4xx) sont **bornés en mémoire** (~262 k IPs suivi
 | `tarpit.delay_ms` | 5000 | Durée de rétention (max 30000, sous les timeouts d'écriture usuels) |
 | `tarpit.max_concurrent` | 200 | Requêtes retenues simultanément ; au-delà, refus immédiat (`403`) |
 
+### Fonctionnement sans l'Admin
+
+Sentinel tourne sur la passerelle sans dépendre de l'Admin, y compris après un redémarrage pendant une coupure :
+
+- **Configuration** : la passerelle garde une copie chiffrée (clé du cache local) de la dernière configuration reçue, `/etc/goproxify/threat-config.gpx` (surchargeable par `GPX_THREAT_CONFIG_PATH`), et la recharge au démarrage avec les listes blanches `sentinel.whitelist` des routes. Chaque envoi de l'Admin remplace la copie.
+- **Bans** : un ban Sentinel est écrit dans la base de bans locale de la passerelle (`bansdb`) : il bloque aussitôt les requêtes suivantes de l'IP pendant `ban_duration`, survit à un redémarrage et est transmis aux pairs HA. L'Admin en est notifié pour l'historique et la diffusion aux autres passerelles.
+
 ### Tarpit
 
 Avec `tarpit.enabled`, une requête bloquée par Sentinel (signal en mode `block`) ou venant d'une IP bannie par Sentinel (ban dont la source est `threat`, y compris les bans posés par le WAF) n'est pas refusée aussitôt : la connexion est retenue `delay_ms` avant la réponse `403`. Un bot qui attend chaque réponse immobilise ses propres connexions et perd du débit.
@@ -229,9 +236,21 @@ Les bans sont centralisés dans l'Admin et propagés aux passerelles via WebSock
 | `fail2ban` | Ban reçu de Fail2Ban natif Go |
 | `crowdsec` | Décision LAPI CrowdSec (stream push) |
 
+### Déban
+
+Débannir une IP depuis l'Admin (UI, CLI `security bans delete`, outils MCP `delete_security_ban` / `unban_ip`) lève **tous** ses bans sur chaque passerelle, y compris ceux que la passerelle a posés elle-même (Fail2Ban, Sentinel, règles automatiques, ban reçu d'un pair HA), et remet à zéro les compteurs Fail2Ban et Sentinel de l'IP. Le déban est conservé sur le disque de la passerelle (survit à un redémarrage) et rejoué à une passerelle qui était déconnectée au moment du déban, à sa reconnexion (débans des 30 derniers jours). Un pair HA qui n'a pas encore reçu le déban ne peut pas réinjecter l'ancien ban ; un ban posé **après** le déban reste appliqué normalement.
+
+Les 403 servis à une IP bannie ne comptent pas pour Fail2Ban (Admin et passerelle) : sans cela, l'IP serait rebannie sur ses propres refus dès la levée du ban.
+
+### Listes blanches et bans existants
+
+Une IP en liste blanche Fail2Ban n'est plus bloquée par les bans Fail2Ban déjà posés ; de même pour la liste blanche Sentinel (globale ou `sentinel.whitelist` d'une route) et les bans Sentinel. Pas besoin d'attendre l'expiration ni de débannir. Les bans manuels et CrowdSec restent appliqués ; pour exempter une IP de tout ban, utiliser un profil IP en mode `allow`.
+
 ### Fail2Ban natif Go
 
 Détection d'échecs d'authentification sans dépendance externe. Configurable : seuil de tentatives, fenêtre de temps, durée de ban. Notification d'alerte déclenchable sur N bans/heure.
+
+IPv4 et IPv6 sont prises en charge, avec ou sans port (`IP:port`, `[IPv6]:port`) ; ce qui n'est pas une IP (dont `[pseudonymisé]`) est ignoré. Une **IPv6 est comptée et bannie par /64** : un abonné reçoit en général un /64 entier et peut y changer d'adresse à volonté, si bien qu'un comptage adresse par adresse le laisserait toujours sous le seuil. Le ban porte donc le préfixe (`2a01:e0a:1:2::/64`), et c'est ce préfixe qu'il faut débannir (un déban de l'adresse seule ne lève pas le ban /64). Contrairement au Sentinel, qui compte aussi par /64 mais bannit l'adresse exacte, Fail2Ban bannit le /64 entier. Exception : si la liste blanche Fail2Ban recoupe le /64, les adresses voisines de l'IP exemptée sont comptées et bannies une par une, et un ban /64 déjà posé qui la contient n'est plus appliqué.
 
 ### CrowdSec
 

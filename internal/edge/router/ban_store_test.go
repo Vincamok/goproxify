@@ -40,6 +40,26 @@ func TestBanStoreCheckBlocked(t *testing.T) {
 	}
 }
 
+// Fail2Ban bannit un /64 pour une IPv6 (ou l'adresse seule si la liste blanche recoupe le /64).
+func TestBanStoreCheckBlockedIPv6(t *testing.T) {
+	store := router.NewBanStore()
+	store.Replace([]*router.RuntimeBan{
+		{ID: "1", IP: "2a01:e0a:1:2::/64", Source: "fail2ban"},
+		{ID: "2", IP: "2a01:e0a:1:4::6", Source: "fail2ban"},
+	})
+	for ip, want := range map[string]bool{
+		"2a01:e0a:1:2::5":               true,
+		"2a01:e0a:1:2:ffff:ffff:ffff:1": true,
+		"2a01:e0a:1:3::5":               false,
+		"2a01:e0a:1:4::6":               true,
+		"2a01:e0a:1:4::5":               false,
+	} {
+		if blocked, _ := store.CheckBlocked(ip); blocked != want {
+			t.Errorf("CheckBlocked(%s) = %v, want %v", ip, blocked, want)
+		}
+	}
+}
+
 func TestIPProfileAllowBypassesLogic(t *testing.T) {
 	profiles := router.NewIPProfileStore()
 	profiles.Replace([]*router.IPProfile{

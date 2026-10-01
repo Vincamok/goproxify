@@ -18,6 +18,7 @@ import (
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	"github.com/vincamok/goproxify/internal/admin/archstore"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
+	"github.com/vincamok/goproxify/internal/sqltime"
 )
 
 // TokensHandler gère la création, la liste, la révocation des tokens d'appairage
@@ -180,7 +181,7 @@ func (h *TokensHandler) create(w http.ResponseWriter, r *http.Request) {
 	_, err := h.DB.ExecContext(r.Context(),
 		`INSERT INTO tokens (id, token, token_hash, role, rbac_role, node_name, node_endpoint, expires_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, stored, hash, req.Role, req.RBACRole, req.NodeName, endpoint, expiresAt,
+		id, stored, hash, req.Role, req.RBACRole, req.NodeName, endpoint, sqltime.Nullable(expiresAt),
 	)
 	if err != nil {
 		if !isCtxErr(err) {
@@ -308,7 +309,7 @@ func (h *TokensHandler) purgeExpired(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusBadRequest, "api.err.days_min")
 		return
 	}
-	cutoff := time.Now().AddDate(0, 0, -req.Days)
+	cutoff := sqltime.Format(time.Now().AddDate(0, 0, -req.Days))
 	res, err := h.DB.ExecContext(r.Context(),
 		`DELETE FROM tokens WHERE
 		   (revoked=1 AND created_at < ?)

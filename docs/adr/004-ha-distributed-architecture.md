@@ -14,7 +14,7 @@ L'architecture initiale présente quatre fragilités identifiées :
 3. L'élection de coordinateur entre passerelles prévoyait l'algorithme Bully, qui peut produire deux coordinateurs simultanés en cas de coupure réseau partielle
 4. La synchronisation de configuration entre passerelles d'un même groupe n'était pas définie
 
-L'objectif central est que **la passerelle soit autonome** : elle doit pouvoir servir le trafic même si l'Administration est temporairement indisponible.
+L'objectif central est que **la passerelle soit autonome** : elle doit pouvoir servir le trafic même si l'Administration est temporairement indisponible. L'ADR-0006 étend ce principe à toutes les fonctions de la passerelle (portail Access compris), aux groupes HA et à l'Agent.
 
 ---
 

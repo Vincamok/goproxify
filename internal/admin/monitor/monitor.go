@@ -58,27 +58,39 @@ func (m *Monitor) Start(ctx context.Context) {
 }
 
 func (m *Monitor) scan() {
-	for _, ev := range m.sloEvents(context.Background()) {
+	ctx := context.Background()
+	for _, ev := range append(m.sloEvents(ctx), m.accessEvents(ctx)...) {
 		m.engine.Emit(ev)
 	}
+}
+
+// logsSince est la borne basse d'une fenêtre sur logs.ts, qui est en RFC3339 :
+// datetime('now', …) compare mal ('T' > ' ', toute la journée UTC passerait).
+func logsSince(d time.Duration) string {
+	return time.Now().Add(-d).UTC().Format(time.RFC3339Nano)
+}
+
+// accessEvents retourne les alertes taux d'erreur / latence des domaines sur la fenêtre d'observation.
+func (m *Monitor) accessEvents(ctx context.Context) []alerting.Event {
 	window := m.cfg.WindowSec
 	if window <= 0 {
 		window = 300
 	}
-	rows, err := m.db.Query(fmt.Sprintf(
+	rows, err := m.db.QueryContext(ctx,
 		`SELECT domain,
 		        COUNT(*) AS total,
 		        SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END) AS errors,
 		        AVG(latency_ms) AS avg_lat
 		 FROM logs
-		 WHERE ts > datetime('now','-%d seconds') AND status > 0 AND domain != ''
+		 WHERE ts > ? AND status > 0 AND domain != ''
 		 GROUP BY domain
-		 HAVING total >= 10`, window))
+		 HAVING total >= 10`, logsSince(time.Duration(window)*time.Second))
 	if err != nil {
-		return
+		return nil
 	}
 	defer rows.Close()
 
+	var out []alerting.Event
 	for rows.Next() {
 		var domain string
 		var total, errors int64
@@ -89,7 +101,7 @@ func (m *Monitor) scan() {
 		errorRate := 100.0 * float64(errors) / float64(total)
 
 		if m.cfg.ErrorRatePct > 0 && errorRate > m.cfg.ErrorRatePct {
-			m.engine.Emit(alerting.Event{
+			out = append(out, alerting.Event{
 				Trigger:   alerting.TriggerHighErrorRate,
 				Severity:  alerting.SevWarning,
 				Domain:    domain,
@@ -105,7 +117,7 @@ func (m *Monitor) scan() {
 		}
 
 		if m.cfg.LatencyMsP95 > 0 && int64(avgLat) > m.cfg.LatencyMsP95 {
-			m.engine.Emit(alerting.Event{
+			out = append(out, alerting.Event{
 				Trigger:   alerting.TriggerHighLatency,
 				Severity:  alerting.SevWarning,
 				Domain:    domain,
@@ -119,6 +131,7 @@ func (m *Monitor) scan() {
 			})
 		}
 	}
+	return out
 }
 
 // sloEvents évalue l'SLO de disponibilité (30 jours) de la flotte puis de chaque passerelle ayant du trafic récent.
@@ -128,7 +141,7 @@ func (m *Monitor) sloEvents(ctx context.Context) []alerting.Event {
 		return nil
 	}
 	scopes := []string{""}
-	if rows, err := m.db.QueryContext(ctx, `SELECT DISTINCT node_name FROM logs WHERE ts > datetime('now','-6 hours') AND status > 0 AND node_name != ''`); err == nil {
+	if rows, err := m.db.QueryContext(ctx, `SELECT DISTINCT node_name FROM logs WHERE ts > ? AND status > 0 AND node_name != ''`, logsSince(6*time.Hour)); err == nil {
 		for rows.Next() {
 			var n string
 			if rows.Scan(&n) == nil {

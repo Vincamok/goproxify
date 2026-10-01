@@ -23,6 +23,9 @@ const Role = {
   // L'utilisateur peut-il écrire (créer/modifier/désactiver) ?
   canWrite: () => Role.isOperator(),
 
+  // Snippets : admin, ou user avec au moins un grant write (rbac.RequireOperator côté API).
+  canWriteSnippets: () => Role.isAdmin() || (state.user?.effective_scopes || []).some(s => s.access_mode === 'write'),
+
   // L'utilisateur a-t-il un scope de type "edge" explicite sur cette passerelle ?
   hasEdgeScope: (nodeName) => {
     if (Role.isGlobalAdmin() || Role.isSuperAdmin()) return true;

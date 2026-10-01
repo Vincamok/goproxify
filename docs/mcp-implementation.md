@@ -164,6 +164,16 @@ Règles à respecter :
 - Retourner `[]map[string]any{}` (et non `nil`) pour les listes vides — `null` confond les LLM.
 - Ne jamais exposer des champs sensibles (`password_hash`, `cert_pem`, `key_pem`, secrets).
 
+### 4. Déclarer le scope (obligatoire)
+
+Dans `internal/admin/rbac/pat_scopes.go` :
+
+- `ToolRequiredScope` : le scope que `RequiredScopeForRequest` exige pour la route REST équivalente (même chemin, même méthode). Un outil sans scope est **refusé** par `handleToolsCall` (`outil sans scope déclaré`).
+- `ToolRequiresAdmin` : ajouter l'outil si la route REST équivalente est montée avec `adminOnly` dans `internal/admin/server.go` (le MCP n'applique pas `RequireAdmin`).
+- `mcpTools` : ajouter le nom, pour qu'il apparaisse dans le catalogue scope → outils de `/mcp-access`.
+
+`TestEveryToolHasScope` et `TestScopeCatalogueListsEveryTool` (`internal/admin/mcp/tool_scopes_test.go`) échouent si l'une de ces étapes manque. Si aucun scope existant ne correspond, en créer un dans le catalogue (`AllPATScopes`, `ScopeCatalog`, `AvailableScopesForUser`) et l'utiliser aussi dans `RequiredScopeForRequest`, pour que REST et MCP restent alignés.
+
 ---
 
 ## Ajouter une ressource
@@ -184,6 +194,14 @@ case "goproxify://ma-ressource":
 ```
 
 Les ressources réutilisent directement les implémentations d'outils — pas de duplication de code SQL.
+
+### 3. Associer la ressource à son outil dans `resourceTools`
+
+```go
+"goproxify://ma-ressource": "mon_outil",
+```
+
+La lecture applique les droits de l'outil (scope, rôle admin). Une URI absente de `resourceTools` renvoie `resource not found` ; `TestEveryResourceMapsToTool` vérifie que chaque ressource listée y figure.
 
 ---
 
@@ -226,9 +244,13 @@ mux.Handle("/mcp",  auth.RequirePAT(s.db)(mcpH))
 mux.Handle("/mcp/", auth.RequirePAT(s.db)(mcpH))
 ```
 
-Le middleware `RequirePAT` n’accepte que les tokens utilisateur `gpx_pat_*` (créés via `/api/v1/me/tokens`). Un JWT de session UI est refusé sur `/mcp`. Les outils vérifient ensuite les scopes effectifs (scopes PAT ∩ droits du compte).
+Le middleware `RequirePAT` n’accepte que les tokens utilisateur `gpx_pat_*` (créés via `/api/v1/me/tokens`). Un JWT de session UI est refusé sur `/mcp`. `/mcp` n'est protégé que par `RequirePAT` : ni `EnforcePATScope` ni `RequireAdmin`. `handleToolsCall` (et `handleResourcesRead`, via `resourceTools`) appelle donc `denyTool`, qui joue le rôle des deux middlewares de la route REST équivalente :
 
-Les outils sécurité (`list_security_*`, `create_security_ban`, …) exigent `audit:read`, aligné sur `RequiredScopeForRequest` pour `/api/v1/security`. Les outils Agents et Infrastructure (`list_agents`, `list_declared_nodes`, `create_bootstrap_ticket`, `accept_node`, …) exigent `nodes:read` ou `nodes:write`. Les outils Access (`*_portal_*`) exigent `portal:read` ou `portal:write`, alignés sur `/api/v1/portal` et `/api/v1/portal-page-templates`.
+1. `rbac.ToolRequiredScope` vide → refus (`outil sans scope déclaré`), le contrôle échoue fermé ;
+2. `rbac.EffectiveHasScope` (scopes PAT ∩ droits actuels du compte) → sinon `scope insuffisant: <scope>` ;
+3. `rbac.ToolRequiresAdmin` et compte non admin → `accès réservé aux administrateurs`.
+
+Chaque outil exige le scope que `RequiredScopeForRequest` exige pour sa route REST (ex. `list_security_*` → `audit:read` comme `GET /api/v1/security`, `ban_ip` → `security:write`, `obtain_cert` → `certs:write` comme `POST /api/v1/certs`, `list_rules` → `audit:read` et `run_rule` → `security:write` comme `/api/v1/rules-engine`). Le rôle admin est exigé en plus pour les outils dont la route REST est `adminOnly` (sécurité, moteur de règles, planifications, playbooks, CA interne, fournisseurs d'auth, Agents, architecture, sauvegardes, Access…) : sans lui, un compte `user` tenant `audit:read` ou `certs:read` passerait. La table complète est dans [mcp.md](mcp.md#contrôle-daccès-des-outils).
 
 Le handler reçoit `*sql.DB` directement — pas de couche de repository intermédiaire, par cohérence avec le reste du code Admin qui accède aussi à SQLite directement. Les outils Access et Infrastructure délèguent aux handlers HTTP Admin (`PortalHandler`, `DeclaredNodesHandler`, `BootstrapHandler`, `NodesHandler`) via `httptest` pour réutiliser validation, auto-accept et génération QR.
 
@@ -273,4 +295,4 @@ out, err := h.toolCreateProxy(r, map[string]any{
 })
 ```
 
-Pour tester le chemin JSON-RPC complet avec scopes, envelopper le handler avec `RequirePAT` et un PAT admin en base (voir `internal/admin/auth/pat_test.go`).
+Pour tester le chemin JSON-RPC complet avec scopes, envelopper le handler avec `RequirePAT` et un PAT en base : `mcpClient` dans `internal/admin/mcp/tool_scopes_test.go` crée le compte (rôle au choix), le PAT et ses scopes, et renvoie un client JSON-RPC (`TestToolsCallAuthorization`, `TestResourcesReadAuthorization`).

@@ -174,16 +174,8 @@ func parseTTLHours(s string) (int, error) {
 		}
 		return n, nil
 	}
-	d, err := time.ParseDuration(s)
+	d, err := parseDurationDays(s)
 	if err != nil {
-		// support 7d (non natif Go)
-		if strings.HasSuffix(s, "d") {
-			n, err2 := strconv.Atoi(strings.TrimSuffix(s, "d"))
-			if err2 != nil || n < 0 {
-				return 0, fmt.Errorf("durée invalide %q", s)
-			}
-			return n * 24, nil
-		}
 		return 0, fmt.Errorf("durée invalide %q (ex: 24h, 7d, 0)", s)
 	}
 	if d < 0 {
@@ -194,6 +186,18 @@ func parseTTLHours(s string) (int, error) {
 		h = 1 // arrondi min 1h si durée < 1h
 	}
 	return h, nil
+}
+
+// parseDurationDays étend time.ParseDuration au suffixe « d » (jours entiers), non natif Go.
+func parseDurationDays(s string) (time.Duration, error) {
+	if n, ok := strings.CutSuffix(s, "d"); ok {
+		days, err := strconv.Atoi(n)
+		if err != nil {
+			return 0, fmt.Errorf("durée invalide %q", s)
+		}
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+	return time.ParseDuration(s)
 }
 
 func maskToken(tok string) string {

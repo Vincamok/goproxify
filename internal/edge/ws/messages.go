@@ -3,7 +3,10 @@
 
 package ws
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Message est l'enveloppe JSON de tous les messages WebSocket du plan de contrôle.
 // seq : compteur croissant côté émetteur — un trou déclenche un full_sync.
@@ -23,6 +26,7 @@ const (
 	TypePushAuthProviders   = "push_auth_providers"
 	TypePushIPProfiles      = "push_ip_profiles"
 	TypePushBans            = "push_bans"
+	TypeUnbanIPs            = "unban_ips" // lève les bans d'IPs débannies depuis l'Admin, toutes sources confondues (payload : []UnbanEntry)
 	TypePushSettings        = "push_settings"
 	TypePushClusterPeers    = "push_cluster_peers"
 	TypePushGatewayPeers    = "push_gateway_peers"
@@ -129,6 +133,14 @@ type F2BBanPayload struct {
 	Reason    string `json:"reason"`
 	ExpiresAt string `json:"expires_at,omitempty"` // RFC3339, vide = permanent
 	NodeName  string `json:"node_name,omitempty"`
+}
+
+// UnbanEntry est un déban décidé dans l'Admin. At vide : déban à l'instant (la passerelle prend sa
+// propre heure, insensible au décalage d'horloge) ; At renseigné : rejeu à la reconnexion, seuls les
+// bans posés avant At sont levés.
+type UnbanEntry struct {
+	IP string     `json:"ip"`
+	At *time.Time `json:"at,omitempty"`
 }
 
 // ThreatBanPayload est envoyé par passerelle → Admin quand le moteur détecte et banne une IP.

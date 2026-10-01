@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/vincamok/goproxify/internal/admin/auth"
+	"github.com/vincamok/goproxify/internal/sqltime"
 	_ "modernc.org/sqlite" // pilote SQLite CGO-free
 )
 
@@ -757,27 +758,21 @@ func migrate(db *sql.DB) error {
 		_, _ = db.Exec(s)
 	}
 
-	// Colonnes additives rules_engine_rules
-	for _, s := range []string{
-		`ALTER TABLE rules_engine_rules ADD COLUMN require_approval INTEGER NOT NULL DEFAULT 0`,
-	} {
-		_, _ = db.Exec(s)
-	}
-
 	// Moteur de règles (condition→action périodique)
 	for _, s := range []string{
 		`CREATE TABLE IF NOT EXISTS rules_engine_rules (
-			id             TEXT PRIMARY KEY,
-			name           TEXT NOT NULL,
-			description    TEXT NOT NULL DEFAULT '',
-			enabled        INTEGER NOT NULL DEFAULT 1,
-			condition_json TEXT NOT NULL DEFAULT '{}',
-			action_json    TEXT NOT NULL DEFAULT '{}',
-			cooldown_sec   INTEGER NOT NULL DEFAULT 300,
-			fire_count     INTEGER NOT NULL DEFAULT 0,
-			last_fired_at  DATETIME,
-			created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
-			updated_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+			id               TEXT PRIMARY KEY,
+			name             TEXT NOT NULL,
+			description      TEXT NOT NULL DEFAULT '',
+			enabled          INTEGER NOT NULL DEFAULT 1,
+			condition_json   TEXT NOT NULL DEFAULT '{}',
+			action_json      TEXT NOT NULL DEFAULT '{}',
+			cooldown_sec     INTEGER NOT NULL DEFAULT 300,
+			fire_count       INTEGER NOT NULL DEFAULT 0,
+			last_fired_at    DATETIME,
+			require_approval INTEGER NOT NULL DEFAULT 0,
+			created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at       DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
 		// Versionnage des règles : un instantané est ajouté après chaque
 		// création/modification/restauration, pour permettre un retour arrière.
@@ -928,6 +923,31 @@ func migrate(db *sql.DB) error {
 	} {
 		if _, err := db.Exec(s); err != nil {
 			return fmt.Errorf("migration rules_engine: %w", err)
+		}
+	}
+
+	// Colonnes additives rules_engine_rules : après le CREATE, sinon l'ALTER échoue sur une base neuve.
+	for _, s := range []string{
+		`ALTER TABLE rules_engine_rules ADD COLUMN require_approval INTEGER NOT NULL DEFAULT 0`,
+	} {
+		_, _ = db.Exec(s)
+	}
+
+	// Dates comparées en SQL à CURRENT_TIMESTAMP / datetime('now', …) mais longtemps écrites en
+	// RFC3339 ou via un time.Time lié tel quel (t.String(), heure locale) : ramenées à son format.
+	for _, c := range [][2]string{
+		{"certs", "expires_at"},
+		{"automation_silences", "starts_at"},
+		{"automation_silences", "ends_at"},
+		{"tokens", "expires_at"},
+		{"user_api_tokens", "expires_at"},
+		{"user_mfa_challenges", "expires_at"},
+		{"user_trusted_devices", "expires_at"},
+		{"domains", "updated_at"},
+		{"ip_profiles", "next_attempt_at"},
+	} {
+		if err := sqltime.Normalize(db, c[0], c[1]); err != nil {
+			return fmt.Errorf("normalisation %s.%s : %w", c[0], c[1], err)
 		}
 	}
 

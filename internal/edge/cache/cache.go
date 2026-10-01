@@ -151,6 +151,60 @@ func (s *Store) decode(data []byte, key [32]byte) (*Snapshot, error) {
 	return &snap, nil
 }
 
+// SaveFile chiffre v (JSON) avec la clé du cache et l'écrit de façon atomique dans path.
+// Sert aux copies locales hors snapshot de ce que pousse l'Admin (ex. configuration Sentinel).
+func (s *Store) SaveFile(path string, v any) error {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	encrypted, err := s.encrypt(data)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+"-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+	if _, err := tmp.Write(encrypted); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
+}
+
+// LoadFile déchiffre dans v un fichier écrit par SaveFile. false, nil = fichier absent.
+func (s *Store) LoadFile(path string, v any) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	plain, err := decryptWithKey(data, s.key)
+	if err != nil {
+		return false, fmt.Errorf("déchiffrement %s : %w", filepath.Base(path), err)
+	}
+	if err := json.Unmarshal(plain, v); err != nil {
+		return false, fmt.Errorf("parsing %s : %w", filepath.Base(path), err)
+	}
+	return true, nil
+}
+
 // Info retourne les métadonnées du cache.
 func (s *Store) Info() (*Info, error) {
 	snap, err := s.Load()

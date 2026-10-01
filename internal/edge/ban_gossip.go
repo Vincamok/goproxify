@@ -84,8 +84,13 @@ func (s *Server) syncBansFromPeer(ctx context.Context, client *http.Client, p pr
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&rows); err != nil {
 		return
 	}
+	unbans, _ := s.bansDB.Unbans()
 	list := make([]router.RuntimeBan, 0, len(rows))
 	for _, r := range rows {
+		// Ban posé avant un déban de son IP que le pair n'a pas encore reçu (Admin injoignable pour lui).
+		if t, ok := unbans[r.IP]; ok && !r.CreatedAt.After(t) {
+			continue
+		}
 		list = append(list, router.RuntimeBan{ID: r.ID, IP: r.IP, Reason: r.Reason, Source: r.Source, ExpiresAt: r.ExpiresAt})
 	}
 	if n := s.mergePeerBans(list); n > 0 {

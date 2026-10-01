@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/google/uuid"
@@ -151,6 +152,16 @@ func TestToolRequiredScope(t *testing.T) {
 	if rbac.ToolRequiredScope("delete_security_ban") != rbac.ScopeSecurityWrite {
 		t.Fatal()
 	}
+	for _, tool := range []string{"ban_ip", "unban_ip"} {
+		if got := rbac.ToolRequiredScope(tool); got != rbac.ScopeSecurityWrite {
+			t.Fatalf("%s : scope %q, attendu %s", tool, got, rbac.ScopeSecurityWrite)
+		}
+	}
+	for _, tool := range []string{"create_security_ban", "delete_security_ban", "ban_ip", "unban_ip"} {
+		if !slices.Contains(rbac.ToolsForScope(rbac.ScopeSecurityWrite), tool) {
+			t.Fatalf("ToolsForScope(security:write) sans %s", tool)
+		}
+	}
 	if rbac.ToolRequiredScope("get_portal_config") != rbac.ScopePortalRead {
 		t.Fatal()
 	}
@@ -179,6 +190,105 @@ type responseDiscard struct{}
 func (responseDiscard) Header() http.Header       { return http.Header{} }
 func (responseDiscard) Write([]byte) (int, error) { return 0, nil }
 func (responseDiscard) WriteHeader(statusCode int) {}
+
+// Outils MCP et routes REST équivalentes exigent le même scope ; les écritures ne
+// passent plus avec un scope de lecture que tout compte peut détenir.
+func TestToolScopesMatchREST(t *testing.T) {
+	for _, c := range []struct{ tool, method, path string }{
+		{"get_cert_status", http.MethodGet, "/api/v1/certs/acme-monitor"},
+		{"list_cert_deploy_targets", http.MethodGet, "/api/v1/certs/c1/deploy-targets"},
+		{"obtain_cert", http.MethodPost, "/api/v1/certs"},
+		{"import_cert", http.MethodPost, "/api/v1/certs/import"},
+		{"trigger_cert_deploy", http.MethodPost, "/api/v1/certs/c1/deploy-targets/t1/trigger"},
+		{"list_internal_cas", http.MethodGet, "/api/v1/internal-ca"},
+		{"list_internal_certs", http.MethodGet, "/api/v1/internal-ca/ca1/certs"},
+		{"create_internal_ca", http.MethodPost, "/api/v1/internal-ca"},
+		{"issue_internal_cert", http.MethodPost, "/api/v1/internal-ca/ca1/certs"},
+		{"revoke_internal_cert", http.MethodDelete, "/api/v1/internal-ca/ca1/certs/x"},
+		{"create_domain", http.MethodPost, "/api/v1/domains"},
+		{"renew_domain", http.MethodPost, "/api/v1/domains/d1/renew"},
+		{"rotate_cert", http.MethodPost, "/api/v1/domains/d1/renew"},
+		{"list_alert_channels", http.MethodGet, "/api/v1/alert-channels"},
+		{"create_alert_channel", http.MethodPost, "/api/v1/alert-channels"},
+		{"delete_alert_rule", http.MethodDelete, "/api/v1/alert-rules/r1"},
+		{"ack_alert_event", http.MethodPost, "/api/v1/alert-events/e1/ack"},
+		{"list_auth_providers", http.MethodGet, "/api/v1/auth-providers"},
+		{"create_auth_provider", http.MethodPost, "/api/v1/auth-providers"},
+		{"list_ip_profiles", http.MethodGet, "/api/v1/ip-profiles"},
+		{"delete_ip_profile", http.MethodDelete, "/api/v1/ip-profiles/p1"},
+		{"create_snippet", http.MethodPost, "/api/v1/snippets"},
+		{"list_rules", http.MethodGet, "/api/v1/rules-engine/rules"},
+		{"run_rule", http.MethodPost, "/api/v1/rules-engine/rules/r1/run"},
+		{"list_pending_actions", http.MethodGet, "/api/v1/rules-engine/pending"},
+		{"approve_pending_action", http.MethodPost, "/api/v1/rules-engine/pending/p1/approve"},
+		{"list_silences", http.MethodGet, "/api/v1/rules-engine/silences"},
+		{"create_silence", http.MethodPost, "/api/v1/rules-engine/silences"},
+		{"export_automation", http.MethodGet, "/api/v1/rules-engine/export"},
+		{"import_automation", http.MethodPost, "/api/v1/rules-engine/import"},
+		{"list_scheduled_tasks", http.MethodGet, "/api/v1/scheduled-tasks"},
+		{"run_scheduled_task", http.MethodPost, "/api/v1/scheduled-tasks/s1/run"},
+		{"list_playbooks", http.MethodGet, "/api/v1/playbooks"},
+		{"run_playbook_now", http.MethodPost, "/api/v1/playbooks/p1/run"},
+		{"get_playbook_run", http.MethodGet, "/api/v1/playbooks/runs/r1"},
+	} {
+		want := rbac.RequiredScopeForRequest(httptest.NewRequest(c.method, c.path, nil))
+		if got := rbac.ToolRequiredScope(c.tool); got != want || got == "" {
+			t.Errorf("%s : scope %q, route %s %s : %q", c.tool, got, c.method, c.path, want)
+		}
+	}
+}
+
+func TestToolRequiresAdmin(t *testing.T) {
+	for _, tool := range []string{
+		"list_rules", "list_internal_cas", "list_scheduled_tasks", "get_playbook_run", "list_auth_providers",
+		"list_security_bans", "list_backups", "list_agents", "get_architecture", "simulate_sentinel_config",
+		"get_portal_config", "push_portal_templates",
+	} {
+		if !rbac.ToolRequiresAdmin(tool) {
+			t.Errorf("%s : route REST adminOnly, l'outil doit l'être aussi", tool)
+		}
+	}
+	for _, tool := range []string{
+		"list_proxies", "get_audit_log", "list_alert_channels", "list_ip_profiles", "list_certs",
+		"list_domains", "list_logs", "list_declared_nodes", "create_snippet",
+	} {
+		if rbac.ToolRequiresAdmin(tool) {
+			t.Errorf("%s : route REST ouverte aux comptes user, l'outil ne doit pas exiger admin", tool)
+		}
+	}
+}
+
+func TestWriteScopesAreAdminOnly(t *testing.T) {
+	db, err := admindb.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, u := range []struct{ id, role string }{{"u", "user"}, {"a", "admin"}, {"s", "superadmin"}} {
+		if _, err := db.Exec(`INSERT INTO users (id, email, password_hash, role) VALUES (?,?,?,?)`,
+			u.id, u.id+"@t.local", "x", u.role); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Grant write : ouvre proxies:write / snippets:write, pas les nouveaux scopes d'écriture.
+	_, _ = db.Exec(`INSERT INTO user_scopes (id, user_id, scope_type, scope_value, access_mode) VALUES (?,?,?,?,?)`,
+		uuid.New().String(), "u", "domain", "*", "write")
+
+	ctx := context.Background()
+	for _, scope := range []string{rbac.ScopeAlertsWrite, rbac.ScopeDomainsWrite, rbac.ScopeCertsWrite} {
+		if !rbac.IsKnownScope(scope) {
+			t.Fatalf("%s absent du catalogue", scope)
+		}
+		if rbac.UserCanHoldScope(ctx, db, "u", scope) {
+			t.Errorf("user ne doit pas détenir %s", scope)
+		}
+		for _, id := range []string{"a", "s"} {
+			if !rbac.UserCanHoldScope(ctx, db, id, scope) {
+				t.Errorf("%s doit détenir %s", id, scope)
+			}
+		}
+	}
+}
 
 func TestPortalTerminalContentNeedsWriteScope(t *testing.T) {
 	scope := func(method, path string) string {

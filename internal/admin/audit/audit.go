@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/vincamok/goproxify/internal/sqltime"
 )
 
 // Severity classe l'importance d'un événement d'audit.
@@ -63,11 +65,19 @@ func (l *Logger) Log(ctx context.Context, e Event) {
 	}
 	_, _ = l.db.ExecContext(ctx,
 		`INSERT INTO audit_log
-		 (component, actor, user_id, ip, action, resource_type, resource_id, detail, severity)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 (component, actor, user_id, ip, action, resource, resource_type, resource_id, detail, severity)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.Component, e.Actor, e.UserID, e.IP,
-		e.Action, e.ResourceType, e.ResourceID, e.Detail, string(e.Severity),
+		e.Action, resource(e.ResourceType, e.ResourceID), e.ResourceType, e.ResourceID, e.Detail, string(e.Severity),
 	)
+}
+
+// resource reproduit la convention « type:id » de admindb.WriteAudit (colonne lue par l'outil MCP get_audit_log).
+func resource(typ, id string) string {
+	if typ == "" || id == "" {
+		return typ + id
+	}
+	return typ + ":" + id
 }
 
 // IPFrom extrait l'IP cliente d'une requête HTTP.
@@ -124,13 +134,14 @@ func (p SearchParams) where() (string, []any) {
 		conds = append(conds, "severity=?")
 		args = append(args, p.Severity)
 	}
+	// created_at est au format de CURRENT_TIMESTAMP (UTC) : les bornes aussi.
 	if !p.From.IsZero() {
 		conds = append(conds, "created_at >= ?")
-		args = append(args, p.From.Format(time.RFC3339))
+		args = append(args, sqltime.Format(p.From))
 	}
 	if !p.To.IsZero() {
 		conds = append(conds, "created_at <= ?")
-		args = append(args, p.To.Format(time.RFC3339))
+		args = append(args, sqltime.Format(p.To))
 	}
 	return strings.Join(conds, " AND "), args
 }

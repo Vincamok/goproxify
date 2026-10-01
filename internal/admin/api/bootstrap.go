@@ -16,6 +16,7 @@ import (
 	"time"
 
 	qrcode "github.com/skip2/go-qrcode"
+	"github.com/vincamok/goproxify/internal/sqltime"
 )
 
 const bootstrapDefaultTTL = 24 * time.Hour
@@ -110,7 +111,7 @@ func (h *BootstrapHandler) ServeCreate(w http.ResponseWriter, r *http.Request) {
 	exp := time.Now().UTC().Add(ttl)
 	_, err = h.DB.ExecContext(r.Context(),
 		`INSERT INTO bootstrap_tickets(token, host_name, edge_endpoint, payload, expires_at) VALUES(?,?,?,?,?)`,
-		tok, strings.TrimSpace(req.HostName), strings.TrimSpace(req.EdgeEndpoint), string(payloadBytes), exp,
+		tok, strings.TrimSpace(req.HostName), strings.TrimSpace(req.EdgeEndpoint), string(payloadBytes), sqltime.Format(exp),
 	)
 	if err != nil {
 		if h.Log != nil {

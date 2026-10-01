@@ -161,6 +161,6 @@ func (h *NodesHandler) live(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(res.Nodes, func(i, j int) bool { return res.Nodes[i].NodeName < res.Nodes[j].NodeName })
 
 	_ = h.DB.QueryRowContext(r.Context(),
-		`SELECT COUNT(*) FROM security_bans WHERE expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP`).Scan(&res.BansActive)
+		`SELECT COUNT(*) FROM security_bans WHERE expires_at IS NULL OR datetime(expires_at) > CURRENT_TIMESTAMP`).Scan(&res.BansActive)
 	jsonOK(w, res)
 }

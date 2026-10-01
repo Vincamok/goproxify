@@ -344,9 +344,7 @@ func (s *Server) handlePushThreatConfig(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if s.threatEngine != nil {
-		s.threatEngine.UpdateConfig(cfg)
-	}
+	s.applyThreatConfig(cfg)
 	s.log.Info("threat: config mise à jour", "enabled", cfg.Enabled)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -454,8 +452,9 @@ func (s *Server) handleHAWAFBehaviorSync(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// threatBanCallback retourne la fonction appelée par le moteur quand il détecte une menace.
-// Elle ajoute le ban au BanStore local pour un effet immédiat et notifie Admin via WS.
+// threatBanCallback retourne la fonction appelée par Sentinel (et le WAF) quand ils bannissent une IP.
+// Comme pour Fail2Ban, le ban est persisté localement : il s'applique et survit à un redémarrage sans
+// l'Admin, qui est seulement notifié.
 func (s *Server) threatBanCallback() threat.BanCallback {
 	return func(ip, reason string, expires time.Time) {
 		b := &router.RuntimeBan{
@@ -465,11 +464,15 @@ func (s *Server) threatBanCallback() threat.BanCallback {
 			Source:    "threat",
 			ExpiresAt: &expires,
 		}
-		s.mu.Lock()
-		s.pendingThreatBans = append(s.pendingThreatBans, b)
-		s.mu.Unlock()
-		s.flushThreatBans()
+		s.addBanEvent(ip, "threat")
 		s.gossipBanToPeers(b)
+		if s.bansDB != nil {
+			if err := s.bansDB.UpsertBan(b.ID, b.IP, "", b.Reason, b.Source, b.ExpiresAt); err != nil {
+				s.log.Warn(threat.Name+": persistance ban DB échouée", "err", err)
+			}
+		}
+		s.reloadBanStore()
+		s.log.Info(threat.Name+": IP bannie", "ip", ip, "reason", reason)
 
 		// Notifier Admin pour persister le ban dans security_bans.
 		payload := edgews.ThreatBanPayload{
@@ -482,6 +485,17 @@ func (s *Server) threatBanCallback() threat.BanCallback {
 			s.wsHub.BroadcastToAdmins(msg)
 		}
 	}
+}
+
+// feedF2B alimente Fail2Ban, sauf avec les 403 servis à une IP déjà bannie : produits par le ban
+// lui-même, ils la rebanniraient dès sa levée.
+func (s *Server) feedF2B(ip string, status int) {
+	if status == http.StatusForbidden {
+		if blocked, _ := s.banStore.CheckBlocked(ip); blocked {
+			return
+		}
+	}
+	s.f2bEngine.Feed(ip, status)
 }
 
 // onF2BBan est appelé par le moteur Fail2Ban passerelle lors d'un nouveau ban.
@@ -566,8 +580,10 @@ func (s *Server) onCrowdSecDecisions(added, deleted []edgecrowdsec.Decision) {
 
 // --- BanStore helpers --------------------------------------------------------
 
-// reloadBanStore reconstruit le BanStore en mémoire depuis la DB + pendingThreatBans.
+// reloadBanStore reconstruit le BanStore en mémoire depuis la DB.
 func (s *Server) reloadBanStore() {
+	s.bansMu.Lock()
+	defer s.bansMu.Unlock()
 	var dbBans []*router.RuntimeBan
 	if s.bansDB != nil {
 		rows, err := s.bansDB.ActiveBans()
@@ -583,14 +599,57 @@ func (s *Server) reloadBanStore() {
 					Source:    r.Source,
 					ExpiresAt: r.ExpiresAt,
 				}
+				if s.autoBanWhitelisted(rb) {
+					continue
+				}
 				dbBans = append(dbBans, rb)
 			}
 		}
 	}
-	s.bansMu.Lock()
-	merged := append(dbBans, s.pendingThreatBans...)
-	s.bansMu.Unlock()
-	s.banStore.Replace(merged)
+	s.banStore.Replace(dbBans)
+}
+
+// autoBanWhitelisted : les listes blanches Fail2Ban et Sentinel priment aussi sur les bans que ces
+// moteurs ont déjà posés — ajouter une IP à la liste blanche la débloque sans attendre l'expiration.
+func (s *Server) autoBanWhitelisted(b *router.RuntimeBan) bool {
+	switch b.Source {
+	case "fail2ban":
+		return s.f2bEngine != nil && s.f2bEngine.Whitelisted(b.IP)
+	case "threat":
+		return s.threatEngine != nil && s.threatEngine.WhitelistedIP(b.IP)
+	}
+	return false
+}
+
+// applyUnbans lève, quelle que soit leur source (Fail2Ban ou Sentinel local, règle, pair HA, Admin),
+// les bans des IPs débannies depuis l'Admin. Un déban à l'instant remet aussi à zéro les compteurs
+// des moteurs pour que l'IP ne soit pas rebannie sur ses erreurs passées.
+func (s *Server) applyUnbans(list []edgews.UnbanEntry) {
+	now := time.Now()
+	for _, u := range list {
+		if u.IP == "" {
+			continue
+		}
+		at := now
+		if u.At != nil && u.At.Before(now) {
+			at = *u.At
+		}
+		if s.bansDB != nil {
+			if err := s.bansDB.Unban(u.IP, at); err != nil {
+				s.log.Warn("bansdb: déban échoué", "ip", u.IP, "err", err)
+			}
+		}
+		if u.At != nil {
+			continue
+		}
+		if s.f2bEngine != nil {
+			s.f2bEngine.UnbanIP(u.IP)
+		}
+		if s.threatEngine != nil {
+			s.threatEngine.ResetIP(u.IP)
+		}
+	}
+	s.reloadBanStore()
 }
 
 // --- Moteur de règles automatiques (Passerelle) ------------------------------------
@@ -709,20 +768,6 @@ func (s *Server) onRuleNotify(ruleID, severity, title, message string, detail ma
 		FiredAt:     time.Now(),
 	}
 	s.onRuleFired(log)
-}
-
-// flushThreatBans fusionne les bans threat dans le BanStore actif.
-// Les bans threat sont en mémoire seulement (courte durée, non persistés en DB).
-func (s *Server) flushThreatBans() {
-	s.mu.Lock()
-	toAdd := s.pendingThreatBans
-	s.pendingThreatBans = nil
-	s.mu.Unlock()
-	if len(toAdd) == 0 {
-		return
-	}
-	s.reloadBanStore()
-	s.log.Info("threat: ban(s) appliqués", "count", len(toAdd))
 }
 
 func (s *Server) handlePushBans(w http.ResponseWriter, r *http.Request) {

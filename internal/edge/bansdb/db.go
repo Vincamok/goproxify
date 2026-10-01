@@ -89,6 +89,10 @@ func migrate(db *sql.DB) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_pe_host ON proxy_errors (host)`,
 		`CREATE INDEX IF NOT EXISTS idx_pe_created ON proxy_errors (created_at)`,
+		`CREATE TABLE IF NOT EXISTS unbans (
+			ip TEXT PRIMARY KEY,
+			at TEXT NOT NULL
+		)`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {
@@ -131,8 +135,9 @@ func (d *DB) DeleteBansBySource(source string) error {
 func (d *DB) ActiveBans() ([]BanRow, error) {
 	rows, err := d.db.Query(
 		`SELECT id, ip, domain, reason, source, expires_at, created_at
-		 FROM bans WHERE expires_at IS NULL OR expires_at > datetime('now')
+		 FROM bans WHERE expires_at IS NULL OR expires_at > ?
 		 ORDER BY created_at DESC`,
+		nowExpiry(),
 	)
 	if err != nil {
 		return nil, err
@@ -141,9 +146,65 @@ func (d *DB) ActiveBans() ([]BanRow, error) {
 	return scanBanRows(rows)
 }
 
+// sqlTime est le format de CURRENT_TIMESTAMP (created_at) : les comparaisons SQL restent lexicographiques.
+const sqlTime = "2006-01-02 15:04:05"
+
+// nowExpiry est l'instant présent au format de bans.expires_at (RFC3339, écrit par UpsertBan) :
+// datetime('now') compare mal ('T' > ' '), un ban expiré resterait actif jusqu'à minuit UTC.
+func nowExpiry() string {
+	return time.Now().UTC().Format(time.RFC3339)
+}
+
+// Unban lève tous les bans de l'IP posés jusqu'à `at`, quelle que soit leur source, et retient la date
+// du déban pour qu'un pair ne réinjecte pas un de ces bans (voir Unbans).
+func (d *DB) Unban(ip string, at time.Time) error {
+	ts := at.UTC().Format(sqlTime)
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+	if _, err := tx.Exec(`DELETE FROM bans WHERE ip=? AND created_at <= ?`, ip, ts); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO unbans (ip, at) VALUES (?, ?) ON CONFLICT(ip) DO UPDATE SET at=MAX(at, excluded.at)`,
+		ip, ts,
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// Unbans retourne la date du dernier déban de chaque IP.
+func (d *DB) Unbans() (map[string]time.Time, error) {
+	rows, err := d.db.Query(`SELECT ip, at FROM unbans`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]time.Time{}
+	for rows.Next() {
+		var ip, at string
+		if err := rows.Scan(&ip, &at); err != nil {
+			return nil, err
+		}
+		if t, err := time.Parse(sqlTime, at); err == nil {
+			out[ip] = t
+		}
+	}
+	return out, rows.Err()
+}
+
+// PurgeUnbans oublie les débans antérieurs à `before`.
+func (d *DB) PurgeUnbans(before time.Time) error {
+	_, err := d.db.Exec(`DELETE FROM unbans WHERE at < ?`, before.UTC().Format(sqlTime))
+	return err
+}
+
 // PurgeExpiredBans supprime les bans expirés.
 func (d *DB) PurgeExpiredBans() error {
-	_, err := d.db.Exec(`DELETE FROM bans WHERE expires_at IS NOT NULL AND expires_at <= datetime('now')`)
+	_, err := d.db.Exec(`DELETE FROM bans WHERE expires_at IS NOT NULL AND expires_at <= ?`, nowExpiry())
 	return err
 }
 
@@ -199,12 +260,12 @@ func (d *DB) RecentBanCount(since time.Time, source string) (int, error) {
 	if source == "" {
 		err = d.db.QueryRow(
 			`SELECT COUNT(*) FROM ban_history WHERE created_at >= ?`,
-			since.UTC().Format(time.RFC3339),
+			since.UTC().Format(sqlTime),
 		).Scan(&n)
 	} else {
 		err = d.db.QueryRow(
 			`SELECT COUNT(*) FROM ban_history WHERE created_at >= ? AND source=?`,
-			since.UTC().Format(time.RFC3339), source,
+			since.UTC().Format(sqlTime), source,
 		).Scan(&n)
 	}
 	return n, err
@@ -217,7 +278,7 @@ func (d *DB) RepeatBanIP(since time.Time, minCount int) (ip string, count int, e
 		 WHERE created_at >= ?
 		 GROUP BY ip HAVING n >= ?
 		 ORDER BY n DESC LIMIT 1`,
-		since.UTC().Format(time.RFC3339), minCount,
+		since.UTC().Format(sqlTime), minCount,
 	)
 	err = row.Scan(&ip, &count)
 	if err == sql.ErrNoRows {
@@ -231,7 +292,7 @@ func (d *DB) BanHistorySince(since time.Time) ([]HistoryRow, error) {
 	rows, err := d.db.Query(
 		`SELECT ip, source, created_at FROM ban_history
 		 WHERE created_at >= ? ORDER BY created_at DESC LIMIT 1000`,
-		since.UTC().Format(time.RFC3339),
+		since.UTC().Format(sqlTime),
 	)
 	if err != nil {
 		return nil, err
@@ -263,7 +324,7 @@ type HistoryRow struct {
 func (d *DB) PurgeBanHistory(before time.Time) error {
 	_, err := d.db.Exec(
 		`DELETE FROM ban_history WHERE created_at < ?`,
-		before.UTC().Format(time.RFC3339),
+		before.UTC().Format(sqlTime),
 	)
 	return err
 }
@@ -296,7 +357,7 @@ func (d *DB) ProxyErrorRate(since time.Time, minRequests int) (rate float64, hos
 		 HAVING total >= ?
 		 ORDER BY (CAST(errs AS REAL)/total) DESC
 		 LIMIT 1`,
-		since.UTC().Format(time.RFC3339), minRequests,
+		since.UTC().Format(sqlTime), minRequests,
 	)
 	if err != nil {
 		return 0, "", err
@@ -318,7 +379,7 @@ func (d *DB) ProxyErrorRate(since time.Time, minRequests int) (rate float64, hos
 func (d *DB) PurgeProxyErrors(before time.Time) error {
 	_, err := d.db.Exec(
 		`DELETE FROM proxy_errors WHERE created_at < ?`,
-		before.UTC().Format(time.RFC3339),
+		before.UTC().Format(sqlTime),
 	)
 	return err
 }

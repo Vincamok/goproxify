@@ -13,6 +13,40 @@ Les scopes du PAT (`proxies:read`, `nodes:read`, …) bornent les outils MCP ; l
 
 **Vue d'ensemble admin :** la même page affiche la liste des utilisateurs porteurs d'un PAT actif sur l'instance (tous porteurs confondus) avec leurs scopes, ainsi que le catalogue de scopes et les outils MCP que chacun couvre, pour référence. C'est une vue en lecture seule côté scopes — la création et le choix des scopes d'un PAT restent self-service depuis **Paramètres → Mes tokens API**.
 
+### Contrôle d'accès des outils
+
+Chaque outil exige un scope, le même que sa route REST équivalente. Les outils marqués † s'appuient sur une route REST réservée aux administrateurs : ils exigent en plus le rôle `admin` ou `superadmin`, comme l'API. Une ressource (`resources/read`) applique les mêmes règles que l'outil qu'elle expose. Un outil sans scope déclaré est refusé : aucun outil n'est appelable sans contrôle (depuis Admin `0.70.0` ; 56 outils n'étaient auparavant soumis à aucun scope).
+
+| Scope | Outils |
+|-------|--------|
+| `proxies:read` | `list_proxies`, `get_proxy` |
+| `proxies:write` | `create_proxy`, `update_proxy`, `set_proxy_enabled` |
+| `proxies:delete` | `delete_proxy` |
+| `nodes:read` | `list_nodes`, `list_declared_nodes`, `get_topology_live`, `list_agents` †, `get_architecture` † |
+| `nodes:write` | `create_declared_node`, `delete_declared_node`, `create_bootstrap_ticket`, `accept_node`, `reject_node`, `approve_agent` †, `revoke_agent` † |
+| `alerts:read` | `list_alerts`, `list_alert_events`, `list_alert_channels`, `list_alert_rules` |
+| `alerts:write` | `create_alert_channel`, `delete_alert_channel`, `create_alert_rule`, `delete_alert_rule`, `ack_alert_event` |
+| `metrics:read` | `get_metrics`, `get_proxy_metrics` |
+| `backups:read` | `list_backups` † |
+| `users:read` | `list_users` † |
+| `teams:read` | `list_teams` † |
+| `snippets:read` | `list_snippets` |
+| `snippets:write` | `create_snippet`, `delete_snippet` |
+| `domains:read` | `list_domains` |
+| `domains:write` | `create_domain`, `renew_domain`, `rotate_cert` |
+| `certs:read` | `list_certs`, `get_cert_status`, `list_cert_deploy_targets`, `list_internal_cas` †, `list_internal_certs` † |
+| `certs:write` | `obtain_cert`, `import_cert`, `trigger_cert_deploy`, `create_internal_ca` †, `issue_internal_cert` †, `revoke_internal_cert` † |
+| `logs:read` | `list_logs`, `get_prism_anomalies`, `get_prism_geo`, `get_prism_slo`, `simulate_sentinel_config` † |
+| `audit:read` | `get_audit_log`, `list_ip_profiles`, `get_security_overview` †, `list_security_bans` †, `list_security_threats` †, `list_security_cves` †, `list_auth_providers` †, `list_rules` †, `list_rule_history` †, `list_rule_versions` †, `list_pending_actions` †, `list_silences` †, `export_automation` †, `list_scheduled_tasks` †, `list_scheduled_task_runs` †, `list_playbooks` †, `list_playbook_runs` †, `get_playbook_run` † |
+| `security:write` | `create_ip_profile`, `delete_ip_profile`, `create_security_ban` †, `delete_security_ban` †, `ban_ip` †, `unban_ip` †, `create_auth_provider` †, `delete_auth_provider` †, `run_rule` †, `replay_rule_history` †, `restore_rule_version` †, `approve_pending_action` †, `reject_pending_action` †, `create_silence` †, `import_automation` †, `create_scheduled_task` †, `update_scheduled_task` †, `delete_scheduled_task` †, `run_scheduled_task` †, `create_playbook` †, `update_playbook` †, `delete_playbook` †, `run_playbook_now` †, `approve_playbook_run` †, `reject_playbook_run` † |
+| `portal:read` / `portal:write` | outils Access (`*_portal_*`, `push_portal`) † — voir [GoProxify Access](#goproxify-access-portail) |
+
+Les scopes d'écriture (`proxies:delete`, `nodes:write`, `alerts:write`, `domains:write`, `certs:write`, `security:write`, `import:write`) ainsi que `users:read`, `teams:read` et `portal:*` sont réservés aux rôles admin et superadmin (`proxies:write` et `snippets:write` sont aussi ouverts à un compte `user` qui a un droit d'écriture). Un refus est renvoyé comme erreur d'outil (`isError: true`) :
+
+- `Erreur: scope insuffisant: <scope>` : le PAT n'a pas ce scope, ou le compte ne peut plus le détenir ;
+- `Erreur: accès réservé aux administrateurs` : outil † appelé par un compte `user` ;
+- `Erreur: outil sans scope déclaré: <outil>` : outil exposé sans entrée dans la table outil → scope (bug serveur, refusé par sécurité).
+
 ---
 
 ## Connexion depuis Claude Desktop
@@ -169,7 +203,7 @@ Liste les nœuds passerelle et Agent avec leurs métriques en temps réel.
 Liste les Agents vus via le plan de contrôle WebSocket (`pending`, `approved`, `revoked`).
 
 **Paramètres :** aucun  
-**Scope :** `nodes:read`
+**Scope :** `nodes:read` + rôle admin
 
 **Réponse exemple :**
 ```json
@@ -188,7 +222,7 @@ Approuve un Agent en attente (broadcast `approve_agent` aux passerelles).
 |-----------|--------|--------|--------------------|
 | `id`      | string | ✓      | ID de l'Agent      |
 
-**Scope :** `nodes:read`
+**Scope :** `nodes:write` + rôle admin
 
 ---
 
@@ -200,7 +234,7 @@ Révoque un Agent (ferme la session WS et invalide le HMAC).
 |-----------|--------|--------|--------------------|
 | `id`      | string | ✓      | ID de l'Agent      |
 
-**Scope :** `nodes:read`
+**Scope :** `nodes:write` + rôle admin
 
 ---
 
@@ -293,7 +327,8 @@ débit récente. L'Admin relève les passerelles toutes les 10 s et garde 1 h d'
 
 Liste les 20 derniers snapshots de sauvegarde.
 
-**Paramètres :** aucun
+**Paramètres :** aucun  
+**Scope :** `backups:read` + rôle admin
 
 **Réponse exemple :**
 ```json
@@ -459,10 +494,10 @@ Retourne le journal d'audit des actions administratives.
 [
   {
     "actor": "admin@example.fr",
-    "action": "delete",
-    "resource": "proxy/px_01abc",
-    "detail": "suppression proxy app.example.com",
-    "severity": "warn",
+    "action": "update",
+    "resource": "proxy:px_01abc",
+    "detail": "app.example.com",
+    "severity": "info",
     "created_at": "2026-08-02T09:55:00Z"
   }
 ]
@@ -475,7 +510,7 @@ Retourne le journal d'audit des actions administratives.
 Compteurs sécurité : bans actifs, menaces CrowdSec, CVE ouvertes, certificats expirant sous 30 jours.
 
 **Paramètres :** aucun  
-**Scope :** `audit:read` (même mapping que `/api/v1/security`)
+**Scope :** `audit:read` + rôle admin (comme `GET /api/v1/security`)
 
 ---
 
@@ -492,6 +527,8 @@ Liste les bans IP (Fail2Ban, CrowdSec, natif).
 
 Chaque ban renvoyé porte `edge_name` (passerelle d'origine, vide = ban global).
 
+**Scope :** `audit:read` + rôle admin
+
 ---
 
 ### `create_security_ban`
@@ -503,43 +540,49 @@ Crée un ban IP natif (**permanent** si `expires_at` omis) et pousse les bans au
 | `ip`          | string | ✓      | Adresse IP                          |
 | `reason`      | string | —      | Motif                               |
 | `domain`      | string | —      | Domaine ciblé (vide = global)       |
-| `expires_at`  | string | —      | Expiration RFC3339 ; omit = permanent |
+| `expires_at`  | string | —      | Expiration RFC3339, enregistrée en UTC ; omis = permanent ; date illisible → erreur |
+
+**Scope :** `security:write`
 
 ---
 
 ### `delete_security_ban`
 
+Supprime le ban et lève tous les bans de son IP sur chaque passerelle, y compris ceux posés localement (Fail2Ban, Sentinel, règles) — voir [Déban](security.md#déban).
+
 | Paramètre | Type   | Requis | Description   |
 |-----------|--------|--------|---------------|
 | `id`      | string | ✓      | ID du ban     |
+
+**Scope :** `security:write`
 
 ---
 
 ### `ban_ip`
 
-Banne une IP directement depuis le MCP (insère dans `security_bans`, pousse aux passerelles).
+Banne une IP directement depuis le MCP (insère dans `security_bans`, pousse aux passerelles). Un seul ban par IP, d'id `mcp-<ip>` : un nouvel appel pour la même IP remplace son motif et son expiration.
 
 | Paramètre    | Type   | Requis | Description                               |
 |--------------|--------|--------|-------------------------------------------|
 | `ip`         | string | ✓      | Adresse IP à bannir                       |
 | `reason`     | string | —      | Motif du ban                              |
-| `expires_at` | string | —      | Expiration RFC3339 ; omis = permanent     |
+| `expires_at` | string | —      | Expiration RFC3339, enregistrée en UTC ; omis = permanent ; date illisible → erreur |
 
-**Scope :** `audit:read`  
-**Réponse :** `{ "banned": "<ip>", "expires_at": "…" }`
+**Scope :** `security:write` (depuis Admin `0.69.6` ; aucun scope n'était vérifié auparavant)  
+**Réponse :** `{ "id": "mcp-<ip>", "ip": "<ip>", "reason": "…", "permanent": true|false }` (`reason` vaut `mcp_ban` si omis)
 
 ---
 
 ### `unban_ip`
 
-Lève le ban d'une IP (supprime de `security_bans`, pousse la mise à jour aux passerelles).
+Lève le ban d'une IP (supprime de `security_bans`) et tous ses bans sur chaque passerelle, y compris ceux posés localement (Fail2Ban, Sentinel, règles) même si l'Admin ne les connaît pas — voir [Déban](security.md#déban). La correspondance est exacte : un ban Fail2Ban IPv6 porte sur un /64, il se lève en passant le préfixe tel que le renvoie `list_security_bans` (`2a01:e0a:1:2::/64`), pas une adresse qu'il contient.
 
 | Paramètre | Type   | Requis | Description         |
 |-----------|--------|--------|---------------------|
 | `ip`      | string | ✓      | Adresse IP à débannir |
 
-**Scope :** `audit:read`  
-**Réponse :** `{ "unbanned": "<ip>" }`
+**Scope :** `security:write` (depuis Admin `0.69.6` ; aucun scope n'était vérifié auparavant)  
+**Réponse :** `{ "ip": "<ip>", "deleted": <n> }` (`deleted` : nombre de bans supprimés de `security_bans`, `0` si l'Admin n'en connaissait aucun — le déban est tout de même envoyé aux passerelles)
 
 ---
 
@@ -547,7 +590,9 @@ Lève le ban d'une IP (supprime de `security_bans`, pousse la mise à jour aux p
 
 Liste les règles automatiques configurées dans le moteur de règles.
 
-**Scope :** `audit:read`  
+Tous les outils du moteur de règles, des planifications, des playbooks et des silences sont réservés au rôle admin, comme `/api/v1/rules-engine`, `/api/v1/scheduled-tasks` et `/api/v1/playbooks` : lecture `audit:read`, action ou modification `security:write`.
+
+**Scope :** `audit:read` + rôle admin  
 **Réponse :** tableau de règles `{ id, name, enabled, condition, action, cooldown_sec, fire_count, last_fired_at }`
 
 ---
@@ -561,7 +606,7 @@ Déclenche l'évaluation immédiate d'une règle. Par défaut en `dry_run` (aucu
 | `id`      | string  | Oui    | ID de la règle                                |
 | `dry_run` | boolean | Non    | `false` pour exécuter réellement l'action (défaut `true`) |
 
-**Scope :** `audit:read`  
+**Scope :** `security:write` + rôle admin (même en `dry_run`, comme `POST /api/v1/rules-engine/rules/:id/run`)  
 **Réponse :** `{ matched, dry_run, detail }`
 
 ---
@@ -570,7 +615,7 @@ Déclenche l'évaluation immédiate d'une règle. Par défaut en `dry_run` (aucu
 
 Liste le journal d'exécution du moteur de règles (200 dernières entrées), y compris les non-déclenchements et les entrées silencées.
 
-**Scope :** `audit:read`  
+**Scope :** `audit:read` + rôle admin  
 **Réponse :** tableau `{ id, rule_id, rule_name, cond_result, action_taken, detail, error, fired_at }`
 
 ---
@@ -583,7 +628,7 @@ Rejoue l'action d'une entrée d'historique en échec (`list_rule_history`), en r
 |--------------|--------|--------|----------------------------------------|
 | `history_id` | number | Oui    | ID de l'entrée d'historique            |
 
-**Scope :** `audit:write`  
+**Scope :** `security:write` + rôle admin  
 **Réponse :** `{ ok: true }`
 
 ---
@@ -596,7 +641,7 @@ Liste l'historique des versions d'une règle (20 dernières, la plus récente en
 |-----------|--------|--------|---------------------|
 | `rule_id` | string | Oui    | ID de la règle       |
 
-**Scope :** `audit:read`  
+**Scope :** `audit:read` + rôle admin  
 **Réponse :** tableau `{ version, name, description, enabled, condition, action, cooldown_sec, created_at }`
 
 ---
@@ -610,7 +655,7 @@ Restaure une règle à une version antérieure (condition, action, cooldown, act
 | `rule_id` | string | Oui    | ID de la règle                         |
 | `version` | number | Oui    | Numéro de version (`list_rule_versions`) |
 
-**Scope :** `audit:write`  
+**Scope :** `security:write` + rôle admin  
 **Réponse :** `{ ok: true }`
 
 ---
@@ -619,6 +664,7 @@ Restaure une règle à une version antérieure (condition, action, cooldown, act
 
 Liste les planifications (cron) : exécutent une action du moteur de règles à heure fixe, indépendamment de toute condition.
 
+**Scope :** `audit:read` + rôle admin  
 **Réponse :** tableau `{ id, name, cron_expr, action, enabled, last_run_at, created_at }`
 
 ---
@@ -634,6 +680,7 @@ Crée une planification.
 | `action`    | object  | Oui    | Action à exécuter : `{ type, ...paramètres }` (mêmes types que `create_rule`) |
 | `enabled`   | boolean | —      | Activer immédiatement (défaut `true`)                  |
 
+**Scope :** `security:write` + rôle admin  
 **Réponse :** `{ id, name }`
 
 ---
@@ -642,6 +689,8 @@ Crée une planification.
 
 Met à jour une planification existante. Mêmes paramètres que `create_scheduled_task`, plus `id` (requis).
 
+**Scope :** `security:write` + rôle admin
+
 ---
 
 ### `delete_scheduled_task`
@@ -649,6 +698,8 @@ Met à jour une planification existante. Mêmes paramètres que `create_schedule
 | Paramètre | Type   | Requis | Description                    |
 |-----------|--------|--------|----------------------------------|
 | `id`      | string | Oui    | ID de la planification à supprimer |
+
+**Scope :** `security:write` + rôle admin
 
 ---
 
@@ -660,6 +711,7 @@ Exécute immédiatement l'action d'une planification, indépendamment de son exp
 |-----------|--------|--------|----------------------------|
 | `id`      | string | Oui    | ID de la planification      |
 
+**Scope :** `security:write` + rôle admin  
 **Réponse :** `{ ok: true }`
 
 ---
@@ -672,6 +724,7 @@ Liste les 100 dernières exécutions d'une planification (30 jours conservés).
 |-----------|--------|--------|------------------------|
 | `id`      | string | Oui    | ID de la planification |
 
+**Scope :** `audit:read` + rôle admin  
 **Réponse :** tableau `{ id, success, error, ran_at }`
 
 ---
@@ -684,6 +737,7 @@ Liste les actions du moteur de règles mises en attente d'approbation humaine (r
 |-----------|--------|--------|-------------------------------------------------------------|
 | `status`  | string | —      | `pending` (défaut), `approved`, `rejected`, ou `all`         |
 
+**Scope :** `audit:read` + rôle admin  
 **Réponse :** tableau `{ id, rule_id, rule_name, action, detail, status, created_at, decided_at, decided_by }`
 
 ---
@@ -696,6 +750,7 @@ Approuve une action en attente : elle est exécutée immédiatement (détail cap
 |-----------|--------|--------|-----------------------------------------------|
 | `id`      | string | Oui    | ID de l'action en attente (`list_pending_actions`) |
 
+**Scope :** `security:write` + rôle admin  
 **Réponse :** `{ ok: true }`
 
 ---
@@ -708,6 +763,7 @@ Refuse une action en attente : elle ne sera jamais exécutée.
 |-----------|--------|--------|-----------------------------------------------|
 | `id`      | string | Oui    | ID de l'action en attente (`list_pending_actions`) |
 
+**Scope :** `security:write` + rôle admin  
 **Réponse :** `{ ok: true }`
 
 ---
@@ -716,6 +772,7 @@ Refuse une action en attente : elle ne sera jamais exécutée.
 
 Liste les playbooks (séquences d'étapes déclenchables via une règle, une planification, ou manuellement).
 
+**Scope :** `audit:read` + rôle admin  
 **Réponse :** tableau `{ id, name, description, steps, enabled, created_at, updated_at }`
 
 ---
@@ -731,6 +788,7 @@ Crée un playbook.
 | `description` | string  | —      | Description                                                         |
 | `enabled`     | boolean | —      | Activer immédiatement (défaut `true`)                               |
 
+**Scope :** `security:write` + rôle admin  
 **Réponse :** `{ id, name }`
 
 ---
@@ -739,6 +797,8 @@ Crée un playbook.
 
 Met à jour un playbook existant. Mêmes paramètres que `create_playbook`, plus `id` (requis).
 
+**Scope :** `security:write` + rôle admin
+
 ---
 
 ### `delete_playbook`
@@ -746,6 +806,8 @@ Met à jour un playbook existant. Mêmes paramètres que `create_playbook`, plus
 | Paramètre | Type   | Requis | Description                |
 |-----------|--------|--------|-------------------------------|
 | `id`      | string | Oui    | ID du playbook à supprimer     |
+
+**Scope :** `security:write` + rôle admin
 
 ---
 
@@ -757,6 +819,7 @@ Démarre l'exécution d'un playbook depuis sa première étape.
 |-----------|--------|--------|------------------------|
 | `id`      | string | Oui    | ID du playbook         |
 
+**Scope :** `security:write` + rôle admin  
 **Réponse :** `{ run_id }` — à suivre avec `get_playbook_run`.
 
 ---
@@ -769,6 +832,7 @@ Liste les 50 dernières exécutions d'un playbook.
 |-----------|--------|--------|-------------------|
 | `id`      | string | Oui    | ID du playbook      |
 
+**Scope :** `audit:read` + rôle admin  
 **Réponse :** tableau `{ id, current_step, status, log, started_at, updated_at, finished_at }`
 
 ---
@@ -781,6 +845,7 @@ Détail d'une exécution : étape courante, statut, journal de chaque étape.
 |-----------|--------|--------|----------------------|
 | `run_id`  | string | Oui    | ID de l'exécution     |
 
+**Scope :** `audit:read` + rôle admin  
 **Réponse :** `{ id, playbook_id, playbook_name, steps, current_step, status, log, context, started_at, updated_at, finished_at }`
 
 ---
@@ -793,6 +858,7 @@ Approuve une exécution suspendue à une étape d'approbation : reprend à l'ét
 |-----------|--------|--------|----------------------|
 | `run_id`  | string | Oui    | ID de l'exécution     |
 
+**Scope :** `security:write` + rôle admin  
 **Réponse :** `{ ok: true }`
 
 ---
@@ -805,6 +871,7 @@ Refuse une exécution suspendue à une étape d'approbation : l'exécution s'arr
 |-----------|--------|--------|----------------------|
 | `run_id`  | string | Oui    | ID de l'exécution     |
 
+**Scope :** `security:write` + rôle admin  
 **Réponse :** `{ ok: true }`
 
 ---
@@ -813,7 +880,7 @@ Refuse une exécution suspendue à une étape d'approbation : l'exécution s'arr
 
 Liste les fenêtres de silence, communes au moteur de règles et au moteur d'alertes (suspendent l'exécution des actions / l'envoi des notifications ; la condition ou l'événement reste évalué et journalisé).
 
-**Scope :** `audit:read`  
+**Scope :** `audit:read` + rôle admin  
 **Réponse :** tableau `{ id, name, rule_ids, starts_at, ends_at, created_at, active }`
 
 ---
@@ -825,11 +892,11 @@ Crée une fenêtre de silence, pour toutes les règles des deux moteurs (`rule_i
 | Paramètre   | Type   | Requis | Description                              |
 |-------------|--------|--------|-------------------------------------------|
 | `name`      | string | Oui    | Nom de la fenêtre de silence               |
-| `starts_at` | string | Oui    | Début, RFC3339                             |
+| `starts_at` | string | Oui    | Début, RFC3339 (tout décalage horaire, stocké en UTC) |
 | `ends_at`   | string | Oui    | Fin, RFC3339 (doit être après `starts_at`) |
 | `rule_ids`  | array  | Non    | IDs de règles (moteur de règles et/ou d'alertes) concernées, vide = toutes |
 
-**Scope :** `audit:write`  
+**Scope :** `security:write` + rôle admin  
 **Réponse :** `{ id }`
 
 ---
@@ -838,20 +905,20 @@ Crée une fenêtre de silence, pour toutes les règles des deux moteurs (`rule_i
 
 Exporte en YAML toute la configuration d'automatisation (règles, canaux d'alerte, silences), réimportable telle quelle (GitOps). Les canaux exportent leur config en clair : à traiter comme un secret.
 
-**Scope :** `audit:read`  
+**Scope :** `audit:read` + rôle admin  
 **Réponse :** `{ yaml: "<document>" }`
 
 ---
 
 ### `import_automation`
 
-Importe un document YAML au format de `export_automation`. Règles et canaux sont upsertés par nom (créés ou mis à jour) ; les silences sont toujours créés.
+Importe un document YAML au format de `export_automation`. Règles et canaux sont upsertés par nom (créés ou mis à jour) ; les silences sont toujours créés, dates ramenées en UTC (RFC3339, quotées ou non, ou `AAAA-MM-JJ HH:MM:SS` en UTC) — un silence aux dates illisibles est ignoré.
 
 | Paramètre | Type   | Requis | Description                          |
 |-----------|--------|--------|----------------------------------------|
 | `yaml`    | string | Oui    | Document YAML (voir `export_automation`) |
 
-**Scope :** `audit:write`  
+**Scope :** `security:write` + rôle admin  
 **Réponse :** `{ rules_created, rules_updated, channels_created, channels_updated, silences_created }`
 
 ---
@@ -864,8 +931,8 @@ Force le renouvellement ACME d'un domaine en vidant la date d'expiration en base
 |-----------|--------|--------|------------------------------------------|
 | `domain`  | string | ✓      | Domaine cible (ex : `app.example.fr`)    |
 
-**Scope :** `proxies:write`  
-**Réponse :** `{ "scheduled": "<domain>" }`
+**Scope :** `domains:write` (comme `POST /api/v1/domains/:id/renew`)  
+**Réponse :** `{ "domain": "<domain>", "status": "renew_requested" }` (le domaine est créé s'il n'était pas encore géré)
 
 ---
 
@@ -877,6 +944,7 @@ Retourne le statut d'expiration de tous les certificats avec KPIs globaux (ok / 
 |-----------|--------|--------|------------------------------------------------|
 | `domain`  | string | —      | Filtrer sur un domaine spécifique              |
 
+**Scope :** `certs:read`  
 **Réponse :** `{ "certs": [...], "total": N, "ok": N, "warning": N, "critical": N, "expired": N }`
 
 ---
@@ -889,6 +957,8 @@ Liste les cibles de déploiement configurées pour un certificat (webhook, ssh_e
 |-----------|--------|--------|-------------------|
 | `cert_id` | string | ✓      | ID du certificat  |
 
+**Scope :** `certs:read`
+
 ---
 
 ### `trigger_cert_deploy`
@@ -899,6 +969,7 @@ Déclenche immédiatement le déploiement d'un certificat vers une cible spécif
 |-------------|--------|--------|---------------------------------|
 | `target_id` | string | ✓      | ID de la cible de déploiement   |
 
+**Scope :** `certs:write`  
 **Réponse :** `{ "target_id": "...", "cert_id": "...", "type": "webhook|ssh_exec", "status": "triggered" }`
 
 ---
@@ -913,6 +984,7 @@ Importe un certificat externe (non-ACME) en fournissant le PEM et la clé privé
 | `key_pem`  | string | ✓      | Clé privée PEM                                       |
 | `issuer`   | string | —      | Émetteur (défaut : `custom`)                         |
 
+**Scope :** `certs:write`  
 **Réponse :** `{ "domain": "...", "issuer": "...", "expires_at": "...", "status": "imported" }`
 
 ---
@@ -927,6 +999,9 @@ Crée une nouvelle autorité de certification interne (CA racine auto-signée EC
 | `common_name`    | string | ✓      | Common Name du certificat racine           |
 | `validity_years` | number | —      | Durée de validité en années (défaut : 10)  |
 
+Tous les outils de CA interne sont réservés au rôle admin, comme `/api/v1/internal-ca`.
+
+**Scope :** `certs:write` + rôle admin  
 **Réponse :** objet CA (`id`, `name`, `subject`, `cert_pem`, `not_after`, `created_at`).
 
 ---
@@ -936,6 +1011,8 @@ Crée une nouvelle autorité de certification interne (CA racine auto-signée EC
 Liste les autorités de certification internes.
 
 _Aucun paramètre._
+
+**Scope :** `certs:read` + rôle admin
 
 ---
 
@@ -951,6 +1028,7 @@ _Aucun paramètre._
 | `usage`         | string | —      | `server` ou `client` (défaut : `server`)       |
 | `validity_days` | number | —      | Durée de validité en jours (défaut : 397)      |
 
+**Scope :** `certs:write` + rôle admin  
 **Réponse :** objet certificat (`id`, `ca_id`, `common_name`, `usage`, `sans`, `serial`, `cert_pem`, `not_after`, `revoked`, `created_at`).
 
 ---
@@ -963,6 +1041,8 @@ Liste les certificats émis par une CA interne.
 |-----------|--------|--------|------------------------|
 | `ca_id`   | string | ✓      | ID de la CA interne    |
 
+**Scope :** `certs:read` + rôle admin
+
 ---
 
 ### `revoke_internal_cert`
@@ -973,6 +1053,7 @@ Révoque un certificat émis par une CA interne.
 |-----------|--------|--------|------------------------------|
 | `cert_id` | string | ✓      | ID du certificat émis        |
 
+**Scope :** `certs:write` + rôle admin  
 **Réponse :** `{ "cert_id": "...", "status": "revoked" }`
 
 ---
@@ -987,6 +1068,8 @@ Décisions CrowdSec synchronisées (`security_threats`).
 
 Trié par `last_seen_at` décroissant. Chaque résultat inclut `edge_name` (Passerelle d'origine) et `occurrences` (nombre de fois où cette menace ip+scenario a été observée ; `last_seen_at` reflète la plus récente).
 
+**Scope :** `audit:read` + rôle admin
+
 ---
 
 ### `list_security_cves`
@@ -1000,6 +1083,8 @@ CVE détectées sur les backends.
 | `kev_only`        | boolean | —      | Uniquement les CVE du catalogue CISA KEV (exploitation active) |
 
 Chaque résultat inclut désormais `edge_name` — la passerelle d'origine ayant remonté la CVE (vide pour les entrées antérieures à cette colonne) — ainsi que `kev` (bool, exploitation activement observée, catalogue CISA) et `epss_score` (0-1, probabilité d'exploitation sous 30 jours, modèle EPSS de FIRST.org), rafraîchis en fin de scan (Admin `0.52.3`).
+
+**Scope :** `audit:read` + rôle admin
 
 ---
 
@@ -1046,7 +1131,7 @@ Trafic par pays (requêtes, erreurs, taux d'erreur, IPs bannies) ou par ville (p
 
 ### `simulate_sentinel_config`
 
-Dry-run Sentinel : rejoue les access logs récents contre une config candidate et la compare à la config actuelle, **sans rien modifier**. Permet de répondre à « si j'applique cette règle, combien de requêtes légitimes auraient été bloquées dans la dernière heure ? » avant de faire `PUT /security/threat-config`. Scope : `logs:read`.
+Dry-run Sentinel : rejoue les access logs récents contre une config candidate et la compare à la config actuelle, **sans rien modifier**. Permet de répondre à « si j'applique cette règle, combien de requêtes légitimes auraient été bloquées dans la dernière heure ? » avant de faire `PUT /security/threat-config`. Scope : `logs:read` + rôle admin (la route REST équivalente est réservée aux admins).
 
 | Paramètre | Type    | Requis | Description |
 |-----------|---------|--------|-------------|
@@ -1070,7 +1155,7 @@ Scopes PAT : `nodes:read` (lecture) / `nodes:write` (écriture). Alignés sur `/
 
 ### `get_architecture`
 
-Architecture déclarée (`architecture.json`, référentiel de la topologie) : nœuds passerelle / Agent avec leur hôte (`config.host`), région et capacités (HA, TLS, Docker, Portainer…), plus les domaines. Scope : `nodes:read`.
+Architecture déclarée (`architecture.json`, référentiel de la topologie) : nœuds passerelle / Agent avec leur hôte (`config.host`), région et capacités (HA, TLS, Docker, Portainer…), plus les domaines. Scope : `nodes:read` + rôle admin (comme `GET /api/v1/architecture`).
 
 | Paramètre | Type   | Requis | Description |
 |-----------|--------|--------|-------------|
@@ -1145,7 +1230,7 @@ Accepte ou rejette un nœud en attente (`pending_nodes`) après présentation du
 
 ## Canaux et règles d'alerte
 
-Scopes PAT : `audit:read` (lecture) / `audit:write` (écriture).
+Scopes PAT : `alerts:read` (lecture) / `alerts:write` (création, suppression, accusé de réception), alignés sur `/api/v1/alert-channels`, `/api/v1/alert-rules` et `/api/v1/alert-events`.
 
 ### `list_alert_channels`
 
@@ -1227,7 +1312,7 @@ Accuse réception d'un événement d'alerte : les paliers d'escalade déjà prog
 
 ## Fournisseurs d'authentification
 
-Scopes PAT : `proxies:read` (lecture) / `proxies:write` (écriture).
+Scopes PAT : `audit:read` (lecture) / `security:write` (écriture), plus le rôle admin, comme `/api/v1/auth-providers`.
 
 ### `list_auth_providers`
 
@@ -1267,7 +1352,7 @@ Crée un fournisseur d'authentification.
 
 ## Profils IP
 
-Scopes PAT : `proxies:read` (lecture) / `proxies:write` (écriture).
+Scopes PAT : `audit:read` (lecture) / `security:write` (écriture), comme `/api/v1/ip-profiles`.
 
 ### `list_ip_profiles`
 
@@ -1303,7 +1388,7 @@ Crée un profil IP.
 
 ## Snippets
 
-Scopes PAT : `proxies:read` (lecture) / `proxies:write` (écriture).
+Scopes PAT : `snippets:read` (lecture, `list_snippets`) / `snippets:write` (écriture), comme `/api/v1/snippets`.
 
 ### `create_snippet`
 
@@ -1327,7 +1412,7 @@ Crée un snippet middleware réutilisable (WAF, rate-limit, headers…).
 
 ## Domaines
 
-Scopes PAT : `proxies:read` (lecture) / `proxies:write` (écriture).
+Scopes PAT : `domains:read` (lecture, `list_domains`) / `domains:write` (écriture, y compris `rotate_cert`), comme `/api/v1/domains`.
 
 ### `create_domain`
 
@@ -1361,6 +1446,8 @@ Déclenche l'émission ACME d'un certificat pour un domaine.
 | Paramètre | Type   | Requis | Description                     |
 |-----------|--------|--------|---------------------------------|
 | `domain`  | string | ✓      | Domaine cible                   |
+
+**Scope :** `certs:write` (comme `POST /api/v1/certs`)
 
 ---
 
@@ -1439,6 +1526,8 @@ Les ressources permettent à un client MCP d'accéder aux données sans construi
 
 Toutes les ressources retournent `mimeType: application/json`.
 
+Lire une ressource exige les mêmes droits que l'outil qu'elle expose (`goproxify://users` → `list_users`, `goproxify://security/bans` → `list_security_bans`, `goproxify://certs/monitor` → `get_cert_status`, etc. ; voir [Contrôle d'accès des outils](#contrôle-daccès-des-outils)). Un refus renvoie une erreur JSON-RPC `-32603` dont le message est `scope insuffisant: <scope>` ou `accès réservé aux administrateurs` (depuis Admin `0.70.0` ; les ressources n'étaient auparavant soumises à aucun contrôle).
+
 ---
 
 ## Gestion des erreurs
@@ -1453,4 +1542,4 @@ Les erreurs suivent le standard JSON-RPC 2.0 :
 | -32603  | Erreur interne           |
 | -32002  | Ressource introuvable    |
 
-Les erreurs d'outil (proxy introuvable, backend SQL) sont retournées avec `isError: true` dans le contenu, sans code d'erreur JSON-RPC — le LLM reçoit le message et peut proposer une correction.
+Les erreurs d'outil (proxy introuvable, backend SQL) sont retournées avec `isError: true` dans le contenu, sans code d'erreur JSON-RPC — le LLM reçoit le message et peut proposer une correction. Les refus d'autorisation (`scope insuffisant`, `accès réservé aux administrateurs`, `outil sans scope déclaré`) suivent le même format, voir [Contrôle d'accès des outils](#contrôle-daccès-des-outils).

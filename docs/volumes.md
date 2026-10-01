@@ -31,6 +31,7 @@ Chaque service persiste ses données dans `/etc/goproxify` via un volume Docker 
 | `geoip/GeoLite2-City.mmdb` | Base GeoIP ville de l'Admin (carte Prism), téléchargée automatiquement (si `GPX_GEOIP_AUTO_DOWNLOAD=true`) ; sans elle, repli sur ip-api.com |
 | `bans/` | Bannissements IP persistés |
 | `threat-lists/` | Listes de menaces téléchargées (IPs malveillantes, etc.) |
+| `threat-config.gpx` | Copie chiffrée de la configuration Sentinel reçue de l'Admin, rechargée au démarrage sans l'Admin |
 | `logs/access.log` | Journal d'accès HTTP du reverse proxy |
 
 > **Note :** `proxies/` et `proxies-revisions/` sont la source de vérité de la passerelle. La passerelle reçoit sa configuration depuis l'Admin via WebSocket au démarrage — ces fichiers sont ensuite mis à jour à chaque changement de configuration.

@@ -1,6 +1,7 @@
 package importer
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"testing"
 
@@ -53,5 +54,47 @@ func TestSummarizeBackupRejectsUnknownVersion(t *testing.T) {
 	_, sum, err := SummarizeBackup([]byte(`{"version":"1","tables":{"settings":[{"key":"a","value":"b"}]}}`))
 	if err != nil || sum.ConfigRowCount != 1 || sum.ConfigTables["settings"] != 1 {
 		t.Fatalf("résumé incorrect: %+v %v", sum, err)
+	}
+}
+
+func TestTablesRoundTripKeepsCurrentTimestampFormat(t *testing.T) {
+	db, err := admindb.Open(filepath.Join(t.TempDir(), "a.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO rules_engine_rules (id, name, condition_json, action_json, last_fired_at) VALUES ('r1','R','{}','{}','2026-09-29 10:00:00')`); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(exportTables(db))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tables map[string][]map[string]any
+	if err := json.Unmarshal(raw, &tables); err != nil {
+		t.Fatal(err)
+	}
+	// Sauvegarde antérieure au correctif : date exportée en RFC3339.
+	legacy := map[string][]map[string]any{"rules_engine_rules": {{"id": "r2", "name": "R2", "condition_json": "{}", "action_json": "{}", "last_fired_at": "2026-09-29T10:00:00Z"}}}
+	db.Exec(`DELETE FROM rules_engine_rules`) //nolint:errcheck
+	if w, _ := applyTables(db, tables, false); w != 1 {
+		t.Fatalf("écrites=%d", w)
+	}
+	if w, _ := applyTables(db, legacy, false); w != 1 {
+		t.Fatalf("écrites (ancienne sauvegarde)=%d", w)
+	}
+	rows, err := db.Query(`SELECT id, CAST(last_fired_at AS TEXT) FROM rules_engine_rules`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, got string
+		if err := rows.Scan(&id, &got); err != nil {
+			t.Fatal(err)
+		}
+		if got != "2026-09-29 10:00:00" {
+			t.Errorf("%s : last_fired_at=%q, attendu le format de CURRENT_TIMESTAMP", id, got)
+		}
 	}
 }

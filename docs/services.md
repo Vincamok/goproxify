@@ -17,7 +17,7 @@ GoProxify est composé de trois processus indépendants qui communiquent via Web
 | **Auth / JWT** | Émet et valide les tokens JWT des sessions utilisateur. Gère les providers OIDC et SAML. |
 | **RBAC** | Contrôle les permissions par rôle (admin, viewer, operator) sur chaque ressource API. |
 | **MFA** | Gère TOTP, passkeys WebAuthn et les codes de récupération pour les utilisateurs. |
-| **Audit Logger** | Journalise chaque action admin (création/suppression/modification) dans la table SQLite `audit_logs`. |
+| **Audit Logger** | Journalise chaque action admin (création/suppression/modification) dans la table SQLite `audit_log`. |
 | **Fail2Ban** | Analyse la table `logs` toutes les 30 s, bannit automatiquement les IPs abusives (4xx répétés). |
 | **CrowdSec Bouncer** | Synchronise les décisions de la LAPI CrowdSec toutes les 60 s vers `security_bans`. |
 | **Rules Engine** | Évalue des règles automatiques toutes les 60 s (pic de bans, CVE critique, moteur silencieux, taux d'erreur). |

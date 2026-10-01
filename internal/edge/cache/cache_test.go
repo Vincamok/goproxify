@@ -5,6 +5,8 @@ package cache_test
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -163,5 +165,29 @@ func TestCacheExportJSON(t *testing.T) {
 	data, _ := os.ReadFile(out.Name())
 	if len(data) == 0 {
 		t.Fatal("export JSON vide")
+	}
+}
+
+func TestCacheSealedFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sub", "cfg.gpx")
+	store := cache.New(filepath.Join(t.TempDir(), "edge-cache.gpx"), "secret-A")
+
+	var got map[string]string
+	if ok, err := store.LoadFile(path, &got); ok || err != nil {
+		t.Fatalf("fichier absent : ok=%v err=%v", ok, err)
+	}
+	if err := store.SaveFile(path, map[string]string{"k": "valeur-secrete"}); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(path)
+	if strings.Contains(string(raw), "valeur-secrete") {
+		t.Fatal("le fichier doit être chiffré")
+	}
+	if ok, err := store.LoadFile(path, &got); !ok || err != nil || got["k"] != "valeur-secrete" {
+		t.Fatalf("relecture : ok=%v err=%v got=%v", ok, err, got)
+	}
+	other := cache.New(filepath.Join(t.TempDir(), "edge-cache.gpx"), "secret-B")
+	if _, err := other.LoadFile(path, &got); err == nil {
+		t.Fatal("une autre clé ne doit pas déchiffrer le fichier")
 	}
 }

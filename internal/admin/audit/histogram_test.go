@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/vincamok/goproxify/internal/admin/db"
+	"github.com/vincamok/goproxify/internal/sqltime"
 )
 
 func TestHistogram(t *testing.T) {
@@ -22,7 +23,7 @@ func TestHistogram(t *testing.T) {
 	ins := func(at time.Time, actor, action, sev string, n int) {
 		for i := 0; i < n; i++ {
 			if _, err := d.Exec(`INSERT INTO audit_log (component, actor, action, resource, severity, created_at) VALUES ('admin',?,?,'r',?,?)`,
-				actor, action, sev, at.Format(time.RFC3339)); err != nil {
+				actor, action, sev, sqltime.Format(at)); err != nil { // format de CURRENT_TIMESTAMP, comme en production
 				t.Fatal(err)
 			}
 		}

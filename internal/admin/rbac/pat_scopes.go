@@ -20,13 +20,16 @@ const (
 	ScopeNodesRead     = "nodes:read"
 	ScopeNodesWrite    = "nodes:write"
 	ScopeAlertsRead    = "alerts:read"
+	ScopeAlertsWrite   = "alerts:write"
 	ScopeMetricsRead   = "metrics:read"
 	ScopeBackupsRead   = "backups:read"
 	ScopeUsersRead     = "users:read"
 	ScopeSnippetsRead  = "snippets:read"
 	ScopeSnippetsWrite = "snippets:write"
 	ScopeDomainsRead   = "domains:read"
+	ScopeDomainsWrite  = "domains:write"
 	ScopeCertsRead     = "certs:read"
+	ScopeCertsWrite    = "certs:write"
 	ScopeLogsRead      = "logs:read"
 	ScopeTeamsRead     = "teams:read"
 	ScopeAuditRead     = "audit:read"
@@ -41,9 +44,10 @@ const (
 // AllPATScopes liste tous les scopes connus (ordre stable pour l'UI).
 var AllPATScopes = []string{
 	ScopeProxiesRead, ScopeProxiesWrite, ScopeProxiesDelete,
-	ScopeNodesRead, ScopeNodesWrite, ScopeAlertsRead, ScopeMetricsRead, ScopeBackupsRead,
+	ScopeNodesRead, ScopeNodesWrite, ScopeAlertsRead, ScopeAlertsWrite, ScopeMetricsRead, ScopeBackupsRead,
 	ScopeUsersRead, ScopeSnippetsRead, ScopeSnippetsWrite,
-	ScopeDomainsRead, ScopeCertsRead, ScopeLogsRead, ScopeTeamsRead, ScopeAuditRead,
+	ScopeDomainsRead, ScopeDomainsWrite, ScopeCertsRead, ScopeCertsWrite,
+	ScopeLogsRead, ScopeTeamsRead, ScopeAuditRead,
 	ScopeSecurityWrite, ScopeImportWrite, ScopePairingRead,
 	ScopePortalRead, ScopePortalWrite,
 	ScopeGDPRReveal,
@@ -63,23 +67,26 @@ func ScopeCatalog() []ScopeMeta {
 		ScopeProxiesDelete: "Supprimer des proxies",
 		ScopeNodesRead:     "Lister les nœuds / Passerelles",
 		ScopeNodesWrite:    "Approuver / révoquer Agents et muter les nœuds",
-		ScopeAlertsRead:    "Lister les alertes et règles",
+		ScopeAlertsRead:    "Lister les alertes, canaux, règles et événements d'alerte",
+		ScopeAlertsWrite:   "Créer / supprimer canaux et règles d'alerte, acquitter les événements",
 		ScopeMetricsRead:   "Lire les métriques",
 		ScopeBackupsRead:   "Lister les sauvegardes",
 		ScopeUsersRead:     "Lister les utilisateurs",
 		ScopeSnippetsRead:  "Lister les snippets",
 		ScopeSnippetsWrite: "Créer et modifier les snippets",
 		ScopeDomainsRead:   "Lister les domaines",
-		ScopeCertsRead:     "Lister les certificats",
+		ScopeDomainsWrite:  "Créer, modifier, supprimer et renouveler les domaines",
+		ScopeCertsRead:     "Lister les certificats, cibles de déploiement et CA internes",
+		ScopeCertsWrite:    "Obtenir, importer, supprimer et déployer des certificats ; gérer la CA interne",
 		ScopeLogsRead:      "Lire les logs",
 		ScopeTeamsRead:     "Lister les équipes",
-		ScopeAuditRead:     "Lire le journal d'audit et le dashboard sécurité (bans, menaces, CVE)",
-		ScopeSecurityWrite: "Créer / supprimer bans et muter la sécurité",
+		ScopeAuditRead:     "Lire le journal d'audit, la sécurité (bans, menaces, CVE, profils IP, fournisseurs d'auth) et l'automatisation (règles, tâches planifiées, playbooks)",
+		ScopeSecurityWrite: "Muter la sécurité (bans, profils IP, fournisseurs d'auth) et piloter l'automatisation (règles, tâches planifiées, playbooks)",
 		ScopeImportWrite:   "Importer des configurations",
 		ScopePairingRead:   "Lire le secret d'appairage",
-		ScopePortalRead:  "Lire GoProxify Access (config, catalogue, users, templates, audit)",
-		ScopePortalWrite: "Gérer GoProxify Access (config, catalogue, invitations, templates, push)",
-		ScopeGDPRReveal:  "Révéler l'IP réelle d'une entrée de log pseudonymisée (RGPD — DPO/juriste/RSSI uniquement)",
+		ScopePortalRead:    "Lire GoProxify Access (config, catalogue, users, templates, audit)",
+		ScopePortalWrite:   "Gérer GoProxify Access (config, catalogue, invitations, templates, push)",
+		ScopeGDPRReveal:    "Révéler l'IP réelle d'une entrée de log pseudonymisée (RGPD — DPO/juriste/RSSI uniquement)",
 	}
 	out := make([]ScopeMeta, 0, len(AllPATScopes))
 	for _, id := range AllPATScopes {
@@ -88,17 +95,32 @@ func ScopeCatalog() []ScopeMeta {
 	return out
 }
 
-// mcpTools liste les outils MCP connus, dans un ordre stable, pour dériver
-// la carte scope → outils sans dupliquer ToolRequiredScope.
+// mcpTools liste tous les outils MCP, dans un ordre stable, pour dériver
+// la carte scope → outils de /mcp-access sans dupliquer ToolRequiredScope.
+// Doit contenir exactement les outils du serveur MCP (vérifié par un test de internal/admin/mcp).
 var mcpTools = []string{
 	"list_proxies", "get_proxy", "create_proxy", "update_proxy", "set_proxy_enabled", "delete_proxy",
 	"list_nodes", "list_agents", "list_declared_nodes", "get_topology_live", "get_architecture",
 	"approve_agent", "revoke_agent", "create_declared_node", "delete_declared_node",
 	"create_bootstrap_ticket", "accept_node", "reject_node",
-	"list_alerts", "list_alert_events", "get_metrics", "get_proxy_metrics", "list_backups", "list_users", "list_snippets",
-	"list_domains", "list_certs", "list_logs", "simulate_sentinel_config", "get_prism_anomalies", "get_prism_geo", "get_prism_slo", "list_teams",
+	"list_alerts", "list_alert_events", "list_alert_channels", "list_alert_rules",
+	"create_alert_channel", "delete_alert_channel", "create_alert_rule", "delete_alert_rule", "ack_alert_event",
+	"get_metrics", "get_proxy_metrics", "list_backups", "list_users",
+	"list_snippets", "create_snippet", "delete_snippet",
+	"list_domains", "create_domain", "renew_domain", "rotate_cert",
+	"list_certs", "get_cert_status", "list_cert_deploy_targets", "list_internal_cas", "list_internal_certs",
+	"obtain_cert", "import_cert", "trigger_cert_deploy", "create_internal_ca", "issue_internal_cert", "revoke_internal_cert",
+	"list_logs", "simulate_sentinel_config", "get_prism_anomalies", "get_prism_geo", "get_prism_slo", "list_teams",
 	"get_audit_log", "get_security_overview", "list_security_bans", "list_security_threats", "list_security_cves",
-	"create_security_ban", "delete_security_ban",
+	"list_ip_profiles", "list_auth_providers",
+	"list_rules", "list_rule_history", "list_pending_actions", "list_rule_versions", "list_silences", "export_automation",
+	"list_scheduled_tasks", "list_scheduled_task_runs", "list_playbooks", "list_playbook_runs", "get_playbook_run",
+	"create_security_ban", "delete_security_ban", "ban_ip", "unban_ip",
+	"create_ip_profile", "delete_ip_profile", "create_auth_provider", "delete_auth_provider",
+	"run_rule", "replay_rule_history", "approve_pending_action", "reject_pending_action", "restore_rule_version",
+	"create_silence", "import_automation",
+	"create_scheduled_task", "update_scheduled_task", "delete_scheduled_task", "run_scheduled_task",
+	"create_playbook", "update_playbook", "delete_playbook", "run_playbook_now", "approve_playbook_run", "reject_playbook_run",
 	"get_portal_config", "list_portal_destinations", "preview_portal_destinations",
 	"list_portal_users", "list_portal_audit", "list_portal_sessions", "terminate_portal_session", "list_portal_access_requests", "decide_portal_access_request", "get_portal_policy", "set_portal_policy", "list_portal_recordings", "delete_portal_recording", "list_portal_templates", "get_portal_template",
 	"update_portal_config", "push_portal",
@@ -148,11 +170,13 @@ func AvailableScopesForUser(ctx context.Context, db *sql.DB, userID string) []st
 	switch {
 	case IsSuperAdminRole(role):
 		add(ScopeProxiesWrite, ScopeProxiesDelete, ScopeSnippetsWrite, ScopeUsersRead, ScopeTeamsRead,
-			ScopeNodesWrite, ScopeSecurityWrite, ScopeImportWrite, ScopePairingRead,
+			ScopeNodesWrite, ScopeAlertsWrite, ScopeDomainsWrite, ScopeCertsWrite,
+			ScopeSecurityWrite, ScopeImportWrite, ScopePairingRead,
 			ScopePortalRead, ScopePortalWrite, ScopeGDPRReveal)
 	case IsAdminRole(role):
 		add(ScopeProxiesWrite, ScopeProxiesDelete, ScopeSnippetsWrite, ScopeUsersRead, ScopeTeamsRead,
-			ScopeNodesWrite, ScopeSecurityWrite, ScopeImportWrite, ScopePairingRead,
+			ScopeNodesWrite, ScopeAlertsWrite, ScopeDomainsWrite, ScopeCertsWrite,
+			ScopeSecurityWrite, ScopeImportWrite, ScopePairingRead,
 			ScopePortalRead, ScopePortalWrite)
 	default:
 		// user (et legacy operator/viewer normalisés) : write PAT si grant write effectif
@@ -190,7 +214,9 @@ func EffectiveHasScope(ctx context.Context, db *sql.DB, scope string) bool {
 	return false
 }
 
-// ToolRequiredScope mappe un outil MCP vers le scope requis.
+// ToolRequiredScope mappe un outil MCP vers le scope requis, aligné sur
+// RequiredScopeForRequest pour la route REST équivalente. "" = outil sans scope :
+// le serveur MCP le refuse.
 func ToolRequiredScope(tool string) string {
 	switch tool {
 	case "list_proxies", "get_proxy":
@@ -205,8 +231,10 @@ func ToolRequiredScope(tool string) string {
 		"create_declared_node", "delete_declared_node",
 		"create_bootstrap_ticket", "accept_node", "reject_node":
 		return ScopeNodesWrite
-	case "list_alerts", "list_alert_events":
+	case "list_alerts", "list_alert_events", "list_alert_channels", "list_alert_rules":
 		return ScopeAlertsRead
+	case "create_alert_channel", "delete_alert_channel", "create_alert_rule", "delete_alert_rule", "ack_alert_event":
+		return ScopeAlertsWrite
 	case "get_metrics", "get_proxy_metrics":
 		return ScopeMetricsRead
 	case "list_backups":
@@ -215,19 +243,37 @@ func ToolRequiredScope(tool string) string {
 		return ScopeUsersRead
 	case "list_snippets":
 		return ScopeSnippetsRead
+	case "create_snippet", "delete_snippet":
+		return ScopeSnippetsWrite
 	case "list_domains":
 		return ScopeDomainsRead
-	case "list_certs":
+	case "create_domain", "renew_domain", "rotate_cert":
+		return ScopeDomainsWrite
+	case "list_certs", "get_cert_status", "list_cert_deploy_targets", "list_internal_cas", "list_internal_certs":
 		return ScopeCertsRead
+	case "obtain_cert", "import_cert", "trigger_cert_deploy",
+		"create_internal_ca", "issue_internal_cert", "revoke_internal_cert":
+		return ScopeCertsWrite
 	case "list_logs", "simulate_sentinel_config", "get_prism_anomalies", "get_prism_geo", "get_prism_slo":
 		return ScopeLogsRead
 	case "list_teams":
 		return ScopeTeamsRead
 	case "get_audit_log",
 		"get_security_overview", "list_security_bans",
-		"list_security_threats", "list_security_cves":
+		"list_security_threats", "list_security_cves",
+		"list_ip_profiles", "list_auth_providers",
+		"list_rules", "list_rule_history", "list_pending_actions", "list_rule_versions",
+		"list_silences", "export_automation",
+		"list_scheduled_tasks", "list_scheduled_task_runs",
+		"list_playbooks", "list_playbook_runs", "get_playbook_run":
 		return ScopeAuditRead
-	case "create_security_ban", "delete_security_ban":
+	case "create_security_ban", "delete_security_ban", "ban_ip", "unban_ip",
+		"create_ip_profile", "delete_ip_profile", "create_auth_provider", "delete_auth_provider",
+		"run_rule", "replay_rule_history", "approve_pending_action", "reject_pending_action",
+		"restore_rule_version", "create_silence", "import_automation",
+		"create_scheduled_task", "update_scheduled_task", "delete_scheduled_task", "run_scheduled_task",
+		"create_playbook", "update_playbook", "delete_playbook", "run_playbook_now",
+		"approve_playbook_run", "reject_playbook_run":
 		return ScopeSecurityWrite
 	case "get_portal_config", "list_portal_destinations", "preview_portal_destinations",
 		"list_portal_users", "list_portal_audit", "list_portal_sessions", "list_portal_access_requests", "get_portal_policy", "list_portal_recordings", "list_portal_templates", "get_portal_template":
@@ -240,6 +286,35 @@ func ToolRequiredScope(tool string) string {
 	default:
 		return ""
 	}
+}
+
+// ToolRequiresAdmin indique si la route REST équivalente de l'outil est adminOnly.
+// /mcp n'est monté qu'avec RequirePAT : sans ce contrôle, un compte user tenant un
+// scope de lecture commun (audit:read, certs:read…) passerait là où REST le refuse.
+func ToolRequiresAdmin(tool string) bool {
+	switch ToolRequiredScope(tool) {
+	case ScopePortalRead, ScopePortalWrite:
+		return true
+	}
+	switch tool {
+	case "list_agents", "approve_agent", "revoke_agent",
+		"get_architecture",
+		"list_backups", "list_users", "list_teams",
+		"get_security_overview", "list_security_bans", "list_security_threats", "list_security_cves",
+		"create_security_ban", "delete_security_ban", "ban_ip", "unban_ip", "simulate_sentinel_config",
+		"list_auth_providers", "create_auth_provider", "delete_auth_provider",
+		"list_internal_cas", "list_internal_certs", "create_internal_ca", "issue_internal_cert", "revoke_internal_cert",
+		"list_rules", "run_rule", "list_rule_history", "replay_rule_history",
+		"list_pending_actions", "approve_pending_action", "reject_pending_action",
+		"list_rule_versions", "restore_rule_version",
+		"list_silences", "create_silence", "export_automation", "import_automation",
+		"list_scheduled_tasks", "create_scheduled_task", "update_scheduled_task", "delete_scheduled_task",
+		"run_scheduled_task", "list_scheduled_task_runs",
+		"list_playbooks", "create_playbook", "update_playbook", "delete_playbook", "run_playbook_now",
+		"list_playbook_runs", "get_playbook_run", "approve_playbook_run", "reject_playbook_run":
+		return true
+	}
+	return false
 }
 
 // RequiredScopeForRequest déduit le scope API pour une requête REST (PAT uniquement).
@@ -284,7 +359,10 @@ func RequiredScopeForRequest(r *http.Request) string {
 		}
 		return ScopeNodesWrite
 	case strings.HasPrefix(path, "/api/v1/alert"):
-		return ScopeAlertsRead
+		if method == http.MethodGet {
+			return ScopeAlertsRead
+		}
+		return ScopeAlertsWrite
 	case strings.HasPrefix(path, "/api/v1/prism"),
 		strings.HasPrefix(path, "/api/v1/metrics/proxies"),
 		strings.HasPrefix(path, "/api/v1/metrics/summary"):
@@ -299,9 +377,16 @@ func RequiredScopeForRequest(r *http.Request) string {
 		}
 		return ScopeSnippetsWrite
 	case strings.HasPrefix(path, "/api/v1/domains"):
-		return ScopeDomainsRead
-	case strings.HasPrefix(path, "/api/v1/certs"):
-		return ScopeCertsRead
+		if method == http.MethodGet {
+			return ScopeDomainsRead
+		}
+		return ScopeDomainsWrite
+	case strings.HasPrefix(path, "/api/v1/certs"),
+		strings.HasPrefix(path, "/api/v1/internal-ca"):
+		if method == http.MethodGet {
+			return ScopeCertsRead
+		}
+		return ScopeCertsWrite
 	case strings.HasPrefix(path, "/api/v1/logs/reveal-ip"):
 		return ScopeGDPRReveal
 	case strings.HasPrefix(path, "/api/v1/logs"):
@@ -315,7 +400,10 @@ func RequiredScopeForRequest(r *http.Request) string {
 		return ScopeUsersRead
 	case strings.HasPrefix(path, "/api/v1/security"),
 		strings.HasPrefix(path, "/api/v1/ip-profiles"),
-		strings.HasPrefix(path, "/api/v1/auth-providers"):
+		strings.HasPrefix(path, "/api/v1/auth-providers"),
+		strings.HasPrefix(path, "/api/v1/rules-engine"),
+		strings.HasPrefix(path, "/api/v1/scheduled-tasks"),
+		strings.HasPrefix(path, "/api/v1/playbooks"):
 		if method == http.MethodGet {
 			return ScopeAuditRead
 		}

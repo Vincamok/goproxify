@@ -15,6 +15,7 @@ import (
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
+	"github.com/vincamok/goproxify/internal/sqltime"
 )
 
 // UserTokensHandler gère /api/v1/me/tokens — PAT self-service.
@@ -216,7 +217,7 @@ func (h *UserTokensHandler) create(w http.ResponseWriter, r *http.Request, userI
 	_, err = tx.ExecContext(r.Context(), `
 		INSERT INTO user_api_tokens (id, user_id, label, token_hash, token_prefix, expires_at)
 		VALUES (?, ?, ?, ?, ?, ?)`,
-		id, userID, label, hash, prefix, expiresAt)
+		id, userID, label, hash, prefix, sqltime.Nullable(expiresAt))
 	if err != nil {
 		h.Log.Error("user_tokens: insert", "err", err)
 		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")

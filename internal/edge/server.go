@@ -68,17 +68,17 @@ type Server struct {
 	rulesEngine     *edgere.Engine
 	tunnelManager   *tunnel.Manager
 
-	// Bans threat : merge avec les bans Admin sans écraser.
-	bansMu            sync.Mutex
-	pendingThreatBans []*router.RuntimeBan
-	cache             *edgecache.Store
-	proxyStore        *proxystore.Store
-	proxyPipe         *proxypipeline.Pipeline
-	health            *proxy.BackendHealth
-	metrics           *proxy.AgentMetricsStore
-	peers             *proxy.PeerRegistry
-	nodeStore         *edgeagent.NodeStore
-	tokenStore        *edgetokens.Store
+	// bansMu sérialise reloadBanStore : une relecture de la DB plus ancienne ne doit pas remplacer
+	// le BanStore après une plus récente (bans posés en parallèle depuis les requêtes).
+	bansMu     sync.Mutex
+	cache      *edgecache.Store
+	proxyStore *proxystore.Store
+	proxyPipe  *proxypipeline.Pipeline
+	health     *proxy.BackendHealth
+	metrics    *proxy.AgentMetricsStore
+	peers      *proxy.PeerRegistry
+	nodeStore  *edgeagent.NodeStore
+	tokenStore *edgetokens.Store
 
 	httpSrv    *http.Server
 	httpsSrv   *http.Server
@@ -383,6 +383,12 @@ func (s *Server) Start(ctx context.Context) error {
 		go s.wafEngine.WatchCustomRulesFile(ctx, p)
 	}
 
+	// Sentinel, sur sa dernière config connue, avant l'API interne : une config poussée par l'Admin
+	// ne peut pas arriver avant le moteur.
+	s.threatEngine = threat.New(s.log.Logger(), s.threatBanCallback())
+	s.loadThreatConfigFromDisk()
+	s.threatEngine.Start(ctx)
+
 	// API interne (push de routes depuis l'Admin)
 	if err := s.startInternalAPI(); err != nil {
 		return err
@@ -426,16 +432,14 @@ func (s *Server) Start(ctx context.Context) error {
 	// Restauration des profils comportementaux WAF depuis le snapshot disque.
 	s.wafEngine.LoadSnapshot("/etc/goproxify/waf-behavior.json")
 
-	// Moteur de détection automatique des menaces.
-	s.threatEngine = threat.New(s.log.Logger(), s.threatBanCallback())
-	s.threatEngine.Start(ctx)
-
 	// Moteur Fail2Ban — autonome, lit les access logs, bans locaux.
 	s.f2bEngine = edgef2b.New()
 	s.f2bEngine.UpdateConfig(edgef2b.LoadConfig(""))
 	s.f2bEngine.OnBan = s.onF2BBan
-	s.accessLog.SetF2BTap(s.f2bEngine.Feed)
+	s.accessLog.SetF2BTap(s.feedF2B)
 	s.f2bEngine.Start(ctx)
+	// Les bans relus au démarrage l'ont été avant la liste blanche Fail2Ban.
+	s.reloadBanStore()
 
 	// Bouncer CrowdSec — autonome, sync LAPI, bans locaux.
 	s.crowdSecBouncer = edgecrowdsec.New(s.log.Logger())
@@ -605,6 +609,7 @@ func (s *Server) refreshSentinelWhitelists() {
 		return
 	}
 	s.threatEngine.MergeRouteWhitelists(collectSentinelWhitelists(s.table.All()))
+	s.reloadBanStore()
 }
 
 // collectSentinelWhitelists agrège les entrées sentinel_whitelist de toutes les routes.

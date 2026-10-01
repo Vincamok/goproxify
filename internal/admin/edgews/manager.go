@@ -997,6 +997,61 @@ func (m *Manager) PushBans(ctx context.Context) {
 	}
 }
 
+// PushUnban lève les bans des IPs sur toutes les passerelles, y compris ceux qu'une passerelle a posés
+// elle-même (Fail2Ban, Sentinel, règles) et que la liste des bans ne retirerait pas. La liste suit sur
+// la même connexion : les autres bans encore actifs de ces IPs sont reposés aussitôt.
+func (m *Manager) PushUnban(ctx context.Context, ips []string) {
+	list, err := m.loadActiveBans(ctx)
+	if err != nil {
+		m.log.Error("edgews/manager: lecture bans", "err", err)
+		return
+	}
+	entries := make([]edgeWS.UnbanEntry, 0, len(ips))
+	for _, ip := range ips {
+		entries = append(entries, edgeWS.UnbanEntry{IP: ip})
+	}
+	for _, e := range m.allEntries() {
+		e := e
+		go func() {
+			if err := e.client.PushJSON(edgeWS.TypeUnbanIPs, entries); err != nil {
+				m.log.Warn("edgews/manager: push unban", "edge", e.nodeName, "err", err)
+				return
+			}
+			if err := e.client.PushJSON(edgeWS.TypePushBans, list); err != nil {
+				m.log.Warn("edgews/manager: push bans", "edge", e.nodeName, "err", err)
+			}
+		}()
+	}
+}
+
+// loadRecentUnbans retourne le dernier déban de chaque IP sur 30 jours, rejoué à la reconnexion d'une
+// passerelle qui aurait manqué l'envoi.
+func (m *Manager) loadRecentUnbans(ctx context.Context) ([]edgeWS.UnbanEntry, error) {
+	rows, err := m.db.QueryContext(ctx, `
+		SELECT ip, MAX(created_at) FROM security_ban_history
+		WHERE action='unbanned' AND created_at > datetime('now','-30 days')
+		GROUP BY ip`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []edgeWS.UnbanEntry
+	for rows.Next() {
+		var ip, at string
+		if err := rows.Scan(&ip, &at); err != nil {
+			return nil, err
+		}
+		t, err := time.Parse("2006-01-02 15:04:05", at)
+		if err != nil {
+			if t, err = time.Parse(time.RFC3339Nano, at); err != nil {
+				continue
+			}
+		}
+		out = append(out, edgeWS.UnbanEntry{IP: ip, At: &t})
+	}
+	return out, rows.Err()
+}
+
 // PushPortal envoie la config portail d'accès à la passerelle nommé (node_name).
 func (m *Manager) PushPortal(ctx context.Context, edgeName string, payload any) {
 	edgeName = strings.TrimSpace(edgeName)
@@ -1375,6 +1430,14 @@ func (m *Manager) pushAllToEntry(ctx context.Context, e *edgeEntry, s Settings) 
 	} else if err := e.client.PushJSON(edgeWS.TypePushErrorPages, tpls); err != nil {
 		m.log.Warn("edgews/manager: push error pages", "edge", e.nodeName, "err", err)
 	}
+	// Débans avant full_sync : les bans qu'il contient, même sur une IP débannie, sont reposés ensuite.
+	if unbans, err := m.loadRecentUnbans(ctx); err != nil {
+		m.log.Warn("edgews/manager: lecture débans", "edge", e.nodeName, "err", err)
+	} else if len(unbans) > 0 {
+		if err := e.client.PushJSON(edgeWS.TypeUnbanIPs, unbans); err != nil {
+			m.log.Warn("edgews/manager: push unban", "edge", e.nodeName, "err", err)
+		}
+	}
 	if err := e.client.PushJSON(edgeWS.TypeFullSync, fsync); err != nil {
 		m.log.Warn("edgews/manager: full_sync", "edge", e.nodeName, "err", err)
 		return
@@ -1679,7 +1742,7 @@ func (m *Manager) loadActiveBans(ctx context.Context) ([]router.RuntimeBan, erro
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT id, ip, reason, source, expires_at
 		FROM security_bans
-		WHERE expires_at IS NULL OR expires_at = '' OR expires_at > CURRENT_TIMESTAMP`)
+		WHERE expires_at IS NULL OR expires_at = '' OR datetime(expires_at) > CURRENT_TIMESTAMP`)
 	if err != nil {
 		return []router.RuntimeBan{}, nil
 	}

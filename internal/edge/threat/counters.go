@@ -118,6 +118,16 @@ func (s *counterStore) errorExceeded(ip string, threshold int, window time.Durat
 	return ew.count(now) >= threshold
 }
 
+func (s *counterStore) reset(ip string) {
+	key := counterKey(ip)
+	sh := s.shard(key)
+	sh.mu.Lock()
+	delete(sh.rate, key)
+	delete(sh.errors, key)
+	delete(sh.rateTrigger, key)
+	sh.mu.Unlock()
+}
+
 func (s *counterStore) resetErrors(ip string) {
 	key := counterKey(ip)
 	sh := s.shard(key)

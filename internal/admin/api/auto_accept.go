@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+
+	"github.com/vincamok/goproxify/internal/sqltime"
 )
 
 // NodeAutoAccept indique si un nœud (declared ou ticket bootstrap) doit être
@@ -45,10 +47,9 @@ func DeclaredAutoAccept(db *sql.DB, nodeName string) bool {
 // BootstrapTicketAutoAccept regarde les tickets non expirés dont payload.auto_accept
 // est vrai et payload.node_names contient nodeName.
 func BootstrapTicketAutoAccept(db *sql.DB, nodeName string) bool {
-	rows, err := db.Query(
-		`SELECT payload FROM bootstrap_tickets WHERE expires_at > ?`,
-		time.Now().UTC().Format(time.RFC3339),
-	)
+	// expires_at est au format de CURRENT_TIMESTAMP (t.String() en UTC pour les anciens tickets, même
+	// préfixe) : une borne RFC3339 donnait le ticket pour expiré dès minuit UTC le jour de son expiration.
+	rows, err := db.Query(`SELECT payload FROM bootstrap_tickets WHERE expires_at > ?`, sqltime.Format(time.Now()))
 	if err != nil {
 		return false
 	}

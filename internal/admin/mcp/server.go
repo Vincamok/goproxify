@@ -28,7 +28,9 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/internalca"
 	"github.com/vincamok/goproxify/internal/admin/mcpaccess"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
+	"github.com/vincamok/goproxify/internal/admin/security"
 	"github.com/vincamok/goproxify/internal/edge/proxystore"
+	"github.com/vincamok/goproxify/internal/sqltime"
 	"gopkg.in/yaml.v3"
 )
 
@@ -57,6 +59,9 @@ type Handler struct {
 	RevokeAgent  func(agentID string)
 	// OnBansChange (optionnel) — push_bans vers les passerelles après create/delete ban.
 	OnBansChange func()
+	// OnUnban (optionnel) — lève les bans d'une IP sur les passerelles, y compris ceux qu'elles ont posés
+	// elles-mêmes, puis renvoie la liste des bans (remplace OnBansChange pour un déban).
+	OnUnban func(ip string)
 	// ResolvePublicURL (optionnel) — base publique Admin pour les tickets bootstrap (QR / curl|bash).
 	ResolvePublicURL func(r *http.Request) string
 	// RulesEngine (optionnel) — moteur de règles automatiques pour l'outil run_rule.
@@ -684,6 +689,32 @@ func (h *Handler) handleToolsList(req rpcRequest) rpcResponse {
 
 // --- tools/call ----------------------------------------------------------
 
+func listedTool(name string) bool {
+	for _, t := range tools {
+		if t["name"] == name {
+			return true
+		}
+	}
+	return false
+}
+
+// denyTool retourne le motif de refus d'un outil, "" s'il est autorisé. /mcp n'est
+// monté qu'avec RequirePAT : ce contrôle tient lieu d'EnforcePATScope et de
+// RequireAdmin de la route REST équivalente. Un outil sans scope déclaré est refusé.
+func (h *Handler) denyTool(r *http.Request, tool string) string {
+	scope := rbac.ToolRequiredScope(tool)
+	if scope == "" {
+		return "outil sans scope déclaré: " + tool
+	}
+	if !rbac.EffectiveHasScope(r.Context(), h.DB, scope) {
+		return "scope insuffisant: " + scope
+	}
+	if rbac.ToolRequiresAdmin(tool) && !rbac.IsAdmin(r.Context(), h.DB, adminauth.UserIDFromContext(r.Context())) {
+		return "accès réservé aux administrateurs"
+	}
+	return ""
+}
+
 func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 	var p struct {
 		Name      string         `json:"name"`
@@ -696,13 +727,14 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 		p.Arguments = map[string]any{}
 	}
 
-	if scope := rbac.ToolRequiredScope(p.Name); scope != "" {
-		if !rbac.EffectiveHasScope(r.Context(), h.DB, scope) {
-			return okResp(req.ID, map[string]any{
-				"content": []map[string]any{{"type": "text", "text": "Erreur: scope insuffisant: " + scope}},
-				"isError": true,
-			})
-		}
+	if !listedTool(p.Name) {
+		return errResp(req.ID, -32601, "outil inconnu: "+p.Name)
+	}
+	if denied := h.denyTool(r, p.Name); denied != "" {
+		return okResp(req.ID, map[string]any{
+			"content": []map[string]any{{"type": "text", "text": "Erreur: " + denied}},
+			"isError": true,
+		})
 	}
 
 	var result any
@@ -1377,8 +1409,9 @@ func (h *Handler) toolGetMetrics(r *http.Request, proxy string) (any, error) {
 	  ROUND(100.0 * SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END) / MAX(COUNT(*),1), 2) AS error_rate,
 	  ROUND(AVG(latency_ms), 0) AS avg_latency_ms,
 	  COUNT(DISTINCT ip) AS unique_ips
-	FROM logs WHERE ts > datetime('now','-1 day')`
-	args := []any{}
+	FROM logs WHERE ts > ?`
+	// logs.ts est en RFC3339 : datetime('now', …) compare mal ('T' > ' ').
+	args := []any{time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339Nano)}
 	if proxy != "" {
 		q += ` AND domain = ?`
 		args = append(args, proxy)
@@ -1624,7 +1657,7 @@ func (h *Handler) toolGetAuditLog(r *http.Request, limit int) (any, error) {
 func (h *Handler) toolGetSecurityOverview(r *http.Request) (any, error) {
 	var activeBans, threats, openCVEs, expiringCerts int
 	_ = h.DB.QueryRowContext(r.Context(),
-		`SELECT COUNT(*) FROM security_bans WHERE expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP`).Scan(&activeBans)
+		`SELECT COUNT(*) FROM security_bans WHERE expires_at IS NULL OR datetime(expires_at) > CURRENT_TIMESTAMP`).Scan(&activeBans)
 	_ = h.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM security_threats`).Scan(&threats)
 	_ = h.DB.QueryRowContext(r.Context(),
 		`SELECT COUNT(*) FROM security_cves WHERE status='open'`).Scan(&openCVEs)
@@ -1650,7 +1683,7 @@ func (h *Handler) toolListSecurityBans(r *http.Request, args map[string]any) (an
 		qargs = append(qargs, source)
 	}
 	if active, _ := args["active_only"].(bool); active {
-		clauses = append(clauses, "(expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)")
+		clauses = append(clauses, "(expires_at IS NULL OR datetime(expires_at) > CURRENT_TIMESTAMP)")
 	}
 	if edge, _ := args["edge"].(string); edge != "" {
 		var node string
@@ -1704,12 +1737,12 @@ func (h *Handler) toolCreateSecurityBan(r *http.Request, args map[string]any) (a
 	reason, _ := args["reason"].(string)
 	domain, _ := args["domain"].(string)
 	expiresAt, _ := args["expires_at"].(string)
-	id := uuid.New().String()
-	var exp any
-	if expiresAt != "" {
-		exp = expiresAt
+	exp, err := security.NormalizeBanExpiry(expiresAt)
+	if err != nil {
+		return nil, err
 	}
-	_, err := h.DB.ExecContext(r.Context(),
+	id := uuid.New().String()
+	_, err = h.DB.ExecContext(r.Context(),
 		`INSERT INTO security_bans (id, ip, domain, reason, source, expires_at) VALUES (?, ?, ?, ?, 'native', ?)`,
 		id, ip, domain, reason, exp)
 	if err != nil {
@@ -1726,6 +1759,9 @@ func (h *Handler) toolDeleteSecurityBan(r *http.Request, id string) (any, error)
 	if id == "" {
 		return nil, fmt.Errorf("id requis")
 	}
+	var ip, reason, source string
+	h.DB.QueryRowContext(r.Context(), //nolint:errcheck
+		`SELECT ip, reason, source FROM security_bans WHERE id=?`, id).Scan(&ip, &reason, &source)
 	res, err := h.DB.ExecContext(r.Context(), `DELETE FROM security_bans WHERE id=?`, id)
 	if err != nil {
 		return nil, err
@@ -1735,10 +1771,27 @@ func (h *Handler) toolDeleteSecurityBan(r *http.Request, id string) (any, error)
 		return nil, fmt.Errorf("ban introuvable: %s", id)
 	}
 	_ = admindb.WriteAudit(h.DB, adminauth.ActorFromContext(r.Context()), "delete", "ban:"+id, "")
-	if h.OnBansChange != nil {
+	h.notifyUnban(r, ip, reason, source, id)
+	return map[string]any{"deleted": id}, nil
+}
+
+// notifyUnban trace le déban dans l'historique (rejoué aux passerelles qui l'auraient manqué, et
+// point de départ du comptage Fail2Ban) puis le propage aux passerelles.
+func (h *Handler) notifyUnban(r *http.Request, ip, reason, source, banID string) {
+	if ip == "" {
+		if h.OnBansChange != nil {
+			h.OnBansChange()
+		}
+		return
+	}
+	h.DB.ExecContext(r.Context(), //nolint:errcheck
+		`INSERT INTO security_ban_history (ip, domain, action, reason, source, ban_id) VALUES (?, '', 'unbanned', ?, ?, ?)`,
+		ip, reason, source, banID)
+	if h.OnUnban != nil {
+		h.OnUnban(ip)
+	} else if h.OnBansChange != nil {
 		h.OnBansChange()
 	}
-	return map[string]any{"deleted": id}, nil
 }
 
 func (h *Handler) toolBanIP(r *http.Request, args map[string]any) (any, error) {
@@ -1751,12 +1804,12 @@ func (h *Handler) toolBanIP(r *http.Request, args map[string]any) (any, error) {
 		reason = "mcp_ban"
 	}
 	expiresAt, _ := args["expires_at"].(string)
-	id := "mcp-" + ip
-	var exp any
-	if expiresAt != "" {
-		exp = expiresAt
+	exp, err := security.NormalizeBanExpiry(expiresAt)
+	if err != nil {
+		return nil, err
 	}
-	_, err := h.DB.ExecContext(r.Context(),
+	id := "mcp-" + ip
+	_, err = h.DB.ExecContext(r.Context(),
 		`INSERT INTO security_bans (id, ip, domain, reason, source, expires_at) VALUES (?, ?, '', ?, 'native', ?)
 		 ON CONFLICT(id) DO UPDATE SET reason=excluded.reason, expires_at=excluded.expires_at`,
 		id, ip, reason, exp)
@@ -1780,9 +1833,7 @@ func (h *Handler) toolUnbanIP(r *http.Request, ip string) (any, error) {
 	}
 	n, _ := res.RowsAffected()
 	_ = admindb.WriteAudit(h.DB, adminauth.ActorFromContext(r.Context()), "unban_ip", "ip:"+ip, "")
-	if h.OnBansChange != nil {
-		h.OnBansChange()
-	}
+	h.notifyUnban(r, ip, "", "", "")
 	return map[string]any{"ip": ip, "deleted": n}, nil
 }
 
@@ -1948,7 +1999,7 @@ func (h *Handler) toolImportCert(r *http.Request, args map[string]any) (any, err
 		 ON CONFLICT(domain) DO UPDATE SET
 		   issuer=excluded.issuer, cert_pem=excluded.cert_pem, key_pem=excluded.key_pem,
 		   expires_at=excluded.expires_at, updated_at=CURRENT_TIMESTAMP`,
-		domain, issuer, certPEM, keyPEM, leaf.NotAfter.UTC().Format(time.RFC3339))
+		domain, issuer, certPEM, keyPEM, sqltime.Format(leaf.NotAfter))
 	if err != nil {
 		return nil, err
 	}
@@ -2488,9 +2539,9 @@ func (h *Handler) toolImportAutomation(r *http.Request, args map[string]any) (an
 
 	for _, sm := range parsed.Silences {
 		name, _ := sm["name"].(string)
-		startsAt, _ := sm["starts_at"].(string)
-		endsAt, _ := sm["ends_at"].(string)
-		if name == "" || startsAt == "" || endsAt == "" {
+		startsAt, errS := yamlTime(sm["starts_at"])
+		endsAt, errE := yamlTime(sm["ends_at"])
+		if name == "" || errS != nil || errE != nil {
 			continue
 		}
 		var ruleIDs []string
@@ -2507,12 +2558,21 @@ func (h *Handler) toolImportAutomation(r *http.Request, args map[string]any) (an
 		ruleIDsJSON, _ := json.Marshal(ruleIDs)
 		if _, err := h.DB.ExecContext(ctx,
 			`INSERT INTO automation_silences (id, name, rule_ids, starts_at, ends_at) VALUES (?, ?, ?, ?, ?)`,
-			uuid.New().String(), name, string(ruleIDsJSON), startsAt, endsAt); err == nil {
+			uuid.New().String(), name, string(ruleIDsJSON), sqltime.Format(startsAt), sqltime.Format(endsAt)); err == nil {
 			summary["silences_created"]++
 		}
 	}
 
 	return summary, nil
+}
+
+// yamlTime lit une date d'un document YAML : yaml.v3 décode un horodatage non quoté en time.Time.
+func yamlTime(v any) (time.Time, error) {
+	if t, ok := v.(time.Time); ok {
+		return t, nil
+	}
+	s, _ := v.(string)
+	return sqltime.Parse(s)
 }
 
 func (h *Handler) toolListSilences(r *http.Request) (any, error) {
@@ -2574,7 +2634,7 @@ func (h *Handler) toolCreateSilence(r *http.Request, args map[string]any) (any, 
 	id := uuid.New().String()
 	if _, err := h.DB.ExecContext(r.Context(),
 		`INSERT INTO automation_silences (id, name, rule_ids, starts_at, ends_at) VALUES (?, ?, ?, ?, ?)`,
-		id, name, string(ruleIDsJSON), startsAt, endsAt,
+		id, name, string(ruleIDsJSON), sqltime.Format(startsAt), sqltime.Format(endsAt),
 	); err != nil {
 		return nil, err
 	}
@@ -2608,12 +2668,42 @@ func (h *Handler) handleResourcesList(req rpcRequest) rpcResponse {
 	})
 }
 
+// resourceTools associe chaque ressource à l'outil qu'elle expose : sa lecture
+// exige les mêmes droits que l'outil.
+var resourceTools = map[string]string{
+	"goproxify://proxies":             "list_proxies",
+	"goproxify://nodes":               "list_nodes",
+	"goproxify://agents":              "list_agents",
+	"goproxify://alerts":              "list_alerts",
+	"goproxify://users":               "list_users",
+	"goproxify://snippets":            "list_snippets",
+	"goproxify://domains":             "list_domains",
+	"goproxify://certs":               "list_certs",
+	"goproxify://certs/monitor":       "get_cert_status",
+	"goproxify://logs":                "list_logs",
+	"goproxify://security/bans":       "list_security_bans",
+	"goproxify://security/threats":    "list_security_threats",
+	"goproxify://security/cves":       "list_security_cves",
+	"goproxify://portal/destinations": "list_portal_destinations",
+	"goproxify://portal/users":        "list_portal_users",
+	"goproxify://portal/templates":    "list_portal_templates",
+	"goproxify://portal/audit":        "list_portal_audit",
+	"goproxify://declared-nodes":      "list_declared_nodes",
+}
+
 func (h *Handler) handleResourcesRead(req rpcRequest, r *http.Request) rpcResponse {
 	var p struct {
 		URI string `json:"uri"`
 	}
 	if err := json.Unmarshal(req.Params, &p); err != nil {
 		return errResp(req.ID, -32602, "invalid params")
+	}
+	tool, ok := resourceTools[p.URI]
+	if !ok {
+		return errResp(req.ID, -32002, "resource not found: "+p.URI)
+	}
+	if denied := h.denyTool(r, tool); denied != "" {
+		return errResp(req.ID, -32603, denied)
 	}
 	var data any
 	var err error

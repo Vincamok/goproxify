@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/vincamok/goproxify/internal/sqltime"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -145,7 +146,7 @@ func (s *Store) CreateChallenge(ctx context.Context, userID string, method Metho
 		`INSERT INTO user_mfa_challenges (id, user_id, method, code_hash, data, expires_at)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
 		id, userID, method, string(hash), data,
-		time.Now().Add(5*time.Minute),
+		sqltime.Format(time.Now().Add(5*time.Minute)),
 	)
 	return id, err
 }
@@ -185,7 +186,7 @@ func (s *Store) CreateWebAuthnChallenge(ctx context.Context, userID string, sess
 	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO user_mfa_challenges (id, user_id, method, data, expires_at)
 		 VALUES (?, ?, 'webauthn', ?, ?)`,
-		id, userID, string(b), time.Now().Add(5*time.Minute),
+		id, userID, string(b), sqltime.Format(time.Now().Add(5*time.Minute)),
 	)
 	return id, err
 }
@@ -283,7 +284,7 @@ func (s *Store) CreateTrustedDevice(ctx context.Context, userID, tokenHash, name
 		`INSERT INTO user_trusted_devices (id, user_id, token_hash, name, expires_at)
 		 VALUES (?, ?, ?, ?, ?)`,
 		id, userID, tokenHash, name,
-		time.Now().AddDate(0, 0, TrustedDeviceTTLDays),
+		sqltime.Format(time.Now().AddDate(0, 0, TrustedDeviceTTLDays)),
 	)
 	return id, err
 }

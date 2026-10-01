@@ -643,7 +643,7 @@ func (p *Pusher) activeBans(ctx context.Context) ([]map[string]any, error) {
 	rows, err := p.db.QueryContext(ctx, `
 		SELECT id, ip, reason, source, expires_at
 		FROM security_bans
-		WHERE expires_at IS NULL OR expires_at = '' OR expires_at > CURRENT_TIMESTAMP`)
+		WHERE expires_at IS NULL OR expires_at = '' OR datetime(expires_at) > CURRENT_TIMESTAMP`)
 	if err != nil {
 		return []map[string]any{}, nil
 	}

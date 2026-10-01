@@ -694,7 +694,7 @@ goproxify security cve sla set -file <sla.json> [-admin-url …] [-token …]
 
 **`security threat simulate`** — rejoue les access logs récents (`-hours`, défaut 1, max 24 ; `-domain` pour un seul domaine) contre la config candidate du fichier, surchargée sur la config actuelle, et affiche le résultat en JSON : requêtes bloquées, faux positifs probables (`legit_blocked`), IP et bans, actuel vs candidat. Ne modifie rien. Voir `POST /api/v1/security/threat-config/simulate`.
 
-**`security bans`** — liste, ajoute ou supprime des IPs bannies manuellement. `-ttl` accepte des durées Go (`1h`, `24h`, `7d`). `list` accepte `-edge` (nom du nœud ou id du token : les bans de cette passerelle et les bans globaux), `-source` et `-active true` (non expirés) ou `false` (expirés) ; la passerelle d’origine est affichée entre crochets.
+**`security bans`** — liste, ajoute ou supprime des IPs bannies manuellement. `-ttl` accepte une durée Go (`30m`, `1h`, `24h`) ou un nombre entier de jours (`7d`), convertie par la CLI en date d'expiration (`expires_at`) au moment de l'appel ; sans `-ttl`, le ban est permanent. Une durée invalide ou nulle est refusée sans rien créer (avant Admin `0.69.5`, `-ttl` était ignoré et le ban toujours permanent). `list` accepte `-edge` (nom du nœud ou id du token : les bans de cette passerelle et les bans globaux), `-source` et `-active true` (non expirés) ou `false` (expirés) ; la passerelle d’origine est affichée entre crochets.
 
 **`security cve sla`** — lit ou écrit le délai de correction attendu des CVE (en jours après détection), par tranche de gravité CVSS ; réglage global (Admin `0.52.3`). Fichier `sla.json` :
 
@@ -839,6 +839,8 @@ goproxify me tokens revoke <id> [-admin-url …] [-token …]
 
 `tokens scopes` liste les scopes disponibles pour votre compte (dépend de votre rôle).
 `tokens create` affiche la valeur du token une seule fois à la création.
+
+Utilisée avec un PAT, une commande d'écriture exige le scope `:write` de sa ressource, un scope de lecture ne suffit pas : `certs:write` pour `cert` et `internal-ca`, `domains:write` pour `domain`, `alerts:write` pour `alert` (canaux, règles, `alert ack`), `security:write` pour `security rules`, `security schedule` et `security playbook` (lectures : `audit:read`, compte admin). Voir le tableau complet dans [api_specs.md](api_specs.md#scope-pat-exigé-par-route). Depuis Admin `0.70.0`, un token créé avant doit être recréé avec ces scopes.
 
 Exemples :
 

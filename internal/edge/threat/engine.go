@@ -355,6 +355,19 @@ func (e *Engine) RecordStatus(ip string, status int) {
 	}
 }
 
+// WhitelistedIP indique si l'IP est exemptée du Sentinel (liste blanche globale ou des routes).
+func (e *Engine) WhitelistedIP(ip string) bool {
+	e.mu.RLock()
+	wl := e.wl
+	e.mu.RUnlock()
+	return wl.allowedIP(ip)
+}
+
+// ResetIP remet à zéro les compteurs d'une IP débannie depuis l'Admin.
+func (e *Engine) ResetIP(ip string) {
+	e.counters.reset(ip)
+}
+
 // WithSignal enrichit le contexte de la requête avec la raison du signal Sentinel.
 // Utilisé par server.go pour transmettre la raison à l'access log.
 func WithSignal(r *http.Request, reason string) *http.Request {

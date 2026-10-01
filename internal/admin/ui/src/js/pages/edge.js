@@ -239,7 +239,7 @@ pages['edge-waf'] = async function() {
         </div>
       </div>
       <div style="margin-top:16px;display:flex;justify-content:flex-end;">
-        <button type="button" class="btn btn-primary" id="edge-waf-save" onclick="saveEdgeWaf()">${t('common.save')}</button>
+        ${Role.canWriteSnippets() ? `<button type="button" class="btn btn-primary" id="edge-waf-save" onclick="saveEdgeWaf()">${t('common.save')}</button>` : ''}
       </div>
       ${wafSnippets.length ? `
       <div style="margin-top:20px;">
@@ -528,7 +528,7 @@ pages['edge-ipfilter'] = async function() {
           ${t('edgepage.geo.linked_snippets')} ${geoSnippets.map(s => `<code>${esc(s.name||s.id)}</code>`).join(', ')}
         </div>` : ''}
         <div style="display:flex;justify-content:flex-end;gap:8px;border-top:1px solid var(--border);padding-top:12px;margin-top:4px;">
-          <button type="button" class="btn btn-primary" id="edge-geo-save" onclick="saveEdgeGeoIP()">${t('edgepage.geo.save')}</button>
+          ${Role.canWriteSnippets() ? `<button type="button" class="btn btn-primary" id="edge-geo-save" onclick="saveEdgeGeoIP()">${t('edgepage.geo.save')}</button>` : ''}
         </div>
       </div>
 
@@ -545,7 +545,7 @@ pages['edge-ipfilter'] = async function() {
           <span class="tag ${botChallenge?'tag-accent':'tag-neutral'}" id="bot-challenge-tag" style="cursor:pointer;" onclick="toggleBotChallenge()">${botChallenge ? t('common.enabled') : t('common.disabled')}</span>
         </div>
         <div style="display:flex;justify-content:flex-end;gap:8px;border-top:1px solid var(--border);padding-top:12px;margin-top:4px;">
-          <button type="button" class="btn btn-primary" id="edge-bot-save" onclick="saveEdgeBot()">${t('edgepage.bot.save')}</button>
+          ${Role.canWriteSnippets() ? `<button type="button" class="btn btn-primary" id="edge-bot-save" onclick="saveEdgeBot()">${t('edgepage.bot.save')}</button>` : ''}
         </div>
       </div>
 

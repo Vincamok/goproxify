@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	"github.com/vincamok/goproxify/internal/admin/rulesengine"
+	"github.com/vincamok/goproxify/internal/sqltime"
 )
 
 // RulesEngineHandler expose le CRUD des règles du moteur de règles.
@@ -389,10 +390,11 @@ func (h *RulesEngineHandler) createSilence(w http.ResponseWriter, r *http.Reques
 	}
 	ruleIDs, _ := json.Marshal(body.RuleIDs)
 	id := uuid.New().String()
+	// Comparées à CURRENT_TIMESTAMP : en UTC, au même format (un time.Time lié tel quel garderait le décalage du client).
 	_, err := h.DB.ExecContext(r.Context(), `
 		INSERT INTO automation_silences (id, name, rule_ids, starts_at, ends_at)
 		VALUES (?, ?, ?, ?, ?)`,
-		id, body.Name, string(ruleIDs), body.StartsAt, body.EndsAt,
+		id, body.Name, string(ruleIDs), sqltime.Format(body.StartsAt), sqltime.Format(body.EndsAt),
 	)
 	if err != nil {
 		h.Log.Error("rulesengine: create silence", "err", err)

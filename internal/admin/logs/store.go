@@ -654,8 +654,7 @@ func (s *Store) StartRetentionLoop(ctx context.Context, onUpdate func() (accessD
 				a, sys := onUpdate()
 				s.SetRetention(a, sys)
 			}
-			// Supprime les entrées dont la date de rétention est dépassée.
-			s.db.Exec(`DELETE FROM logs WHERE retained_until IS NOT NULL AND retained_until < datetime('now')`) //nolint:errcheck
+			s.purgeRetained()
 		}
 		purge()
 		t := time.NewTicker(24 * time.Hour)
@@ -669,6 +668,13 @@ func (s *Store) StartRetentionLoop(ctx context.Context, onUpdate func() (accessD
 			}
 		}
 	}()
+}
+
+// purgeRetained supprime les entrées dont la date de rétention est dépassée.
+// retained_until est en RFC3339 : la borne doit l'être aussi (datetime('now') compare mal, 'T' > ' ').
+func (s *Store) purgeRetained() {
+	s.db.Exec(`DELETE FROM logs WHERE retained_until IS NOT NULL AND retained_until < ?`, //nolint:errcheck
+		time.Now().UTC().Format(time.RFC3339))
 }
 
 // DeleteByIP supprime tous les logs d'une IP (droit à l'effacement RGPD).

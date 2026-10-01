@@ -10,6 +10,8 @@ async function renderCertsPage(ctx) {
   const isAdmin = mode === 'admin';
   const edge    = isAdmin ? null : state.selectedEdge;
   const edgeLabel = edge ? (edge.display_name || edge.node_name || edge.id || '—') : '';
+  // Écritures domaines/certificats réservées aux admins (API : 403 pour un user).
+  const canManage = Role.isAdmin();
 
   const content = document.getElementById('content');
   document.getElementById('topbar-actions').innerHTML = isAdmin
@@ -73,7 +75,7 @@ async function renderCertsPage(ctx) {
     const emptyMsg = isAdmin
       ? t('domains.empty_admin')
       : t('domains.empty_edge', { name: esc(edgeLabel) });
-    const colSpan = isAdmin ? 6 : 5;
+    const colSpan = (isAdmin ? 5 : 4) + (canManage ? 1 : 0);
 
     content.innerHTML = `
       <div style="margin-bottom:14px;padding:10px 12px;background:color-mix(in srgb,var(--accent) 7%,transparent);border:1px solid color-mix(in srgb,var(--accent) 22%,transparent);border-radius:6px;font-size:12px;color:var(--text2);">
@@ -85,7 +87,7 @@ async function renderCertsPage(ctx) {
         <div class="table-wrap">
           <table>
             <thead><tr>
-              <th>${t('trafic.domain')}</th>${isAdmin ? `<th>${t('domains.col.entry_edge')}</th>` : ''}<th>${t('domains.col.dns_provider')}</th><th>${t('domains.col.certificate')}</th><th>${t('domains.col.delegation')}</th><th>${t('trafic.actions')}</th>
+              <th>${t('trafic.domain')}</th>${isAdmin ? `<th>${t('domains.col.entry_edge')}</th>` : ''}<th>${t('domains.col.dns_provider')}</th><th>${t('domains.col.certificate')}</th><th>${t('domains.col.delegation')}</th>${canManage ? `<th>${t('trafic.actions')}</th>` : ''}
             </tr></thead>
             <tbody>
               ${rows.length ? rows.map(d => {
@@ -115,11 +117,11 @@ async function renderCertsPage(ctx) {
                   <td style="color:var(--text2);font-size:12px">${esc(provLabel)}</td>
                   <td>${certTag}${tlsMetricsHtml}</td>
                   <td>${delegLabel}</td>
-                  <td><div style="display:inline-flex;gap:4px">
+                  ${canManage ? `<td><div style="display:inline-flex;gap:4px">
                     <button class="btn btn-ghost btn-icon btn-sm" onclick="openDomainModal('${esc(d.id)}')" title="${esc(t('common.edit'))}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
                     <button class="btn btn-ghost btn-icon btn-sm" onclick="renewDomainCert('${esc(d.id)}')" title="${esc(t('domains.renew'))}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
                     <button class="btn btn-ghost btn-icon btn-sm" onclick="deleteDomain('${esc(d.id)}','${esc(d.domain)}')" title="${esc(t('common.delete'))}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
-                  </div></td>
+                  </div></td>` : ''}
                 </tr>`;
               }).join('') : `<tr><td colspan="${colSpan}" class="empty"><p>${emptyMsg}</p></td></tr>`}
             </tbody>

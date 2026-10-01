@@ -63,6 +63,38 @@ Crée un PAT. Le secret en clair n’est retourné qu’une fois.
 
 Révoque immédiatement le PAT.
 
+### Scope PAT exigé par route
+
+Une requête authentifiée par PAT doit porter le scope de la route (`403 scope insuffisant: <scope>` sinon), en plus du rôle exigé par la route (`adminOnly` : admin/superadmin). Les sessions UI (JWT) ne sont soumises qu'au rôle. `GET` = lecture, toute autre méthode = écriture.
+
+| Préfixe de route | Lecture (`GET`) | Écriture |
+|---|---|---|
+| `/api/v1/proxies` | `proxies:read` | `proxies:write` (`DELETE` : `proxies:delete`) |
+| `/api/v1/nodes`, `/declared-nodes`, `/bootstrap-tickets`, `/node-events`, `/discovered-containers`, `/backends/health`, `/agents` | `nodes:read` | `nodes:write` |
+| `/api/v1/alert-channels`, `/alert-rules`, `/alert-events` | `alerts:read` | `alerts:write` |
+| `/api/v1/domains` | `domains:read` | `domains:write` |
+| `/api/v1/certs` (dont `deploy-targets`, `pull-tokens`), `/api/v1/internal-ca` | `certs:read` | `certs:write` |
+| `/api/v1/snippets` | `snippets:read` | `snippets:write` |
+| `/api/v1/security`, `/ip-profiles`, `/auth-providers`, `/rules-engine`, `/scheduled-tasks`, `/playbooks` | `audit:read` | `security:write` |
+| `/api/v1/import` | `audit:read` | `import:write` |
+| `/api/v1/portal`, `/portal-page-templates` | `portal:read` | `portal:write` (contenu d'un terminal — rejeu, observation — : `portal:write` même en `GET`) |
+| `/api/v1/prism`, `/metrics/proxies`, `/metrics/summary` | `metrics:read` | idem |
+| `/api/v1/logs` (`/logs/reveal-ip` : `gdpr:reveal`) | `logs:read` | idem |
+| `/api/v1/backups` · `/users` · `/tokens` · `/teams` · `/audit` · `/pairing-secret` | `backups:read` · `users:read` · `users:read` · `teams:read` · `audit:read` · `pairing:read` | idem |
+
+Depuis Admin `0.70.0` : les écritures sur `/alert-*`, `/domains`, `/certs` exigent `alerts:write`, `domains:write`, `certs:write` (le scope de lecture suffisait auparavant), `/internal-ca` exige `certs:read` / `certs:write`, et `/rules-engine`, `/scheduled-tasks`, `/playbooks` exigent `audit:read` / `security:write` (aucun scope n'était vérifié auparavant, seul le rôle admin). Ces scopes d'écriture sont réservés aux rôles admin et superadmin ; un PAT existant ne les reçoit pas, il faut en créer un nouveau.
+
+### Rôle exigé pour les écritures
+
+Routes ouvertes en lecture à tout compte authentifié mais dont les écritures sont réservées à certains rôles. Le contrôle s'applique aux sessions UI (JWT) comme aux PAT, en plus du scope PAT ci-dessus.
+
+| Routes | Lecture (`GET`) | Écriture (toute autre méthode) |
+|---|---|---|
+| `/api/v1/certs` (dont `deploy-targets`, `pull-tokens`), `/domains`, `/alert-channels`, `/alert-rules` (dont `simulate`), `/alert-events` (`ack`), `/ip-profiles` (dont `refresh`) | tout compte | admin / superadmin — sinon `403 accès réservé aux administrateurs` |
+| `/api/v1/snippets` | tout compte | admin / superadmin, ou `user` disposant d'au moins un grant `write` (équipe ou direct) — sinon `403 accès insuffisant` |
+
+Depuis Admin `0.70.2` : jusque-là, seul le scope PAT était vérifié sur ces écritures ; un compte `user` connecté à l'interface pouvait obtenir, importer ou supprimer des certificats, générer un pull token (et donc récupérer la clé privée via `/cert-bundle`), créer ou renouveler des domaines, et créer ou supprimer des canaux et règles d'alerte.
+
 ---
 
 ## Initialisation (First Boot)
@@ -178,6 +210,8 @@ Vide le cache disque de ce proxy sur toutes les passerelles qui l'hébergent (be
 ### `POST /api/v1/proxies/:domain/disable`
 
 Active/désactive un proxy à chaud.
+
+Écritures sur les deploy targets et pull tokens (`POST`, `DELETE`, `trigger`) : admin / superadmin (voir [Rôle exigé pour les écritures](#rôle-exigé-pour-les-écritures)).
 
 ### `GET /api/v1/certs/:id/deploy-targets`
 
@@ -341,6 +375,8 @@ Corps : `{"data": <sauvegarde>, "selection": {"proxy_ids", "import_users", "impo
 
 ## Certificats
 
+Lecture pour tout compte authentifié ; obtention, import et suppression réservés aux admins / superadmins.
+
 ### `GET /api/v1/certs`
 
 Liste les certificats gérés.
@@ -503,6 +539,8 @@ Révoque un certificat émis (marqué `revoked`, ne supprime pas la ligne).
 
 ## Profils IP
 
+Lecture pour tout compte authentifié ; création, modification, suppression et `refresh` réservés aux admins / superadmins.
+
 ### `GET /api/v1/ip-profiles` · `GET /api/v1/ip-profiles/:id`
 
 Liste / détail des profils IP (`id`, `name`, `profile_type`, `mode`, `feed_urls`, `feed_format`, `refresh_interval_h`, `cidrs`, `enabled`, `last_updated_at`…). Champs d'état du rafraîchissement automatique :
@@ -523,6 +561,8 @@ Force un rafraîchissement complet (téléchargement inconditionnel, garde-fou d
 ---
 
 ## Snippets
+
+Lecture pour tout compte authentifié ; écritures réservées aux admins / superadmins et aux comptes `user` disposant d'au moins un grant `write`.
 
 ### `GET /api/v1/snippets/:section`
 
@@ -739,7 +779,13 @@ Liste les bans (500 au plus, du plus récent au plus ancien). Paramètres : `act
 
 ### `POST /api/v1/security/bans`
 
-Crée un ban manuel. Corps : `{ "ip", "domain", "reason", "expires_at" }`.
+Crée un ban manuel. Corps : `{ "ip", "domain", "reason", "expires_at" }`. Réponse `201` : `{ "id" }`.
+
+`expires_at` est une date RFC3339 (décalage horaire et fractions de seconde acceptés), enregistrée en UTC à la seconde (`2026-12-31T23:59:59Z`) ; absent, `null` ou `""` → ban permanent. Depuis Admin `0.69.5`, une date illisible renvoie `400` au lieu d'être enregistrée telle quelle (le ban n'était alors jamais actif). Il n'y a pas de champ `ttl` : une durée se convertit en `expires_at` côté client, comme le fait `goproxify security bans add -ttl`.
+
+### `PATCH /api/v1/security/bans/:id`
+
+Modifie l'expiration d'un ban. Corps : `{ "expires_at": "<RFC3339>" }` (même validation et normalisation qu'à la création, `""` → permanent) ou `{ "permanent": true }`. Réponse `204` ; `400` si l'expiration est illisible ou si le corps ne porte aucun des deux champs.
 
 ### `DELETE /api/v1/security/bans/:id`
 
@@ -770,7 +816,7 @@ Délai de correction attendu (en jours après détection), par tranche de gravit
 
 ### `GET /api/v1/security/fail2ban` · `PUT /api/v1/security/fail2ban`
 
-Lit ou met à jour la configuration Fail2Ban (`enabled`, `window_sec`, `max_errors`, `ban_duration_sec`, `whitelist`).
+Lit ou met à jour la configuration Fail2Ban (`enabled`, `window_sec`, `max_errors`, `ban_duration_sec`, `whitelist`). `whitelist` accepte des IPv4, IPv6 et CIDR des deux familles. Depuis Admin `0.69.3` / Edge `0.17.5`, Fail2Ban banne aussi les IPv6, par /64 : l'`ip` d'un tel ban (source `fail2ban`) dans `GET /security/bans` est le préfixe, par exemple `2a01:e0a:1:2::/64` (l'adresse seule si la liste blanche recoupe ce /64) — voir [Fail2Ban natif Go](security.md#fail2ban-natif-go).
 
 ### `GET /api/v1/security/crowdsec` · `PUT /api/v1/security/crowdsec`
 
@@ -789,6 +835,8 @@ Configuration du moteur Sentinel. Paramètre optionnel `edge=<id ou nom>` :
 - sans `edge` : configuration globale.
 
 Lecture : valeur du groupe, sinon valeur propre à la passerelle (antérieure aux groupes), sinon globale. Au démarrage, la valeur d'un groupe qui n'en a pas encore est reprise du premier membre (dans l'ordre d'`architecture.json`) qui en avait une ; un désaccord entre membres est signalé dans le log de l'Admin, jamais écrasé.
+
+Chaque passerelle garde une copie chiffrée de la configuration reçue (`/etc/goproxify/threat-config.gpx`) et la recharge à son démarrage : Sentinel reste actif si l'Admin est injoignable. Un nouvel enregistrement remplace cette copie.
 
 ### `POST /api/v1/security/threat-config/simulate`
 
@@ -944,7 +992,7 @@ Liste les silences. Réponse : tableau `Silence[]` (`id, name, rule_ids, starts_
 
 ### `POST /api/v1/rules-engine/silences`
 
-Crée un silence. Corps : `{ name, starts_at, ends_at, rule_ids }` (`starts_at`/`ends_at` en RFC3339, `rule_ids` optionnel — IDs de `rules_engine_rules` et/ou `alert_rules`, vide = toutes les règles). `400` si `ends_at <= starts_at`. Réponse : `{ id }` (201).
+Crée un silence. Corps : `{ name, starts_at, ends_at, rule_ids }` (`starts_at`/`ends_at` en RFC3339, avec n'importe quel décalage horaire — stockées et renvoyées en UTC ; `rule_ids` optionnel — IDs de `rules_engine_rules` et/ou `alert_rules`, vide = toutes les règles). `400` si `ends_at <= starts_at`. Réponse : `{ id }` (201).
 
 ### `DELETE /api/v1/rules-engine/silences/:id`
 
@@ -968,7 +1016,7 @@ Exporte en YAML toute la configuration d'automatisation : `{ version, rules[], c
 
 ### `POST /api/v1/rules-engine/import`
 
-Importe un document YAML au format de l'export ci-dessus. Corps : le document YAML brut. Règles et canaux upsertés par nom ; silences toujours créés. Réponse : `{ rules_created, rules_updated, channels_created, channels_updated, silences_created }`.
+Importe un document YAML au format de l'export ci-dessus. Corps : le document YAML brut. Règles et canaux upsertés par nom ; silences toujours créés, dates ramenées en UTC — un silence dont `starts_at` ou `ends_at` n'est pas une date (RFC3339, ou `AAAA-MM-JJ HH:MM:SS` en UTC) est ignoré. Réponse : `{ rules_created, rules_updated, channels_created, channels_updated, silences_created }`.
 
 ---
 
@@ -1271,6 +1319,6 @@ Codes d'erreur :
 - `GET /api/v1/prism/geo/points?[from&to&proxy&node_name&limit]` — trafic agrégé par ville, les plus actives d'abord (`limit` 300 par défaut, 1000 max) : `[{city, region, country_code, country_name, lat, lon, requests, errors, error_rate, ips, banned_ips}]`. La position est approximative (géolocalisation IP, précision de l'ordre de la ville) ; les IPs pas encore localisées sont ignorées.
 - `GET /api/v1/prism/anomalies?[from&to&proxy&node_name]` — écarts détectés sur la période, critiques d'abord : `[{kind, level, subject, label, value, baseline, count, banned?}]`. `kind` : `error_spike` (point de la courbe > moyenne + 2,5 écarts-types, au moins 10 erreurs ; `subject` = tranche horaire), `dominant_ip` (au moins 20 % des requêtes et 50 requêtes ; `banned` si déjà bannie), `country_errors` (au moins 20 % d'erreurs sur 50 requêtes, 2 max), `backend_errors` (plus de 10 % d'erreurs sur 20 requêtes, 2 max), `bot_share` (au moins 30 %). `level` : `critical` | `warning`.
 - `GET /api/v1/prism/slo?[target&days&proxy&node_name]` — SLO de disponibilité (réponses non-5xx) sur une fenêtre glissante (`target` en % : objectif enregistré, 99.9 par défaut ; `days` : 30 par défaut, 90 max ; `from`/`to` ignorés) : `{target, days, requests, errors, availability, budget_total, budget_left_pct, burn_1h, burn_6h, state}`. `burn_*` vaut 1 quand le budget est consommé exactement au rythme de l'objectif. `state` : `exhausted` (budget consommé), `critical` (burn ≥ 14,4 sur 1 h et ≥ 6 sur 6 h), `warning` (burn ≥ 3 sur 6 h), sinon `ok`.
-- `GET /api/v1/alert-events?[days&limit&trigger&node]` — alertes déclenchées (30 jours conservés, plus récente d'abord) : `[{id, rule_id, rule_name, trigger, detail, channels, title, body, priority, silenced, fired_at}]` ; `node` filtre sur le nom de passerelle du détail. `silenced=true` : la règle correspondait mais un silence actif (`Automatisation > Alertes > Silences & maintenance`) a bloqué l'envoi — `channels` est alors vide.
+- `GET /api/v1/alert-events?[days&limit&trigger&node]` — alertes déclenchées (30 jours conservés, plus récente d'abord) : `[{id, rule_id, rule_name, trigger, detail, channels, title, body, priority, silenced, fired_at}]` ; `node` filtre sur le nom de passerelle du détail. `silenced=true` : la règle correspondait mais un silence actif (`Automatisation > Alertes > Silences & maintenance`) a bloqué l'envoi — `channels` est alors vide. `POST /api/v1/alert-events/{id}/ack` (acquittement) est réservé aux admins / superadmins.
 - `GET /api/v1/prism/slo/config` → `{target}` ; `PUT /api/v1/prism/slo/config` `{target}` (admin, entre 90 et 99.999) — objectif SLO enregistré (réglage `slo.target`, 99.9 par défaut), utilisé par l'écran, `GET /prism/slo` sans `target`, l'outil MCP `get_prism_slo` et l'alerte `slo_burn`.
 - `GET /api/v1/prism/live-ips` renvoie en plus `city`, `lat`, `lon` (0/0 tant que l'IP n'est pas localisée).

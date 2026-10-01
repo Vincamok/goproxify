@@ -57,7 +57,7 @@ func banTechnique(source, reason string) (key, label string) {
 func (h *PrismHandler) bansBreakdown(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.DB.QueryContext(r.Context(), `
 		SELECT source, reason, COUNT(*) FROM security_bans
-		WHERE expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP
+		WHERE expires_at IS NULL OR datetime(expires_at) > CURRENT_TIMESTAMP
 		GROUP BY source, reason`)
 	if err != nil {
 		prismJSONErr(w, err, http.StatusInternalServerError)
@@ -145,7 +145,7 @@ func (h *PrismHandler) ipScan(w http.ResponseWriter, r *http.Request) {
 
 	if rows, err := h.DB.QueryContext(ctx, `
 		SELECT source, reason, COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', created_at),''), COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', expires_at),'')
-		FROM security_bans WHERE ip = ? AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+		FROM security_bans WHERE ip = ? AND (expires_at IS NULL OR datetime(expires_at) > CURRENT_TIMESTAMP)
 		ORDER BY created_at DESC`, ip); err == nil {
 		for rows.Next() {
 			var b ban

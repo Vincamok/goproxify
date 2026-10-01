@@ -59,13 +59,16 @@ async function renderObsAlerts(scope) {
   const firedByRule = {};
   forCounts.forEach(e => { firedByRule[e.rule_id] = (firedByRule[e.rule_id] || 0) + 1; });
 
+  // Règles, canaux et acquittement réservés aux admins (API : 403 pour un user).
+  const canManage = Role.isAdmin();
+
   const nodeSel = scope.lock ? '' : `
     <select class="form-input" style="max-width:200px" data-oa="node">
       <option value="">${esc(t('obs.syn.all_edges'))}</option>
       ${allEdges.map(n => { const v = n.node_name || n.display_name || n.id; return `<option value="${esc(v)}" ${v === node ? 'selected' : ''}>${esc(n.display_name || n.node_name || n.id)}</option>`; }).join('')}
     </select>`;
 
-  const banner = covered ? '' : `
+  const banner = covered || !canManage ? '' : `
     <div class="prism-panel" style="margin-bottom:14px;border-color:var(--yellow)">
       <div class="prism-panel-title" style="color:var(--yellow)">${esc(t('oa.no_rule_title'))}</div>
       <p style="margin:0 0 10px;font-size:13px;color:var(--text2)">${esc(t('oa.no_rule_body'))}</p>
@@ -123,7 +126,7 @@ async function renderObsAlerts(scope) {
 
   const rulesCard = `
     <div class="prism-panel" style="margin-top:14px">
-      <div class="prism-panel-title"><span>${esc(t('oa.rules'))}</span><button type="button" class="btn btn-secondary btn-sm" data-oa="manage">${esc(t('oa.manage'))}</button></div>
+      <div class="prism-panel-title"><span>${esc(t('oa.rules'))}</span>${canManage ? `<button type="button" class="btn btn-secondary btn-sm" data-oa="manage">${esc(t('oa.manage'))}</button>` : ''}</div>
       ${rulesList.length ? `<table class="prism-table"><thead><tr><th>${esc(t('oa.col_rule'))}</th><th>${esc(t('oa.col_triggers'))}</th><th>${esc(t('oa.col_channels'))}</th><th>${esc(t('oa.col_fired'))}</th><th>${esc(t('oa.col_enabled'))}</th></tr></thead>
         <tbody>${rulesList.map(r => `<tr>
           <td><b>${esc(r.name)}</b></td>
@@ -168,7 +171,7 @@ async function renderObsAlerts(scope) {
       <div class="prism-muted" style="margin-bottom:12px">${esc(label(e.trigger))} · ${esc(e.rule_name || '—')} · ${esc(fmtDate(oaTs(e.fired_at)))}</div>
       ${e.silenced ? `<p class="prism-muted" style="margin:0 0 12px">${esc(t('oa.silenced_hint'))}</p>` : ''}
       ${e.acked ? `<p class="prism-muted" style="margin:0 0 12px">${esc(t('oa.acked_by', { who: e.acked_by || '—', when: e.acked_at ? fmtDate(oaTs(e.acked_at)) : '' }))}</p>`
-        : `<button type="button" class="btn btn-primary btn-sm" data-oa="ack" data-i="${list.indexOf(e)}" style="margin-bottom:12px">${esc(t('oa.ack'))}</button>`}
+        : canManage ? `<button type="button" class="btn btn-primary btn-sm" data-oa="ack" data-i="${list.indexOf(e)}" style="margin-bottom:12px">${esc(t('oa.ack'))}</button>` : ''}
       ${e.body ? `<pre class="mono" style="white-space:pre-wrap;word-break:break-word;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:10px;font-size:12px;margin:0 0 12px">${esc(e.body)}</pre>` : ''}
       ${detail ? `<div class="prism-panel-title" style="margin:0 0 6px">${esc(t('oa.detail'))}</div><pre class="mono" style="white-space:pre-wrap;word-break:break-word;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:10px;font-size:12px;margin:0 0 12px">${esc(detail)}</pre>` : ''}
       <div class="prism-dstats" style="grid-template-columns:1fr"><div class="prism-dstat"><span>${esc(t('oa.col_channels'))}</span><b>${(e.channels || []).length}</b></div><div class="prism-dstat"><span>${esc(t('oa.priority'))}</span><b>${e.priority || 0}</b></div></div>`;

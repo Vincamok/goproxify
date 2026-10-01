@@ -18,6 +18,7 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/auth"
 	"github.com/vincamok/goproxify/internal/admin/edgeproxy"
 	"github.com/vincamok/goproxify/internal/edge/router"
+	"github.com/vincamok/goproxify/internal/sqltime"
 )
 
 // Backup est le format natif de sauvegarde Goproxify (.gpx-admin-backup / .gpx-full-backup).
@@ -266,7 +267,7 @@ func Apply(db *sql.DB, b *Backup, sel ImportSelection) ImportResult {
 			stored, hash := auth.PrepareNodeTokenForStore(t.Token)
 			rbacRole := t.RBACRole
 			_, err := db.Exec(verb+` INTO tokens (id, token, token_hash, role, rbac_role, node_name, node_endpoint, expires_at) VALUES (?,?,?,?,?,?,?,?)`,
-				id, stored, hash, t.Role, rbacRole, t.NodeName, t.NodeEndpoint, t.ExpiresAt)
+				id, stored, hash, t.Role, rbacRole, t.NodeName, t.NodeEndpoint, sqlExpiry(t.ExpiresAt))
 			if err == nil {
 				res.Tokens++
 			} else {
@@ -304,7 +305,7 @@ func Apply(db *sql.DB, b *Backup, sel ImportSelection) ImportResult {
 				verb = `INSERT OR REPLACE`
 			}
 			_, err := db.Exec(verb+` INTO user_api_tokens (id, user_id, label, token_hash, token_prefix, expires_at) VALUES (?,?,?,?,?,?)`,
-				id, p.UserID, p.Label, p.TokenHash, p.TokenPrefix, p.ExpiresAt)
+				id, p.UserID, p.Label, p.TokenHash, p.TokenPrefix, sqlExpiry(p.ExpiresAt))
 			if err == nil {
 				res.PATs++
 				for _, scope := range p.Scopes {
@@ -435,6 +436,14 @@ func Apply(db *sql.DB, b *Backup, sel ImportSelection) ImportResult {
 	}
 
 	return res
+}
+
+// sqlExpiry ramène une expiration exportée (RFC3339) au format de CURRENT_TIMESTAMP, auquel elle est comparée.
+func sqlExpiry(s *string) any {
+	if s == nil {
+		return nil
+	}
+	return sqltime.Text(*s)
 }
 
 // ExportBackup crée un Backup complet depuis la DB (ou fichiers passerelle).

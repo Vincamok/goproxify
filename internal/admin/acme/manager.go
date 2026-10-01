@@ -23,6 +23,7 @@ import (
 	xacme "golang.org/x/crypto/acme"
 
 	edgetls "github.com/vincamok/goproxify/internal/edge/tls"
+	"github.com/vincamok/goproxify/internal/sqltime"
 )
 
 // CertPusher envoie le certificat déchiffré aux passerelles.
@@ -378,6 +379,8 @@ func (m *Manager) domainsFromDisk(threshold time.Duration) []string {
 }
 
 func (m *Manager) saveCertMeta(domain, issuer string, expiresAt time.Time, certPEM, keyPEM []byte) error {
+	// Comparée à datetime('now', …) et lue par julianday() : pas de time.Time lié tel quel (t.String()).
+	exp := sqltime.Format(expiresAt)
 	_, err := m.db.Exec(
 		`INSERT INTO certs (id, domain, issuer, expires_at, cert_pem, key_pem)
 		 VALUES (lower(hex(randomblob(16))), ?, ?, ?, ?, ?)
@@ -385,14 +388,14 @@ func (m *Manager) saveCertMeta(domain, issuer string, expiresAt time.Time, certP
 		   issuer=excluded.issuer, expires_at=excluded.expires_at,
 		   cert_pem=excluded.cert_pem, key_pem=excluded.key_pem,
 		   updated_at=CURRENT_TIMESTAMP`,
-		domain, issuer, expiresAt, string(certPEM), string(keyPEM),
+		domain, issuer, exp, string(certPEM), string(keyPEM),
 	)
 	if err != nil {
 		return err
 	}
 	_, _ = m.db.Exec(
 		`UPDATE domains SET cert_expires_at=?, updated_at=CURRENT_TIMESTAMP WHERE domain=?`,
-		expiresAt, domain,
+		exp, domain,
 	)
 	m.writeCertFiles(domain, certPEM, keyPEM)
 	return nil

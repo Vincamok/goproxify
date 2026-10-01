@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/vincamok/goproxify/internal/sqltime"
 	"gopkg.in/yaml.v3"
 )
 
@@ -146,7 +147,7 @@ func (s *UserStore) LoadIntoDB(ctx context.Context, db *sql.DB) error {
 			db.ExecContext(ctx, //nolint:errcheck
 				`INSERT OR IGNORE INTO user_api_tokens(id, user_id, label, token_hash, token_prefix, expires_at)
 				 VALUES(?,?,?,?,?,?)`,
-				p.ID, p.UserID, p.Label, p.TokenHash, p.TokenPrefix, nullableStr(p.ExpiresAt))
+				p.ID, p.UserID, p.Label, p.TokenHash, p.TokenPrefix, nullableStr(sqltime.Text(p.ExpiresAt)))
 			for _, sc := range p.Scopes {
 				db.ExecContext(ctx, //nolint:errcheck
 					`INSERT OR IGNORE INTO user_api_token_scopes(token_id, scope) VALUES(?,?)`,

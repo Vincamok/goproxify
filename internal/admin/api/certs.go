@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/vincamok/goproxify/internal/sqltime"
 )
 
 // CertObtainer est implémenté par acme.Manager.
@@ -288,7 +290,7 @@ func (h *CertsHandler) importCert(w http.ResponseWriter, r *http.Request) {
 		   cert_pem=excluded.cert_pem, key_pem=excluded.key_pem,
 		   updated_at=CURRENT_TIMESTAMP
 		 RETURNING id`,
-		domain, issuer, leaf.NotAfter, req.CertPEM, req.KeyPEM).Scan(&id)
+		domain, issuer, sqltime.Format(leaf.NotAfter), req.CertPEM, req.KeyPEM).Scan(&id)
 	if err != nil {
 		if !isCtxErr(err) {
 			h.Log.Error("certs: import", "err", err)

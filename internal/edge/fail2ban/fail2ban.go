@@ -9,9 +9,9 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -127,10 +127,11 @@ func (e *Engine) Feed(ip string, status int) {
 		return
 	}
 
-	rawIP := strings.Split(ip, ":")[0]
-	if rawIP == "" || isPrivateIP(rawIP) || e.isWhitelisted(rawIP, cfg.Whitelist) {
+	addr, ok := clientAddr(ip)
+	if !ok || isPrivateIP(addr) || whitelisted(netip.PrefixFrom(addr, addr.BitLen()), cfg.Whitelist) {
 		return
 	}
+	key := banKey(addr, cfg.Whitelist)
 
 	window := time.Duration(cfg.WindowSec) * time.Second
 	if window <= 0 {
@@ -146,7 +147,7 @@ func (e *Engine) Feed(ip string, status int) {
 
 	e.mu.Lock()
 	// Nettoyage de la fenêtre pour cette IP.
-	ts := e.counters[rawIP]
+	ts := e.counters[key]
 	filtered := ts[:0]
 	for _, t := range ts {
 		if t.After(cutoff) {
@@ -154,7 +155,7 @@ func (e *Engine) Feed(ip string, status int) {
 		}
 	}
 	filtered = append(filtered, now)
-	e.counters[rawIP] = filtered
+	e.counters[key] = filtered
 	count := len(filtered)
 	e.mu.Unlock()
 
@@ -164,22 +165,22 @@ func (e *Engine) Feed(ip string, status int) {
 
 	// Vérification doublon en mémoire.
 	e.bansMu.RLock()
-	_, already := e.banned[rawIP]
+	_, already := e.banned[key]
 	e.bansMu.RUnlock()
 	if already {
 		return
 	}
 
 	e.bansMu.Lock()
-	e.banned[rawIP] = struct{}{}
+	e.banned[key] = struct{}{}
 	e.mu.Lock()
-	delete(e.counters, rawIP)
+	delete(e.counters, key)
 	e.mu.Unlock()
 	e.bansMu.Unlock()
 
 	ban := Ban{
 		ID:     uuid.New().String(),
-		IP:     rawIP,
+		IP:     key,
 		Reason: "Fail2Ban: trop d'erreurs",
 	}
 	if cfg.BanDurationSec > 0 {
@@ -195,11 +196,20 @@ func (e *Engine) Feed(ip string, status int) {
 	}
 }
 
-// UnbanIP retire une IP de la liste en mémoire (suite à un unban Admin).
+// UnbanIP oublie l'IP (suite à un unban Admin) : elle peut de nouveau être bannie, à partir d'un compteur vide.
 func (e *Engine) UnbanIP(ip string) {
 	e.bansMu.Lock()
 	delete(e.banned, ip)
 	e.bansMu.Unlock()
+	e.mu.Lock()
+	delete(e.counters, ip)
+	e.mu.Unlock()
+}
+
+// Whitelisted indique si la cible d'un ban (IP ou CIDR) recoupe la liste blanche courante.
+func (e *Engine) Whitelisted(ip string) bool {
+	p, ok := toPrefix(ip)
+	return ok && whitelisted(p, e.GetConfig().Whitelist)
 }
 
 // sweep nettoie périodiquement les compteurs pour les IPs inactives.
@@ -240,14 +250,46 @@ func (e *Engine) sweep() {
 	}
 }
 
-func (e *Engine) isWhitelisted(ip string, whitelist []string) bool {
-	parsed := net.ParseIP(ip)
+// clientAddr lit une IP seule, « IP:port » ou « [IPv6]:port ». Faux pour tout ce qui n'est pas une IP.
+func clientAddr(s string) (netip.Addr, bool) {
+	if host, _, err := net.SplitHostPort(s); err == nil {
+		s = host
+	}
+	a, err := netip.ParseAddr(s)
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	return a.Unmap().WithZone(""), true
+}
+
+// toPrefix lit une IP (préfixe /32 ou /128) ou un CIDR.
+func toPrefix(s string) (netip.Prefix, bool) {
+	if p, err := netip.ParsePrefix(s); err == nil {
+		return p, true
+	}
+	a, ok := clientAddr(s)
+	return netip.PrefixFrom(a, a.BitLen()), ok
+}
+
+// banKey est la clé de comptage et la cible du ban : l'adresse pour une IPv4, son /64 pour une IPv6
+// (même agrégation que les compteurs Sentinel). Un /64 revient en général à un seul abonné, qui y
+// change d'adresse à volonté : compté adresse par adresse, il resterait toujours sous le seuil.
+// Si la liste blanche recoupe le /64, on s'en tient à l'adresse pour ne pas bloquer l'IP exemptée.
+func banKey(a netip.Addr, whitelist []string) string {
+	if a.Is4() {
+		return a.String()
+	}
+	p, _ := a.Prefix(64)
+	if whitelisted(p, whitelist) {
+		return a.String()
+	}
+	return p.String()
+}
+
+// whitelisted indique si p recoupe une entrée de la liste blanche (IP ou CIDR).
+func whitelisted(p netip.Prefix, whitelist []string) bool {
 	for _, entry := range whitelist {
-		if entry == ip {
-			return true
-		}
-		_, cidr, err := net.ParseCIDR(entry)
-		if err == nil && cidr != nil && parsed != nil && cidr.Contains(parsed) {
+		if w, ok := toPrefix(entry); ok && w.Overlaps(p) {
 			return true
 		}
 	}
@@ -267,17 +309,20 @@ var cloudflareRanges = []string{
 	"2405:b500::/32", "2405:8100::/32", "2a06:98c0::/29", "2c0f:f248::/32",
 }
 
-func isPrivateIP(ip string) bool {
-	parsed := net.ParseIP(ip)
-	if parsed == nil {
-		return true
-	}
+var exemptNets = func() []netip.Prefix {
+	var out []netip.Prefix
 	for _, cidr := range append([]string{
 		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
 		"127.0.0.0/8", "::1/128", "fc00::/7",
 	}, cloudflareRanges...) {
-		_, network, _ := net.ParseCIDR(cidr)
-		if network != nil && network.Contains(parsed) {
+		out = append(out, netip.MustParsePrefix(cidr))
+	}
+	return out
+}()
+
+func isPrivateIP(a netip.Addr) bool {
+	for _, p := range exemptNets {
+		if p.Contains(a) {
 			return true
 		}
 	}

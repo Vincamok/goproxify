@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
+	"github.com/vincamok/goproxify/internal/sqltime"
 	"gopkg.in/yaml.v3"
 )
 
@@ -198,7 +199,9 @@ func (h *RulesEngineHandler) importAutomation(w http.ResponseWriter, r *http.Req
 	}
 
 	for _, es := range doc.Silences {
-		if es.Name == "" || es.StartsAt == "" || es.EndsAt == "" {
+		startsAt, errS := sqltime.Parse(es.StartsAt)
+		endsAt, errE := sqltime.Parse(es.EndsAt)
+		if es.Name == "" || errS != nil || errE != nil {
 			continue
 		}
 		ruleIDs := es.RuleIDs
@@ -209,7 +212,7 @@ func (h *RulesEngineHandler) importAutomation(w http.ResponseWriter, r *http.Req
 		id := uuid.New().String()
 		if _, execErr := h.DB.ExecContext(ctx,
 			`INSERT INTO automation_silences (id, name, rule_ids, starts_at, ends_at) VALUES (?, ?, ?, ?, ?)`,
-			id, es.Name, string(ruleIDsJSON), es.StartsAt, es.EndsAt,
+			id, es.Name, string(ruleIDsJSON), sqltime.Format(startsAt), sqltime.Format(endsAt),
 		); execErr == nil {
 			summary["silences_created"]++
 		}

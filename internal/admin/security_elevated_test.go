@@ -60,6 +60,33 @@ func TestElevatedH1_PairingSecretAdminOnly(t *testing.T) {
 	}
 }
 
+// TestWriteRoutesGuardedForJWT — EnforcePATScope ignore les sessions UI : sans garde
+// de rôle, un user connecté mute certificats, domaines, alertes, profils IP et snippets.
+func TestWriteRoutesGuardedForJWT(t *testing.T) {
+	src := adminServerSource(t)
+	needles := []string{
+		`mux.Handle("/api/v1/certs", adminWrites(`,
+		`mux.Handle("/api/v1/certs/", adminWrites(`,
+		`mux.Handle("/api/v1/domains", adminWrites(`,
+		`mux.Handle("/api/v1/domains/", adminWrites(`,
+		`mux.Handle("/api/v1/alert-channels", adminWrites(`,
+		`mux.Handle("/api/v1/alert-channels/", adminWrites(`,
+		`mux.Handle("/api/v1/alert-rules", adminWrites(`,
+		`mux.Handle("/api/v1/alert-rules/", adminWrites(`,
+		`mux.Handle("/api/v1/alert-events", adminWrites(`,
+		`mux.Handle("/api/v1/alert-events/", adminWrites(`,
+		`mux.Handle("/api/v1/ip-profiles", adminWrites(`,
+		`mux.Handle("/api/v1/ip-profiles/", adminWrites(`,
+		`mux.Handle("/api/v1/snippets", operatorWrites(`,
+		`mux.Handle("/api/v1/snippets/", operatorWrites(`,
+	}
+	for _, n := range needles {
+		if !strings.Contains(src, n) {
+			t.Errorf("route d'écriture sans garde de rôle: %s", n)
+		}
+	}
+}
+
 // TestElevatedH7_BackupsEncrypted — snapshots rédigent secrets + chiffrement optionnel.
 func TestElevatedH7_BackupsEncrypted(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)

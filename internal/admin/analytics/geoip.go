@@ -459,7 +459,7 @@ func GetGeoPoints(db *sql.DB, p Params, limit int) []GeoPoint {
 		        SUM(CASE WHEN l.status >= 400 THEN 1 ELSE 0 END),
 		        COUNT(DISTINCT l.ip),
 		        COUNT(DISTINCT CASE WHEN l.ip IN (
-		            SELECT ip FROM security_bans WHERE expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP
+		            SELECT ip FROM security_bans WHERE expires_at IS NULL OR datetime(expires_at) > CURRENT_TIMESTAMP
 		        ) THEN l.ip END)
 		 FROM (SELECT ip, status FROM logs %s) l
 		 JOIN geoip_cache g ON g.ip = l.ip
@@ -554,7 +554,7 @@ func GetLiveIPs(db *sql.DB, since time.Time, proxy, nodeName string, limit int) 
 func activeBannedIPSet(db *sql.DB) map[string]bool {
 	rows, err := db.Query(
 		`SELECT ip FROM security_bans
-		 WHERE expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP`)
+		 WHERE expires_at IS NULL OR datetime(expires_at) > CURRENT_TIMESTAMP`)
 	if err != nil {
 		return nil
 	}
@@ -574,7 +574,7 @@ func geoBannedIPs(db *sql.DB) map[string]int64 {
 		`SELECT COALESCE(g.country_code,'?') as cc, COUNT(DISTINCT sb.ip)
 		 FROM security_bans sb
 		 LEFT JOIN geoip_cache g ON g.ip = sb.ip
-		 WHERE (sb.expires_at IS NULL OR sb.expires_at > CURRENT_TIMESTAMP)
+		 WHERE (sb.expires_at IS NULL OR datetime(sb.expires_at) > CURRENT_TIMESTAMP)
 		 GROUP BY cc`)
 	if err != nil {
 		return nil

@@ -133,6 +133,14 @@ func (s *Server) handleWSAdminMessage(connID string, msg edgews.Message) error {
 		s.applyBans(list)
 		s.log.Info("ws/admin: bans mis à jour", "count", len(list))
 
+	case edgews.TypeUnbanIPs:
+		var list []edgews.UnbanEntry
+		if err := json.Unmarshal(msg.Payload, &list); err != nil {
+			return err
+		}
+		s.applyUnbans(list)
+		s.log.Info("ws/admin: débans appliqués", "count", len(list))
+
 	case edgews.TypePushCrowdSecConfig:
 		var cfg edgecrowdsec.Config
 		if err := json.Unmarshal(msg.Payload, &cfg); err != nil {
@@ -157,6 +165,7 @@ func (s *Server) handleWSAdminMessage(connID string, msg edgews.Message) error {
 			if err := edgef2b.SaveConfig("", cfg); err != nil {
 				s.log.Warn("f2b: persistance config échouée", "err", err)
 			}
+			s.reloadBanStore()
 		}
 		s.log.Info("fail2ban: config mise à jour", "enabled", cfg.Enabled)
 
@@ -165,9 +174,7 @@ func (s *Server) handleWSAdminMessage(connID string, msg edgews.Message) error {
 		if err := json.Unmarshal(msg.Payload, &cfg); err != nil {
 			return err
 		}
-		if s.threatEngine != nil {
-			s.threatEngine.UpdateConfig(cfg)
-		}
+		s.applyThreatConfig(cfg)
 		s.log.Info(threat.Name+": config mise à jour", "enabled", cfg.Enabled)
 
 	case edgews.TypePushServerConfig:

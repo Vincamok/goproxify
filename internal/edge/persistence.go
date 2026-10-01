@@ -6,6 +6,7 @@ package edge
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"time"
 
 	"github.com/vincamok/goproxify/internal/agent/telemetry"
@@ -16,6 +17,7 @@ import (
 	"github.com/vincamok/goproxify/internal/edge/metrics"
 	"github.com/vincamok/goproxify/internal/edge/raft"
 	"github.com/vincamok/goproxify/internal/edge/router"
+	"github.com/vincamok/goproxify/internal/edge/threat"
 	edgews "github.com/vincamok/goproxify/internal/edge/ws"
 )
 
@@ -75,30 +77,46 @@ func (s *Server) loadBansFromDisk() {
 	if s.bansDB == nil {
 		return
 	}
-	rows, err := s.bansDB.ActiveBans()
+	s.reloadBanStore()
+	s.log.Info("edge: bans chargés depuis la DB", "count", s.banStore.Len())
+}
+
+// threatConfigPath est la copie locale chiffrée de la configuration Sentinel poussée par l'Admin.
+func threatConfigPath() string {
+	if p := os.Getenv("GPX_THREAT_CONFIG_PATH"); p != "" {
+		return p
+	}
+	return "/etc/goproxify/threat-config.gpx"
+}
+
+// applyThreatConfig persiste la configuration Sentinel reçue de l'Admin puis l'applique. La copie est
+// écrite même si le moteur n'existe pas encore : il la relira à son démarrage.
+func (s *Server) applyThreatConfig(cfg threat.Config) {
+	if err := s.cache.SaveFile(threatConfigPath(), cfg); err != nil {
+		s.log.Warn(threat.Name+": persistance config échouée", "err", err)
+	}
+	if s.threatEngine == nil {
+		return
+	}
+	s.threatEngine.UpdateConfig(cfg)
+	// UpdateConfig remplace la liste blanche : y remettre les entrées sentinel_whitelist des routes.
+	s.refreshSentinelWhitelists()
+}
+
+// loadThreatConfigFromDisk rend Sentinel opérationnel sans l'Admin après un redémarrage.
+func (s *Server) loadThreatConfigFromDisk() {
+	var cfg threat.Config
+	ok, err := s.cache.LoadFile(threatConfigPath(), &cfg)
 	if err != nil {
-		s.log.Warn("edge: lecture bans DB échouée", "err", err)
+		s.log.Warn(threat.Name+": config locale illisible — en attente de l'Admin", "err", err)
 		return
 	}
-	if len(rows) == 0 {
+	if !ok {
 		return
 	}
-	var list []*router.RuntimeBan
-	for _, r := range rows {
-		r := r
-		list = append(list, &router.RuntimeBan{
-			ID:        r.ID,
-			IP:        r.IP,
-			Reason:    r.Reason,
-			Source:    r.Source,
-			ExpiresAt: r.ExpiresAt,
-		})
-	}
-	s.bansMu.Lock()
-	merged := append(list, s.pendingThreatBans...)
-	s.bansMu.Unlock()
-	s.banStore.Replace(merged)
-	s.log.Info("edge: bans chargés depuis la DB", "count", len(list))
+	s.threatEngine.UpdateConfig(cfg)
+	s.refreshSentinelWhitelists()
+	s.log.Info(threat.Name+": config chargée depuis le disque", "enabled", cfg.Enabled)
 }
 
 func (s *Server) saveCache() {
@@ -144,6 +162,7 @@ func (s *Server) bansDBPurgeLoop(ctx context.Context) {
 		case <-ticker.C:
 			_ = s.bansDB.PurgeExpiredBans()
 			_ = s.bansDB.PurgeBanHistory(time.Now().AddDate(0, 0, -30))
+			_ = s.bansDB.PurgeUnbans(time.Now().AddDate(0, 0, -30))
 			_ = s.bansDB.PurgeProxyErrors(time.Now().Add(-48 * time.Hour))
 		}
 	}
