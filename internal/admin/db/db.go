@@ -949,6 +949,8 @@ func migrate(db *sql.DB) error {
 		{"user_mfa_challenges", "expires_at"},
 		{"user_trusted_devices", "expires_at"},
 		{"domains", "updated_at"},
+		{"domains", "cert_expires_at"},
+		{"domains", "created_at"},
 		{"ip_profiles", "next_attempt_at"},
 	} {
 		if err := sqltime.Normalize(db, c[0], c[1]); err != nil {

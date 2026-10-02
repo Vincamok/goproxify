@@ -79,6 +79,117 @@ function _searchScore(e, tokens, whole) {
   return score;
 }
 
+
+// ── Éléments nommés (proxies, certificats, passerelles) ──────────────────────────
+// Chargés à l'ouverture de la palette ; un résultat ouvre la page qui les liste,
+// avec le champ de recherche de la page prérempli sur le nom.
+let _searchEntities = [];
+let _searchEntitiesSeq = 0;
+
+function _searchEntity(kind, label, sub, page, extra) {
+  return {
+    entity: true, kind, label, page, group: sub || '', scope: kind,
+    norm: _searchNorm(label),
+    hay: _searchNorm([label, sub || ''].join(' ')),
+    ...extra,
+  };
+}
+
+async function _searchLoadEntities() {
+  const seq = ++_searchEntitiesSeq;
+  const edge = state.selectedEdge;
+  const edgeRef = edge ? (edge.node_name || edge.id || '') : '';
+  const proxiesPath = edgeRef ? `/proxies?edge=${encodeURIComponent(edgeRef)}` : '/proxies';
+  const proxyPage = edgeRef ? 'edge-trafic' : 'admin-trafic';
+  const admin = Role.isAdmin();
+  const [proxies, nodes, certs, cas, users, snippets, domains] = await Promise.all([
+    api('GET', proxiesPath).catch(() => []),
+    window._navEdges ? Promise.resolve(window._navEdges) : api('GET', '/nodes').catch(() => []),
+    admin ? api('GET', '/certs/acme-monitor').catch(() => null) : Promise.resolve(null),
+    admin ? api('GET', '/internal-ca').catch(() => []) : Promise.resolve([]),
+    admin ? api('GET', '/users').catch(() => []) : Promise.resolve([]),
+    api('GET', '/snippets').catch(() => []),
+    admin ? api('GET', '/domains').catch(() => []) : Promise.resolve([]),
+  ]);
+  const locals = admin ? await Promise.all((cas || []).map(ca =>
+    api('GET', `/internal-ca/${ca.id}/certs`).catch(() => []).then(l => (l || []).map(c => ({ c, ca }))))) : [];
+  const out = [];
+  (proxies || []).forEach(p => {
+    const cfg = (typeof p.config === 'object' && p.config) ? p.config : (tryJSON(p.config) || {});
+    const host = cfg.host || p.host || p.name;
+    if (!host) return;
+    const aliases = (cfg.aliases || []).join(' ');
+    const backs = (cfg.backends || p.backends || []).map(b => b.url || b).join(' ');
+    out.push(_searchEntity('proxy', host, [p.name, aliases, backs].filter(Boolean).join(' '), proxyPage, { query: host }));
+  });
+  ((certs && certs.certs) || []).forEach(c => {
+    out.push(_searchEntity('cert', c.domain, c.issuer || '', 'acme-monitor', { query: c.domain }));
+  });
+  locals.flat().forEach(({ c, ca }) => {
+    if (c.common_name) out.push(_searchEntity('cert', c.common_name, ca.name, 'acme-monitor', { query: c.common_name }));
+  });
+  (nodes || []).filter(n => n.role === 'edge').forEach(n => {
+    const name = n.display_name || n.node_name || n.id;
+    if (name) out.push(_searchEntity('edge', name, n.node_name || '', 'edge-trafic', { node: n }));
+  });
+  const certNames = new Set(out.filter(e => e.kind === 'cert').map(e => e.norm));
+  (domains || []).forEach(d => {
+    if (d.domain && !certNames.has(_searchNorm(d.domain))) out.push(_searchEntity('domain', d.domain, '', 'acme-monitor', { query: d.domain }));
+  });
+  (users || []).forEach(u => {
+    if (u.email) out.push(_searchEntity('user', u.email, [u.name, u.role].filter(Boolean).join(' '), 'users', { open: u.id }));
+  });
+  (snippets || []).forEach(s => {
+    if (s.name) out.push(_searchEntity('snippet', s.name, s.type || '', 'snippets', { open: s.id }));
+  });
+  if (seq !== _searchEntitiesSeq) return;
+  _searchEntities = out;
+  const box = document.getElementById('search-modal');
+  const input = document.getElementById('search-input');
+  if (box && !box.hidden && input?.value.trim() && !_searchPendingPage) {
+    _searchResults = _searchRun(input.value);
+    _searchSel = 0;
+    _searchRender();
+  }
+}
+
+// Préremplit le champ de recherche de la page d'arrivée (rendue de façon asynchrone).
+function _searchPrefill(inputId, value) {
+  let tries = 0;
+  const tick = () => {
+    const el = document.getElementById(inputId);
+    if (el) {
+      el.value = value;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    } else if (++tries < 30) {
+      setTimeout(tick, 100);
+    }
+  };
+  tick();
+}
+
+function _searchOpenEntity(e) {
+  closeSearch();
+  if (e.kind === 'edge') { selectEdge(e.node, e.page); return; }
+  navigate(e.page);
+  if (e.open) {
+    const modal = e.kind === 'user' ? 'openUserModal' : Role.canWriteSnippets() ? 'openSnippetModal' : '';
+    if (modal) _searchWhenListed(`${modal}('${esc(e.open)}')`, () => window[modal](e.open));
+    return;
+  }
+  _searchPrefill(e.kind === 'proxy' ? 'trafic-search' : 'dc-search', e.query);
+}
+
+// Ouvre la fiche d'un élément dès que la page d'arrivée l'a listé (rendu asynchrone).
+function _searchWhenListed(marker, fn) {
+  let tries = 0;
+  const tick = () => {
+    if (document.getElementById('content')?.innerHTML.includes(marker)) fn();
+    else if (++tries < 30) setTimeout(tick, 100);
+  };
+  tick();
+}
+
 function _searchRun(q) {
   const entries = _searchIndex();
   const whole = _searchNorm(q).trim();
@@ -86,12 +197,12 @@ function _searchRun(q) {
     return entries.filter(e => e.scope === (state.selectedEdge ? 'edge' : 'admin')).slice(0, 12);
   }
   const tokens = whole.split(/\s+/);
-  return entries
+  const rank = list => list
     .map(e => ({ e, s: _searchScore(e, tokens, whole) }))
     .filter(x => x.s >= 0)
     .sort((a, b) => b.s - a.s || a.e.label.localeCompare(b.e.label))
-    .slice(0, 30)
     .map(x => x.e);
+  return [...rank(entries).slice(0, 20), ...rank(_searchEntities).slice(0, 15)];
 }
 
 function _searchRender() {
@@ -114,7 +225,7 @@ function _searchRender() {
     <div class="search-item${i === _searchSel ? ' active' : ''}" data-i="${i}" role="option" onmousemove="searchHover(${i})" onclick="searchOpen(${i})">
       <span class="search-item-label">${esc(e.label)}</span>
       ${e.group ? `<span class="search-item-group">${esc(e.group)}</span>` : ''}
-      <span class="search-badge ${e.scope}">${esc(t('search.scope.' + e.scope))}</span>
+      <span class="search-badge ${e.scope}">${esc(t((e.entity ? 'search.kind.' : 'search.scope.') + e.scope))}</span>
     </div>`).join('');
   list.querySelector('.search-item.active')?.scrollIntoView({ block: 'nearest' });
 }
@@ -135,6 +246,7 @@ window.openSearch = function() {
   _searchSel = 0;
   _searchRender();
   input.focus();
+  _searchLoadEntities();
 };
 
 window.closeSearch = function() {
@@ -159,6 +271,7 @@ window.searchHover = function(i) {
 window.searchOpen = function(i) {
   const e = _searchResults[i];
   if (!e) return;
+  if (e.entity) { _searchOpenEntity(e); return; }
   if (e.needsEdge && !state.selectedEdge) {
     const edges = window._navEdges || [];
     if (!edges.length) { toast(t('common.edges_none'), 'error'); return; }

@@ -202,6 +202,7 @@ func (h *DomainsHandler) list(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&d.ID, &d.Domain, &d.EdgeID, &d.DNSProvider, &credJSON,
 			&d.CertMethod, &d.DelegatedToEdgeID, &d.DelegatedEndpoint, &d.DelegationMode,
 			&exp, &d.CreatedAt, &d.UpdatedAt); err != nil {
+			h.Log.Error("domains: scan", "err", err)
 			continue
 		}
 		if !rbac.CanReadDomainWithGrants(userRole, userGrants, d.Domain) {
