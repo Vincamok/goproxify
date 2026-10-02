@@ -17,7 +17,7 @@ async function renderAccessPolicies(content) {
   try {
     // ── Chargement parallèle ────────────────────────────────────────────────
     const [domains, usersRaw, teams, tokens] = await Promise.all([
-      api('GET', '/domains').catch(() => []),
+      api('GET', '/domains'),
       api('GET', '/users').catch(() => []),
       api('GET', '/teams').catch(() => []),
       api('GET', '/tokens?role=edge').catch(() => []),
