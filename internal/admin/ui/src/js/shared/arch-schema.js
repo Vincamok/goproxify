@@ -545,19 +545,19 @@ function _asPanelHTML(model) {
   if (s.type === 'agent' && node && (node.container_runtimes || []).length) row(t('as.drift.runtime'), esc(node.container_runtimes.join(', ')));
   if (st === 'warn' && node && _asSeen(node.last_seen_at)) row(t('as.panel.last_seen'), esc(fmtDate(node.last_seen_at)));
 
-  const b = (kind, label, cls) => `<button type="button" class="btn ${cls || 'btn-secondary'} btn-sm" onclick="asAct('${kind}','${esc(s.id)}')">${esc(label)}</button>`;
+  const b = (kind, label, cls, ic) => `<button type="button" class="btn ${cls || 'btn-secondary'} btn-sm" onclick="asAct('${kind}','${esc(s.id)}')">${_asIcon(ic, 14)}${esc(label)}</button>`;
   let main = '';
   let more = '';
   if (s.type === 'edge' && node) {
-    main = b('traffic', t('infra.title.traffic'), 'btn-primary') + b('settings', t('as.act.settings')) + b('config', t('as.config'));
-    more = b('update', t('as.act.update'), 'btn-ghost') + b('rollback', t('infra.title.rollback'), 'btn-ghost');
+    main = b('traffic', t('as.act.proxy'), 'btn-primary', 'activity') + b('settings', t('as.act.settings'), '', 'sliders') + b('config', t('as.config'), '', 'fileCog');
+    more = b('update', t('as.act.update'), 'btn-ghost', 'upCircle') + b('rollback', t('infra.title.rollback'), 'btn-ghost', 'undo');
   } else if (s.type === 'agent' && node) {
-    main = b('containers', t('as.act.containers'), 'btn-primary') + b('events', t('as.act.events')) + b('config', t('as.config'));
-    more = b('rescan', t('as.act.rescan'), 'btn-ghost') + b('agent_update', t('as.act.update'), 'btn-ghost') + b('agent_cfg', t('as.act.agent_cfg'), 'btn-ghost');
+    main = b('containers', t('as.act.containers'), 'btn-primary', 'box') + b('events', t('as.act.events'), '', 'list') + b('config', t('as.config'), '', 'fileCog');
+    more = b('rescan', t('as.act.rescan'), 'btn-ghost', 'refresh') + b('agent_update', t('as.act.update'), 'btn-ghost', 'upCircle') + b('agent_cfg', t('as.act.agent_cfg'), 'btn-ghost', 'sliders');
   } else if (h) {
-    main = b('config', t('as.config'), 'btn-primary');
+    main = b('config', t('as.config'), 'btn-primary', 'fileCog');
   }
-  if (s.type !== 'admin') more += `<button type="button" class="btn btn-ghost btn-sm as-pn-del" onclick="asAct('delete','${esc(s.id)}')">${esc(t('as.act.delete'))}</button>`;
+  if (s.type !== 'admin') more += `<button type="button" class="btn btn-ghost btn-sm as-pn-del" onclick="asAct('delete','${esc(s.id)}')">${_asIcon('trash', 14)}${esc(t('as.act.delete'))}</button>`;
 
   let events = '';
   if (s.type !== 'admin') {
@@ -1111,6 +1111,14 @@ const _AS_IC = {
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
   restore: '<path d="M4 12a8 8 0 1 0 2.3-5.6L4 9"/><path d="M4 4v5h5"/>',
   refresh: '<path d="M20 12a8 8 0 1 1-2.3-5.6L20 9"/><path d="M20 4v5h-5"/>',
+  activity: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+  sliders: '<path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
+  fileCog: '<path d="M14 3H7a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V7z"/><path d="M14 3v4h4"/><circle cx="12" cy="14" r="2"/><path d="M12 10.5v1M12 16.5v1M9 12.3l.9.5M14.1 15.2l.9.5M9 15.7l.9-.5M14.1 12.8l.9-.5"/>',
+  upCircle: '<circle cx="12" cy="12" r="9"/><path d="M12 16V8M8.5 11.5L12 8l3.5 3.5"/>',
+  undo: '<path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
+  trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+  box: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>',
+  list: '<path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/>',
 };
 
 function _asIcon(name, size) {

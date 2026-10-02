@@ -97,7 +97,9 @@
 .as-pn-acts { display: flex; flex-direction: column; gap: 6px; }
 .as-pn-acts > div:first-child { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 6px; }
 .as-pn-acts > div + div { display: flex; gap: 4px; flex-wrap: wrap; }
-.as-pn-acts .btn { justify-content: center; }
+.as-pn-acts .btn { justify-content: center; gap: 6px; }
+.as-pn-acts .btn svg { flex: none; }
+.as-pn-acts .btn-ghost svg { opacity: .7; }
 .as-pn-acts .as-pn-del { margin-left: auto; color: var(--red); }
 .as-pn-ev { display: flex; flex-direction: column; gap: 9px; padding-top: 14px; border-top: 1px solid var(--border); }
 .as-pn-evr { display: grid; grid-template-columns: minmax(44px, auto) minmax(0, 1fr); gap: 10px; font-size: 12.5px; }
