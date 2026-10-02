@@ -52,7 +52,9 @@ func TestWriteGuards_JWTAndPAT(t *testing.T) {
 		"pat:u":      {"u", []string{rbac.ScopeCertsRead, rbac.ScopeCertsWrite, rbac.ScopeSnippetsWrite}},
 		"pat:w":      {"w", []string{rbac.ScopeSnippetsWrite, rbac.ScopeCertsWrite}},
 		"pat:a":      {"a", []string{rbac.ScopeCertsWrite, rbac.ScopeSnippetsWrite}},
-		"pat:a-read": {"a", []string{rbac.ScopeCertsRead}},
+		"pat:a-read": {"a", []string{rbac.ScopeCertsRead, rbac.ScopeLogsRead}},
+		"pat:u-logs": {"u", []string{rbac.ScopeLogsRead, rbac.ScopeLogsWrite}},
+		"pat:a-logs": {"a", []string{rbac.ScopeLogsWrite}},
 	}
 	for name, p := range pats {
 		plain := auth.GeneratePAT()
@@ -95,6 +97,17 @@ func TestWriteGuards_JWTAndPAT(t *testing.T) {
 		{adminWrites, http.MethodPost, "/api/v1/certs/import", "pat:w", http.StatusForbidden},
 		{adminWrites, http.MethodPost, "/api/v1/certs/import", "pat:a-read", http.StatusForbidden},
 		{adminWrites, http.MethodPost, "/api/v1/certs/import", "pat:a", http.StatusNoContent},
+		// Logs : lecture ouverte ; réglages RGPD et effacement réservés aux admins.
+		{adminWrites, http.MethodGet, "/api/v1/logs", "jwt:u", http.StatusNoContent},
+		{adminWrites, http.MethodGet, "/api/v1/logs/settings", "pat:a-read", http.StatusNoContent},
+		{adminWrites, http.MethodPut, "/api/v1/logs/settings", "jwt:u", http.StatusForbidden},
+		{adminWrites, http.MethodDelete, "/api/v1/logs/by-ip/203.0.113.7", "jwt:w", http.StatusForbidden},
+		{adminWrites, http.MethodDelete, "/api/v1/logs/by-user/u", "pat:u-logs", http.StatusForbidden},
+		{adminWrites, http.MethodPut, "/api/v1/logs/settings", "pat:a-read", http.StatusForbidden},
+		{adminWrites, http.MethodPut, "/api/v1/logs/settings", "pat:a-logs", http.StatusNoContent},
+		{adminWrites, http.MethodDelete, "/api/v1/logs/by-ip/203.0.113.7", "jwt:a", http.StatusNoContent},
+		{adminWrites, http.MethodPost, "/api/v1/logs/reveal-ip", "jwt:u", http.StatusForbidden},
+		{adminWrites, http.MethodPost, "/api/v1/logs/reveal-ip", "pat:a-logs", http.StatusForbidden},
 		// Snippets : admin ou user avec un grant write.
 		{operatorWrites, http.MethodGet, "/api/v1/snippets", "jwt:u", http.StatusNoContent},
 		{operatorWrites, http.MethodPost, "/api/v1/snippets", "jwt:u", http.StatusForbidden},

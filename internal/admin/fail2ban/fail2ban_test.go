@@ -146,6 +146,52 @@ func TestScanIgnoresPseudonymizedIPs(t *testing.T) {
 	}
 }
 
+func insertTruncated(t *testing.T, d *sql.DB, ip string, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		if _, err := d.Exec(`INSERT INTO logs (ts, component, status, ip, ip_truncated) VALUES (?, 'edge', 403, ?, 1)`,
+			time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano), ip); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestScanIgnoresTruncatedIPs(t *testing.T) {
+	e, d := newTestEngine(t)
+	// Tronquées par la passerelle : tout un /24, tout un /48 (dont 2a01:e0a:1::/64 n'est qu'une part).
+	insertTruncated(t, d, "203.0.113.0", 50)
+	insertTruncated(t, d, "2a01:e0a:1::", 50)
+	e.scan()
+	if got := allBans(t, d); len(got) != 0 {
+		t.Fatalf("une IP tronquée ne désigne aucun client : bans %v", got)
+	}
+	// Sans le marqueur, x.x.x.0 est une adresse comme une autre (ex. dans un /23).
+	insertForbidden(t, d, "198.51.100.0", time.Now().Add(-time.Minute), 5)
+	e.scan()
+	if got := allBans(t, d); len(got) != 1 || got[0] != "198.51.100.0" {
+		t.Fatalf("IP réelle en .0 : bans %v, attendu [198.51.100.0]", got)
+	}
+}
+
+func TestScanSkippedWhileAdminPushesIPProtection(t *testing.T) {
+	for _, key := range []string{"logs.ip_anonymize", "logs.ip_pseudonymize"} {
+		e, d := newTestEngine(t)
+		if err := db.SetSetting(d, key, "true"); err != nil {
+			t.Fatal(err)
+		}
+		// Passerelle antérieure au marqueur ip_truncated : IP tronquées non signalées.
+		insertForbidden(t, d, "203.0.113.0", time.Now().Add(-time.Minute), 50)
+		insertForbidden(t, d, "2a01:e0a:1::", time.Now().Add(-time.Minute), 50)
+		e.scan()
+		if got := allBans(t, d); len(got) != 0 {
+			t.Errorf("%s : les IP reçues sont tronquées, aucun ban attendu : %v", key, got)
+		}
+		if e.LastActivity().IsZero() {
+			t.Errorf("%s : le scan doit compter comme actif (pas d'alerte engine_silent)", key)
+		}
+	}
+}
+
 func TestScanAggregatesIPv6By64(t *testing.T) {
 	e, d := newTestEngine(t)
 	at := time.Now().Add(-time.Minute)

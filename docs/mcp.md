@@ -464,6 +464,8 @@ Retourne les 100 derniers logs d'accès, filtrables par domaine, niveau ou `requ
 
 Le champ `request_id` est présent quand le proxy cible a l'option **Injection request_id** activée. Utilisez-le comme filtre pour récupérer l'ensemble des entrées (Admin + Passerelle) d'une même requête HTTP.
 
+Depuis Admin `0.71.2`, `ip_truncated: true` signale une IP tronquée par la passerelle (anonymisation ou pseudonymisation RGPD : `x.x.x.0`, préfixe /48 `2a01:e0a:1::`). Cette valeur regroupe plusieurs clients : `ban_ip` dessus ne bannirait personne (IPv4) ou pas le bon client (IPv6). Le champ est absent pour une IP complète.
+
 ---
 
 ### `list_teams`
@@ -1098,7 +1100,7 @@ Anomalies détectées par Prism : pic d'erreurs, IP dominante, pays en erreur, b
 | `edge`    | string | —      | Passerelle (nom du nœud ou id du token) ; omis = toutes  |
 | `proxy`   | string | —      | Domaine du proxy ; omis = tous                           |
 
-Chaque résultat : `kind`, `level` (`critical` | `warning`), `subject`, `label`, `value`, `baseline`, `count`. Mêmes règles que `GET /api/v1/prism/anomalies`.
+Chaque résultat : `kind`, `level` (`critical` | `warning`), `subject`, `label`, `value`, `baseline`, `count`. Mêmes règles que `GET /api/v1/prism/anomalies` : l'IP dominante n'est jamais une IP tronquée par l'anonymisation RGPD ni `[pseudonymisé]`.
 
 ---
 
@@ -1144,7 +1146,7 @@ Réponse : `current` et `candidate` (`events`, `blocked`, `blocked_by_ban`, `leg
 
 - Le rejeu utilise le moteur Sentinel réel sur l'horloge des logs, en mode `block` ; une IP bannie pendant le rejeu reste bloquée pour la durée du ban.
 - `legit_blocked` compte les requêtes bloquées qui avaient reçu un statut `< 400` : indicateur de faux positifs, pas une certitude.
-- **Non simulé** : listes par défaut (UA/path/IP téléchargées), `global_rps`, règles User-Agent (l'UA n'est pas conservé dans les logs Admin) et WAF (ni en-têtes ni corps conservés). Les IP pseudonymisées (RGPD) sont ignorées.
+- **Non simulé** : listes par défaut (UA/path/IP téléchargées), `global_rps`, règles User-Agent (l'UA n'est pas conservé dans les logs Admin) et WAF (ni en-têtes ni corps conservés). Les IP pseudonymisées ou tronquées par l'anonymisation (RGPD) sont ignorées et comptées dans `skipped_unattributable_ip`.
 - Équivalent REST (bouton « Simuler » de la page Sentinel) : `POST /api/v1/security/threat-config/simulate`, voir `docs/api_specs.md`. Équivalent CLI : `goproxify security threat simulate`.
 
 ---

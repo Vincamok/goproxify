@@ -16,7 +16,7 @@ func sentinelSimTools() []map[string]any {
 		"description": "Dry-run Sentinel : rejoue les access logs récents contre une config candidate (surchargée sur la config actuelle) " +
 			"et la compare à la config actuelle. Ne modifie rien. Retourne requêtes bloquées, bans, IP les plus touchées et " +
 			"legit_blocked (requêtes bloquées qui avaient abouti, indicateur de faux positifs). " +
-			"Non simulé : listes par défaut, global_rps, règles User-Agent (l'UA n'est pas conservé dans les logs) ; les IP pseudonymisées sont ignorées.",
+			"Non simulé : listes par défaut, global_rps, règles User-Agent (l'UA n'est pas conservé dans les logs) ; les IP pseudonymisées ou tronquées (anonymisation RGPD) sont ignorées.",
 		"inputSchema": schema(
 			req("config", "object", "Champs Sentinel à surcharger (ex: {\"rate_limit\":20,\"custom_lists\":{\"paths\":[\"/wp-admin\"]}}), mêmes noms que threat-config"),
 			opt("hours", "number", "Fenêtre de logs rejouée en heures (défaut 1, max 24)"),

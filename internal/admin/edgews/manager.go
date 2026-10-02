@@ -1088,29 +1088,16 @@ func (m *Manager) PushSettings(ctx context.Context, s Settings) {
 	}
 }
 
-// PushIPAnonymize pousse uniquement le toggle d'anonymisation IP vers toutes les passerelles.
-// Implémente api.LogsSettingsPusher.
-func (m *Manager) PushIPAnonymize(ctx context.Context, enabled bool) {
-	partial := Settings{IPAnonymize: &enabled}
+// PushIPProtection pousse les deux modes de protection des IP dans un seul message : envoyés
+// séparément, un passage anonymisation → pseudonymisation pouvait laisser une passerelle sans
+// protection entre les deux. Implémente api.LogsSettingsPusher.
+func (m *Manager) PushIPProtection(ctx context.Context, anonymize, pseudonymize bool) {
+	partial := Settings{IPAnonymize: &anonymize, IPPseudonymize: &pseudonymize}
 	for _, e := range m.allEntries() {
 		e := e
 		go func() {
 			if err := e.client.PushJSON(edgeWS.TypePushSettings, partial); err != nil {
-				m.log.Warn("edgews/manager: push ip_anonymize", "edge", e.nodeName, "err", err)
-			}
-		}()
-	}
-}
-
-// PushIPPseudonymize pousse le toggle de pseudonymisation IP vers toutes les passerelles.
-// Implémente api.LogsSettingsPusher.
-func (m *Manager) PushIPPseudonymize(ctx context.Context, enabled bool) {
-	partial := Settings{IPPseudonymize: &enabled}
-	for _, e := range m.allEntries() {
-		e := e
-		go func() {
-			if err := e.client.PushJSON(edgeWS.TypePushSettings, partial); err != nil {
-				m.log.Warn("edgews/manager: push ip_pseudonymize", "edge", e.nodeName, "err", err)
+				m.log.Warn("edgews/manager: push protection IP", "edge", e.nodeName, "err", err)
 			}
 		}()
 	}

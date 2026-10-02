@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/vincamok/goproxify/internal/admin/logs"
 )
 
 const queryTimeout = 25 * time.Second
@@ -77,6 +79,9 @@ type IPEntry struct {
 	Requests int64  `json:"requests"`
 	Errors   int64  `json:"errors"`
 	Bytes    int64  `json:"bytes"`
+	// IPTruncated : IP tronquée par l'anonymisation RGPD de la passerelle. La ligne regroupe tout
+	// un /24 (IPv4) ou /48 (IPv6) : ni bannissable ni analysable comme un client.
+	IPTruncated bool `json:"ip_truncated,omitempty"`
 }
 
 // AgentEntry navigateur ou bot.
@@ -345,16 +350,26 @@ func GetTopPaths(db *sql.DB, p Params, search string, limit, offset int) (paths 
 
 // GetTopIPs retourne les IPs les plus actives.
 func GetTopIPs(db *sql.DB, p Params, limit int) []IPEntry {
+	return topIPs(db, p, limit, false)
+}
+
+// topIPs : attributableOnly écarte les IP tronquées ou pseudonymisées, qui regroupent plusieurs
+// clients sous une même valeur.
+func topIPs(db *sql.DB, p Params, limit int, attributableOnly bool) []IPEntry {
 	if limit <= 0 {
 		limit = 50
 	}
 	w, args := where(p)
+	if attributableOnly {
+		w += " AND ip_truncated = 0 AND ip <> ?"
+		args = append(args, logs.PseudonymizedIP)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
 	rows, err := db.QueryContext(ctx,
 		`SELECT ip, COUNT(*) as n,
 		        SUM(CASE WHEN status>=400 THEN 1 ELSE 0 END),
-		        COALESCE(SUM(bytes),0)
+		        COALESCE(SUM(bytes),0), MAX(ip_truncated)
 		 FROM logs `+w+` GROUP BY ip ORDER BY n DESC LIMIT ?`,
 		append(args, limit)...)
 	if err != nil {
@@ -364,7 +379,7 @@ func GetTopIPs(db *sql.DB, p Params, limit int) []IPEntry {
 	var out []IPEntry
 	for rows.Next() {
 		var e IPEntry
-		rows.Scan(&e.IP, &e.Requests, &e.Errors, &e.Bytes) //nolint:errcheck
+		rows.Scan(&e.IP, &e.Requests, &e.Errors, &e.Bytes, &e.IPTruncated) //nolint:errcheck
 		out = append(out, e)
 	}
 	return out

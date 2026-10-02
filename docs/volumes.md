@@ -32,6 +32,7 @@ Chaque service persiste ses données dans `/etc/goproxify` via un volume Docker 
 | `bans/` | Bannissements IP persistés |
 | `threat-lists/` | Listes de menaces téléchargées (IPs malveillantes, etc.) |
 | `threat-config.gpx` | Copie chiffrée de la configuration Sentinel reçue de l'Admin, rechargée au démarrage sans l'Admin |
+| `edge-settings.gpx` | Copie chiffrée des réglages runtime reçus de l'Admin (anonymisation / pseudonymisation des IP, journalisation, tracing, URL publique), rechargée au démarrage sans l'Admin (surchargeable par `GPX_EDGE_SETTINGS_PATH`) |
 | `logs/access.log` | Journal d'accès HTTP du reverse proxy |
 
 > **Note :** `proxies/` et `proxies-revisions/` sont la source de vérité de la passerelle. La passerelle reçoit sa configuration depuis l'Admin via WebSocket au démarrage — ces fichiers sont ensuite mis à jour à chaque changement de configuration.

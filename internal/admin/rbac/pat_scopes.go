@@ -31,6 +31,7 @@ const (
 	ScopeCertsRead     = "certs:read"
 	ScopeCertsWrite    = "certs:write"
 	ScopeLogsRead      = "logs:read"
+	ScopeLogsWrite     = "logs:write"
 	ScopeTeamsRead     = "teams:read"
 	ScopeAuditRead     = "audit:read"
 	ScopeSecurityWrite = "security:write"
@@ -47,7 +48,7 @@ var AllPATScopes = []string{
 	ScopeNodesRead, ScopeNodesWrite, ScopeAlertsRead, ScopeAlertsWrite, ScopeMetricsRead, ScopeBackupsRead,
 	ScopeUsersRead, ScopeSnippetsRead, ScopeSnippetsWrite,
 	ScopeDomainsRead, ScopeDomainsWrite, ScopeCertsRead, ScopeCertsWrite,
-	ScopeLogsRead, ScopeTeamsRead, ScopeAuditRead,
+	ScopeLogsRead, ScopeLogsWrite, ScopeTeamsRead, ScopeAuditRead,
 	ScopeSecurityWrite, ScopeImportWrite, ScopePairingRead,
 	ScopePortalRead, ScopePortalWrite,
 	ScopeGDPRReveal,
@@ -79,6 +80,7 @@ func ScopeCatalog() []ScopeMeta {
 		ScopeCertsRead:     "Lister les certificats, cibles de déploiement et CA internes",
 		ScopeCertsWrite:    "Obtenir, importer, supprimer et déployer des certificats ; gérer la CA interne",
 		ScopeLogsRead:      "Lire les logs",
+		ScopeLogsWrite:     "Modifier les réglages des logs (rétention, protection des IP) et effacer des logs (RGPD Art. 17)",
 		ScopeTeamsRead:     "Lister les équipes",
 		ScopeAuditRead:     "Lire le journal d'audit, la sécurité (bans, menaces, CVE, profils IP, fournisseurs d'auth) et l'automatisation (règles, tâches planifiées, playbooks)",
 		ScopeSecurityWrite: "Muter la sécurité (bans, profils IP, fournisseurs d'auth) et piloter l'automatisation (règles, tâches planifiées, playbooks)",
@@ -170,12 +172,12 @@ func AvailableScopesForUser(ctx context.Context, db *sql.DB, userID string) []st
 	switch {
 	case IsSuperAdminRole(role):
 		add(ScopeProxiesWrite, ScopeProxiesDelete, ScopeSnippetsWrite, ScopeUsersRead, ScopeTeamsRead,
-			ScopeNodesWrite, ScopeAlertsWrite, ScopeDomainsWrite, ScopeCertsWrite,
+			ScopeNodesWrite, ScopeAlertsWrite, ScopeDomainsWrite, ScopeCertsWrite, ScopeLogsWrite,
 			ScopeSecurityWrite, ScopeImportWrite, ScopePairingRead,
 			ScopePortalRead, ScopePortalWrite, ScopeGDPRReveal)
 	case IsAdminRole(role):
 		add(ScopeProxiesWrite, ScopeProxiesDelete, ScopeSnippetsWrite, ScopeUsersRead, ScopeTeamsRead,
-			ScopeNodesWrite, ScopeAlertsWrite, ScopeDomainsWrite, ScopeCertsWrite,
+			ScopeNodesWrite, ScopeAlertsWrite, ScopeDomainsWrite, ScopeCertsWrite, ScopeLogsWrite,
 			ScopeSecurityWrite, ScopeImportWrite, ScopePairingRead,
 			ScopePortalRead, ScopePortalWrite)
 	default:
@@ -390,7 +392,10 @@ func RequiredScopeForRequest(r *http.Request) string {
 	case strings.HasPrefix(path, "/api/v1/logs/reveal-ip"):
 		return ScopeGDPRReveal
 	case strings.HasPrefix(path, "/api/v1/logs"):
+		if method == http.MethodGet {
 		return ScopeLogsRead
+		}
+		return ScopeLogsWrite
 	case strings.HasPrefix(path, "/api/v1/teams"):
 		return ScopeTeamsRead
 	case strings.HasPrefix(path, "/api/v1/audit"):

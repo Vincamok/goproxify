@@ -45,6 +45,7 @@ Chaque composant fonctionne seul avec ce qu'il a déjà reçu. Une coupure n'enl
 
 - Routes (y compris celles découvertes par les Agents), certificats, snippets et fournisseurs d'authentification : cache chiffré `edge-cache.gpx`, rechargé au démarrage sans Admin.
 - Bans, profils IP, listes de menaces, configuration CrowdSec et fail2ban, pages d'erreur : sur le disque de la passerelle.
+- Réglages runtime (`push_settings` : anonymisation / pseudonymisation des IP, journalisation, tracing, URL publique) : copie chiffrée `edge-settings.gpx`, rechargée au démarrage (Edge `0.17.10`).
 - Portail : comptes, coffres, catalogue et audit dans `portal.gpx` (chiffré, répliqué dans le groupe HA).
 - HMAC des Agents approuvés persisté des deux côtés : un Agent se reconnecte à une passerelle redémarrée sans l'Admin.
 - Agent : `agent.json`, `agent.token` et HMAC locaux ; santé, scaling et mises à jour sans passerelle ni Admin.
@@ -56,7 +57,7 @@ Chaque composant fonctionne seul avec ce qu'il a déjà reçu. Une coupure n'enl
 - **Groupe HA** : liste des pairs de synchronisation (`push_gateway_peers`) et topologie Raft poussée par l'Admin (en l'absence de `cluster.peers` local) en mémoire seulement → plus de synchronisation entre pairs après un redémarrage sans Admin.
 - **Agent** : un changement de conteneur survenu pendant une coupure de sa passerelle est perdu (envoi HTTP unique, pas de réannonce à la reconnexion) jusqu'au prochain rescan.
 - **Agent rattaché à un groupe HA** : ne connaît qu'une adresse de passerelle (`control_plane.edge_endpoint`) ; le rattachement au groupe n'existe que côté Admin. Pas de bascule vers un autre membre, sauf si l'adresse est une IP virtuelle.
-- **Autres envois de l'Admin** (réglages, règles automatiques, tunnel L4, modèles du portail, configuration serveur) : persistance à vérifier un par un.
+- **Autres envois de l'Admin** (règles automatiques, tunnel L4, modèles du portail, configuration serveur) : persistance à vérifier un par un.
 
 ---
 

@@ -44,16 +44,18 @@ Enable in `edge.json`:
 }
 ```
 
-Or push from Admin UI → **Logs → Settings → IP anonymisation**.
+Or push from the Admin UI → **Logs** page → settings (gear icon, admins only) → **Client IP addresses (GDPR)** → *Anonymised*.
 
 Effect:
 - IPv4: last octet zeroed → `192.168.1.123` becomes `192.168.1.0`
 - IPv6: last 80 bits zeroed → prefix `/48` is kept
-- Fail2Ban and Sentinel still receive the real IP before anonymisation — protection is not degraded
+- The Edge's Fail2Ban and Sentinel still receive the real IP before anonymisation and keep banning
+- The Admin's Fail2Ban, which reads the stored logs, ignores truncated IPs: `x.x.x.0` or a `/48` prefix covers many clients, and banning it would hit none of them (IPv4) or innocent ones (IPv6). The Edge flags every truncated line (`ip_truncated`), including when anonymisation comes from its own `edge.json`. What is lost: the Admin no longer catches an IP whose errors are spread over several Edges — see [security.md](security.md#fail2ban-natif-go)
+- The Admin UI does not offer to ban or analyse a truncated IP: the **Logs** page detail labels it *Truncated IP (anonymisation)* and hides **Ban** and the IP reputation scan; Prism's top IPs tags it *Truncated* and hides re-scan and **Ban**; Prism's "dominant IP" anomaly (which offers **Ban**) only considers attributable IPs. The flag is exposed as `ip_truncated` in `GET /api/v1/logs`, the live stream `/logs/live`, `GET /prism/ips`, `GET /prism/ip-scan` and the MCP tool `list_logs`. Lines stored before Admin `0.71.1`, or sent by an Edge older than `0.17.12`, carry no flag and are shown as regular IPs
 
 ### Log retention
 
-Configure in Admin UI → **Logs → Settings → Retention** or via API:
+Configure in the Admin UI → **Logs** page → settings (gear icon) or via API:
 
 ```http
 PUT /api/v1/logs/settings
@@ -75,7 +77,7 @@ Older entries are purged automatically every night.
 
 Mode plus fort que l'anonymisation : l'IP est **chiffrée** (AES-GCM 256 bits) en base SQLite côté Admin. Le fichier de log de la passerelle reçoit toujours une IP tronquée. L'IP réelle ne peut être obtenue que par un utilisateur possédant le scope `gdpr:reveal` (voir §3 bis).
 
-Activer via Admin UI → **Logs → Settings → Pseudonymisation IP** ou via API :
+Activer dans l'interface Admin → page **Logs** → réglages (icône engrenage, admins) → **Adresses IP des clients (RGPD)** → *Pseudonymisées*, ou via API :
 
 ```http
 PUT /api/v1/logs/settings
@@ -88,10 +90,18 @@ Ou dans `edge.json` (non supporté — ce réglage est Admin-side).
 |---|---|---|
 | IP dans fichier passerelle | tronquée (x.x.x.0) | tronquée (x.x.x.0) |
 | IP dans SQLite Admin | tronquée | chiffrée AES-GCM |
-| Taps Fail2Ban/Sentinel | IP réelle ✓ | IP réelle ✓ |
+| Fail2Ban/Sentinel de la passerelle | IP réelle ✓ | IP réelle ✓ |
+| Fail2Ban de l'Admin (logs) | IP tronquée ignorée | IP pseudonymisée ignorée |
+| Bannir / analyser l'IP depuis l'interface (Logs, Prism) | masqué (« IP tronquée ») | masqué (« Pseudonymisée ») |
 | Révélation possible ? | ❌ irréversible | ✓ avec scope `gdpr:reveal` |
 
-La clé AES-GCM est générée automatiquement au premier démarrage et stockée dans la table `gdpr_keys` de la base Admin. Elle ne quitte jamais le serveur Admin.
+Les deux modes sont exclusifs : l'Admin refuse (`400`) un réglage qui les laisserait actifs ensemble. Sur la passerelle, l'anonymisation l'emporte toujours : si `ip_anonymize: true` est défini dans `edge.json`, l'IP réelle n'est jamais envoyée à l'Admin, même quand celui-ci active la pseudonymisation.
+
+La clé AES-GCM est générée automatiquement au premier démarrage et stockée dans la table `gdpr_keys` de la base Admin. Elle ne quitte jamais le serveur Admin. Elle reste chargée quand la pseudonymisation est désactivée : les entrées déjà pseudonymisées restent révélables jusqu'à la fin de leur rétention.
+
+Modifier ces réglages, comme effacer des logs (ci-dessous), est réservé aux rôles admin et superadmin (scope `logs:write` pour un token API). Chaque changement de mode est inscrit au journal d'audit (`logs_ip_anonymize`, `logs_ip_pseudonymize`).
+
+Chaque passerelle garde une copie chiffrée des réglages reçus de l'Admin (`/etc/goproxify/edge-settings.gpx`) et la recharge au démarrage : une passerelle redémarrée pendant une coupure de l'Admin continue d'anonymiser ou de pseudonymiser les IP de son access log.
 
 ---
 
@@ -101,7 +111,9 @@ La clé AES-GCM est générée automatiquement au premier démarrage et stockée
 DELETE /api/v1/logs/by-ip/{ip}
 ```
 
-Removes all access log entries matching the given IP. An audit entry is created with the reason.
+Removes all log entries of the given IP, **including pseudonymised entries**: each one carries a keyed fingerprint of the real IP (`ip_hmac`, HMAC-SHA256), so the Admin finds them without decrypting the logs. IPv6 is matched whatever its notation. Entries pseudonymised before Admin `0.70.5` get their fingerprint in the background at the next start.
+
+`{ip}` must be a valid IP address (`400` otherwise). An audit entry (`rgpd_erasure_ip`) and a system log are created with the reason and the number of deleted entries; neither contains the erased IP in clear, only its fingerprint (`hmac:…`), or its truncated form if the pseudonymisation key is unavailable.
 
 CLI equivalent:
 
@@ -121,15 +133,21 @@ Removes all log entries attributed to an authenticated user (JWT subject).
 
 ## 3 bis. Droit de révélation IP (scope `gdpr:reveal`)
 
-Quand la pseudonymisation est active, les utilisateurs possédant le scope `gdpr:reveal` peuvent obtenir l'IP réelle d'une entrée spécifique, avec traçabilité complète.
+Les utilisateurs possédant le scope `gdpr:reveal` peuvent obtenir l'IP réelle d'une entrée pseudonymisée, avec traçabilité complète. C'est possible tant que l'entrée est conservée, même si la pseudonymisation a été désactivée depuis.
 
 ### Qui peut avoir ce droit ?
 
-| Rôle | `gdpr:reveal` par défaut | Délégable via équipe |
-|---|---|---|
-| Super-admin | ✓ | — |
-| Admin | ❌ | ✓ (super-admin délègue) |
-| Utilisateur (DPO, juriste, RSSI) | ❌ | ✓ (super-admin délègue) |
+| Rôle | `gdpr:reveal` |
+|---|---|
+| Super-admin | ✓ (session UI, ou token API portant le scope `gdpr:reveal`) |
+| Admin | ❌ |
+| Utilisateur | ❌ |
+
+La délégation de ce droit à un compte non super-admin (DPO, juriste, RSSI) n'est pas encore disponible : elle est suivie dans la feuille de route.
+
+### Via l'interface
+
+Page **Logs** → cliquer une entrée dont l'IP est « Pseudonymisée » → **Révéler l'IP** (bouton visible du seul super-admin) → saisir le motif légal → **Révéler**. L'IP s'affiche dans le panneau de détail uniquement.
 
 ### Via API
 
@@ -208,7 +226,8 @@ These integrations are **opt-in** and configured by the operator. GoProxify send
 
 Before going to production, ensure:
 
-- [ ] IP anonymisation enabled (`ip_anonymize: true`) if no legitimate need to store full IPs
+- [ ] IP anonymisation enabled (`ip_anonymize: true`) if no legitimate need to store full IPs — or pseudonymisation if real IPs must remain obtainable for legal requests
+- [ ] Only the accounts that need it are admins (they can change these settings and erase logs) or superadmins (they can reveal pseudonymised IPs)
 - [ ] Log retention set to the shortest period that meets your legal obligations
 - [ ] Admin user list reviewed — remove test accounts
 - [ ] SSH portal vault entries reviewed — remove unused targets

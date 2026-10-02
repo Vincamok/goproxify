@@ -9,8 +9,10 @@ import (
 	"database/sql"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -64,6 +66,10 @@ type Entry struct {
 	// RealIP est l'IP réelle fournie par la passerelle en mode pseudonymisation.
 	// Elle n'est JAMAIS renvoyée dans les réponses API — uniquement chiffrée en DB.
 	RealIP string `json:"-"`
+	// IPTruncated : IP tronquée par la passerelle (anonymisation ou pseudonymisation). Fail2Ban, la
+	// simulation Sentinel et les actions de l'interface (ban, analyse d'IP) écartent ces lignes :
+	// x.x.x.0 ou un /48 ne désignent aucun client.
+	IPTruncated bool `json:"ip_truncated,omitempty"`
 }
 
 // SearchParams filtre les entrées de log.
@@ -108,10 +114,23 @@ type Store struct {
 	retentionAccessDays int
 	retentionSystemDays int
 
-	// Pseudonymisation RGPD (AES-GCM) — nil si désactivée.
+	// Pseudonymisation RGPD (AES-GCM). La clé reste chargée mode désactivé : les entrées
+	// déjà pseudonymisées doivent rester révélables pendant leur rétention.
 	pseudoMu  sync.RWMutex
-	pseudoKey []byte
+	gdprKey      []byte
+	pseudonymize bool
 }
+
+// PseudonymizedIP remplace l'IP d'une entrée pseudonymisée dans la colonne ip. Volontairement
+// pas une IP : Fail2Ban et la simulation Sentinel, qui lisent cette colonne, l'ignorent.
+const PseudonymizedIP = "[pseudonymisé]"
+
+// Erreurs de RevealIP.
+var (
+	ErrEntryNotFound    = errors.New("entrée de log introuvable")
+	ErrNotPseudonymized = errors.New("cette entrée n'est pas pseudonymisée")
+	ErrNoGDPRKey        = errors.New("clé de pseudonymisation non chargée")
+)
 
 // New crée un Store avec les durées de rétention par défaut.
 func New(db *sql.DB) *Store {
@@ -137,30 +156,38 @@ func (s *Store) SetRetention(accessDays, systemDays int) {
 	}
 }
 
-// SetPseudonymizeKey active la pseudonymisation RGPD (AES-GCM).
-// Passer nil pour désactiver (les IPs sont alors stockées en clair ou anonymisées côté passerelle).
-func (s *Store) SetPseudonymizeKey(key []byte) {
+// SetGDPRKey charge la clé AES-GCM de pseudonymisation (gdpr.EnsureKey).
+func (s *Store) SetGDPRKey(key []byte) {
 	s.pseudoMu.Lock()
-	s.pseudoKey = key
+	s.gdprKey = key
 	s.pseudoMu.Unlock()
 }
 
-// RevealIP retourne l'IP réelle d'une entrée pseudonymisée.
-// Retourne une erreur si l'entrée n'est pas pseudonymisée ou si le déchiffrement échoue.
+// SetPseudonymize active ou désactive le chiffrement de l'IP réelle reçue des passerelles.
+func (s *Store) SetPseudonymize(enabled bool) {
+	s.pseudoMu.Lock()
+	s.pseudonymize = enabled
+	s.pseudoMu.Unlock()
+}
+
+// RevealIP retourne l'IP réelle d'une entrée pseudonymisée, que le mode soit encore actif ou non.
 func (s *Store) RevealIP(entryID int64) (string, error) {
 	var enc string
 	err := s.db.QueryRow(`SELECT ip_enc FROM logs WHERE id = ?`, entryID).Scan(&enc)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrEntryNotFound
+	}
 	if err != nil {
-		return "", fmt.Errorf("entrée introuvable : %w", err)
+		return "", err
 	}
 	if enc == "" {
-		return "", fmt.Errorf("cette entrée n'est pas pseudonymisée")
+		return "", ErrNotPseudonymized
 	}
 	s.pseudoMu.RLock()
-	key := s.pseudoKey
+	key := s.gdprKey
 	s.pseudoMu.RUnlock()
 	if key == nil {
-		return "", fmt.Errorf("clé de pseudonymisation non chargée")
+		return "", ErrNoGDPRKey
 	}
 	return gdpr.Decrypt(key, enc)
 }
@@ -184,24 +211,28 @@ func (s *Store) Write(e Entry) {
 	e.RetainedUntil = &retained
 
 	// Pseudonymisation : chiffrer l'IP réelle si disponible et clé chargée.
-	ipEnc := ""
+	var ipEnc, ipHmac string
 	s.pseudoMu.RLock()
-	key := s.pseudoKey
+	key := s.gdprKey
+	if !s.pseudonymize {
+		key = nil
+	}
 	s.pseudoMu.RUnlock()
 	if key != nil && e.RealIP != "" {
 		if enc, err := gdpr.Encrypt(key, e.RealIP); err == nil {
 			ipEnc = enc
-			e.IP = "[pseudonymisé]"
+			ipHmac = gdpr.IPIndex(key, e.RealIP)
+			e.IP = PseudonymizedIP
 		}
 	}
 
 	res, err := s.db.Exec(
-		`INSERT INTO logs (ts, level, component, node_name, node_id, domain, method, path, status, ip, latency_ms, bytes, message, referrer, user_id, request_id, waf_matches, threat_signal, retained_until, ip_enc)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO logs (ts, level, component, node_name, node_id, domain, method, path, status, ip, latency_ms, bytes, message, referrer, user_id, request_id, waf_matches, threat_signal, retained_until, ip_enc, ip_hmac, ip_truncated)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.Ts.UTC().Format(time.RFC3339Nano),
 		nvl(e.Level, "info"), nvl(e.Component, "admin"), e.NodeName, e.NodeID,
 		e.Domain, e.Method, e.Path, e.Status, e.IP, e.LatencyMs, e.Bytes, e.Message, e.Referrer,
-		e.UserID, e.RequestID, encodeWAFMatches(e.WAFMatches), e.ThreatSignal, retained.Format(time.RFC3339), ipEnc,
+		e.UserID, e.RequestID, encodeWAFMatches(e.WAFMatches), e.ThreatSignal, retained.Format(time.RFC3339), ipEnc, ipHmac, e.IPTruncated,
 	)
 	if err == nil {
 		if id, err2 := res.LastInsertId(); err2 == nil {
@@ -281,7 +312,7 @@ func (s *Store) Search(p SearchParams) ([]Entry, bool, error) {
 		if where == "" {
 			cursorClause = " WHERE id < ?"
 		}
-		q = "SELECT id, ts, level, component, COALESCE(node_name,''), COALESCE(node_id,''), domain, method, path, status, ip, latency_ms, bytes, message, COALESCE(request_id,''), COALESCE(waf_matches,''), COALESCE(threat_signal,'') FROM logs" +
+		q = "SELECT id, ts, level, component, COALESCE(node_name,''), COALESCE(node_id,''), domain, method, path, status, ip, latency_ms, bytes, message, COALESCE(request_id,''), COALESCE(waf_matches,''), COALESCE(threat_signal,''), ip_truncated FROM logs" +
 			where + cursorClause + " ORDER BY id DESC LIMIT ?"
 		qArgs = append(args, p.BeforeID, p.PageSize)
 	} else {
@@ -289,7 +320,7 @@ func (s *Store) Search(p SearchParams) ([]Entry, bool, error) {
 			p.Page = 1
 		}
 		offset := (p.Page - 1) * p.PageSize
-		q = "SELECT id, ts, level, component, COALESCE(node_name,''), COALESCE(node_id,''), domain, method, path, status, ip, latency_ms, bytes, message, COALESCE(request_id,''), COALESCE(waf_matches,''), COALESCE(threat_signal,'') FROM logs" +
+		q = "SELECT id, ts, level, component, COALESCE(node_name,''), COALESCE(node_id,''), domain, method, path, status, ip, latency_ms, bytes, message, COALESCE(request_id,''), COALESCE(waf_matches,''), COALESCE(threat_signal,''), ip_truncated FROM logs" +
 			where + " ORDER BY id DESC LIMIT ? OFFSET ?"
 		qArgs = append(args, p.PageSize, offset)
 	}
@@ -304,7 +335,7 @@ func (s *Store) Search(p SearchParams) ([]Entry, bool, error) {
 		var e Entry
 		var ts, wafMatches string
 		if err := rows.Scan(&e.ID, &ts, &e.Level, &e.Component, &e.NodeName, &e.NodeID, &e.Domain, &e.Method, &e.Path,
-			&e.Status, &e.IP, &e.LatencyMs, &e.Bytes, &e.Message, &e.RequestID, &wafMatches, &e.ThreatSignal); err != nil {
+			&e.Status, &e.IP, &e.LatencyMs, &e.Bytes, &e.Message, &e.RequestID, &wafMatches, &e.ThreatSignal, &e.IPTruncated); err != nil {
 			continue
 		}
 		e.Ts, _ = time.Parse(time.RFC3339Nano, ts)
@@ -677,14 +708,92 @@ func (s *Store) purgeRetained() {
 		time.Now().UTC().Format(time.RFC3339))
 }
 
-// DeleteByIP supprime tous les logs d'une IP (droit à l'effacement RGPD).
-// Retourne le nombre de lignes supprimées.
+// DeleteByIP supprime tous les logs d'une IP (droit à l'effacement RGPD), entrées
+// pseudonymisées comprises. Retourne le nombre de lignes supprimées.
 func (s *Store) DeleteByIP(ip string) (int64, error) {
-	res, err := s.db.Exec(`DELETE FROM logs WHERE ip = ?`, ip)
+	canon := gdpr.CanonicalIP(ip)
+	s.pseudoMu.RLock()
+	key := s.gdprKey
+	s.pseudoMu.RUnlock()
+	q, args := `DELETE FROM logs WHERE ip IN (?, ?)`, []any{ip, canon}
+	if key != nil {
+		q += ` OR ip_hmac = ?`
+		args = append(args, gdpr.IPIndex(key, canon))
+	}
+	res, err := s.db.Exec(q, args...)
 	if err != nil {
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// IPReference désigne une IP sans la révéler, pour tracer son effacement : empreinte
+// ip_hmac (« hmac:… », comparable à la colonne) si la clé RGPD est chargée, sinon
+// l'IP tronquée (x.x.x.0, /48 en IPv6).
+func (s *Store) IPReference(ip string) string {
+	s.pseudoMu.RLock()
+	key := s.gdprKey
+	s.pseudoMu.RUnlock()
+	if key != nil {
+		return "hmac:" + gdpr.IPIndex(key, ip)
+	}
+	a, err := netip.ParseAddr(gdpr.CanonicalIP(ip))
+	if err != nil {
+		return "?"
+	}
+	bits := 24
+	if a.Is6() {
+		bits = 48
+	}
+	p, _ := a.Prefix(bits)
+	return p.Addr().String()
+}
+
+// BackfillIPIndex calcule ip_hmac pour les entrées pseudonymisées avant son introduction,
+// en déchiffrant ip_enc par lots. Retourne le nombre d'entrées complétées.
+func (s *Store) BackfillIPIndex(ctx context.Context) (int, error) {
+	s.pseudoMu.RLock()
+	key := s.gdprKey
+	s.pseudoMu.RUnlock()
+	if key == nil {
+		return 0, ErrNoGDPRKey
+	}
+	type row struct {
+		id  int64
+		enc string
+	}
+	var done int
+	var lastID int64
+	for ctx.Err() == nil {
+		rows, err := s.db.QueryContext(ctx,
+			`SELECT id, ip_enc FROM logs WHERE ip_enc != '' AND ip_hmac = '' AND id > ? ORDER BY id LIMIT 500`, lastID)
+		if err != nil {
+			return done, err
+		}
+		var batch []row
+		for rows.Next() {
+			var r row
+			if rows.Scan(&r.id, &r.enc) == nil {
+				batch = append(batch, r)
+			}
+		}
+		rows.Close()
+		if len(batch) == 0 {
+			return done, nil
+		}
+		for _, r := range batch {
+			lastID = r.id
+			ip, err := gdpr.Decrypt(key, r.enc)
+			if err != nil {
+				continue
+			}
+			if _, err := s.db.ExecContext(ctx, `UPDATE logs SET ip_hmac = ? WHERE id = ?`, gdpr.IPIndex(key, ip), r.id); err != nil {
+				return done, err
+			}
+			done++
+		}
+	}
+	return done, ctx.Err()
 }
 
 // DeleteByUserID supprime tous les logs d'un utilisateur (droit à l'effacement RGPD).

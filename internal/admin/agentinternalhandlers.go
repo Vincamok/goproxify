@@ -27,9 +27,10 @@ func (s *Server) handleAgentLogs(w http.ResponseWriter, r *http.Request) {
 		Method    string `json:"method"`
 		Path      string `json:"path"`
 		Status    int    `json:"status"`
-		IP        string `json:"ip"`
-		LatencyMs int64  `json:"latency_ms"`
-		Bytes     int64  `json:"bytes"`
+		IP          string `json:"ip"`
+		IPTruncated bool   `json:"ip_truncated"`
+		LatencyMs   int64  `json:"latency_ms"`
+		Bytes       int64  `json:"bytes"`
 		Message      string   `json:"message"`
 		Referrer     string   `json:"referrer"`
 		RequestID    string   `json:"request_id"`
@@ -57,8 +58,9 @@ func (s *Server) handleAgentLogs(w http.ResponseWriter, r *http.Request) {
 			Method:    item.Method,
 			Path:      item.Path,
 			Status:    item.Status,
-			IP:        item.IP,
-			LatencyMs: item.LatencyMs,
+			IP:          item.IP,
+			IPTruncated: item.IPTruncated,
+			LatencyMs:   item.LatencyMs,
 			Bytes:     item.Bytes,
 			Message:      item.Message,
 			Referrer:     item.Referrer,

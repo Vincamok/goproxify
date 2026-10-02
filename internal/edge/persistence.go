@@ -119,6 +119,47 @@ func (s *Server) loadThreatConfigFromDisk() {
 	s.log.Info(threat.Name+": config chargée depuis le disque", "enabled", cfg.Enabled)
 }
 
+// settingsPath est la copie locale chiffrée des réglages runtime poussés par l'Admin
+// (protection des IP des access logs, journalisation, tracing, URL publique).
+func settingsPath() string {
+	if p := os.Getenv("GPX_EDGE_SETTINGS_PATH"); p != "" {
+		return p
+	}
+	return "/etc/goproxify/edge-settings.gpx"
+}
+
+// receivePushedSettings persiste puis applique des réglages reçus de l'Admin. Sans copie
+// locale, une passerelle redémarrée pendant une coupure de l'Admin écrirait les IP complètes
+// dans son access log malgré l'anonymisation demandée.
+func (s *Server) receivePushedSettings(p pushedSettings) {
+	s.pushedMu.Lock()
+	s.pushed = s.pushed.merge(p)
+	err := s.cache.SaveFile(settingsPath(), s.pushed)
+	s.pushedMu.Unlock()
+	if err != nil {
+		s.log.Warn("settings: persistance des réglages Admin échouée", "err", err)
+	}
+	s.applyPushedSettings(p)
+}
+
+// loadPushedSettingsFromDisk réapplique au démarrage les derniers réglages reçus de l'Admin.
+func (s *Server) loadPushedSettingsFromDisk() {
+	var p pushedSettings
+	ok, err := s.cache.LoadFile(settingsPath(), &p)
+	if err != nil {
+		s.log.Warn("settings: copie locale illisible — en attente de l'Admin", "err", err)
+		return
+	}
+	if !ok {
+		return
+	}
+	s.pushedMu.Lock()
+	s.pushed = p
+	s.pushedMu.Unlock()
+	s.applyPushedSettings(p)
+	s.log.Info("settings: réglages Admin chargés depuis le disque")
+}
+
 func (s *Server) saveCache() {
 	// Invalider immédiatement les chaînes dispatch ; le flush disque est debouncé.
 	s.invalidateDispatchCache()

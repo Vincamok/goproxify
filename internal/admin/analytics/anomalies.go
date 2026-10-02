@@ -129,8 +129,9 @@ func DetectAnomalies(ctx context.Context, db *sql.DB, p Params) []Anomaly {
 
 	reqs, _, _, bots, _ := rawKPIs(db, p)
 
-	// IP dominante : ≥ 20 % des requêtes de la période (et au moins 50).
-	if ips := GetTopIPs(db, p, 1); len(ips) == 1 && reqs > 0 {
+	// IP dominante : ≥ 20 % des requêtes de la période (et au moins 50). Une IP tronquée ou
+	// pseudonymisée regroupe plusieurs clients : l'anomalie et son action Bannir ne la visent pas.
+	if ips := topIPs(db, p, 1, true); len(ips) == 1 && reqs > 0 {
 		if share := float64(ips[0].Requests) / float64(reqs); share >= 0.2 && ips[0].Requests >= 50 {
 			out = append(out, Anomaly{Kind: "dominant_ip", Level: "warning", Subject: ips[0].IP,
 				Value: share * 100, Count: ips[0].Requests, Banned: activeBannedIPSet(db)[ips[0].IP]})

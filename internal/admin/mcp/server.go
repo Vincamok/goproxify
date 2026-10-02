@@ -356,7 +356,7 @@ var tools = []map[string]any{
 	// Logs
 	{
 		"name":        "list_logs",
-		"description": "Retourne les derniers logs d'accès (100 entrées max), filtrables par domaine, niveau ou request_id.",
+		"description": "Retourne les derniers logs d'accès (100 entrées max), filtrables par domaine, niveau ou request_id. Une entrée ip_truncated porte une IP tronquée par l'anonymisation RGPD (x.x.x.0, préfixe /48) qui regroupe plusieurs clients : ne pas la bannir.",
 		"inputSchema": schema(
 			opt("domain", "string", "Filtrer par domaine proxy"),
 			opt("level", "string", "Filtrer par niveau (info, warn, error)"),
@@ -1557,7 +1557,7 @@ func (h *Handler) toolListCerts(r *http.Request) (any, error) {
 }
 
 func (h *Handler) toolListLogs(r *http.Request, domain, level, requestID string) (any, error) {
-	q := `SELECT ts, level, component, domain, method, path, status, ip, latency_ms, COALESCE(request_id,''), message
+	q := `SELECT ts, level, component, domain, method, path, status, ip, latency_ms, COALESCE(request_id,''), message, ip_truncated
 	      FROM logs WHERE 1=1`
 	args := []any{}
 	if requestID != "" {
@@ -1583,7 +1583,8 @@ func (h *Handler) toolListLogs(r *http.Request, domain, level, requestID string)
 		var ts time.Time
 		var lvl, component, dom, method, path, ip, reqID, message string
 		var status, latency int
-		if err := rows.Scan(&ts, &lvl, &component, &dom, &method, &path, &status, &ip, &latency, &reqID, &message); err != nil {
+		var ipTruncated bool
+		if err := rows.Scan(&ts, &lvl, &component, &dom, &method, &path, &status, &ip, &latency, &reqID, &message, &ipTruncated); err != nil {
 			continue
 		}
 		entry := map[string]any{
@@ -1593,6 +1594,10 @@ func (h *Handler) toolListLogs(r *http.Request, domain, level, requestID string)
 		}
 		if reqID != "" {
 			entry["request_id"] = reqID
+		}
+		// IP tronquée par l'anonymisation : ban_ip sur cette valeur ne viserait aucun client.
+		if ipTruncated {
+			entry["ip_truncated"] = true
 		}
 		out = append(out, entry)
 	}

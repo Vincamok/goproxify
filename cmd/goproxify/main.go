@@ -870,15 +870,20 @@ func subcommand(args []string, idx int) string {
 }
 
 // parseFlags construit une map clé→valeur depuis une liste d'args style "-key value" ou "-flag".
+// "--key" est rangé sous "-key" : les deux écritures sont acceptées.
 func parseFlags(args []string) map[string]string {
 	m := make(map[string]string)
 	for i := 0; i < len(args); i++ {
 		if len(args[i]) > 0 && args[i][0] == '-' {
+			key := args[i]
+			if strings.HasPrefix(key, "--") {
+				key = key[1:]
+			}
 			if i+1 < len(args) && (len(args[i+1]) == 0 || args[i+1][0] != '-') {
-				m[args[i]] = args[i+1]
+				m[key] = args[i+1]
 				i++
 			} else {
-				m[args[i]] = ""
+				m[key] = ""
 			}
 		}
 	}

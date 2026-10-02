@@ -5,6 +5,7 @@ package api_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -64,6 +65,38 @@ func TestListBansEdgeFilter(t *testing.T) {
 	}
 	if got := ips("?active=false"); len(got) != 1 || !got["4.4.4.4"] {
 		t.Errorf("active=false ne doit renvoyer que les expirés, reçu %v", got)
+	}
+}
+
+func TestListBansReturnsAllActiveBans(t *testing.T) {
+	db, err := admindb.Open(filepath.Join(t.TempDir(), "bans.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const n = 750
+	for i := 0; i < n; i++ {
+		if _, err := tx.Exec(`INSERT INTO security_bans (id, ip, source) VALUES (?, ?, 'threat')`,
+			fmt.Sprintf("b%d", i), fmt.Sprintf("10.0.%d.%d", i/256, i%256)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	(&api.SecurityHandler{DB: db}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/security/bans?active=true", nil))
+	var out []security.Ban
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != n {
+		t.Errorf("%d bans actifs attendus, reçu %d", n, len(out))
 	}
 }
 

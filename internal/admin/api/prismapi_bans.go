@@ -141,6 +141,9 @@ func (h *PrismHandler) ipScan(w http.ResponseWriter, r *http.Request) {
 		FirstSeen  string     `json:"first_seen,omitempty"`
 		LastSeen   string     `json:"last_seen,omitempty"`
 		TopPaths   []pathStat `json:"top_paths"`
+		// IPTruncated : les logs de la période portent cette valeur tronquée par l'anonymisation
+		// RGPD — l'activité est celle de tout un /24 ou /48, pas d'un client.
+		IPTruncated bool `json:"ip_truncated,omitempty"`
 	}{IP: ip, ScannedAt: time.Now().UTC().Format(time.RFC3339), Bans: []ban{}, Threats: []threat{}, TopPaths: []pathStat{}}
 
 	if rows, err := h.DB.QueryContext(ctx, `
@@ -178,9 +181,9 @@ func (h *PrismHandler) ipScan(w http.ResponseWriter, r *http.Request) {
 
 	from, to := p.From.UTC().Format(time.RFC3339), p.To.UTC().Format(time.RFC3339)
 	h.DB.QueryRowContext(ctx, `
-		SELECT COUNT(*), COALESCE(SUM(CASE WHEN status>=400 THEN 1 ELSE 0 END),0), COALESCE(MIN(ts),''), COALESCE(MAX(ts),'')
+		SELECT COUNT(*), COALESCE(SUM(CASE WHEN status>=400 THEN 1 ELSE 0 END),0), COALESCE(MIN(ts),''), COALESCE(MAX(ts),''), COALESCE(MAX(ip_truncated),0)
 		FROM logs WHERE ip = ? AND status > 0 AND ts >= ? AND ts <= ?`, ip, from, to).
-		Scan(&out.Requests, &out.Errors, &out.FirstSeen, &out.LastSeen) //nolint:errcheck
+		Scan(&out.Requests, &out.Errors, &out.FirstSeen, &out.LastSeen, &out.IPTruncated) //nolint:errcheck
 	if rows, err := h.DB.QueryContext(ctx, `
 		SELECT path, COUNT(*) n, SUM(CASE WHEN status>=400 THEN 1 ELSE 0 END)
 		FROM logs WHERE ip = ? AND status > 0 AND ts >= ? AND ts <= ?

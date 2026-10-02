@@ -35,6 +35,10 @@ func TestSimulateSentinelTool(t *testing.T) {
 	ins(now.Add(-7*time.Minute), "[pseudonymisé]", "/wp-admin", 200, "edge")
 	ins(now.Add(-6*time.Minute), "7.7.7.7", "/wp-admin", 200, "admin")
 	ins(now.Add(-3*time.Hour), "6.6.6.6", "/wp-admin", 200, "edge")
+	if _, err := db.Exec(`INSERT INTO logs (ts, component, domain, method, path, status, ip, ip_truncated) VALUES (?, 'edge', 'a.test', 'GET', '/wp-admin', 200, '5.5.5.0', 1)`,
+		now.Add(-5*time.Minute).Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
 
 	h := &Handler{DB: db}
 	r := httptest.NewRequest(http.MethodPost, "/mcp", nil)
@@ -45,7 +49,7 @@ func TestSimulateSentinelTool(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := out.(map[string]any)
-	if m["events_replayed"] != 3 || m["skipped_unattributable_ip"] != 1 {
+	if m["events_replayed"] != 3 || m["skipped_unattributable_ip"] != 2 {
 		t.Fatalf("events=%v skipped=%v", m["events_replayed"], m["skipped_unattributable_ip"])
 	}
 	cand := m["candidate"].(threat.SimReport)

@@ -36,7 +36,11 @@ func TestAccessLoggerForwarder(t *testing.T) {
 	al.SetForwarder(func(batch []ShipEntry) {
 		mu.Lock()
 		got = append(got, batch...)
+		n := len(got)
 		mu.Unlock()
+		if n < 3 {
+			return
+		}
 		select {
 		case <-done:
 		default:
@@ -48,11 +52,15 @@ func TestAccessLoggerForwarder(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	}))
-	req := httptest.NewRequest(http.MethodGet, "https://app.example.com:443/api/ping", nil)
-	req.Host = "app.example.com:443"
-	req.Header.Set("Referer", "https://ref.example/")
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
+	// Sans protection, anonymisée, pseudonymisée.
+	for _, mode := range [][2]bool{{false, false}, {true, false}, {false, true}} {
+		al.SetIPProtection(mode[0], mode[1])
+		req := httptest.NewRequest(http.MethodGet, "https://app.example.com:443/api/ping", nil)
+		req.Host = "app.example.com:443"
+		req.RemoteAddr = "203.0.113.42:51234"
+		req.Header.Set("Referer", "https://ref.example/")
+		h.ServeHTTP(httptest.NewRecorder(), req)
+	}
 
 	select {
 	case <-done:
@@ -62,8 +70,18 @@ func TestAccessLoggerForwarder(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(got) == 0 {
-		t.Fatal("expected at least one shipped entry")
+	for i, want := range []struct {
+		ip, realIP string
+		truncated  bool
+	}{
+		{"203.0.113.42", "", false},
+		{"203.0.113.0", "", true},
+		{"203.0.113.0", "203.0.113.42", true},
+	} {
+		if s := got[i]; s.IP != want.ip || s.RealIP != want.realIP || s.IPTruncated != want.truncated {
+			t.Errorf("entrée %d : ip=%q real_ip=%q ip_truncated=%v, attendu %q %q %v",
+				i, s.IP, s.RealIP, s.IPTruncated, want.ip, want.realIP, want.truncated)
+		}
 	}
 	e := got[0]
 	if e.Domain != "app.example.com" {
@@ -80,6 +98,25 @@ func TestAccessLoggerForwarder(t *testing.T) {
 	}
 	if e.Referrer != "https://ref.example/" {
 		t.Errorf("referrer=%q", e.Referrer)
+	}
+}
+
+func TestIPFieldsAnonymizeWinsOverPseudonymize(t *testing.T) {
+	const ip = "203.0.113.42"
+	cases := []struct {
+		anon, pseudo      bool
+		wantLog, wantShip string
+	}{
+		{false, false, ip, ""},
+		{true, false, "203.0.113.0", ""},
+		{false, true, "203.0.113.0", ip},
+		{true, true, "203.0.113.0", ""},
+	}
+	for _, c := range cases {
+		logIP, shipIP := ipFields(ip, c.anon, c.pseudo)
+		if logIP != c.wantLog || shipIP != c.wantShip {
+			t.Errorf("anon=%v pseudo=%v: got (%q, %q) want (%q, %q)", c.anon, c.pseudo, logIP, shipIP, c.wantLog, c.wantShip)
+		}
 	}
 }
 

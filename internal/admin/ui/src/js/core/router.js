@@ -407,7 +407,7 @@ window.openNavEdge = function(i) {
 };
 
 // ── Sélection / désélection d'une passerelle ─────────────────────────────────────
-// page optionnelle : destination après sélection (défaut Routage).
+// page optionnelle : destination après sélection (défaut Proxies).
 // Évite la course openEdge()+navigate(X) où selectEdge écrasait toujours vers edge-trafic.
 function selectEdge(edge, page) {
   state.selectedEdge = edge;

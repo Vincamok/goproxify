@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -64,7 +65,6 @@ type Server struct {
 	schedEngine    *scheduler.Engine
 	pbEngine       *playbooks.Engine
 	logStore       *logs.Store
-	gdprKey        []byte          // clé AES-GCM pseudonymisation RGPD
 	wsManager      *edgews.Manager // manager WS Admin→Passerelle
 	loginLimit     *loginLimiter
 }
@@ -85,14 +85,11 @@ func New(cfg *config.AdminConfig) (*Server, error) {
 	setup.Init(db, cfg)
 
 	logStore := logs.New(db)
-	// Charger (ou générer) la clé de pseudonymisation RGPD. Erreur non-fatale.
-	var gdprKey []byte
-	if key, err := gdpr.EnsureKey(db); err == nil {
-		gdprKey = key
-		if admindb.GetSetting(db, "logs.ip_pseudonymize", "false") == "true" {
-			logStore.SetPseudonymizeKey(key)
-		}
-	}
+	// Clé de pseudonymisation RGPD : sans elle, l'IP réelle reçue est simplement ignorée
+	// (l'IP tronquée par la passerelle est conservée), d'où une erreur non fatale.
+	gdprKey, gdprErr := gdpr.EnsureKey(db)
+	logStore.SetGDPRKey(gdprKey)
+	logStore.SetPseudonymize(admindb.GetSetting(db, "logs.ip_pseudonymize", "false") == "true")
 	nodeName := cfg.HA.NodeID
 	if nodeName == "" {
 		nodeName = "admin"
@@ -104,6 +101,9 @@ func New(cfg *config.AdminConfig) (*Server, error) {
 		NodeName:  nodeName,
 	}
 	log := slog.New(&logs.FanoutHandler{Handlers: []slog.Handler{stderrH, storeH}})
+	if gdprErr != nil {
+		log.Warn("rgpd: clé de pseudonymisation indisponible", "err", gdprErr)
+	}
 
 	s := &Server{
 		cfg:            cfg,
@@ -112,7 +112,6 @@ func New(cfg *config.AdminConfig) (*Server, error) {
 		auditor:        audit.New(db, cfg.App.AuditRetentionDays),
 		alertingEngine: alerting.New(db, log),
 		logStore:       logStore,
-		gdprKey:        gdprKey,
 		loginLimit:     newLoginLimiter(),
 	}
 
@@ -188,6 +187,7 @@ func (s *Server) Start(ctx context.Context) error {
 				Status:    item.Status,
 				IP:        item.IP,
 				RealIP:    item.RealIP,
+				IPTruncated:  item.IPTruncated,
 				LatencyMs:    item.LatencyMs,
 				Bytes:        item.Bytes,
 				Message:      item.Message,
@@ -371,7 +371,7 @@ func (s *Server) Start(ctx context.Context) error {
 	auditH := &api.AuditHandler{DB: s.db, Log: s.log, Auditor: s.auditor}
 	channelsH := &api.ChannelsHandler{DB: s.db, Log: s.log, Engine: s.alertingEngine, OnChange: syncConfig}
 	rulesH := &api.RulesHandler{DB: s.db, Log: s.log, Engine: s.alertingEngine, OnChange: syncConfig}
-	logsH := &api.LogsHandler{Log: s.log, Store: s.logStore, DB: s.db, Pusher: manager, GDPRKey: s.gdprKey}
+	logsH := &api.LogsHandler{Log: s.log, Store: s.logStore, DB: s.db, Pusher: manager}
 	f2bEngine := fail2ban.New(s.db, s.log)
 	vsScanner := vulnscan.New(s.db, s.log, "")
 	csBouncer := crowdsec.New(s.db, s.log)
@@ -601,6 +601,14 @@ func (s *Server) Start(ctx context.Context) error {
 		return parseInt("logs.retention_access_days", logs.DefaultRetentionAccessDays),
 			parseInt("logs.retention_system_days", logs.DefaultRetentionSystemDays)
 	})
+	go func() {
+		n, err := s.logStore.BackfillIPIndex(ctx)
+		if err != nil && !errors.Is(err, logs.ErrNoGDPRKey) && ctx.Err() == nil {
+			s.log.Warn("rgpd: index d'effacement des IP pseudonymisées incomplet", "err", err, "done", n)
+		} else if n > 0 {
+			s.log.Info("rgpd: index d'effacement des IP pseudonymisées complété", "entries", n)
+		}
+	}()
 
 	if s.haManager != nil {
 		if err := s.haManager.Start(ctx); err != nil {
@@ -735,8 +743,8 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/api/v1/alert-events/", adminWrites(alertEventsH))
 	mux.Handle("/api/v1/alert-rules", adminWrites(rulesH))
 	mux.Handle("/api/v1/alert-rules/", adminWrites(rulesH))
-	mux.Handle("/api/v1/logs", protected(logsH))
-	mux.Handle("/api/v1/logs/", protected(logsH))
+	mux.Handle("/api/v1/logs", adminWrites(logsH))
+	mux.Handle("/api/v1/logs/", adminWrites(logsH))
 	mux.Handle("/api/v1/security", adminOnly(securityH))
 	mux.Handle("/api/v1/security/", adminOnly(securityH))
 	mux.Handle("/api/v1/rules-engine/", adminOnly(reH))

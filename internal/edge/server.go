@@ -97,6 +97,9 @@ type Server struct {
 	pushedTracing string // endpoint OTLP poussé par Admin (utilisé si cfg.Engine.TracingEndpoint est vide)
 	activeTracing string // endpoint OTLP réellement exporté (démarrage ou poussé par Admin)
 
+	pushedMu sync.Mutex
+	pushed   pushedSettings // cumul des réglages poussés par l'Admin, persisté (settingsPath)
+
 	// saveCache debounce (revue P1 #8)
 	saveCacheMu    sync.Mutex
 	saveCacheTimer *time.Timer
@@ -304,6 +307,7 @@ func New(cfg *config.EdgeConfig, cfgPath ...string) (*Server, error) {
 				Status:    e.Status,
 				IP:        e.IP,
 				RealIP:    e.RealIP,
+				IPTruncated:  e.IPTruncated,
 				LatencyMs:    e.LatencyMs,
 				Bytes:        e.Bytes,
 				Message:      e.Message,
@@ -388,6 +392,9 @@ func (s *Server) Start(ctx context.Context) error {
 	s.threatEngine = threat.New(s.log.Logger(), s.threatBanCallback())
 	s.loadThreatConfigFromDisk()
 	s.threatEngine.Start(ctx)
+
+	// Réglages poussés (protection des IP, journalisation…) avant le premier access log.
+	s.loadPushedSettingsFromDisk()
 
 	// API interne (push de routes depuis l'Admin)
 	if err := s.startInternalAPI(); err != nil {

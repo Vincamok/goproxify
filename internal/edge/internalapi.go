@@ -867,6 +867,32 @@ type pushedSettings struct {
 	IPPseudonymize  *bool  `json:"ip_pseudonymize,omitempty"`
 }
 
+// merge reporte sur p les champs renseignés de next : l'Admin pousse aussi des réglages
+// isolés (ex. ip_anonymize seul), qui ne doivent pas effacer les autres de la copie locale.
+func (p pushedSettings) merge(next pushedSettings) pushedSettings {
+	for _, f := range []struct {
+		dst *string
+		src string
+	}{
+		{&p.TracingEndpoint, next.TracingEndpoint},
+		{&p.LogLevel, next.LogLevel},
+		{&p.LogFormat, next.LogFormat},
+		{&p.AccessLogPath, next.AccessLogPath},
+		{&p.AdminPublicURL, next.AdminPublicURL},
+	} {
+		if f.src != "" {
+			*f.dst = f.src
+		}
+	}
+	if next.IPAnonymize != nil {
+		p.IPAnonymize = next.IPAnonymize
+	}
+	if next.IPPseudonymize != nil {
+		p.IPPseudonymize = next.IPPseudonymize
+	}
+	return p
+}
+
 // handlePushSettings reçoit les paramètres runtime poussés par Admin.
 // La config locale (cfg.Engine.*) a toujours la priorité sur chaque champ.
 func (s *Server) handlePushSettings(w http.ResponseWriter, r *http.Request) {
@@ -875,7 +901,7 @@ func (s *Server) handlePushSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	s.applyPushedSettings(payload)
+	s.receivePushedSettings(payload)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -910,16 +936,18 @@ func (s *Server) applyPushedSettings(payload pushedSettings) {
 		s.log.Info("settings: access log redirigé depuis Admin", "path", payload.AccessLogPath)
 	}
 
-	// IP anonymisation — Admin pousse la valeur ; la config locale edge.json a la priorité.
-	if payload.IPAnonymize != nil && !s.cfg.Engine.IPAnonymize {
-		s.accessLog.SetIPAnonymize(*payload.IPAnonymize)
-		s.log.Info("settings: anonymisation IP access logs", "enabled", *payload.IPAnonymize)
-	}
-
-	// IP pseudonymisation — Admin pousse la valeur ; local wins.
-	if payload.IPPseudonymize != nil {
-		s.accessLog.SetIPPseudonymize(*payload.IPPseudonymize)
-		s.log.Info("settings: pseudonymisation IP access logs", "enabled", *payload.IPPseudonymize)
+	// Protection des IP, appliquée d'un bloc : l'anonymisation de edge.json ne peut pas être levée
+	// par l'Admin, et l'emporte dans le logger sur la pseudonymisation (IP réelle jamais envoyée).
+	if payload.IPAnonymize != nil || payload.IPPseudonymize != nil {
+		anon, pseudo := s.accessLog.IPProtection()
+		if payload.IPAnonymize != nil && !s.cfg.Engine.IPAnonymize {
+			anon = *payload.IPAnonymize
+		}
+		if payload.IPPseudonymize != nil {
+			pseudo = *payload.IPPseudonymize
+		}
+		s.accessLog.SetIPProtection(anon, pseudo)
+		s.log.Info("settings: protection IP access logs", "anonymize", anon, "pseudonymize", pseudo)
 	}
 
 	// URL publique Admin — pour les liens des pages d'erreur (sauf override env local).

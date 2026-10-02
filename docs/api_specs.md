@@ -79,10 +79,12 @@ Une requête authentifiée par PAT doit porter le scope de la route (`403 scope 
 | `/api/v1/import` | `audit:read` | `import:write` |
 | `/api/v1/portal`, `/portal-page-templates` | `portal:read` | `portal:write` (contenu d'un terminal — rejeu, observation — : `portal:write` même en `GET`) |
 | `/api/v1/prism`, `/metrics/proxies`, `/metrics/summary` | `metrics:read` | idem |
-| `/api/v1/logs` (`/logs/reveal-ip` : `gdpr:reveal`) | `logs:read` | idem |
+| `/api/v1/logs` (`/logs/reveal-ip` : `gdpr:reveal`) | `logs:read` | `logs:write` |
 | `/api/v1/backups` · `/users` · `/tokens` · `/teams` · `/audit` · `/pairing-secret` | `backups:read` · `users:read` · `users:read` · `teams:read` · `audit:read` · `pairing:read` | idem |
 
 Depuis Admin `0.70.0` : les écritures sur `/alert-*`, `/domains`, `/certs` exigent `alerts:write`, `domains:write`, `certs:write` (le scope de lecture suffisait auparavant), `/internal-ca` exige `certs:read` / `certs:write`, et `/rules-engine`, `/scheduled-tasks`, `/playbooks` exigent `audit:read` / `security:write` (aucun scope n'était vérifié auparavant, seul le rôle admin). Ces scopes d'écriture sont réservés aux rôles admin et superadmin ; un PAT existant ne les reçoit pas, il faut en créer un nouveau.
+
+Depuis Admin `0.70.4` : les écritures sur `/logs` (réglages, effacement RGPD) exigent `logs:write`, réservé aux rôles admin et superadmin ; `logs:read` suffisait auparavant.
 
 ### Rôle exigé pour les écritures
 
@@ -92,6 +94,9 @@ Routes ouvertes en lecture à tout compte authentifié mais dont les écritures 
 |---|---|---|
 | `/api/v1/certs` (dont `deploy-targets`, `pull-tokens`), `/domains`, `/alert-channels`, `/alert-rules` (dont `simulate`), `/alert-events` (`ack`), `/ip-profiles` (dont `refresh`) | tout compte | admin / superadmin — sinon `403 accès réservé aux administrateurs` |
 | `/api/v1/snippets` | tout compte | admin / superadmin, ou `user` disposant d'au moins un grant `write` (équipe ou direct) — sinon `403 accès insuffisant` |
+| `/api/v1/logs` (`settings`, `by-ip`, `by-user`, `reveal-ip`) | tout compte | admin / superadmin — sinon `403 accès réservé aux administrateurs` ; `reveal-ip` exige en plus `gdpr:reveal` (superadmin) |
+
+Depuis Admin `0.70.4` pour `/logs` : un compte `user` pouvait désactiver l'anonymisation ou la pseudonymisation des IP, réduire la rétention et effacer des logs par IP ou par utilisateur.
 
 Depuis Admin `0.70.2` : jusque-là, seul le scope PAT était vérifié sur ces écritures ; un compte `user` connecté à l'interface pouvait obtenir, importer ou supprimer des certificats, générer un pull token (et donc récupérer la clé privée via `/cert-bundle`), créer ou renouveler des domaines, et créer ou supprimer des canaux et règles d'alerte.
 
@@ -773,9 +778,9 @@ Compteurs globaux : `active_bans`, `active_threats`, `open_cves`, `critical_cves
 
 ### `GET /api/v1/security/bans`
 
-Liste les bans (500 au plus, du plus récent au plus ancien). Paramètres : `active=true` (non expirés) ou `active=false` (expirés uniquement), `ip` (sous-chaîne), `domain`, `source` (`native|fail2ban|crowdsec|threat|rules_engine:<nœud>`), `edge` (nom du nœud ou id du token : les bans de cette passerelle **et** les bans globaux). Chaque entrée porte `edge_name`, la passerelle d'origine (vide = ban global : créé depuis l'Admin ou antérieur à cette colonne).
+Liste tous les bans correspondant aux filtres, du plus récent au plus ancien. Paramètres : `active=true` (non expirés) ou `active=false` (expirés uniquement), `ip` (sous-chaîne), `domain`, `source` (`native|fail2ban|crowdsec|threat|rules_engine:<nœud>`), `edge` (nom du nœud ou id du token : les bans de cette passerelle **et** les bans globaux). Chaque entrée porte `edge_name`, la passerelle d'origine (vide = ban global : créé depuis l'Admin ou antérieur à cette colonne).
 
-`GET /security/bans/countries`, `GET /security/bans/export` (CSV ou JSON, colonne `edge_name` ajoutée) et `GET /security/bans/intel/{kpis,by-reason,by-source,timeline,top-ips}` acceptent le même paramètre `edge`. `intel/kpis` renvoie `recurring_ips`, le nombre d'IP ayant au moins 3 bans.
+`GET /security/bans/countries`, `GET /security/bans/export` (CSV ou JSON, colonne `edge_name` ajoutée) et `GET /security/bans/intel/{kpis,by-reason,by-source,timeline,top-ips}` acceptent le même paramètre `edge`. `intel/kpis` renvoie `history_total` (bans posés), `unbanned` (débans), `rotation_ratio` (`unbanned / history_total`) et `recurring_ips`, le nombre d'IP ayant au moins 3 bans ; le nombre de bans actifs est la longueur de `GET /security/bans?active=true`.
 
 ### `POST /api/v1/security/bans`
 
@@ -816,7 +821,7 @@ Délai de correction attendu (en jours après détection), par tranche de gravit
 
 ### `GET /api/v1/security/fail2ban` · `PUT /api/v1/security/fail2ban`
 
-Lit ou met à jour la configuration Fail2Ban (`enabled`, `window_sec`, `max_errors`, `ban_duration_sec`, `whitelist`). `whitelist` accepte des IPv4, IPv6 et CIDR des deux familles. Depuis Admin `0.69.3` / Edge `0.17.5`, Fail2Ban banne aussi les IPv6, par /64 : l'`ip` d'un tel ban (source `fail2ban`) dans `GET /security/bans` est le préfixe, par exemple `2a01:e0a:1:2::/64` (l'adresse seule si la liste blanche recoupe ce /64) — voir [Fail2Ban natif Go](security.md#fail2ban-natif-go).
+Lit ou met à jour la configuration Fail2Ban (`enabled`, `window_sec`, `max_errors`, `ban_duration_sec`, `whitelist`). `whitelist` accepte des IPv4, IPv6 et CIDR des deux familles. Depuis Admin `0.69.3` / Edge `0.17.5`, Fail2Ban banne aussi les IPv6, par /64 : l'`ip` d'un tel ban (source `fail2ban`) dans `GET /security/bans` est le préfixe, par exemple `2a01:e0a:1:2::/64` (l'adresse seule si la liste blanche recoupe ce /64) — voir [Fail2Ban natif Go](security.md#fail2ban-natif-go). Depuis Admin `0.71.1` / Edge `0.17.12`, le Fail2Ban de l'Admin ignore les entrées de log dont l'IP a été tronquée par la passerelle (champ `ip_truncated` des logs envoyés à l'Admin, posé en anonymisation comme en pseudonymisation) et ne bannit plus depuis les logs tant que `ip_anonymize` ou `ip_pseudonymize` est actif (`PUT /logs/settings`) ; le Fail2Ban de chaque passerelle bannit sur l'IP réelle.
 
 ### `GET /api/v1/security/crowdsec` · `PUT /api/v1/security/crowdsec`
 
@@ -851,7 +856,7 @@ Corps :
 - `config` (requis) : champs Sentinel surchargés sur la config actuelle, mêmes noms que `threat-config` ;
 - `hours` : fenêtre rejouée, défaut `1`, max `24` ; `domain` : limite le rejeu à un domaine.
 
-Réponse `200` : `current` et `candidate` (`events`, `blocked`, `blocked_by_ban`, `legit_blocked`, `blocked_ips`, `by_reason`, `bans`, `top_ips`), `delta` (candidat − actuel), `events_replayed`, `truncated`, `skipped_unattributable_ip`, `not_simulated`, `note`. `400` si `config` est absent ou invalide. Non simulé : listes par défaut, `global_rps`, règles User-Agent, WAF.
+Réponse `200` : `current` et `candidate` (`events`, `blocked`, `blocked_by_ban`, `legit_blocked`, `blocked_ips`, `by_reason`, `bans`, `top_ips`), `delta` (candidat − actuel), `events_replayed`, `truncated`, `skipped_unattributable_ip` (entrées écartées : IP pseudonymisée, ou tronquée par l'anonymisation RGPD), `not_simulated`, `note`. `400` si `config` est absent ou invalide. Non simulé : listes par défaut, `global_rps`, règles User-Agent, WAF.
 
 ### `GET /api/v1/security/ips-provider` · `PUT /api/v1/security/ips-provider`
 
@@ -1218,7 +1223,7 @@ Tous les messages WS utilisent l'enveloppe suivante :
 | `push_snippets` | Pousse tous les snippets actifs |
 | `push_auth_providers` | Pousse les fournisseurs d'authentification |
 | `push_ip_profiles` | Pousse les profils IP/CIDR |
-| `push_settings` | Pousse les paramètres runtime (log level, tracing, etc.) |
+| `push_settings` | Pousse les paramètres runtime (log level, tracing, protection des IP, etc.) ; la passerelle en garde une copie chiffrée (`edge-settings.gpx`) rechargée au démarrage, un envoi partiel ne modifie que les champs présents |
 | `push_cluster_peers` | Pousse la topologie Raft |
 | `push_delegations` | Pousse les routes de délégation multi-passerelle |
 | `full_sync` | Full sync : envoie toutes les données en une seule enveloppe |
@@ -1276,15 +1281,15 @@ Tous les messages WS utilisent l'enveloppe suivante :
 
 | Méthode | Endpoint | Scope requis | Description |
 |---|---|---|---|
-| GET | `/api/v1/logs` | `logs:read` | Liste paginée (curseur `before_id`, `page_size`) : filtres `kind` (`access`/`system`), `level`, `component`, `node_name`/`node_id`, `domain`, `ip`, `method`, `status`, `path`, `search`, `date_from`, `date_to`, `exclude_internal` (`1`/`true` : exclut les IP de réseau privé/loopback — RFC 1918, loopback, link-local IPv4/IPv6 — appliqué en SQL avant `LIMIT`, donc `has_more`/`page_size` restent cohérents) → `{has_more, last_id, entries:[Entry]}`. Chaque `Entry` porte `country` (code ISO alpha-2, résolu au mieux depuis le cache géo-IP déjà alimenté par le tableau de bord/Prism/Bans ; absent si l'IP n'a pas encore été résolue — pas d'appel réseau synchrone sur cette route), `request_id` (identifiant de la requête d'origine, transmis par la passerelle — voir `/logs/correlate?request_id=`), `waf_matches` (catégories de règles WAF déclenchées, tableau, absent si aucune) et `threat_signal` (signal Sentinel déclenché, absent sinon). `exclude_internal` s'applique aussi à `/logs/histogram`, `/logs/facets`, `/logs/export` et `/logs/live` (mêmes filtres) |
-| GET | `/api/v1/logs/live` | `logs:read` | Flux SSE des nouvelles entrées, mêmes filtres que la liste (`?_auth=<token>` requis, `EventSource` ne pose pas d'en-tête `Authorization`) |
+| GET | `/api/v1/logs` | `logs:read` | Liste paginée (curseur `before_id`, `page_size`) : filtres `kind` (`access`/`system`), `level`, `component`, `node_name`/`node_id`, `domain`, `ip`, `method`, `status`, `path`, `search`, `date_from`, `date_to`, `exclude_internal` (`1`/`true` : exclut les IP de réseau privé/loopback — RFC 1918, loopback, link-local IPv4/IPv6 — appliqué en SQL avant `LIMIT`, donc `has_more`/`page_size` restent cohérents) → `{has_more, last_id, entries:[Entry]}`. Chaque `Entry` porte `country` (code ISO alpha-2, résolu au mieux depuis le cache géo-IP déjà alimenté par le tableau de bord/Prism/Bans ; absent si l'IP n'a pas encore été résolue — pas d'appel réseau synchrone sur cette route), `request_id` (identifiant de la requête d'origine, transmis par la passerelle — voir `/logs/correlate?request_id=`), `waf_matches` (catégories de règles WAF déclenchées, tableau, absent si aucune), `threat_signal` (signal Sentinel déclenché, absent sinon) et, depuis Admin `0.71.2`, `ip_truncated` (`true` quand la passerelle a tronqué l'IP par l'anonymisation ou la pseudonymisation RGPD — `x.x.x.0`, préfixe /48 `2a01:e0a:1::` — : la valeur regroupe plusieurs clients et ne doit être ni bannie ni analysée ; absent sinon, et absent des entrées stockées avant Admin `0.71.1` ou envoyées par une passerelle antérieure à Edge `0.17.12`). Une entrée pseudonymisée porte aussi `ip_truncated` (son `ip` vaut `[pseudonymisé]`). `exclude_internal` s'applique aussi à `/logs/histogram`, `/logs/facets`, `/logs/export` et `/logs/live` (mêmes filtres) |
+| GET | `/api/v1/logs/live` | `logs:read` | Flux SSE des nouvelles entrées, mêmes filtres et mêmes champs que la liste, `ip_truncated` compris (`?_auth=<token>` requis, `EventSource` ne pose pas d'en-tête `Authorization`) |
 | GET | `/api/v1/logs/export?format=json\|csv` | `logs:read` | Export des entrées filtrées (mêmes filtres que la liste) |
 | GET | `/api/v1/logs/correlate` | `logs:read` | Entrées voisines d'un événement : `request_id`, ou `domain`+`ts`+`window` (secondes, défaut 30) |
 | GET | `/api/v1/logs/settings` | `logs:read` | Paramètres de rétention et de pseudonymisation |
-| PUT | `/api/v1/logs/settings` | admin | Modifier rétention, `ip_anonymize`, `ip_pseudonymize` |
-| POST | `/api/v1/logs/reveal-ip` | `gdpr:reveal` | Révéler l'IP réelle d'une entrée pseudonymisée |
-| DELETE | `/api/v1/logs/by-ip/{ip}` | admin | Effacement RGPD Art.17 par IP |
-| DELETE | `/api/v1/logs/by-user/{user_id}` | admin | Effacement RGPD Art.17 par utilisateur |
+| PUT | `/api/v1/logs/settings` | `logs:write` + admin | Modifier rétention, `ip_anonymize`, `ip_pseudonymize`. Les deux modes sont exclusifs : `400` si la requête les laisserait actifs ensemble (en tenant compte de la valeur déjà enregistrée ; envoyer les deux champs pour basculer). Un mode modifié est audité (`logs_ip_anonymize`, `logs_ip_pseudonymize`) et poussé aux passerelles en un seul message `push_settings` portant les deux champs ; une valeur inchangée n'est ni auditée ni poussée. Une entrée pseudonymisée a `ip` = `[pseudonymisé]` dans `GET /logs` |
+| POST | `/api/v1/logs/reveal-ip` | `gdpr:reveal` (superadmin) | Révéler l'IP réelle d'une entrée pseudonymisée |
+| DELETE | `/api/v1/logs/by-ip/{ip}` | `logs:write` + admin | Effacement RGPD Art.17 par IP, entrées pseudonymisées comprises (empreinte `ip_hmac`), IPv6 quelle que soit sa notation → `{deleted, ip}`. `{ip}` doit être une adresse IP (`400` sinon). L'audit (`rgpd_erasure_ip`) et le log système ne contiennent que l'empreinte de l'IP (`hmac:…`) |
+| DELETE | `/api/v1/logs/by-user/{user_id}` | `logs:write` + admin | Effacement RGPD Art.17 par utilisateur |
 | GET | `/api/v1/logs/histogram` | `logs:read` | Entrées par tranche de temps et par niveau : mêmes filtres que la liste plus `bucket` (`minute`, `hour`, `day` ; défaut selon l'étendue, 24 h sans `date_from`) → `{bucket, points:[{bucket, total, warn, error}]}` |
 | GET | `/api/v1/logs/facets` | `logs:read` | Comptage des entrées filtrées par valeur, pour l'explorateur de logs : mêmes filtres que la liste plus `fields` (CSV parmi `level`, `component`, `node_name`, `domain`, `method` ; par défaut les cinq) → `{<field>: [{value, count}]}`, 12 valeurs les plus fréquentes par champ, valeurs vides exclues |
 | GET | `/api/v1/audit/histogram` | authentifié | Actions du journal d'audit par tranche et par gravité : filtres `component`, `action`, `actor`, `severity`, `from`, `to` (RFC 3339) plus `bucket` → `{bucket, points:[{bucket, total, warn, critical}]}` |
@@ -1307,17 +1312,22 @@ Réponse `200` :
 }
 ```
 
+La révélation reste possible après la désactivation de la pseudonymisation, tant que l'entrée est conservée.
+
 Codes d'erreur :
 - `403` — scope `gdpr:reveal` manquant
 - `400` — `entry_id` ou `reason` manquant
-- `422` — entrée non pseudonymisée ou clé non chargée
+- `404` — entrée introuvable
+- `422` — entrée non pseudonymisée
+- `500` — clé de pseudonymisation non chargée
 
 ## Prism — bans et scan d'IP
 
 - `GET /api/v1/prism/bans/breakdown` — bans actifs ventilés par source puis par technique de détection : `[{source, source_label, sentinel, technique, label, count}]`. `sentinel: true` pour la source `threat` (moteur Sentinel de la passerelle : techniques `ip`, `ua`, `path`, `rate` et leurs variantes `custom_*`) ; Fail2Ban est rapporté en `errors`, CrowdSec par scénario.
-- `GET /api/v1/prism/ip-scan?ip=<ip>[&from&to]` — ré-analyse à la demande d'une IP : `verdict` (`banned` | `suspect` | `clean`), bans actifs (avec source/technique), nombre de bans passés, décisions de menace, requêtes/erreurs sur la période et chemins les plus visés.
+- `GET /api/v1/prism/ip-scan?ip=<ip>[&from&to]` — ré-analyse à la demande d'une IP : `verdict` (`banned` | `suspect` | `clean`), bans actifs (avec source/technique), nombre de bans passés, décisions de menace, requêtes/erreurs sur la période et chemins les plus visés. `ip_truncated: true` (depuis Admin `0.71.2`) quand les logs de la période portent cette valeur tronquée par l'anonymisation RGPD : requêtes et erreurs sont alors celles de tout un /24 ou /48, et l'interface ne propose pas de bannir.
+- `GET /api/v1/prism/ips?[from&to&proxy&node_name&ip&path&limit]` — IP les plus actives (`limit` 50 par défaut) : `[{ip, requests, errors, bytes, ip_truncated?}]`. `ip_truncated: true` (depuis Admin `0.71.2`) signale une IP tronquée par l'anonymisation ou la pseudonymisation RGPD, qui regroupe plusieurs clients : l'interface la marque « Tronquée » et n'y propose ni ré-analyse ni ban.
 - `GET /api/v1/prism/geo/points?[from&to&proxy&node_name&limit]` — trafic agrégé par ville, les plus actives d'abord (`limit` 300 par défaut, 1000 max) : `[{city, region, country_code, country_name, lat, lon, requests, errors, error_rate, ips, banned_ips}]`. La position est approximative (géolocalisation IP, précision de l'ordre de la ville) ; les IPs pas encore localisées sont ignorées.
-- `GET /api/v1/prism/anomalies?[from&to&proxy&node_name]` — écarts détectés sur la période, critiques d'abord : `[{kind, level, subject, label, value, baseline, count, banned?}]`. `kind` : `error_spike` (point de la courbe > moyenne + 2,5 écarts-types, au moins 10 erreurs ; `subject` = tranche horaire), `dominant_ip` (au moins 20 % des requêtes et 50 requêtes ; `banned` si déjà bannie), `country_errors` (au moins 20 % d'erreurs sur 50 requêtes, 2 max), `backend_errors` (plus de 10 % d'erreurs sur 20 requêtes, 2 max), `bot_share` (au moins 30 %). `level` : `critical` | `warning`.
+- `GET /api/v1/prism/anomalies?[from&to&proxy&node_name]` — écarts détectés sur la période, critiques d'abord : `[{kind, level, subject, label, value, baseline, count, banned?}]`. `kind` : `error_spike` (point de la courbe > moyenne + 2,5 écarts-types, au moins 10 erreurs ; `subject` = tranche horaire), `dominant_ip` (au moins 20 % des requêtes et 50 requêtes ; `banned` si déjà bannie ; depuis Admin `0.71.2`, seules les IP attribuables comptent — une IP tronquée par l'anonymisation RGPD ou `[pseudonymisé]` regroupe plusieurs clients et n'est jamais retenue), `country_errors` (au moins 20 % d'erreurs sur 50 requêtes, 2 max), `backend_errors` (plus de 10 % d'erreurs sur 20 requêtes, 2 max), `bot_share` (au moins 30 %). `level` : `critical` | `warning`.
 - `GET /api/v1/prism/slo?[target&days&proxy&node_name]` — SLO de disponibilité (réponses non-5xx) sur une fenêtre glissante (`target` en % : objectif enregistré, 99.9 par défaut ; `days` : 30 par défaut, 90 max ; `from`/`to` ignorés) : `{target, days, requests, errors, availability, budget_total, budget_left_pct, burn_1h, burn_6h, state}`. `burn_*` vaut 1 quand le budget est consommé exactement au rythme de l'objectif. `state` : `exhausted` (budget consommé), `critical` (burn ≥ 14,4 sur 1 h et ≥ 6 sur 6 h), `warning` (burn ≥ 3 sur 6 h), sinon `ok`.
 - `GET /api/v1/alert-events?[days&limit&trigger&node]` — alertes déclenchées (30 jours conservés, plus récente d'abord) : `[{id, rule_id, rule_name, trigger, detail, channels, title, body, priority, silenced, fired_at}]` ; `node` filtre sur le nom de passerelle du détail. `silenced=true` : la règle correspondait mais un silence actif (`Automatisation > Alertes > Silences & maintenance`) a bloqué l'envoi — `channels` est alors vide. `POST /api/v1/alert-events/{id}/ack` (acquittement) est réservé aux admins / superadmins.
 - `GET /api/v1/prism/slo/config` → `{target}` ; `PUT /api/v1/prism/slo/config` `{target}` (admin, entre 90 et 99.999) — objectif SLO enregistré (réglage `slo.target`, 99.9 par défaut), utilisé par l'écran, `GET /prism/slo` sans `target`, l'outil MCP `get_prism_slo` et l'alerte `slo_burn`.

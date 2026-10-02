@@ -54,7 +54,7 @@ const APP_CONFIG = {
     },
     {
       page: 'admin-trafic',
-      label: 'Routage',
+      label: 'Proxies',
       icon: '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 8h12M9 4l5 4-5 4"/></svg>',
     },
     {
@@ -209,7 +209,7 @@ const APP_CONFIG = {
   edgeNav: [
     {
       page: 'edge-trafic',
-      label: 'Routage',
+      label: 'Proxies',
       icon: '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 17h2.5a3 3 0 0 0 2.4-1.2l6.2-8.6A3 3 0 0 1 16.5 6H21"/><path d="m17.5 3 3.5 3-3.5 3"/><path d="M3 7h2.5a3 3 0 0 1 2.4 1.2l1 1.4"/><path d="M14.5 15.4l1 1.4A3 3 0 0 0 17.9 18H21"/><path d="m17.5 15 3.5 3-3.5 3"/></svg>',
     },
     {
@@ -310,7 +310,7 @@ const APP_CONFIG = {
         { page: 'security-vulns',    key: 'vulns',    label: 'Vulnérabilités' },
         { page: 'security-bans',     key: 'bans',     label: 'Bans' },
         { page: 'security-sentinel', key: 'sentinel', label: 'Sentinel' },
-        { page: 'security-posture',  key: 'posture',  label: 'En-têtes & certificats' },
+        { page: 'security-posture',  key: 'posture',  label: 'Score par proxy' },
       ],
     },
     {
@@ -338,7 +338,7 @@ const APP_CONFIG = {
         { page: 'edge-security-vulns',    key: 'vulns',    label: 'Vulnérabilités' },
         { page: 'edge-security-bans',     key: 'bans',     label: 'Bans' },
         { page: 'edge-security-sentinel', key: 'sentinel', label: 'Sentinel' },
-        { page: 'edge-security-posture',  key: 'posture',  label: 'En-têtes & certificats' },
+        { page: 'edge-security-posture',  key: 'posture',  label: 'Score par proxy' },
       ],
     },
   ],
@@ -348,7 +348,7 @@ const APP_CONFIG = {
     dashboard:          'Dashboard',
     infrastructure:     'Infrastructure',
     architecture:       'Infrastructure',
-    'admin-trafic':     'Routage',
+    'admin-trafic':     'Proxies',
     logs:               'Logs d\'accès',
     'logs-system':      'Logs système',
     settings:           'Paramètres',
@@ -382,7 +382,7 @@ const APP_CONFIG = {
     backups:            'Sauvegardes',
     import:             'Import / Restore',
     onboarding:         'Assistant d\'intégration',
-    'edge-trafic':      'Routage',
+    'edge-trafic':      'Proxies',
     'edge-certs':       'Certificats TLS',
     'edge-logs-access': 'Logs d\'accès',
     'edge-logs-system': 'Logs système',
@@ -400,7 +400,7 @@ const APP_CONFIG = {
     'edge-tunnel':      'Tunnel L4 mTLS',
     'edge-security':           'Sécurité',
     'edge-security-vulns':     'Vulnérabilités',
-    'edge-security-posture':   'Posture',
+    'edge-security-posture':   'Score par proxy',
     'edge-security-bans':      'Bans',
     'edge-security-ips-engines': 'Moteurs IPS',
     'edge-cluster':     'Nœuds / Raft',

@@ -252,6 +252,7 @@ Full reference → **[docs/cli.md](docs/cli.md)**
 - **Internal CA** — generate a self-signed internal root CA and issue server/client certificates for internal services, outside ACME
 - **Granular alerting** — rules per node/domain/team, 10 channels: Email, Webhook, ntfy.sh, Gotify, Jira, Linear, GitHub Issues, GitLab Issues, Zammad, GLPI
 - Structured audit log for all components
+- **GDPR-ready access logs** — client IPs kept in full, anonymised or pseudonymised (AES-GCM, revealable by a superadmin with an audited legal reason), configurable retention, Art. 17 erasure by IP or user — see [docs/rgpd.md](docs/rgpd.md)
 - Scheduled backups and restore
 - Import: nginx, HAProxy, Traefik, Caddy, CSV, JSON
 

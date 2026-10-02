@@ -7,8 +7,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -23,17 +25,15 @@ import (
 
 // LogsSettingsPusher pousse les settings de logging vers les passerelles.
 type LogsSettingsPusher interface {
-	PushIPAnonymize(ctx context.Context, enabled bool)
-	PushIPPseudonymize(ctx context.Context, enabled bool)
+	PushIPProtection(ctx context.Context, anonymize, pseudonymize bool)
 }
 
 // LogsHandler gère la consultation statique, l'export et le streaming SSE.
 type LogsHandler struct {
-	Log     *slog.Logger
-	Store   *logs.Store
-	DB      *sql.DB
-	Pusher  LogsSettingsPusher
-	GDPRKey []byte // clé AES-GCM pour activer la pseudonymisation à chaud
+	Log    *slog.Logger
+	Store  *logs.Store
+	DB     *sql.DB
+	Pusher LogsSettingsPusher
 }
 
 func (h *LogsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -287,6 +287,19 @@ func (h *LogsHandler) putSettings(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusBadRequest, "api.err.retention")
 		return
 	}
+	prevAnon := admindb.GetSetting(h.DB, "logs.ip_anonymize", "false") == "true"
+	prevPseudo := admindb.GetSetting(h.DB, "logs.ip_pseudonymize", "false") == "true"
+	anon, pseudo := prevAnon, prevPseudo
+	if body.IPAnonymize != nil {
+		anon = *body.IPAnonymize
+	}
+	if body.IPPseudonymize != nil {
+		pseudo = *body.IPPseudonymize
+	}
+	if anon && pseudo {
+		writeErr(w, r, http.StatusBadRequest, "api.err.ip_mode_conflict")
+		return
+	}
 	if body.RetentionAccessDays > 0 {
 		admindb.SetSetting(h.DB, "logs.retention_access_days", strconv.Itoa(body.RetentionAccessDays)) //nolint:errcheck
 	}
@@ -294,30 +307,18 @@ func (h *LogsHandler) putSettings(w http.ResponseWriter, r *http.Request) {
 		admindb.SetSetting(h.DB, "logs.retention_system_days", strconv.Itoa(body.RetentionSystemDays)) //nolint:errcheck
 	}
 	h.Store.SetRetention(body.RetentionAccessDays, body.RetentionSystemDays)
-	if body.IPAnonymize != nil {
-		val := "false"
-		if *body.IPAnonymize {
-			val = "true"
-		}
-		admindb.SetSetting(h.DB, "logs.ip_anonymize", val) //nolint:errcheck
-		if h.Pusher != nil {
-			h.Pusher.PushIPAnonymize(r.Context(), *body.IPAnonymize)
-		}
+	actor := adminauth.UserIDFromContext(r.Context())
+	if anon != prevAnon {
+		admindb.SetSetting(h.DB, "logs.ip_anonymize", strconv.FormatBool(anon)) //nolint:errcheck
+		_ = admindb.WriteAudit(h.DB, actor, "logs_ip_anonymize", "logs", fmt.Sprintf("enabled=%t", anon))
 	}
-	if body.IPPseudonymize != nil {
-		val := "false"
-		if *body.IPPseudonymize {
-			val = "true"
-		}
-		admindb.SetSetting(h.DB, "logs.ip_pseudonymize", val) //nolint:errcheck
-		if *body.IPPseudonymize && h.GDPRKey != nil {
-			h.Store.SetPseudonymizeKey(h.GDPRKey)
-		} else if !*body.IPPseudonymize {
-			h.Store.SetPseudonymizeKey(nil)
-		}
-		if h.Pusher != nil {
-			h.Pusher.PushIPPseudonymize(r.Context(), *body.IPPseudonymize)
-		}
+	if pseudo != prevPseudo {
+		admindb.SetSetting(h.DB, "logs.ip_pseudonymize", strconv.FormatBool(pseudo)) //nolint:errcheck
+		_ = admindb.WriteAudit(h.DB, actor, "logs_ip_pseudonymize", "logs", fmt.Sprintf("enabled=%t", pseudo))
+		h.Store.SetPseudonymize(pseudo)
+	}
+	if (anon != prevAnon || pseudo != prevPseudo) && h.Pusher != nil {
+		h.Pusher.PushIPProtection(r.Context(), anon, pseudo)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -326,7 +327,7 @@ func (h *LogsHandler) putSettings(w http.ResponseWriter, r *http.Request) {
 // Nécessite le scope gdpr:reveal. Un motif (reason) est obligatoire. Chaque appel est audité.
 func (h *LogsHandler) revealIP(w http.ResponseWriter, r *http.Request) {
 	if !rbac.EffectiveHasScope(r.Context(), h.DB, rbac.ScopeGDPRReveal) {
-		http.Error(w, "scope insuffisant: gdpr:reveal", http.StatusForbidden)
+		writeErr(w, r, http.StatusForbidden, "api.err.gdpr_reveal_forbidden")
 		return
 	}
 	var body struct {
@@ -346,8 +347,15 @@ func (h *LogsHandler) revealIP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ip, err := h.Store.RevealIP(body.EntryID)
-	if err != nil {
+	switch {
+	case errors.Is(err, logs.ErrEntryNotFound):
+		logsJSONErr(w, err, http.StatusNotFound)
+		return
+	case errors.Is(err, logs.ErrNotPseudonymized):
 		logsJSONErr(w, err, http.StatusUnprocessableEntity)
+		return
+	case err != nil:
+		logsJSONErr(w, err, http.StatusInternalServerError)
 		return
 	}
 	actor := adminauth.UserIDFromContext(r.Context())
@@ -374,6 +382,11 @@ func (h *LogsHandler) deleteByIP(w http.ResponseWriter, r *http.Request, ip stri
 		writeErr(w, r, http.StatusBadRequest, "api.err.missing_ip")
 		return
 	}
+	// Une valeur non-IP (« [pseudonymisé] ») effacerait d'un coup toutes les entrées pseudonymisées.
+	if _, err := netip.ParseAddr(ip); err != nil {
+		writeErr(w, r, http.StatusBadRequest, "api.err.invalid_ip")
+		return
+	}
 	reason := parseDeletionReason(r)
 	actor := adminauth.UserIDFromContext(r.Context())
 
@@ -383,12 +396,14 @@ func (h *LogsHandler) deleteByIP(w http.ResponseWriter, r *http.Request, ip stri
 		return
 	}
 
-	detail := fmt.Sprintf("ip=%s deleted=%d reason=%q", ip, n, reason)
+	// Trace de l'effacement sans réinscrire l'IP effacée en clair (audit et logs système).
+	ref := h.Store.IPReference(ip)
+	detail := fmt.Sprintf("ip=%s deleted=%d reason=%q", ref, n, reason)
 	_ = admindb.WriteAudit(h.DB, actor, "rgpd_erasure_ip", "logs", detail)
 	h.Store.Write(logs.Entry{
 		Level:     "info",
 		Component: "admin",
-		Message:   fmt.Sprintf("RGPD effacement IP %s : %d entrées supprimées par %s — %s", ip, n, actor, reason),
+		Message:   fmt.Sprintf("RGPD effacement IP %s : %d entrées supprimées par %s — %s", ref, n, actor, reason),
 	})
 
 	jsonOK(w, map[string]any{"deleted": n, "ip": ip})

@@ -255,10 +255,10 @@ function renderLogsPage() {
     </button>
     <button type="button" id="btn-logs-live" class="btn btn-ghost btn-icon btn-sm" onclick="toggleLogsLive()" title="${esc(t('logs.tab_live'))}">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>
-    </button>
+    </button>${Role.isAdmin() ? `
     <button type="button" class="btn btn-ghost btn-icon btn-sm" onclick="openLogsSettingsModal()" title="${esc(t('logs.tab_settings'))}">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-    </button>`;
+    </button>` : ''}`;
 
   const content = document.getElementById('content');
   content.innerHTML = `
@@ -667,6 +667,12 @@ window.openLogsSettingsModal = async function() {
   modal(t('logs.tab_settings'), `<div class="spinner" style="margin:20px auto"></div>`);
   try {
     const s = await api('GET', '/logs/settings') || {};
+    const mode = s.ip_pseudonymize ? 'pseudonymize' : s.ip_anonymize ? 'anonymize' : 'none';
+    const ipOpt = m => `
+        <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;margin-bottom:6px">
+          <input type="radio" name="log-ip-mode" value="${m}" ${mode === m ? 'checked' : ''} style="margin-top:3px">
+          <span>${esc(t('logs.ip_mode_' + m))}</span>
+        </label>`;
     const body = `
       <div class="field" style="margin-bottom:14px">
         <label class="field-label">${t('logs.retention_access')}</label>
@@ -676,7 +682,12 @@ window.openLogsSettingsModal = async function() {
         <label class="field-label">${t('logs.retention_system')}</label>
         <input id="log-retention-system" type="number" class="input" value="${s.retention_system_days ?? 90}" min="1" max="3650" style="width:120px">
       </div>
-      <p style="font-size:12px;color:var(--text2);margin-top:10px">${t('logs.retention_hint')}</p>`;
+      <p style="font-size:12px;color:var(--text2);margin-top:10px">${t('logs.retention_hint')}</p>
+      <div class="field" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+        <label class="field-label">${t('logs.ip_protection')}</label>
+        ${['none', 'anonymize', 'pseudonymize'].map(ipOpt).join('')}
+        <p style="font-size:12px;color:var(--text2);margin-top:6px">${esc(t('logs.ip_mode_hint'))}</p>
+      </div>`;
     modal(t('logs.tab_settings'), body,
       `<button class="btn btn-secondary" onclick="closeModal()">${t('common.cancel')}</button>
        <button class="btn btn-primary" onclick="saveLogsSettings()">${t('common.save')}</button>`);
@@ -686,8 +697,12 @@ window.openLogsSettingsModal = async function() {
 window.saveLogsSettings = async function() {
   const access = parseInt(document.getElementById('log-retention-access')?.value) || 30;
   const sys = parseInt(document.getElementById('log-retention-system')?.value) || 90;
+  const mode = document.querySelector('input[name="log-ip-mode"]:checked')?.value || 'none';
   try {
-    await api('PUT', '/logs/settings', { retention_access_days: access, retention_system_days: sys });
+    await api('PUT', '/logs/settings', {
+      retention_access_days: access, retention_system_days: sys,
+      ip_anonymize: mode === 'anonymize', ip_pseudonymize: mode === 'pseudonymize',
+    });
     toast(t('logs.settings_saved'), 'success');
     closeModal();
     logsRetention = { access, system: sys };
@@ -1086,6 +1101,17 @@ function openLogDrawer(en, i) {
     ? `<span class="tag tag-red" style="font-size:11px" title="${esc(t('lg.threat_signal'))}">${esc(t('lg.threat_signal'))}: ${esc(en.threat_signal)}</span>`
     : `<span class="tag tag-green" style="font-size:11px">${esc(t('lg.sentinel_clean'))}</span>`;
 
+  // IP pseudonymisée ou tronquée par l'anonymisation (RGPD) : ni bannissable ni analysable ;
+  // un super-admin peut révéler une IP pseudonymisée.
+  const pseudo = en.ip === LOGS_PSEUDONYMIZED_IP;
+  const truncated = !pseudo && en.ip_truncated;
+  const actionable = obsIPActionable(en);
+  const ipCell = !en.ip ? '' : pseudo
+    ? `<span class="mono" id="log-drawer-ip">${esc(t('logs.ip_pseudonymized'))}</span>
+       ${Role.isSuperAdmin() ? `<button type="button" id="log-drawer-reveal" class="btn btn-ghost btn-sm" data-log-dact="reveal" data-log-di="${i}">${esc(t('logs.reveal_ip'))}</button>` : ''}`
+    : `<span class="mono">${logCellFilter('ip', en.ip)}</span>
+       ${truncated ? `<span class="tag tag-neutral" style="font-size:11px">${esc(t('logs.ip_truncated'))}</span>` : ''}`;
+
   col.hidden = false;
   col.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
@@ -1096,16 +1122,16 @@ function openLogDrawer(en, i) {
     <div class="logs-security-card">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
         <span class="prism-panel-title" style="margin:0">${esc(t('lg.security_badges'))}</span>
-        ${en.ip ? iconBtn('ban', icoBan, t('lg.ban_ip'), 'style="color:var(--red)"') : ''}
+        ${actionable ? iconBtn('ban', icoBan, t('lg.ban_ip'), 'style="color:var(--red)"') : ''}
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">${wafBadge}${sentinelBadge}</div>
-      <div id="log-drawer-scan" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)"></div>
+      <div id="log-drawer-scan" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">${truncated ? `<span style="color:var(--text3);font-size:12px">${esc(t('logs.ip_truncated_hint'))}</span>` : ''}</div>
     </div>
     <div class="prism-dstats" style="grid-template-columns:1fr">
       ${row(t('logs.ts'), esc(logsTsPrecise(en.ts)))}
       ${row(t('logs.node'), en.node_name ? esc(nodeDisplayName(en.node_name)) : '')}
       ${row(t('logs.component'), esc(en.component || ''))}
-      ${row(t('logs.ip'), en.ip ? `<span class="mono">${logCellFilter('ip', en.ip)}</span>` : '')}
+      ${row(t('logs.ip'), ipCell)}
       ${row(t('logs.country'), en.country ? countryCellHTML(en) : '')}
       ${row(t('lg.latency'), en.latency_ms != null ? esc(String(en.latency_ms)) + ' ms' : '')}
       ${row(t('lg.bytes'), en.bytes ? esc(String(en.bytes)) + ' B' : '')}
@@ -1118,7 +1144,7 @@ function openLogDrawer(en, i) {
         ${en.domain ? iconBtn('curl', icoCopy, t('lg.copy_curl')) : ''}
       </div>
     </div>`;
-  if (en.ip) {
+  if (actionable) {
     api('GET', '/prism/ip-scan?ip=' + encodeURIComponent(en.ip)).then(d => {
       const box = document.getElementById('log-drawer-scan');
       if (!box || !d) return;
@@ -1138,7 +1164,17 @@ async function logDrawerAction(act, i) {
     const txt = act === 'copymsg' ? (en.message || '') : JSON.stringify(en, null, 2);
     try { await navigator.clipboard.writeText(txt); toast(t('lg.copied'), 'success'); } catch { toast(txt.slice(0, 200), 'info'); }
   }
-  else if (act === 'prism') openPrismFromLogs({ proxy: en.domain, ip: en.ip, path: en.path });
+  else if (act === 'prism') openPrismFromLogs({ proxy: en.domain, ip: obsIPActionable(en) ? en.ip : '', path: en.path });
+  else if (act === 'reveal') {
+    modal(t('logs.reveal_title'), `
+      <div class="field">
+        <label class="field-label">${esc(t('logs.reveal_reason'))}</label>
+        <textarea id="log-reveal-reason" class="input" rows="3" placeholder="${esc(t('logs.reveal_reason_placeholder'))}"></textarea>
+      </div>
+      <p style="font-size:12px;color:var(--text2);margin-top:8px">${esc(t('logs.reveal_hint'))}</p>`,
+      `<button class="btn btn-secondary" onclick="closeModal()">${t('common.cancel')}</button>
+       <button class="btn btn-primary" onclick="revealLogIP(${i})">${esc(t('logs.reveal_btn'))}</button>`);
+  }
   else if (act === 'curl') {
     const cmd = `curl -i -X ${en.method || 'GET'} 'https://${en.domain}${en.path || '/'}'`;
     try { await navigator.clipboard.writeText(cmd); toast(t('lg.copied'), 'success'); } catch { toast(cmd, 'info'); }
@@ -1150,6 +1186,21 @@ async function logDrawerAction(act, i) {
     } catch (err) { toast(err.message, 'error'); }
   }
 }
+
+// Révèle l'IP réelle d'une entrée pseudonymisée (scope gdpr:reveal, motif audité). L'IP n'est
+// affichée que dans le tiroir ouvert, jamais réinjectée dans la liste.
+window.revealLogIP = async function(i) {
+  const en = logsRows[i];
+  const reason = document.getElementById('log-reveal-reason')?.value.trim();
+  if (!en || !reason) { toast(t('logs.reveal_reason_required'), 'error'); return; }
+  try {
+    const r = await api('POST', '/logs/reveal-ip', { entry_id: en.id, reason });
+    closeModal();
+    const el = document.getElementById('log-drawer-ip');
+    if (el) el.textContent = r.ip;
+    document.getElementById('log-drawer-reveal')?.remove();
+  } catch (e) { toast(e.message, 'error'); }
+};
 
 // Tiroir d'un log système : message complet, contexte et actions de filtrage.
 function openSysLogDrawer(en, i) {

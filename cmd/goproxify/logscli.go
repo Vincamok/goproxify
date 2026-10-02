@@ -127,6 +127,36 @@ func runLogs() {
 		ts, _ := result["ts"].(string)
 		fmt.Printf("IP réelle  : %s\nDemandé par : %s\nHorodatage : %s\nMotif       : %s\n", ip, by, ts, reason)
 
+	case "delete":
+		args := parseFlags(os.Args[3:])
+		client, err := newAdminClient(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+			os.Exit(1)
+		}
+		ip := flagValue(args, "-by-ip", "")
+		user := flagValue(args, "-by-user", "")
+		if (ip == "") == (user == "") {
+			fmt.Fprintln(os.Stderr, "usage: goproxify logs delete --by-ip <ip> | --by-user <user_id> [--reason \"motif\"]")
+			os.Exit(1)
+		}
+		path := "/api/v1/logs/by-ip/" + url.PathEscape(ip)
+		if user != "" {
+			path = "/api/v1/logs/by-user/" + url.PathEscape(user)
+		}
+		var body any
+		if reason := flagValue(args, "-reason", ""); reason != "" {
+			body = map[string]string{"reason": reason}
+		}
+		var result struct {
+			Deleted int64 `json:"deleted"`
+		}
+		if _, err := client.DoJSON("DELETE", path, body, &result); err != nil {
+			fmt.Fprintf(os.Stderr, "delete : %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("%d entrée(s) supprimée(s)\n", result.Deleted)
+
 	case "help":
 		fmt.Print(`Usage: goproxify logs <sous-commande> [options]
 
@@ -134,6 +164,7 @@ Sous-commandes :
   list       Recherche dans les logs d'accès et système
   export     Exporte les logs en CSV ou JSON
   reveal-ip  Révèle l'IP réelle d'une entrée pseudonymisée (scope gdpr:reveal requis)
+  delete     Efface les logs d'une IP ou d'un utilisateur (RGPD Art. 17, admin, scope logs:write)
 
 goproxify logs list
   [-level debug|info|warn|error]  Niveau de log
@@ -160,6 +191,12 @@ goproxify logs reveal-ip
   --reason "<motif>" Motif légal obligatoire (ex: "RGPD Art.17 DPO request")
   [-admin-url …] [-token …]
   Nécessite le scope gdpr:reveal.
+
+goproxify logs delete
+  --by-ip <ip> | --by-user <user_id>  Entrées à effacer (entrées pseudonymisées comprises)
+  [--reason "<motif>"]                Motif inscrit au journal d'audit
+  [-admin-url …] [-token …]
+  Rôle admin ; avec un token API, scope logs:write.
 `)
 	default:
 		fmt.Fprintf(os.Stderr, "sous-commande logs inconnue : %q\n", sub)

@@ -2,6 +2,17 @@
 // Rendu HTML pur : les données viennent des endpoints /prism/*, les actions
 // passent par des attributs data-prism="…" interprétés par la page hôte.
 
+// Valeur de la colonne ip d'une entrée pseudonymisée (logs.PseudonymizedIP côté Admin).
+const LOGS_PSEUDONYMIZED_IP = '[pseudonymisé]';
+
+// IP sur laquelle bannir ou lancer une analyse a un sens (entrée de log, ligne du top IPs). Une IP
+// pseudonymisée n'est pas une IP ; une IP tronquée par l'anonymisation (x.x.x.0, préfixe /48)
+// regroupe tout un réseau de clients : bannir x.x.x.0 ne touche personne, bannir le préfixe
+// n'atteint pas le bon client.
+function obsIPActionable(x) {
+  return !!x.ip && x.ip !== LOGS_PSEUDONYMIZED_IP && !x.ip_truncated;
+}
+
 function obsNum(n) {
   if (n == null) return '0';
   if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';

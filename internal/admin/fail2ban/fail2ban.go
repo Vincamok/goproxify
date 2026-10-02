@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/vincamok/goproxify/internal/admin/adminmetrics"
+	admindb "github.com/vincamok/goproxify/internal/admin/db"
 )
 
 // Config paramètre le moteur Fail2Ban.
@@ -129,6 +130,9 @@ func (e *Engine) scan() {
 	e.lastActivity = time.Now()
 	e.lastActivityMu.Unlock()
 	adminmetrics.F2B.ScansTotal.Inc()
+	if ipProtectionPushed(e.db) {
+		return
+	}
 
 	window := cfg.WindowSec
 	if window <= 0 {
@@ -185,16 +189,30 @@ func (e *Engine) scan() {
 	}
 }
 
+// ipProtectionPushed indique si l'Admin pousse l'anonymisation ou la pseudonymisation des IP : toutes
+// les IP reçues sont alors tronquées ou « [pseudonymisé] ». Les passerelles antérieures à Edge 0.17.12
+// n'envoient pas ip_truncated, leurs IP tronquées passeraient pour des IP réelles. Chaque passerelle
+// bannit de toute façon sur l'IP réelle (son Fail2Ban la reçoit avant troncature).
+func ipProtectionPushed(db *sql.DB) bool {
+	for _, key := range []string{"logs.ip_anonymize", "logs.ip_pseudonymize"} {
+		if admindb.GetSetting(db, key, "false") == "true" {
+			return true
+		}
+	}
+	return false
+}
+
 // errorCounts compte, depuis since, les erreurs client par cible de ban (voir banKey). Seules les
 // erreurs CLIENT (4xx hors 404) comptent — les 5xx (502, 503…) sont des erreurs backend, pas de
 // l'abus utilisateur. En SQL, le seuil n'écarte que les IPv4 seules : les autres valeurs (IPv6,
-// IP:port) sont regroupées ici et c'est le groupe qui doit l'atteindre.
+// IP:port) sont regroupées ici et c'est le groupe qui doit l'atteindre. Les IP tronquées par la
+// passerelle sont écartées : x.x.x.0 ne bannirait personne, un /48 tronqué bannirait son premier /64.
 func (e *Engine) errorCounts(since time.Time, maxErr int, whitelist []string) map[string]int {
 	rows, err := e.db.Query(
 		`SELECT ip, COUNT(*) as n FROM logs
 		 WHERE ts > ?
 		   AND status >= 400 AND status < 500 AND status != 404
-		   AND ip != '' AND component = 'edge'
+		   AND ip != '' AND component = 'edge' AND ip_truncated = 0
 		 GROUP BY ip HAVING n >= ? OR instr(ip, ':') > 0`, since.UTC().Format(time.RFC3339Nano), maxErr)
 	if err != nil {
 		return nil

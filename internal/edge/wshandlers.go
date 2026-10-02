@@ -211,7 +211,7 @@ func (s *Server) handleWSAdminMessage(connID string, msg edgews.Message) error {
 		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
 			return err
 		}
-		s.applyPushedSettings(payload)
+		s.receivePushedSettings(payload)
 
 	case edgews.TypePushPortal:
 		var payload portalPushPayload

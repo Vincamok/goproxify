@@ -6,6 +6,8 @@ Le binaire `goproxify` regroupe tous les rôles et commandes opérationnelles.
 goproxify <commande> [options]
 ```
 
+Les options s'écrivent avec un ou deux tirets : `-reason` et `--reason` sont équivalents.
+
 ---
 
 ## Commandes de service
@@ -334,7 +336,20 @@ goproxify logs export
   [-output <fichier>]
   [-level …] [-domain …] [-ip …] [-from …] [-to …]
   [-admin-url …] [-token …]
+
+goproxify logs reveal-ip
+  -entry-id <id>      ID de l'entrée pseudonymisée
+  -reason "<motif>"   Motif légal, obligatoire, inscrit au journal d'audit
+  [-admin-url …] [-token …]
+
+goproxify logs delete
+  -by-ip <ip> | -by-user <user_id>
+  [-reason "<motif>"]
+  [-admin-url …] [-token …]
 ```
+
+- `reveal-ip` affiche l'IP réelle d'une entrée pseudonymisée (RGPD) ; réservé au superadmin (scope `gdpr:reveal` avec un token API). Fonctionne aussi après la désactivation de la pseudonymisation, tant que l'entrée est conservée.
+- `delete` efface les logs d'une IP (entrées pseudonymisées comprises) ou d'un utilisateur (droit à l'effacement, Art. 17) et affiche le nombre d'entrées supprimées ; rôle admin, scope `logs:write` avec un token API. Le journal d'audit garde le motif et le nombre d'entrées, pas l'IP en clair.
 
 Exemples :
 
@@ -342,6 +357,8 @@ Exemples :
 goproxify logs list -domain app.example.fr -status 5xx -limit 100
 goproxify logs list -ip 1.2.3.4 -from 2026-09-01T00:00:00Z
 goproxify logs export -format json -output access.json
+goproxify logs reveal-ip --entry-id 4821 --reason "Réquisition judiciaire n° 2026/1234"
+goproxify logs delete --by-ip 203.0.113.42 --reason "Demande RGPD Art. 17"
 ```
 
 ---
@@ -840,7 +857,7 @@ goproxify me tokens revoke <id> [-admin-url …] [-token …]
 `tokens scopes` liste les scopes disponibles pour votre compte (dépend de votre rôle).
 `tokens create` affiche la valeur du token une seule fois à la création.
 
-Utilisée avec un PAT, une commande d'écriture exige le scope `:write` de sa ressource, un scope de lecture ne suffit pas : `certs:write` pour `cert` et `internal-ca`, `domains:write` pour `domain`, `alerts:write` pour `alert` (canaux, règles, `alert ack`), `security:write` pour `security rules`, `security schedule` et `security playbook` (lectures : `audit:read`, compte admin). Voir le tableau complet dans [api_specs.md](api_specs.md#scope-pat-exigé-par-route). Depuis Admin `0.70.0`, un token créé avant doit être recréé avec ces scopes.
+Utilisée avec un PAT, une commande d'écriture exige le scope `:write` de sa ressource, un scope de lecture ne suffit pas : `certs:write` pour `cert` et `internal-ca`, `domains:write` pour `domain`, `alerts:write` pour `alert` (canaux, règles, `alert ack`), `logs:write` pour `logs delete` (`gdpr:reveal` pour `logs reveal-ip`), `security:write` pour `security rules`, `security schedule` et `security playbook` (lectures : `audit:read`, compte admin). Voir le tableau complet dans [api_specs.md](api_specs.md#scope-pat-exigé-par-route). Depuis Admin `0.70.0`, un token créé avant doit être recréé avec ces scopes.
 
 Exemples :
 

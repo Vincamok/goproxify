@@ -79,6 +79,8 @@ func TestWriteRoutesGuardedForJWT(t *testing.T) {
 		`mux.Handle("/api/v1/ip-profiles/", adminWrites(`,
 		`mux.Handle("/api/v1/snippets", operatorWrites(`,
 		`mux.Handle("/api/v1/snippets/", operatorWrites(`,
+		`mux.Handle("/api/v1/logs", adminWrites(`,
+		`mux.Handle("/api/v1/logs/", adminWrites(`,
 	}
 	for _, n := range needles {
 		if !strings.Contains(src, n) {

@@ -44,7 +44,7 @@ func SimulateSentinel(ctx context.Context, db *sql.DB, cfgKey string, override m
 	}
 
 	since := time.Now().UTC().Add(-time.Duration(hours) * time.Hour)
-	q := `SELECT ts, ip, path, status FROM logs
+	q := `SELECT ts, ip, path, status, ip_truncated FROM logs
 	      WHERE status > 0 AND component <> 'admin' AND ts >= ?`
 	qargs := []any{since.Format(time.RFC3339Nano)}
 	if domain != "" {
@@ -65,10 +65,11 @@ func SimulateSentinel(ctx context.Context, db *sql.DB, cfgKey string, override m
 		var ts time.Time
 		var ip, path string
 		var status int
-		if err := rows.Scan(&ts, &ip, &path, &status); err != nil {
+		var ipTruncated bool
+		if err := rows.Scan(&ts, &ip, &path, &status, &ipTruncated); err != nil {
 			continue
 		}
-		if _, err := netip.ParseAddr(ip); err != nil {
+		if _, err := netip.ParseAddr(ip); err != nil || ipTruncated {
 			skipped++
 			continue
 		}

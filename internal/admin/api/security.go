@@ -239,7 +239,7 @@ func (h *SecurityHandler) listBans(w http.ResponseWriter, r *http.Request) {
 		where = " WHERE " + strings.Join(clauses, " AND ")
 	}
 	rows, err := h.DB.QueryContext(r.Context(),
-		`SELECT id, ip, domain, reason, source, edge_name, expires_at, strftime('%Y-%m-%dT%H:%M:%SZ', created_at) FROM security_bans`+where+` ORDER BY created_at DESC LIMIT 500`,
+		`SELECT id, ip, domain, reason, source, edge_name, expires_at, strftime('%Y-%m-%dT%H:%M:%SZ', created_at) FROM security_bans`+where+` ORDER BY created_at DESC`,
 		args...)
 	if err != nil {
 		secJSONErr(w, err, http.StatusInternalServerError)
@@ -1096,31 +1096,25 @@ func (h *SecurityHandler) exportBans(w http.ResponseWriter, r *http.Request) {
 
 func (h *SecurityHandler) intelKPIs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	var active, histTotal, recurring int
+	and := ""
 	bc, ba := h.banEdgeClause(r, "edge_name")
-	and, where := "", ""
 	if bc != "" {
-		and, where = " AND "+bc, " WHERE "+bc
+		and = " AND " + bc
 	}
-	h.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM security_bans`+where, ba...).Scan(&active)                                                                                  //nolint:errcheck
-	h.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM security_ban_history WHERE action='banned'`+and, ba...).Scan(&histTotal)                                                    //nolint:errcheck
+	var banned, unbanned, recurring int
+	h.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM security_ban_history WHERE action='banned'`+and, ba...).Scan(&banned)                                                       //nolint:errcheck
+	h.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM security_ban_history WHERE action='unbanned'`+and, ba...).Scan(&unbanned)                                                   //nolint:errcheck
 	h.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM (SELECT ip FROM security_ban_history WHERE action='banned'`+and+` GROUP BY ip HAVING COUNT(*)>=3)`, ba...).Scan(&recurring) //nolint:errcheck
 
-	var bannedCount, unbannedCount int
-	h.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM security_ban_history WHERE action='banned'`+and, ba...).Scan(&bannedCount)     //nolint:errcheck
-	h.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM security_ban_history WHERE action='unbanned'`+and, ba...).Scan(&unbannedCount) //nolint:errcheck
-
+	ratio := 0.0
+	if banned > 0 {
+		ratio = float64(unbanned) / float64(banned)
+	}
 	jsonOK(w, map[string]any{
-		"active":        active,
-		"history_total": histTotal,
-		"recurring_ips": recurring,
-		"unbanned":      unbannedCount,
-		"rotation_ratio": func() float64 {
-			if bannedCount == 0 {
-				return 0
-			}
-			return float64(unbannedCount) / float64(bannedCount)
-		}(),
+		"history_total":  banned,
+		"recurring_ips":  recurring,
+		"unbanned":       unbanned,
+		"rotation_ratio": ratio,
 	})
 }
 

@@ -70,6 +70,7 @@ type accessEntry struct {
 	RemoteIP      string   `json:"remote_ip"`
 	// ShipIP est l'IP réelle à envoyer à l'Admin pour pseudonymisation (non loguée dans le fichier passerelle).
 	ShipIP        string   `json:"-"`
+	IPTruncated   bool     `json:"-"`
 	UserAgent     string   `json:"user_agent"`
 	Referrer      string   `json:"referrer,omitempty"`
 	WAFMatches    []string `json:"waf_matches,omitempty"`
@@ -89,6 +90,9 @@ type ShipEntry struct {
 	IP            string   `json:"ip"`
 	// RealIP est présent uniquement en mode pseudonymisation (non loggé, chiffré côté Admin).
 	RealIP        string   `json:"real_ip,omitempty"`
+	// IPTruncated signale que IP est tronquée (anonymisation ou pseudonymisation) : la valeur ne
+	// le dit pas, et l'Admin ne voit pas un ip_anonymize posé dans edge.json.
+	IPTruncated   bool     `json:"ip_truncated,omitempty"`
 	LatencyMs     int64    `json:"latency_ms"`
 	Bytes         int64    `json:"bytes"`
 	Message       string   `json:"message"`
@@ -177,6 +181,7 @@ func (a *AccessLogger) ship() {
 				Status:       e.Status,
 				IP:           e.RemoteIP,
 				RealIP:       e.ShipIP,
+				IPTruncated:  e.IPTruncated,
 				LatencyMs:    e.DurationMs,
 				Bytes:        int64(e.BytesSent),
 				Message:      shipMessage(e),
@@ -270,13 +275,20 @@ func (a *AccessLogger) SetF2BTap(fn func(ip string, status int)) {
 	a.f2bTapMu.Unlock()
 }
 
-// SetIPPseudonymize active le mode pseudonymisation : le fichier passerelle reçoit une IP tronquée,
-// mais l'Admin reçoit l'IP réelle pour la chiffrer (AES-GCM) côté Admin.
-// Mutuellement exclusif avec SetIPAnonymize — les deux ne doivent pas être activés simultanément.
-func (a *AccessLogger) SetIPPseudonymize(enabled bool) {
+// SetIPProtection règle les deux modes d'un coup, sans état intermédiaire non protégé.
+// Pseudonymisation : le fichier passerelle reçoit une IP tronquée, l'Admin l'IP réelle qu'il
+// chiffre ; sans effet tant que l'anonymisation est active (voir ipFields).
+func (a *AccessLogger) SetIPProtection(anonymize, pseudonymize bool) {
 	a.anonymizeMu.Lock()
-	a.pseudonymize = enabled
+	a.anonymize, a.pseudonymize = anonymize, pseudonymize
 	a.anonymizeMu.Unlock()
+}
+
+// IPProtection retourne l'état de l'anonymisation et de la pseudonymisation.
+func (a *AccessLogger) IPProtection() (anonymize, pseudonymize bool) {
+	a.anonymizeMu.RLock()
+	defer a.anonymizeMu.RUnlock()
+	return a.anonymize, a.pseudonymize
 }
 
 // SetIPAnonymize active ou désactive l'anonymisation des IPs dans les logs.
@@ -287,6 +299,20 @@ func (a *AccessLogger) SetIPAnonymize(enabled bool) {
 	a.anonymizeMu.Lock()
 	a.anonymize = enabled
 	a.anonymizeMu.Unlock()
+}
+
+// ipFields retourne l'IP écrite dans le fichier local et l'IP réelle à envoyer à l'Admin
+// (vide hors pseudonymisation). L'anonymisation l'emporte : elle peut venir de edge.json,
+// et un opérateur qui l'a choisie localement ne doit jamais voir l'IP réelle quitter la passerelle.
+func ipFields(ip string, anon, pseudo bool) (logIP, shipIP string) {
+	switch {
+	case anon:
+		return anonymizeIP(ip), ""
+	case pseudo:
+		return anonymizeIP(ip), ip
+	default:
+		return ip, ""
+	}
 }
 
 // anonymizeIP tronque une IP pour la conformité RGPD.
@@ -388,16 +414,7 @@ func (a *AccessLogger) Middleware(next http.Handler) http.Handler {
 		anon := a.anonymize
 		pseudo := a.pseudonymize
 		a.anonymizeMu.RUnlock()
-
-		logIP := ip
-		shipIP := ""
-		if pseudo {
-			// Mode pseudonymisation : fichier passerelle = IP tronquée, Admin = IP réelle chiffrée.
-			logIP = anonymizeIP(ip)
-			shipIP = ip
-		} else if anon {
-			logIP = anonymizeIP(ip)
-		}
+		logIP, shipIP := ipFields(ip, anon, pseudo)
 
 		select {
 		case a.ch <- accessEntry{
@@ -411,6 +428,7 @@ func (a *AccessLogger) Middleware(next http.Handler) http.Handler {
 			DurationMs:   time.Since(start).Milliseconds(),
 			RemoteIP:     logIP,
 			ShipIP:       shipIP,
+			IPTruncated:  anon || pseudo,
 			UserAgent:    r.UserAgent(),
 			Referrer:     r.Referer(),
 			WAFMatches:   wafMatches,

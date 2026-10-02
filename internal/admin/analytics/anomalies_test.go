@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/vincamok/goproxify/internal/admin/db"
+	"github.com/vincamok/goproxify/internal/admin/logs"
 )
 
 func TestDetectAnomalies(t *testing.T) {
@@ -69,5 +70,53 @@ func TestDetectAnomalies(t *testing.T) {
 		if a.Kind == "error_spike" || a.Kind == "dominant_ip" {
 			t.Errorf("aucune anomalie attendue sur la période calme, obtenu %+v", a)
 		}
+	}
+}
+
+// Une IP tronquée par l'anonymisation regroupe tout un /24 : Prism la garde dans le top IPs mais la
+// marque, et l'anomalie « IP dominante » (action Bannir) vise la première IP attribuable.
+func TestTruncatedIPsMarkedAndNeverDominant(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d.Close() })
+
+	at := time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339)
+	ins := func(ip string, truncated, n int) {
+		for i := 0; i < n; i++ {
+			if _, err := d.Exec(`INSERT INTO logs (ts, domain, ip, status, latency_ms, ip_truncated) VALUES (?,'api.acme.fr',?,200,10,?)`,
+				at, ip, truncated); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	ins("203.0.113.0", 1, 100)
+	ins("2a01:e0a:1::", 1, 70)
+	// Entrées pseudonymisées écrites avant Admin 0.71.1, sans marqueur.
+	ins(logs.PseudonymizedIP, 0, 95)
+	ins("198.51.100.7", 0, 90)
+	ins("198.51.100.8", 0, 10)
+
+	p := Params{From: time.Now().Add(-time.Hour), To: time.Now()}
+	marked := map[string]bool{}
+	for _, e := range GetTopIPs(d, p, 10) {
+		marked[e.IP] = e.IPTruncated
+	}
+	want := map[string]bool{"203.0.113.0": true, "2a01:e0a:1::": true, logs.PseudonymizedIP: false, "198.51.100.7": false, "198.51.100.8": false}
+	for ip, w := range want {
+		if got, ok := marked[ip]; !ok || got != w {
+			t.Errorf("GetTopIPs %s : présent=%v ip_truncated=%v, attendu présent, ip_truncated=%v", ip, ok, got, w)
+		}
+	}
+
+	var dominant []Anomaly
+	for _, a := range DetectAnomalies(context.Background(), d, p) {
+		if a.Kind == "dominant_ip" {
+			dominant = append(dominant, a)
+		}
+	}
+	if len(dominant) != 1 || dominant[0].Subject != "198.51.100.7" {
+		t.Fatalf("IP dominante = %+v, attendu 198.51.100.7 (IP tronquées et pseudonymisées écartées)", dominant)
 	}
 }

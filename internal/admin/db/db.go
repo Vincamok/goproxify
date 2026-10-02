@@ -418,6 +418,9 @@ func migrate(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_logs_analytics_node ON logs (node_name, ts) WHERE status > 0`,
 		// RGPD pseudonymisation : IP chiffrée (AES-GCM) — vide si mode anonymisation classique.
 		`ALTER TABLE logs ADD COLUMN ip_enc TEXT NOT NULL DEFAULT ''`,
+		// Empreinte HMAC de l'IP pseudonymisée : effacement Art. 17 par IP sans tout déchiffrer.
+		`ALTER TABLE logs ADD COLUMN ip_hmac TEXT NOT NULL DEFAULT ''`,
+		`CREATE INDEX IF NOT EXISTS idx_logs_ip_hmac ON logs (ip_hmac) WHERE ip_hmac != ''`,
 		// Clé de chiffrement RGPD (32 bytes random base64) — générée au premier démarrage.
 		`CREATE TABLE IF NOT EXISTS gdpr_keys (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')`,
 		// node_id : identifiant stable du nœud (edgeID/token), insensible à un
@@ -426,6 +429,8 @@ func migrate(db *sql.DB) error {
 		// d'un nœud introuvable sous son ancien nom.
 		`ALTER TABLE logs ADD COLUMN node_id TEXT NOT NULL DEFAULT ''`,
 		`CREATE INDEX IF NOT EXISTS idx_logs_node_id ON logs (node_id)`,
+		// IP tronquée par la passerelle (anonymisation/pseudonymisation) : écartée par Fail2Ban.
+		`ALTER TABLE logs ADD COLUMN ip_truncated INTEGER NOT NULL DEFAULT 0`,
 	} {
 		db.Exec(s) //nolint:errcheck
 	}

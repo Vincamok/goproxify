@@ -591,11 +591,13 @@ async function renderPrismPage() {
         <thead><tr><th>IP</th><th>Req.</th><th>Err.</th><th>Volume</th><th></th></tr></thead>
         <tbody>${ips.slice(0,20).map(i=>{
           const banned = bannedIPs.has(i.ip);
+          const actionable = obsIPActionable(i);
           return `
           <tr>
             <td style="font-family:monospace">
               <button type="button" class="log-filter-link${selIp===i.ip?' is-active':''}" data-prism="filter-ip" data-ip="${esc(i.ip)}">${esc(i.ip)}</button>
               ${banned ? `<span class="tag tag-red" style="margin-left:6px;font-size:9px;padding:1px 6px;vertical-align:middle">${esc(t('prism.banned'))}</span>` : ''}
+              ${i.ip_truncated && i.ip !== LOGS_PSEUDONYMIZED_IP ? `<span class="tag tag-neutral" style="margin-left:6px;font-size:9px;padding:1px 6px;vertical-align:middle" title="${esc(t('logs.ip_truncated_hint'))}">${esc(t('prism.ip_truncated'))}</span>` : ''}
             </td>
             <td>${fmtNum(i.requests)}</td>
             <td style="color:${i.errors>0?'var(--red)':'var(--text3)'}">${fmtNum(i.errors)}</td>
@@ -604,8 +606,9 @@ async function renderPrismPage() {
               <button type="button" class="btn btn-ghost btn-icon btn-sm" data-prism="to-logs" data-ip="${esc(i.ip)}" title="${esc(t('prism.filter_logs'))}">
                 <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 8h10M7 12h10M7 16h6"/></svg>
               </button>
-              <button type="button" class="btn btn-ghost btn-icon btn-sm" data-prism="rescan" data-ip="${esc(i.ip)}" title="${esc(t('pz.rescan_ip'))}">${icoRescan}</button>
-              ${banned
+              ${actionable ? `<button type="button" class="btn btn-ghost btn-icon btn-sm" data-prism="rescan" data-ip="${esc(i.ip)}" title="${esc(t('pz.rescan_ip'))}">${icoRescan}</button>` : ''}
+              ${!actionable ? ''
+                : banned
                 ? `<span class="btn btn-ghost btn-icon btn-sm" title="${esc(t('prism.banned'))}" style="color:var(--red);opacity:.9;cursor:default;pointer-events:none">${icoBan}</span>`
                 : `<button type="button" class="btn btn-ghost btn-icon btn-sm" data-prism="ban" data-ip="${esc(i.ip)}" title="${esc(t('prism.ban'))}">${icoBan}</button>`}
             </td>
@@ -779,6 +782,7 @@ async function renderPrismPage() {
         <div class="mono" style="font-size:18px;font-weight:700">${esc(d.ip)}</div>
         <div style="margin:6px 0 14px"><span class="prism-verdict" style="--v:${verdict[1]}">${verdict[0]}</span>
           <span style="color:var(--text3);font-size:11px;margin-left:8px">${esc(t('pz.scanned_at', { when: when(d.scanned_at) }))}</span></div>
+        ${d.ip_truncated ? `<p class="prism-muted" style="margin:-6px 0 14px">${esc(t('logs.ip_truncated_hint'))}</p>` : ''}
         <div class="prism-dstats">
           <div class="prism-dstat"><span>${esc(t('pz.requests_period'))}</span><b>${fmtNum(d.requests)}</b></div>
           <div class="prism-dstat"><span>${esc(t('prism.errors'))}</span><b${d.errors ? ' style="color:var(--red)"' : ''}>${fmtNum(d.errors)}</b></div>
@@ -797,7 +801,7 @@ async function renderPrismPage() {
         <div style="display:flex;gap:8px;margin-top:18px;flex-wrap:wrap">
           <button type="button" class="btn btn-secondary btn-sm" data-prism="rescan" data-ip="${esc(d.ip)}">${icoRescan} ${esc(t('pz.rescan'))}</button>
           <button type="button" class="btn btn-secondary btn-sm" data-prism="to-logs" data-ip="${esc(d.ip)}">→ Logs</button>
-          ${d.verdict !== 'banned' ? `<button type="button" class="btn btn-ghost btn-sm" style="color:var(--red)" data-prism="ban" data-ip="${esc(d.ip)}">${esc(t('pz.ban_btn'))}</button>` : ''}
+          ${d.verdict !== 'banned' && !d.ip_truncated ? `<button type="button" class="btn btn-ghost btn-sm" style="color:var(--red)" data-prism="ban" data-ip="${esc(d.ip)}">${esc(t('pz.ban_btn'))}</button>` : ''}
         </div>`;
     } catch (e) {
       dr.innerHTML = `<p style="color:var(--red)">${esc(t('prism.error'))}: ${esc(e.message || '')}</p>`;
