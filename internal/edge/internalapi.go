@@ -258,7 +258,7 @@ func (s *Server) handlePushRoutes(w http.ResponseWriter, r *http.Request) {
 	s.ensurePortalPublicRoute()
 	purged := s.purgeRoutesShadowedByPassthrough()
 	metrics.Edge.RouteCount.Set(float64(s.table.Len()))
-	s.health.StartChecksFromRoutes(routes)
+	s.syncHealthChecks()
 	s.saveCache()
 	s.log.Info("routes remplacées", "count", len(routes), "purged_conflicts", purged)
 	w.WriteHeader(http.StatusNoContent)

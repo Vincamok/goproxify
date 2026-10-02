@@ -6,6 +6,7 @@ package middleware
 import (
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -19,17 +20,49 @@ const defaultBackpressureQueueTimeout = time.Second
 // attendent dans une file bornée, puis reçoivent 503 + Retry-After : la mémoire
 // de la passerelle reste bornée quand les backends ralentissent.
 func Backpressure(host string, cfg *router.BackpressureConfig) func(http.Handler) http.Handler {
+	return backpressure(host, cfg, nil)
+}
+
+type bpState struct {
+	cfg    router.BackpressureConfig
+	slots  chan struct{}
+	queued atomic.Int64
+}
+
+var bpRegistry sync.Map // key -> *bpState
+
+// BackpressureShared comme Backpressure, mais slots et file sont partagés entre
+// toutes les chaînes construites avec la même clé et la même config : reconstruire
+// la route (nouvelle génération de dispatch) ne remet pas les compteurs à zéro.
+func BackpressureShared(key, host string, cfg *router.BackpressureConfig) func(http.Handler) http.Handler {
+	if cfg == nil || cfg.MaxInflight <= 0 {
+		bpRegistry.Delete(key)
+		return backpressure(host, cfg, nil)
+	}
+	if v, ok := bpRegistry.Load(key); ok {
+		if st := v.(*bpState); st.cfg == *cfg {
+			return backpressure(host, cfg, st)
+		}
+	}
+	st := &bpState{cfg: *cfg, slots: make(chan struct{}, cfg.MaxInflight)}
+	bpRegistry.Store(key, st)
+	return backpressure(host, cfg, st)
+}
+
+func backpressure(host string, cfg *router.BackpressureConfig, st *bpState) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		if cfg == nil || cfg.MaxInflight <= 0 {
 			return next
 		}
-		slots := make(chan struct{}, cfg.MaxInflight)
+		if st == nil {
+			st = &bpState{slots: make(chan struct{}, cfg.MaxInflight)}
+		}
+		slots, queued := st.slots, &st.queued
 		maxQueue := int64(max(cfg.Queue, 0))
 		wait := defaultBackpressureQueueTimeout
 		if cfg.QueueTimeoutMs > 0 {
 			wait = time.Duration(cfg.QueueTimeoutMs) * time.Millisecond
 		}
-		var queued atomic.Int64
 		inflight := metrics.Backpressure.Inflight.WithLabelValues(host)
 		queuedG := metrics.Backpressure.Queued.WithLabelValues(host)
 		reject := func(w http.ResponseWriter, reason string) {

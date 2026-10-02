@@ -25,6 +25,7 @@ type instance struct {
 	port    int
 	healthy atomic.Bool
 	failN   atomic.Int64 // prochaines requêtes applicatives en 503
+	dropN   atomic.Int64 // prochaines requêtes applicatives : connexion coupée sans réponse (panne de transport)
 	latency atomic.Int64 // ms ajoutées à chaque requête applicative
 	hits    atomic.Int64 // requêtes applicatives (hors /healthz)
 	probes  atomic.Int64 // sondes /healthz reçues
@@ -46,14 +47,16 @@ func intQ(r *http.Request, k string, def int) int {
 func (in *instance) handler() http.Handler {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+	health := func(w http.ResponseWriter, r *http.Request) {
 		in.probes.Add(1)
 		if !in.healthy.Load() {
 			http.Error(w, "down", http.StatusServiceUnavailable)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
-	})
+	}
+	mux.HandleFunc("/healthz", health)
+	mux.HandleFunc("/health", health) // chemin sondé par défaut par la passerelle
 
 	// Page d'accueil : contient l'URL interne du backend (sub_filter, proxy_redirect).
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -176,7 +179,7 @@ func (in *instance) handler() http.Handler {
 func (in *instance) wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Instance", in.id)
-		if r.URL.Path == "/healthz" {
+		if r.URL.Path == "/healthz" || r.URL.Path == "/health" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -186,6 +189,14 @@ func (in *instance) wrap(next http.Handler) http.Handler {
 		in.lastMu.Unlock()
 		if ms := in.latency.Load(); ms > 0 {
 			time.Sleep(time.Duration(ms) * time.Millisecond)
+		}
+		if in.dropN.Load() > 0 && in.dropN.Add(-1) >= 0 {
+			if hj, ok := w.(http.Hijacker); ok {
+				if c, _, err := hj.Hijack(); err == nil {
+					c.Close()
+					return
+				}
+			}
 		}
 		if in.failN.Load() > 0 && in.failN.Add(-1) >= 0 {
 			http.Error(w, "simulated failure", http.StatusServiceUnavailable)
@@ -272,6 +283,7 @@ func control() http.Handler {
 			for _, in := range instances {
 				in.healthy.Store(true)
 				in.failN.Store(0)
+				in.dropN.Store(0)
 				in.latency.Store(0)
 				in.hits.Store(0)
 				in.static.Store(0)
@@ -290,11 +302,14 @@ func control() http.Handler {
 			in.healthy.Store(r.URL.Query().Get("up") != "0")
 		case "fail":
 			in.failN.Store(int64(intQ(r, "n", 1)))
+		case "drop":
+			in.dropN.Store(int64(intQ(r, "n", 1)))
 		case "latency":
 			in.latency.Store(int64(intQ(r, "ms", 0)))
 		case "reset":
 			in.healthy.Store(true)
 			in.failN.Store(0)
+			in.dropN.Store(0)
 			in.latency.Store(0)
 		default:
 			http.NotFound(w, r)
@@ -325,8 +340,9 @@ func tcpEcho(addr string) {
 }
 
 func main() {
-	// a/b/c : pool de la boutique ; canary/shadow : hors pool ; dead : port volontairement non écouté (voir routes).
-	for id, port := range map[string]int{"a": 9001, "b": 9002, "c": 9003, "canary": 9004, "shadow": 9005, "legacy": 9006} {
+	// a/b/c : pool de la boutique ; canary/shadow/legacy : hors pool ; h1/h2 : sondes de santé (une config de sonde est partagée par URL de backend) ;
+	// le port 9009 n'est volontairement pas écouté (backend mort).
+	for id, port := range map[string]int{"a": 9001, "b": 9002, "c": 9003, "canary": 9004, "shadow": 9005, "legacy": 9006, "h1": 9007, "h2": 9008} {
 		in := &instance{id: id, port: port, last: map[string]string{}}
 		in.healthy.Store(true)
 		instances[id] = in

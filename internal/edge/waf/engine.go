@@ -263,10 +263,18 @@ func (e *Engine) reload(cfg *router.WAFConfig) {
 // Inspect analyse une requête et retourne les correspondances.
 // excludeIDs additionnels (par route) sont fusionnés avec ceux du moteur.
 func (e *Engine) Inspect(r *http.Request, maxBodyMB int, excludeIDs ...int) []Match {
+	return e.inspect(r, maxBodyMB, nil, excludeIDs)
+}
+
+// inspect applique les règles globales puis routeRules (règles custom propres à une route).
+func (e *Engine) inspect(r *http.Request, maxBodyMB int, routeRules []Rule, excludeIDs []int) []Match {
 	e.mu.RLock()
 	rules := e.rules
 	baseExclude := e.exclude
 	e.mu.RUnlock()
+	if len(routeRules) > 0 {
+		rules = append(rules[:len(rules):len(rules)], routeRules...)
+	}
 
 	exclude := baseExclude
 	if len(excludeIDs) > 0 {
@@ -329,10 +337,17 @@ func (e *Engine) Inspect(r *http.Request, maxBodyMB int, excludeIDs ...int) []Ma
 
 // InspectResponse analyse un corps de réponse (règles TargetResponse uniquement).
 func (e *Engine) InspectResponse(body string, excludeIDs ...int) []Match {
+	return e.inspectResponse(body, nil, excludeIDs)
+}
+
+func (e *Engine) inspectResponse(body string, routeRules []Rule, excludeIDs []int) []Match {
 	e.mu.RLock()
 	rules := e.rules
 	baseExclude := e.exclude
 	e.mu.RUnlock()
+	if len(routeRules) > 0 {
+		rules = append(rules[:len(rules):len(rules)], routeRules...)
+	}
 
 	exclude := baseExclude
 	if len(excludeIDs) > 0 {
@@ -428,8 +443,20 @@ func (e *Engine) Middleware(cfg *router.WAFConfig, next http.Handler) http.Handl
 		wafWhitelistNets = parseTrustedProxies(cfg.WAFWhitelistIPs)
 	}
 
+	// Les custom_rules de la route sont compilées ici : le handler est reconstruit à chaque
+	// mise à jour de la route, ce qui sert de hot-reload et isole les règles entre routes.
+	var routeRules []Rule
+	if cfg != nil && len(cfg.CustomRules) > 0 {
+		compiled, err := CompileCustomRules(cfg.CustomRules)
+		if err != nil {
+			e.log.Error("waf: erreur compilation règles custom de la route", "err", err)
+		} else {
+			routeRules = compiled
+		}
+	}
+
 	// Vérifier si des règles TargetResponse existent pour décider de bufferiser les réponses.
-	hasResponseRules := e.hasResponseRules()
+	hasResponseRules := e.hasResponseRules() || rulesHaveResponseTarget(routeRules)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host := r.Host
@@ -458,7 +485,7 @@ func (e *Engine) Middleware(cfg *router.WAFConfig, next http.Handler) http.Handl
 		}
 
 		// ── Étape 2 : inspection WAF requête ─────────────────────────────
-		matches := e.Inspect(r, maxBody, excludeIDs...)
+		matches := e.inspect(r, maxBody, routeRules, excludeIDs)
 
 		wafScore := 0
 		for _, m := range matches {
@@ -519,7 +546,7 @@ func (e *Engine) Middleware(cfg *router.WAFConfig, next http.Handler) http.Handl
 			}
 			next.ServeHTTP(rc, r)
 
-			respMatches := e.InspectResponse(rc.buf.String(), excludeIDs...)
+			respMatches := e.inspectResponse(rc.buf.String(), routeRules, excludeIDs)
 			for _, m := range respMatches {
 				action := "detect"
 				if block {
@@ -605,7 +632,11 @@ func (e *Engine) postRecord(host, ip string, r *http.Request, wafScore, status, 
 func (e *Engine) hasResponseRules() bool {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	for _, r := range e.rules {
+	return rulesHaveResponseTarget(e.rules)
+}
+
+func rulesHaveResponseTarget(rules []Rule) bool {
+	for _, r := range rules {
 		for _, t := range r.Targets {
 			if t == TargetResponse {
 				return true

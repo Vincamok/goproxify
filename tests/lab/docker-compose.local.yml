@@ -1,0 +1,64 @@
+# =============================================================================
+# GOPROXIFY — Labo local jetable (Admin + Passerelle + lab-sim + runner), sans aucune dépendance à la production
+#
+# Pour valider la suite fonctionnelle (features.sh) ou le trafic réaliste sur un build précis, sans toucher
+# à une stack réelle. Réseau Docker dédié, aucun port publié.
+#
+#   docker compose -f tests/lab/docker-compose.local.yml up -d --build   # --build : passerelle compilée depuis les sources
+#   docker compose -f tests/lab/docker-compose.local.yml exec lab-tools bash /lab/scripts/features.sh seed
+#   docker compose -f tests/lab/docker-compose.local.yml exec lab-tools bash /lab/scripts/features.sh run [sections]
+#   docker compose -f tests/lab/docker-compose.local.yml down -v
+#
+# Notes :
+#   - Le nom de nœud de la passerelle (GPX_IDENTITY_EDGE_NODE_NAME) doit être résolvable par l'Admin : c'est le nom du service.
+#   - Les identifiants ci-dessous n'existent que dans ce labo jetable.
+#   - Les scripts sont copiés avec fins de ligne LF au démarrage (un checkout Windows peut les avoir en CRLF).
+#   - k6 : docker run --rm --network goproxify-lab_default --add-host lab-realistic.lab.test:<IP de goproxify-edge> \
+#       -v "$PWD/tests/lab/load:/scripts" -v "$PWD/tests/lab/results:/results" -u root -e SHOP_RATE=10 grafana/k6 run /scripts/realistic.js
+# =============================================================================
+name: goproxify-lab
+
+services:
+  goproxify-admin:
+    image: ${GOPROXIFY_REGISTRY:-ghcr.io/vincamok/goproxify}/admin:${GOPROXIFY_ADMIN_TAG:-preview}
+    command: ["admin"]
+    environment:
+      - GPX_SECURITY_JWT_SECRET=lab-jwt-secret-not-for-production-32b
+      - GPX_PAIRING_SECRET=lab-pairing-secret-not-for-production-x
+      - GPX_FIRST_ADMIN_EMAIL=lab@lab.test
+      - GPX_FIRST_ADMIN_PASSWORD=Lab-Local-12345!
+      - GPX_IDENTITY_EDGE_NODE_NAME=goproxify-edge
+      - GPX_ENGINE_LOG_LEVEL=info
+
+  goproxify-edge:
+    image: goproxify-lab-edge:local
+    build:
+      context: ../..
+      dockerfile: services/edge/Dockerfile
+    command: ["edge"]
+    environment:
+      - GPX_PAIRING_SECRET=lab-pairing-secret-not-for-production-x
+      - GPX_IDENTITY_EDGE_NODE_NAME=goproxify-edge
+      - GPX_ENGINE_LOG_LEVEL=info
+
+  lab-sim:
+    image: golang:1.22-alpine
+    working_dir: /app
+    volumes: ["./sim:/app:ro"]
+    entrypoint: ["sh", "-c", "go run /app/main.go"]
+
+  lab-tools:
+    image: alpine:3.20
+    volumes: ["./scripts:/src:ro"]
+    entrypoint:
+      - sh
+      - -c
+      - |
+        apk add --no-cache bash curl jq netcat-openbsd openssl coreutils >/dev/null
+        mkdir -p /lab/scripts
+        for f in /src/*; do tr -d '\r' < "$$f" > "/lab/scripts/$$(basename "$$f")"; done
+        exec sleep infinity
+    environment:
+      LAB_ADMIN_URL: http://goproxify-admin:9443
+      LAB_ADMIN_EMAIL: lab@lab.test
+      LAB_ADMIN_PASSWORD: Lab-Local-12345!

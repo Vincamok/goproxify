@@ -112,6 +112,7 @@ type Server struct {
 	// Cache de chaînes dispatch invalidé par génération (revue P1 #3)
 	dispatchGen      atomic.Uint64
 	dispatchHandlers sync.Map // key -> *cachedDispatch
+	dispatchBuildMu  sync.Mutex
 }
 
 // New initialise la passerelle à partir de la configuration.
@@ -435,6 +436,9 @@ func (s *Server) Start(ctx context.Context) error {
 	// Mise à jour périodique du cache
 	go s.autosaveLoop(ctx)
 
+	// Sondes de santé : suivent la table (proxies fichiers, révisions, agents) sans l'Admin.
+	go s.healthSyncLoop(ctx)
+
 	// Sync pools discovery depuis les passerelles pairs (LB cross-passerelle)
 	s.startPeerSyncLoop(ctx)
 
@@ -634,7 +638,7 @@ func collectSentinelWhitelists(routes []*router.Route) []string {
 func (s *Server) applySnapshot(snap *edgecache.Snapshot) {
 	if snap.Routes != nil {
 		s.table.Replace(snap.Routes) //nolint:errcheck
-		s.health.StartChecksFromRoutes(snap.Routes)
+		s.syncHealthChecks()
 		if s.threatEngine != nil {
 			s.threatEngine.MergeRouteWhitelists(collectSentinelWhitelists(snap.Routes))
 		}
@@ -838,4 +842,22 @@ func copyConn(dst, src net.Conn, buf []byte) {
 func (s *Server) startQUIC() error {
 	s.quicSrv = &edgequic.QUICServer{}
 	return s.quicSrv.Start(s.cfg, tracing.Middleware(requestIDMiddleware(s.accessLog.Middleware(s.httpMux()))), s.certStore)
+}
+
+// syncHealthChecks aligne les sondes actives sur la table de routes courante.
+func (s *Server) syncHealthChecks() {
+	s.health.Sync(s.table.All())
+}
+
+func (s *Server) healthSyncLoop(ctx context.Context) {
+	t := time.NewTicker(2 * time.Second)
+	defer t.Stop()
+	for {
+		s.syncHealthChecks()
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
 }

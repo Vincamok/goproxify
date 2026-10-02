@@ -111,6 +111,8 @@ Format dans l'UI Admin ou via snippet : `id|category|severity|targets|pattern|me
 
 Targets disponibles : `uri`, `args`, `body`, `headers`, `cookies`, `response`.
 
+Les `custom_rules` d'une route (`waf.custom_rules`) ne s'appliquent qu'à cette route et sont rechargées à chaque mise à jour de la route ; les règles du fichier `custom_rules_path` sont globales à la passerelle.
+
 ### Métriques Prometheus
 
 ```

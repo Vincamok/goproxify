@@ -1,4 +1,4 @@
-// Trafic réaliste sur la boutique simulée (route lab-realistic : 3 instances, health check, retry, rate-limit, réécriture du corps) :
+// Trafic réaliste sur la boutique simulée (route lab-realistic : 3 instances, health check, retry, rate-limit) :
 // clients web (pages + assets + panier), clients API, lecteurs de flux SSE, échanges WebSocket, téléchargements
 // et envois de fichiers. Débit imposé (modèle ouvert) avec une courbe de journée ; SHOP_RATE = pic d'itérations/s
 // des visiteurs (≈ 8 requêtes chacune). Par défaut ~150 req/s au pic pendant 3 min : faible impact sur la production.
@@ -42,6 +42,16 @@ export const options = {
     "http_req_failed{kind:api}": ["rate<0.01"],
     "http_req_duration{kind:page}": ["p(95)<300"],
     "http_req_duration{kind:api}": ["p(95)<300"],
+    "http_req_duration{kind:slow}": ["p(95)<800"],
+    "http_req_duration{kind:asset}": ["p(95)<300"],
+    "http_req_duration{kind:sse}": ["p(95)<4000"],
+    "http_req_duration{kind:download}": ["p(95)<2000"],
+    "http_req_duration{kind:upload}": ["p(95)<2000"],
+    "http_req_failed{kind:slow}": ["rate<0.01"],
+    "http_req_failed{kind:asset}": ["rate<0.05"],
+    "http_req_failed{kind:sse}": ["rate<0.01"],
+    "http_req_failed{kind:download}": ["rate<0.01"],
+    "http_req_failed{kind:upload}": ["rate<0.01"],
     "checks": ["rate>0.99"],
     "dropped_iterations": ["count==0"],
   },
@@ -53,7 +63,7 @@ const pause = (min, max) => sleep(min + Math.random() * (max - min));
 export function visiteur() {
   group("visite", () => {
     let r = http.get(`${BASE}/`, { tags: { kind: "page" } });
-    check(r, { "accueil 200": (x) => x.status === 200, "accueil sans URL interne": (x) => !x.body.includes("lab-sim:") });
+    check(r, { "accueil 200": (x) => x.status === 200 });
     for (const a of assets.slice(0, 3 + Math.floor(Math.random() * 3))) {
       http.get(`${BASE}${a}`, { tags: { kind: "asset" } });
     }
@@ -74,8 +84,8 @@ export function clientApi() {
   const h = { headers: { Authorization: "Bearer lab-token", Accept: "application/json" }, tags: { kind: "api" } };
   const r = http.get(`${BASE}/api/v1/orders?page=${1 + Math.floor(Math.random() * 5)}`, h);
   check(r, { "api 200": (x) => x.status === 200 });
-  if (Math.random() < 0.1) http.options(`${BASE}/api/v1/orders`, { headers: { Origin: "https://app.lab.test", "Access-Control-Request-Method": "GET" }, tags: { kind: "api" } });
-  if (Math.random() < 0.2) http.get(`${BASE}/slow?ms=${100 + Math.floor(Math.random() * 400)}`, { tags: { kind: "api" } });
+  if (Math.random() < 0.1) http.options(`${BASE}/api/v1/orders`, null, { headers: { Origin: "https://app.lab.test", "Access-Control-Request-Method": "GET" }, tags: { kind: "api" } });
+  if (Math.random() < 0.2) http.get(`${BASE}/slow?ms=${100 + Math.floor(Math.random() * 400)}`, { tags: { kind: "slow" } });
 }
 
 export function fluxSSE() {
@@ -110,4 +120,13 @@ export function fichiers() {
   }
 }
 
-export const handleSummary = summary("realistic");
+export function handleSummary(data) {
+  const out = summary("realistic")(data);
+  const v = (k, q) => (data.metrics[k] && data.metrics[k].values[q] !== undefined ? data.metrics[k].values[q].toFixed(1) : "-");
+  const lines = ["page", "api", "slow", "asset", "sse", "download", "upload"].map(
+    (k) => `  ${k.padEnd(9)} p95=${v(`http_req_duration{kind:${k}}`, "p(95)")} ms  échecs=${(Number(v(`http_req_failed{kind:${k}}`, "rate")) * 100).toFixed(2)} %`,
+  );
+  const failed = Object.entries(data.metrics).flatMap(([n, m]) => Object.entries(m.thresholds || {}).filter(([, t]) => !t.ok).map(([e]) => `${n} ${e}`));
+  out.stdout += ["par type de requête :", ...lines, `checks     : ${(data.metrics.checks.values.rate * 100).toFixed(2)} % réussis`, failed.length ? `seuils franchis : ${failed.join(" ; ")}` : "tous les seuils respectés", ""].join("\n");
+  return out;
+}

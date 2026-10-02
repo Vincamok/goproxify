@@ -19,7 +19,7 @@ func SecurityHeaders(cfg *router.HeadersConfig) func(http.Handler) http.Handler 
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			h := w.Header()
 			if cfg.HideServer {
-				h.Set("Server", "")
+				w = &hideServerWriter{ResponseWriter: w}
 			}
 			if cfg.HSTS {
 				age := cfg.HSTSMaxAge
@@ -38,6 +38,42 @@ func SecurityHeaders(cfg *router.HeadersConfig) func(http.Handler) http.Handler 
 		})
 	}
 }
+
+// hideServerWriter retire Server et X-Powered-By au moment de l'envoi des en-têtes :
+// le reverse proxy y copie ceux du backend après le passage du middleware.
+type hideServerWriter struct {
+	http.ResponseWriter
+	sent bool
+}
+
+func (w *hideServerWriter) strip() {
+	if w.sent {
+		return
+	}
+	w.sent = true
+	h := w.ResponseWriter.Header()
+	h.Del("Server")
+	h.Del("X-Powered-By")
+}
+
+func (w *hideServerWriter) WriteHeader(code int) {
+	if code >= 200 || code == http.StatusSwitchingProtocols {
+		w.strip()
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *hideServerWriter) Write(b []byte) (int, error) {
+	w.strip()
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *hideServerWriter) Flush() {
+	w.strip()
+	http.NewResponseController(w.ResponseWriter).Flush() //nolint:errcheck
+}
+
+func (w *hideServerWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // CORS applique les headers CORS selon la configuration de la route.
 func CORS(cfg *router.CORSConfig) func(http.Handler) http.Handler {

@@ -20,6 +20,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -53,6 +54,7 @@ type proxyAttempt struct {
 	writeOnError bool
 	attempt      int
 	backend      string
+	secure       bool // requête entrante en HTTPS, pour l'attribut Secure du cookie sticky
 	failed       bool
 	err          error // erreur transport pour distinguer transitoire vs panne réelle
 }
@@ -398,6 +400,29 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.log.Warn("aucun backend sain, tentative quand même", "host", h.route.Host, "backends", len(candidates))
 	}
 
+	if h.cb != nil {
+		allowed := make([]*router.Backend, 0, len(attempts))
+		for _, b := range attempts {
+			if h.cb.Allow(b.URL) {
+				allowed = append(allowed, b)
+			}
+		}
+		if len(allowed) == 0 {
+			urls := make([]string, len(attempts))
+			for i, b := range attempts {
+				urls[i] = b.URL
+			}
+			secs := int(math.Ceil(h.cb.RetryAfter(urls).Seconds()))
+			if secs < 1 {
+				secs = 1
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(secs))
+			h.writeError(w, r, http.StatusServiceUnavailable)
+			return
+		}
+		attempts = allowed
+	}
+
 	for i, backend := range attempts {
 		if i > 0 {
 			metrics.Backend.RetriesTotal.WithLabelValues(h.route.Host, attempts[i-1].URL).Inc()
@@ -408,17 +433,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if ok {
 			h.health.MarkUp(backend.URL)
 			if h.cb != nil {
-				h.cb.RecordSuccess()
-			}
-			if h.route.StickyCookie != "" {
-				http.SetCookie(w, &http.Cookie{
-					Name:     h.route.StickyCookie,
-					Value:    backend.URL,
-					Path:     "/",
-					HttpOnly: true,
-					Secure:   middleware.CookieSecure(r),
-					SameSite: http.SameSiteLaxMode,
-				})
+				h.cb.RecordSuccess(backend.URL)
 			}
 			return
 		}
@@ -429,7 +444,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.health.MarkDown(backend.URL, ttl)
 		}
 		if h.cb != nil {
-			h.cb.RecordFailure()
+			h.cb.RecordFailure(backend.URL)
 		}
 		if responded {
 			return
@@ -629,7 +644,7 @@ func (h *Handler) do(w http.ResponseWriter, r *http.Request, b *router.Backend, 
 	}
 
 	callStart := time.Now()
-	att := &proxyAttempt{writeOnError: writeOnError, attempt: attempt, backend: b.URL}
+	att := &proxyAttempt{writeOnError: writeOnError, attempt: attempt, backend: b.URL, secure: middleware.CookieSecure(r)}
 	ctx := context.WithValue(r.Context(), proxyAttemptKey{}, att)
 	ctx = context.WithValue(ctx, backendCallStartKey{}, callStart)
 	r = r.WithContext(ctx)
@@ -728,6 +743,22 @@ func (h *Handler) reverseProxyFor(b *router.Backend, target *url.URL) *httputil.
 			}
 			if len(h.route.CookieDomains) > 0 || len(h.route.CookiePaths) > 0 {
 				rewriteSetCookieHeaders(resp, h.route.CookieDomains, h.route.CookiePaths)
+			}
+			if h.route.StickyCookie != "" {
+				secure := false
+				if resp.Request != nil {
+					if att, ok := resp.Request.Context().Value(proxyAttemptKey{}).(*proxyAttempt); ok {
+						secure = att.secure
+					}
+				}
+				resp.Header.Add("Set-Cookie", (&http.Cookie{
+					Name:     h.route.StickyCookie,
+					Value:    b.URL,
+					Path:     "/",
+					HttpOnly: true,
+					Secure:   secure,
+					SameSite: http.SameSiteLaxMode,
+				}).String())
 			}
 			if len(h.route.SubFilters) > 0 {
 				if err := applySubFilters(resp, h.route.SubFilters, subFilterRes); err != nil {
@@ -893,6 +924,7 @@ func applySubFilters(resp *http.Response, filters []router.SubFilter, res []*reg
 	if err != nil {
 		resp.Body = io.NopCloser(bytes.NewReader(raw))
 		resp.ContentLength = int64(len(raw))
+		resp.Header.Set("Content-Length", strconv.Itoa(len(raw)))
 		return nil
 	}
 	result := string(raw)
@@ -913,6 +945,7 @@ func applySubFilters(resp *http.Response, filters []router.SubFilter, res []*reg
 	b := []byte(result)
 	resp.Body = io.NopCloser(bytes.NewReader(b))
 	resp.ContentLength = int64(len(b))
+	resp.Header.Set("Content-Length", strconv.Itoa(len(b)))
 	return nil
 }
 
@@ -1029,7 +1062,17 @@ func applyForwardedHeaders(req *http.Request, route *router.Route, xfHost string
 		}
 	}
 	ip := clientIP(req)
-	setOrDel("X-Forwarded-For", ip)
+	// ReverseProxy ajoute lui-même RemoteAddr à X-Forwarded-For : on ne pose la
+	// valeur que si elle en diffère, et une entrée nil désactive cet ajout.
+	remote, _, _ := net.SplitHostPort(req.RemoteAddr)
+	switch {
+	case !wantsForwardedHeader(route, "X-Forwarded-For"):
+		req.Header["X-Forwarded-For"] = nil
+	case ip == remote:
+		req.Header.Del("X-Forwarded-For")
+	default:
+		req.Header.Set("X-Forwarded-For", ip)
+	}
 	setOrDel("X-Forwarded-Proto", scheme(req))
 	setOrDel("X-Forwarded-Host", xfHost)
 	setOrDel("X-Real-IP", ip)

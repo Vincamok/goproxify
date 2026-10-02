@@ -1,6 +1,6 @@
 # Labo de tests — procédure pas à pas
 
-Guide d'exécution du labo `tests/lab/` (charge, sécurité, chaos) sur un daemon Docker distant, avec les résultats du premier passage (2026-09-24). Référence rapide : [tests/lab/README.md](../tests/lab/README.md). Rapport de la dernière campagne : [rapport-tests-2026-10-02.md](rapport-tests-2026-10-02.md) (précédent : [rapport-tests-2026-09-24.md](rapport-tests-2026-09-24.md)).
+Guide d'exécution du labo `tests/lab/` (charge, sécurité, chaos, fonctionnalités des proxies) sur un daemon Docker distant, avec les résultats du premier passage (2026-09-24). Référence rapide : [tests/lab/README.md](../tests/lab/README.md). Suite fonctionnelle : [rapport-tests-2026-10-03.md](rapport-tests-2026-10-03.md). Dernière campagne sécurité/chaos : [rapport-tests-2026-10-02.md](rapport-tests-2026-10-02.md) (précédent : [rapport-tests-2026-09-24.md](rapport-tests-2026-09-24.md)).
 
 > **Le labo se branche sur la stack existante (`goproxify_net`).** Sur une stack de production, il crée des routes `*.lab.test` dans l'Admin et la passerelle réelles : n'exécuter que les tests « faible impact » (§4) et nettoyer ensuite (§7).
 
@@ -13,6 +13,7 @@ Guide d'exécution du labo `tests/lab/` (charge, sécurité, chaos) sur un daemo
 | `lab-tools` | Runner bash : `seed.sh`, `attacks.sh`, `chaos.sh`, `cleanup.sh` |
 | `lab-k6` | Runner de charge (scénarios `smoke`, `moderate`, `baseline`, `spike`, `stress`, `soak`, `mixed`) |
 | `lab-juice` | Cible vulnérable optionnelle (profil `vuln`) |
+| `lab-sim` | Applications simulées pour la suite fonctionnelle et le trafic réaliste : boutique à 3 instances, canary, shadow, legacy, 2 instances de sonde, écho WebSocket/TCP, port de contrôle interne (détail : [tests/lab/README.md](../tests/lab/README.md)) |
 
 Aucun build ni montage de fichier : les scripts sont embarqués dans `docker-compose.lab.yml` par `tests/lab/gen-compose.sh` (à relancer après toute modification de `scripts/` ou `load/`). Les runners retrouvent eux-mêmes l'IP de la passerelle (`scripts/hosts.sh`).
 
@@ -52,6 +53,8 @@ Chaque commande affiche PASS/FAIL ; le code retour de `attacks.sh` et `chaos.sh`
 | 5 | Saturation (50 VUs sans pause, ~1 min) : débit atteint, sans seuil de latence | `docker exec lab-k6 sh -c "sh /hosts.sh && k6 run /scripts/saturation.js"` | Modéré à élevé (sature le CPU de la VM) |
 | — | Attaques complètes (brute-force login Admin) | sans `LAB_SAFE=1` | **Élevé** : échecs de connexion réels sur l'Admin, alertes/audit |
 | — | `spike`, `stress`, `baseline`, `soak`, `mixed` | `k6 run /scripts/<nom>.js` | **Élevé** : à réserver à un environnement isolé ou à une fenêtre de maintenance |
+| 6 | Fonctionnalités (34 routes, 29 sections) | `docker exec lab-tools bash /lab/scripts/features.sh seed` puis `docker exec lab-tools bash /lab/scripts/features.sh run` | Faible : routes `lab-*`, ~500 requêtes au total, quelques rafales de 6 à 8 requêtes concurrentes. Créer les routes demande un PAT (`proxies:write`) ; `LAB_RUNNER_CIDR` ajoute le poste de test à la liste blanche Sentinel des routes pour éviter qu'il soit banni par ses propres 403/502 attendus |
+| 7 | Trafic réaliste (~150 req/s au pic, 3 min ; `SHOP_RATE`, `DURATION` réglables) | `docker exec lab-k6 sh -c "sh /hosts.sh && k6 run /scripts/realistic.js"` | Faible à modéré (route `lab-realistic`) |
 
 Toutes les commandes `docker` s'écrivent avec `sudo` sur la VM.
 
@@ -60,6 +63,8 @@ Toutes les commandes `docker` s'écrivent avec `sudo` sur la VM.
 - **Attaques** : WAF en block/detect (SQLi, XSS, traversal, Log4Shell, injection de commande), `X-Forwarded-For` complété par la passerelle, en-têtes hop-by-hop, Host inconnu/dupliqué, `TRACE`, en-tête de 64 Ko, corps > `max_body_mb` transmis intact, request smuggling CL+TE, rate-limit, slowloris (coupure attendue à 10 s), et hors `LAB_SAFE` : API Admin sans jeton, JWT `alg=none`, traversal API, frein anti brute-force.
 - **Chaos** : latence +1,5 s propagée, backend coupé → 502 immédiat puis reprise, connexion réinitialisée, backend muet (coupure à 30 s), bande passante 50 Ko/s. Toxiproxy est sans état : `chaos.sh` recrée son proxy à chaque lancement et s'arrête si la route de référence n'est pas saine.
 - **Charge** : `moderate` fixe le débit (modèle ouvert) pour mesurer la latence de service (p95 < 100 ms, p99 < 300 ms, aucune itération abandonnée) ; `saturation` lance 50 utilisateurs sans pause pour mesurer le débit atteint (facteur limitant : k6, Passerelle ou VM). En modèle fermé la latence reflète la file d'attente (loi de Little : latence moyenne ≈ VUs / débit), d'où l'absence de seuil de latence.
+- **Fonctionnalités** (`features.sh`) : une route `lab-*.lab.test` par fonctionnalité du proxy, devant les applications simulées de `lab-sim`. Chaque section vérifie le comportement observable de bout en bout (instance qui répond, en-têtes reçus par le backend, en-têtes reçus par le client, codes, délais) et pas seulement le code retour. Sections : `lb weighted sticky health retry cb transform paths redirect subfilter cors cache ip vars backpressure canary shadow cond errpages ws body secheaders timeout auth bot wafcustom headers stream toggle` (`features.sh run lb,cache` pour en lancer quelques-unes). L'état des instances simulées est remis à zéro en sortie.
+- **Trafic réaliste** (`realistic.js`) : visiteurs (page, 3 à 5 assets, catalogue JSON, 30 % se connectent et valident un panier), clients API, flux SSE de 3 s, échanges WebSocket, téléchargements de 2 Mo et envois de 512 Ko, avec une courbe de journée à débit imposé (modèle ouvert). Les seuils sont posés par type de requête (`page`, `api`, `slow`, `asset`, `sse`, `download`, `upload`) et le résumé les détaille.
 
 ## 6. Résultats (2026-09-24, VM partagée avec la production)
 

@@ -246,6 +246,15 @@ func (s *Server) handlerForRoute(route *router.Route, locPath string) http.Handl
 		}
 	}
 
+	s.dispatchBuildMu.Lock()
+	defer s.dispatchBuildMu.Unlock()
+	gen = s.dispatchGen.Load()
+	if v, ok := s.dispatchHandlers.Load(key); ok {
+		if c := v.(*cachedDispatch); c.gen == gen {
+			return c.h
+		}
+	}
+
 	h := http.Handler(proxy.NewHandler(route, s.health, s.metrics, s.peers, s.log.Logger()))
 	if route.Cache != nil && route.Cache.Enabled {
 		h = proxy.New(routeCacheDir(route)).MiddlewareWithConfig(route.Cache)(h)
@@ -274,7 +283,7 @@ func (s *Server) handlerForRoute(route *router.Route, locPath string) http.Handl
 	h = middleware.IPFilter(route.IPFilter)(h)
 	h = middleware.RateLimit(route.RateLimit)(h)
 	h = middleware.LimitConn(route.ID, route.LimitConn)(h)
-	h = middleware.Backpressure(route.Host,route.Backpressure)(h)
+	h = middleware.BackpressureShared(key, route.Host, route.Backpressure)(h)
 	h = middleware.ResolveRequestVars(route.RequestVars)(h)
 	h = middleware.BotProtection(route.Bot)(h)
 	if route.WAF != nil && route.WAF.Enabled {

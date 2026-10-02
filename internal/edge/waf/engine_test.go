@@ -407,3 +407,51 @@ func TestReadBody_LargeBodyForwardedIntact(t *testing.T) {
 		}
 	}
 }
+
+func TestRouteCustomRulesInspectIsolated(t *testing.T) {
+	e := NewEngine(nil, slog.Default())
+	rules, err := CompileCustomRules([]router.CustomRule{{ID: 990001, Pattern: "LAB-FORBIDDEN-WORD", Targets: []string{"uri", "args", "body"}, Severity: "high"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodGet, "/?q=LAB-FORBIDDEN-WORD", nil)
+	if m := e.inspect(r, 1, rules, nil); len(m) == 0 || m[0].RuleID != 990001 {
+		t.Fatalf("route rule should match, got %#v", m)
+	}
+	if m := e.Inspect(r, 1); len(m) != 0 {
+		t.Fatalf("route rule leaked into global rules: %#v", m)
+	}
+	if len(e.rules) != len(DefaultRules()) {
+		t.Fatal("global rules slice mutated")
+	}
+}
+
+func TestMiddlewareRouteCustomRules(t *testing.T) {
+	e := NewEngine(nil, slog.Default())
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	cfg := &router.WAFConfig{Enabled: true, Mode: "block", CustomRules: []router.CustomRule{
+		{ID: 990001, Pattern: "LAB-FORBIDDEN-WORD", Targets: []string{"uri", "args", "body"}, Severity: "high"},
+	}}
+	with := e.Middleware(cfg, next)
+	without := e.Middleware(&router.WAFConfig{Enabled: true, Mode: "block"}, next)
+
+	do := func(h http.Handler, req *http.Request) int {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		return rr.Code
+	}
+	if c := do(with, httptest.NewRequest(http.MethodGet, "/?q=LAB-FORBIDDEN-WORD", nil)); c != http.StatusForbidden {
+		t.Fatalf("query: got %d", c)
+	}
+	post := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("note=LAB-FORBIDDEN-WORD"))
+	post.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if c := do(with, post); c != http.StatusForbidden {
+		t.Fatalf("body: got %d", c)
+	}
+	if c := do(with, httptest.NewRequest(http.MethodGet, "/?q=hello", nil)); c != http.StatusOK {
+		t.Fatalf("clean: got %d", c)
+	}
+	if c := do(without, httptest.NewRequest(http.MethodGet, "/?q=LAB-FORBIDDEN-WORD", nil)); c != http.StatusOK {
+		t.Fatalf("other route must not block, got %d", c)
+	}
+}

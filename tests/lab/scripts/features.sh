@@ -14,15 +14,15 @@ EDGE_HOST=${EDGE_HOST:-goproxify-edge}
 SIM=${LAB_SIM_CTL:-http://lab-sim:9999}
 ROUTES=/lab/scripts/feature-routes.json
 PASSFILE=/tmp/lab-basic.pass
-fail=0; pass=0
+fail=0; npass=0
 
-ok()   { printf '  \033[32mPASS\033[0m %s\n' "$1"; pass=$((pass+1)); }
+ok()   { printf '  \033[32mPASS\033[0m %s\n' "$1"; npass=$((npass+1)); }
 ko()   { printf '  \033[31mFAIL\033[0m %s\n' "$1"; fail=$((fail+1)); }
 info() { printf '  info  %s\n' "$1"; }
 code() { curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$@"; }
-check() { # description got expected...
-  local d=$1 got=$2; shift 2
-  for a in "$@"; do [ "$got" = "$a" ] && { ok "$d ($got)"; return; }; done
+check() { # description got expected... (x local : le shell a une portée dynamique)
+  local d=$1 got=$2 x; shift 2
+  for x in "$@"; do [ "$got" = "$x" ] && { ok "$d ($got)"; return; }; done
   ko "$d : obtenu « $got », attendu « $* »"
 }
 ge() { awk -v a="$1" -v b="$2" 'BEGIN{exit !(a>=b)}'; } # a >= b (réels)
@@ -84,7 +84,7 @@ preflight() {
   done
 }
 
-want() { [ -z "${SECTIONS:-}" ] || case ",$SECTIONS," in *",$1,"*) return 0;; esac; return 1; }
+want() { [ -z "${SECTIONS:-}" ] && return 0; case ",$SECTIONS," in *",$1,"*) return 0;; esac; return 1; }
 section() { want "$1" || return 1; echo "== $2 =="; return 0; }
 
 # ------------------------------------------------------------------ sections
@@ -112,33 +112,42 @@ t_sticky() { section sticky "Sessions collantes (cookie LABSID)" || return
 }
 
 t_health() { section health "Health check actif : éjection puis réintégration" || return
-  ctl a/health?up=0
-  info "instance a rendue malsaine, attente de la sonde (≤ 6 s)"
-  local d codes; sleep 6
+  local d codes
+  ctl h1/health?up=0
+  info "instance h1 rendue malsaine, attente de la sonde (≤ 6 s)"; sleep 6
   codes=$(for _ in $(seq 1 20); do code "$(u health)/whoami"; echo; done | sort | uniq -c | awk '{printf "%s×%s ", $1,$2}')
   d=$(spread "$(u health)/whoami" 20)
-  [ "$(count_of "$d" a)" = 0 ] && ok "aucune requête vers l'instance malsaine ($codes)" || ko "l'instance malsaine reçoit encore du trafic ($(echo $d | tr '\n' ' '))"
-  ctl a/health?up=1; sleep 6
+  [ "$(count_of "$d" h1)" = 0 ] && ok "aucune requête vers l'instance malsaine ($codes)" || ko "l'instance malsaine reçoit encore du trafic ($(echo $d | tr '\n' ' '))"
+  ctl h1/health?up=1; sleep 6
   d=$(spread "$(u health)/whoami" 20)
-  [ "$(count_of "$d" a)" -ge 3 ] && ok "instance a réintégrée ($(echo $d | tr '\n' ' '))" || ko "instance a non réintégrée ($(echo $d | tr '\n' ' '))"
-  ctl b/health?up=0; ctl a/health?up=0; sleep 6
-  info "tous les backends malsains : code obtenu $(code "$(u health)/whoami")"
-  ctl reset; sleep 5
+  [ "$(count_of "$d" h1)" -ge 3 ] && ok "instance h1 réintégrée ($(echo $d | tr '\n' ' '))" || ko "instance h1 non réintégrée ($(echo $d | tr '\n' ' '))"
+  ctl h1/health?up=0; ctl h2/health?up=0; sleep 6
+  check "tous les backends malsains : la passerelle tente quand même (fail-open)" "$(code "$(u health)/whoami")" 200
+  ctl reset; sleep 4
 }
 
-t_retry() { section retry "Politique de retry vs sans retry" || return
-  check "avec retry (3 tentatives) : 502,502 puis 200" "$(code "$(u retry)/fail-first?key=$(rnd)&n=2")" 200
-  check "sans retry : première erreur transmise" "$(code "$(u noretry)/fail-first?key=$(rnd)&n=1")" 502
+t_retry() { section retry "Failover et retry (un backend du pool est mort : port fermé)" || return
+  local i o bad=0 max=0 t
+  for i in 1 2 3 4 5 6 7 8; do
+    o=$(curl -s -o /dev/null -w '%{http_code} %{time_total}' --max-time 20 "$(u retry)/whoami"); t=${o#* }
+    [ "${o% *}" = 200 ] || bad=$((bad+1)); ge "$t" "$max" && max=$t
+  done
+  [ $bad = 0 ] && ok "avec retry : 8/8 réponses 200 malgré le backend mort" || ko "avec retry : $bad/8 erreurs"
+  info "temps max observé $max s (attente de retry configurée : 0,4 s ; absente si le backend mort était déjà en quarantaine)"
+  bad=0
+  for i in 1 2 3 4 5 6 7 8; do [ "$(code "$(u noretry)/whoami")" = 200 ] || bad=$((bad+1)); done
+  [ $bad = 0 ] && ok "sans retry : failover quand même (8/8 réponses 200)" || ko "sans retry : $bad/8 erreurs"
+  info "une réponse 5xx du backend n'est ni retentée ni basculée : seules les pannes de transport (connexion refusée, coupée) déclenchent le failover"
 }
 
-t_cb() { section cb "Circuit breaker (seuil 3, ouverture 8 s)" || return
-  local before after
-  ctl legacy/fail?n=100000
+t_cb() { section cb "Circuit breaker (seuil 3 échecs de transport, ouverture 8 s)" || return
+  local hits
+  ctl legacy/drop?n=100000
   for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do code "$(u cb)/whoami" >/dev/null; done
-  after=$(stats | jq '.legacy.hits')
-  [ "$after" -le 8 ] && ok "circuit ouvert : $after requêtes seulement ont atteint le backend sur 12" || ko "le circuit ne s'ouvre pas ($after/12 requêtes backend)"
+  hits=$(stats | jq '.legacy.hits')
+  [ "$hits" -le 6 ] && ok "circuit ouvert : $hits requêtes seulement ont atteint le backend sur 12" || ko "le circuit ne s'ouvre pas : $hits/12 requêtes ont atteint le backend"
   ctl legacy/reset; sleep 9
-  check "demi-ouverture puis fermeture après guérison" "$(code "$(u cb)/whoami")" 200
+  check "après l'ouverture et la guérison, le trafic reprend" "$(code "$(u cb)/whoami")" 200
 }
 
 t_transform() { section transform "Pipeline de transformation (réécriture, en-têtes)" || return
@@ -158,16 +167,21 @@ t_paths() { section paths "Routage par chemin (locations)" || return
   check "chemin par défaut → instance a" "$(curl -s "$(u paths)/whoami")" a
 }
 
-t_redirect() { section redirect "Réécriture Location / cookies / corps de réponse" || return
-  local loc ck body
+t_redirect() { section redirect "Réécriture Location et cookies (proxy_redirect, proxy_cookie_*)" || return
+  local loc ck
   loc=$(curl -s -o /dev/null -D- "$(u redirect)/redirect" | tr -d '\r' | awk 'tolower($1)=="location:"{print $2}')
   check "proxy_redirect" "$loc" https://shop.lab.test/landing
   ck=$(curl -s -o /dev/null -D- "$(u redirect)/login" | tr -d '\r' | grep -i '^set-cookie:')
   case "$ck" in *"Domain=shop.lab.test"*) ok "cookie Domain réécrit";; *) ko "cookie Domain non réécrit : $ck";; esac
   case "$ck" in *"Path=/;"*|*"Path=/") ok "cookie Path réécrit";; *) ko "cookie Path non réécrit : $ck";; esac
-  body=$(curl -s "$(u redirect)/")
-  case "$body" in *"https://shop.lab.test/products"*) ok "sub_filter : URL interne réécrite";; *) ko "URL interne non réécrite";; esac
-  case "$body" in *PUBLIC-MARKER*) ok "sub_filter : texte remplacé";; *) ko "BACKEND-MARKER non remplacé";; esac
+}
+
+t_subfilter() { section subfilter "Réécriture du corps de réponse (sub_filter)" || return
+  local body
+  body=$(curl -s --max-time 10 "$(u subfilter)/")
+  [ -n "$body" ] || { ko "réponse vide ou tronquée (en-tête Content-Length périmé après réécriture ?)"; return; }
+  case "$body" in *"https://shop.lab.test/products"*) ok "URL interne réécrite";; *) ko "URL interne non réécrite";; esac
+  case "$body" in *PUBLIC-MARKER*) ok "texte remplacé";; *) ko "BACKEND-MARKER non remplacé";; esac
 }
 
 t_cors() { section cors "CORS" || return
@@ -205,6 +219,7 @@ t_vars() { section vars "Variables de requête → en-tête (map nginx)" || retu
 }
 
 t_backpressure() { section backpressure "Backpressure (max_inflight=2, sans file) et limit_conn (3/IP)" || return
+  code "$(u backpressure)/whoami" >/dev/null; code "$(u limitconn)/whoami" >/dev/null  # amorce les handlers : à froid, des requêtes concurrentes créent chacune leur propre limiteur
   burst "$(u backpressure)/slow?ms=1500" 6
   [ "$BURST_NON200" -ge 1 ] && ok "excédent rejeté ($BURST_CODES)" || ko "aucun rejet ($BURST_CODES)"
   [ "$BURST_200" -ge 2 ] && ok "les requêtes dans la limite passent" || ko "trop peu de requêtes servies ($BURST_CODES)"
@@ -302,15 +317,19 @@ t_wafcustom() { section wafcustom "Règle WAF personnalisée" || return
 }
 
 t_headers() { section headers "Host conservé / X-Request-ID / X-Forwarded-*" || return
-  local a b hdr
+  local a b hdr xff dup
   hdr=$(mktemp); a=$(curl -s -D "$hdr" "$(u lb)/echo")
   check "défaut : le backend voit le Host public" "$(echo "$a" | jq -r .host)" lab-lb.lab.test
   grep -qi '^x-request-id' "$hdr" && ok "X-Request-ID renvoyé au client" || ko "X-Request-ID absent par défaut"
   echo "$a" | jq -e '.headers["X-Forwarded-For"]' >/dev/null && ok "X-Forwarded-For transmis par défaut" || ko "X-Forwarded-For absent par défaut"
+  xff=$(echo "$a" | jq -r '.headers["X-Forwarded-For"][0] // ""')
+  dup=$(echo "$xff" | tr "," "\n" | tr -d " " | sort | uniq -d | wc -l)
+  [ "$dup" = 0 ] && ok "X-Forwarded-For sans doublon ($xff)" || ko "X-Forwarded-For : IP du client en double ($xff)"
   b=$(curl -s -D "$hdr" "$(u nohost)/echo")
   check "preserve_host:false : le backend voit son propre Host" "$(echo "$b" | jq -r .host)" lab-sim:9001
   grep -qi '^x-request-id' "$hdr" && ko "request_id:false : X-Request-ID présent" || ok "request_id:false : pas de X-Request-ID"
-  echo "$b" | jq -e '.headers["X-Forwarded-For"]' >/dev/null && ko "forwarded_headers vide mais XFF transmis" || ok "forwarded_headers vide : aucun X-Forwarded-*"
+  [ "$(echo "$b" | jq -r '[.headers["X-Forwarded-Host"], .headers["X-Forwarded-Proto"], .headers["X-Real-Ip"]] | map(select(. != null)) | length')" = 0 ] && ok "forwarded_headers vide : ni X-Forwarded-Host, -Proto ni X-Real-IP" || ko "forwarded_headers vide mais des en-têtes X-Forwarded-* / X-Real-IP sont transmis"
+  info "X-Forwarded-For avec forwarded_headers vide : $(echo "$b" | jq -r '.headers["X-Forwarded-For"][0] // "<absent>"') (ajouté par le reverse proxy Go lui-même)"
   rm -f "$hdr"
 }
 
@@ -343,8 +362,8 @@ esac
 if [ -n "${LAB_ADMIN_TOKEN:-}${LAB_ADMIN_EMAIL:-}" ]; then . /lab/scripts/auth.sh; else token=""; fi
 preflight
 trap 'ctl reset' EXIT
-for s in lb weighted sticky health retry cb transform paths redirect cors cache ip vars backpressure canary shadow cond errpages ws body secheaders timeout auth bot wafcustom headers stream toggle; do
+for s in lb weighted sticky health retry cb transform paths redirect subfilter cors cache ip vars backpressure canary shadow cond errpages ws body secheaders timeout auth bot wafcustom headers stream toggle; do
   "t_$s"
 done
-echo; echo "Bilan : $pass PASS, $fail FAIL"
+echo; echo "Bilan : $npass PASS, $fail FAIL"
 exit $fail

@@ -71,11 +71,17 @@ type backendState struct {
 	cfg        probeConfig
 }
 
+// watcher est la sonde active d'un backend : sa config et le canal qui l'arrête.
+type watcher struct {
+	cfg  probeConfig
+	stop chan struct{}
+}
+
 // BackendHealth suit l'état de santé d'un backend par URL.
 type BackendHealth struct {
 	mu      sync.RWMutex
 	states  map[string]*backendState
-	watched map[string]struct{} // URLs avec un goroutine de check actif
+	watched map[string]watcher // URLs avec une goroutine de check active
 	log     *slog.Logger
 	OnDown  func(url string) // appelé quand un backend passe healthy→unhealthy
 }
@@ -83,7 +89,7 @@ type BackendHealth struct {
 func NewBackendHealth(log *slog.Logger) *BackendHealth {
 	return &BackendHealth{
 		states:  make(map[string]*backendState),
-		watched: make(map[string]struct{}),
+		watched: make(map[string]watcher),
 		log:     log,
 	}
 }
@@ -250,74 +256,92 @@ func (h *BackendHealth) StartChecks(urls []string, interval time.Duration) {
 	if interval > 0 {
 		cfg.interval = interval
 	}
-	h.startChecksWithConfig(urls, cfg)
+	h.mu.Lock()
+	for _, u := range urls {
+		if u != "" {
+			h.startLocked(u, cfg)
+		}
+	}
+	h.mu.Unlock()
 }
 
-// StartChecksFromRoutes lance les health checks en utilisant la HealthCheckConfig de chaque route.
-func (h *BackendHealth) StartChecksFromRoutes(routes []*router.Route) {
-	// Construire une map url → meilleure config connue.
-	// Si plusieurs routes partagent un même backend, on prend la première config non-nil.
-	cfgByURL := make(map[string]probeConfig)
+// moreSpecific indique si a doit remplacer b comme config de sonde d'un backend partagé :
+// une config explicite l'emporte sur le défaut, puis l'intervalle le plus court
+// (le plus réactif), puis l'ordre alphabétique du chemin pour rester déterministe.
+func moreSpecific(a, b probeConfig, aExplicit, bExplicit bool) bool {
+	if aExplicit != bExplicit {
+		return aExplicit
+	}
+	if a.interval != b.interval {
+		return a.interval < b.interval
+	}
+	return a.path < b.path
+}
+
+// Sync réconcilie les sondes avec l'ensemble de routes donné : démarre celles des nouveaux
+// backends, relance celles dont la config a changé, arrête celles des backends disparus.
+// Lorsque plusieurs routes partagent un backend, la config la plus spécifique est retenue.
+// Idempotent et peu coûteux : à appeler après toute modification de la table.
+func (h *BackendHealth) Sync(routes []*router.Route) {
+	if h == nil {
+		return
+	}
+	type want struct {
+		cfg      probeConfig
+		explicit bool
+	}
+	desired := make(map[string]want)
 	for _, r := range routes {
 		if r == nil || r.Type == router.RouteUDP {
 			continue
 		}
 		pc := probeConfigFrom(r.HealthCheck)
+		explicit := r.HealthCheck != nil
 		for _, b := range r.Backends {
 			if b.URL == "" {
 				continue
 			}
-			if _, seen := cfgByURL[b.URL]; !seen {
-				cfgByURL[b.URL] = pc
+			if cur, ok := desired[b.URL]; !ok || moreSpecific(pc, cur.cfg, explicit, cur.explicit) {
+				desired[b.URL] = want{pc, explicit}
 			}
 		}
 	}
 	h.mu.Lock()
-	var toStart []struct {
-		url string
-		cfg probeConfig
+	defer h.mu.Unlock()
+	for u, w := range desired {
+		h.startLocked(u, w.cfg)
 	}
-	for u, pc := range cfgByURL {
-		if _, ok := h.watched[u]; !ok {
-			h.watched[u] = struct{}{}
-			// Stocker la config dans l'état
-			st := h.getOrCreateLocked(u)
-			st.cfg = pc
-			toStart = append(toStart, struct {
-				url string
-				cfg probeConfig
-			}{u, pc})
+	for u, p := range h.watched {
+		if _, ok := desired[u]; !ok {
+			close(p.stop)
+			delete(h.watched, u)
+			delete(h.states, u)
 		}
-	}
-	h.mu.Unlock()
-	for _, item := range toStart {
-		go h.loop(item.url, item.cfg)
 	}
 }
 
-func (h *BackendHealth) startChecksWithConfig(urls []string, cfg probeConfig) {
-	h.mu.Lock()
-	var toStart []string
-	for _, u := range urls {
-		if u == "" {
-			continue
+// startLocked démarre (ou relance si la config diffère) la sonde de u. h.mu doit être tenu.
+func (h *BackendHealth) startLocked(u string, cfg probeConfig) {
+	if p, ok := h.watched[u]; ok {
+		if p.cfg == cfg {
+			return
 		}
-		if _, ok := h.watched[u]; !ok {
-			h.watched[u] = struct{}{}
-			st := h.getOrCreateLocked(u)
-			st.cfg = cfg
-			toStart = append(toStart, u)
-		}
+		close(p.stop)
 	}
-	h.mu.Unlock()
-	for _, u := range toStart {
-		go h.loop(u, cfg)
-	}
+	stop := make(chan struct{})
+	h.watched[u] = watcher{cfg: cfg, stop: stop}
+	h.getOrCreateLocked(u).cfg = cfg
+	go h.loop(u, cfg, stop)
 }
 
-func (h *BackendHealth) loop(target string, cfg probeConfig) {
+func (h *BackendHealth) loop(target string, cfg probeConfig, stop <-chan struct{}) {
 	for {
 		ok := probeWithConfig(target, cfg)
+		select {
+		case <-stop:
+			return
+		default:
+		}
 		h.mu.Lock()
 		st := h.getOrCreateLocked(target)
 		prevHealthy := st.healthy
@@ -351,7 +375,11 @@ func (h *BackendHealth) loop(target string, cfg probeConfig) {
 		if wentDown && h.OnDown != nil {
 			h.OnDown(target)
 		}
-		time.Sleep(cfg.interval)
+		select {
+		case <-stop:
+			return
+		case <-time.After(cfg.interval):
+		}
 	}
 }
 

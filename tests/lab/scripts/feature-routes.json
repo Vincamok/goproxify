@@ -14,14 +14,16 @@
   {"host": "lab-health.lab.test", "config": {
     "lb": "round_robin",
     "health_check": {"path": "/healthz", "interval": 1000000000, "timeout": 1000000000, "healthy_threshold": 1, "unhealthy_threshold": 1},
-    "backends": [{"url": "http://lab-sim:9001", "weight": 1}, {"url": "http://lab-sim:9002", "weight": 1}]}},
+    "backends": [{"url": "http://lab-sim:9007", "weight": 1}, {"url": "http://lab-sim:9008", "weight": 1}]}},
 
   {"host": "lab-retry.lab.test", "config": {
-    "retry": {"attempts": 3, "initial_wait": 50000000, "max_wait": 200000000},
-    "backends": [{"url": "http://lab-sim:9001", "weight": 1}]}},
+    "lb": "round_robin",
+    "retry": {"attempts": 3, "initial_wait": 400000000, "max_wait": 400000000},
+    "backends": [{"url": "http://lab-sim:9009", "weight": 1}, {"url": "http://lab-sim:9001", "weight": 1}]}},
 
   {"host": "lab-noretry.lab.test", "config": {
-    "backends": [{"url": "http://lab-sim:9001", "weight": 1}]}},
+    "lb": "round_robin",
+    "backends": [{"url": "http://lab-sim:9009", "weight": 1}, {"url": "http://lab-sim:9001", "weight": 1}]}},
 
   {"host": "lab-cb.lab.test", "config": {
     "circuit_breaker": {"threshold": 3, "timeout": 8000000000},
@@ -46,7 +48,10 @@
     "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
     "proxy_redirects": [{"from": "http://lab-sim:9001/", "to": "https://shop.lab.test/"}],
     "cookie_domains": [{"from": "lab-sim", "to": "shop.lab.test"}],
-    "cookie_paths": [{"from": "/app", "to": "/"}],
+    "cookie_paths": [{"from": "/app", "to": "/"}]}},
+
+  {"host": "lab-subfilter.lab.test", "config": {
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
     "sub_filters": [{"from": "http://lab-sim:9001", "to": "https://shop.lab.test"}, {"from": "BACKEND-MARKER", "to": "PUBLIC-MARKER"}]}},
 
   {"host": "lab-cors.lab.test", "config": {
@@ -144,7 +149,6 @@
     "health_check": {"path": "/healthz", "interval": 2000000000, "timeout": 1000000000, "healthy_threshold": 1, "unhealthy_threshold": 2},
     "retry": {"attempts": 2, "initial_wait": 50000000, "max_wait": 200000000},
     "rate_limit": {"rps": 500, "burst": 1000},
-    "sub_filters": [{"from": "http://lab-sim:[0-9]+", "to": "http://lab-realistic.lab.test", "regex": true}],
     "headers": {"hsts": true, "hsts_max_age": 31536000, "x_frame_options": "SAMEORIGIN", "hide_server": true},
     "websocket": true,
     "backends": [{"url": "http://lab-sim:9001", "weight": 1}, {"url": "http://lab-sim:9002", "weight": 1}, {"url": "http://lab-sim:9003", "weight": 1}]}},

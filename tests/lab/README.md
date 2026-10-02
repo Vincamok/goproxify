@@ -19,6 +19,8 @@ tests/lab/lab.sh all          # smoke + attaques + chaos
 tests/lab/lab.sh down         # nettoyage (routes lab-* à supprimer depuis l'Admin)
 ```
 
+Sans aucune stack existante (validation d'un build, développement) : `docker compose -f tests/lab/docker-compose.local.yml up -d --build` monte Admin, passerelle compilée depuis les sources, `lab-sim` et un runner ; voir l'en-tête du fichier.
+
 Rapports dans `tests/lab/results/` (ignoré par git).
 
 ## Daemon distant (Portainer…) : docker exec, sans clone ni copie
@@ -67,6 +69,8 @@ docker exec -e LAB_ADMIN_TOKEN=... lab-tools bash /lab/scripts/cleanup.sh
 | Endurance | `lab.sh soak` | k6 + docker stats | fuites mémoire/PIDs de la passerelle (`results/soak-edge-stats.csv`) ; `DURATION=2h RATE=500` |
 | Attaques ciblées | `lab.sh attacks` | bash/curl/nc | WAF block/detect, XFF/X-Real-IP usurpés, hop-by-hop, Host inconnu/dupliqué, TRACE, en-têtes 64 Ko, corps trop gros, smuggling CL+TE, rate-limit, slowloris, API Admin (sans jeton, JWT `alg=none`, brute-force login) |
 | Chaos | `lab.sh chaos` | Toxiproxy | latence, backend coupé, RST, timeout amont, bande passante : erreur rapide + reprise automatique |
+| Fonctionnalités | `lab.sh seed-features && lab.sh features [sections]` | bash/curl + `lab-sim` | 29 sections, une route `lab-*.lab.test` par fonctionnalité du proxy : équilibrage (round-robin, pondéré, sticky), health check, failover/retry, circuit breaker, transformation d'URL/en-têtes, locations, proxy_redirect/cookies, sub_filter, CORS, cache + purge, filtrage IP, request_vars, backpressure, limit_conn, canary, shadow, routage conditionnel, pages d'erreur, WebSocket, taille de corps, en-têtes de sécurité, délai de réponse, Basic auth, bot, règle WAF, en-têtes transmis, SSE/gros fichiers, maintenance (API Admin) |
+| Trafic réaliste | `lab.sh load realistic` | k6 + `lab-sim` | visiteurs (pages, assets, panier), clients API (CORS, requêtes lentes), flux SSE, WebSocket, téléchargements/envois ; courbe de journée à débit imposé (`SHOP_RATE`, défaut 20 itérations/s au pic ≈ 150 req/s ; `DURATION`) ; seuils par type de requête |
 | Scanners | `lab.sh up-vuln && lab.sh zap` / `nuclei` | ZAP, Nuclei, Juice Shop | détection de vulnérabilités via le WAF (mode detect) |
 
 Chaque contrôle d'`attacks` et `chaos` affiche PASS/FAIL ; le code retour est le nombre d'échecs (utilisable en CI).
@@ -76,6 +80,19 @@ Chaque contrôle d'`attacks` et `chaos` affiche PASS/FAIL ; le code retour est l
 `/` · `/echo` (ce que le backend a réellement reçu) · `/slow?ms=` · `/flaky?p=` · `/bytes?n=` ·
 `/status/{code}` · `/upload` · `/sse?n=&ms=`
 
+## Applications simulées (`lab-sim`, `sim/main.go`)
+
+Un seul conteneur, plusieurs « serveurs » derrière les reverse proxy (routes dans `scripts/feature-routes.json`) :
+
+| Port | Rôle |
+|---|---|
+| 9001-9003 | Boutique, instances `a`, `b`, `c` (équilibrage, sticky, retry) : page HTML avec URL interne, `/api/…` JSON, `/login` (cookie Domain/Path interne), `/redirect`, `/static/*` cacheable (`X-Origin-Hit`), `/ws` (écho WebSocket), `/sse`, `/fail-first`, `/echo`, `/slow`, `/bytes`, `/upload`, `/status/{code}`, `/whoami` |
+| 9004 / 9005 / 9006 | `canary`, `shadow` (garde le dernier `X-Lab-Marker` reçu), `legacy` |
+| 9007 / 9008 | `h1`, `h2` : dédiés au health check (la config de sonde est partagée par URL de backend, voir le rapport) |
+| 9009 | volontairement fermé : backend mort |
+| 9100 | écho TCP (bannière `LAB-TCP-BANNER`) |
+| 9999 | contrôle, réseau interne seulement : `/ctl/stats`, `/ctl/reset`, `/ctl/<id>/health?up=0\|1`, `/ctl/<id>/fail?n=` (503), `/ctl/<id>/drop?n=` (connexion coupée), `/ctl/<id>/latency?ms=` |
+
 ## Prérequis
 
 Docker (Compose v2), Bash (Git Bash sur Windows). Les images k6, ZAP, Nuclei, Toxiproxy et Juice Shop sont tirées au premier lancement.
@@ -84,4 +101,5 @@ Docker (Compose v2), Bash (Git Bash sur Windows). Les images k6, ZAP, Nuclei, To
 
 - Pas de TLS dans le labo (routes HTTP) : la charge TLS/QUIC et testssl restent à ajouter.
 - Le test slowloris dure ~75 s ; les tests de charge lourds doivent tourner sur une machine dédiée (les résultats sur poste de dev ne sont pas comparables à `docs/benchmark.md`).
+- La route L4 (TCP/UDP) n’est pas couverte : elle exige un port d’écoute dédié sur la passerelle (l’écho TCP `lab-sim:9100` est prêt pour ce test).
 - Les scénarios ont été écrits et validés statiquement (syntaxe, `docker compose config`, build Go) ; un premier passage réel peut nécessiter d'ajuster les seuils.
