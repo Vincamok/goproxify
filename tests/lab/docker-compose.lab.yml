@@ -16,6 +16,40 @@ x-lab-hosts: &lab-hosts
     - "lab-ratelimit.lab.test:${EDGE_IP:-127.0.0.1}"
     - "lab-chaos.lab.test:${EDGE_IP:-127.0.0.1}"
     - "lab-juice.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-lb.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-lb-alias.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-weighted.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-sticky.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-health.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-retry.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-noretry.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-cb.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-transform.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-paths.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-redirect.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-cors.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-cache.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-ipallow.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-ipdeny.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-vars.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-backpressure.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-limitconn.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-canary.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-canary-pct.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-shadow.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-cond.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-errpages.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-ws.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-nows.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-body.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-secheaders.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-timeout.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-basicauth.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-bot.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-wafcustom.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-nohost.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-realistic.lab.test:${EDGE_IP:-127.0.0.1}"
+    - "lab-toggle.lab.test:${EDGE_IP:-127.0.0.1}"
 
 networks:
   goproxify_net:
@@ -167,7 +201,8 @@ services:
       - |
         apk add --no-cache bash curl jq netcat-openbsd openssl coreutils >/dev/null
         mkdir -p /lab/scripts
-        for f in seed attacks chaos hosts auth cleanup; do eval "printf %s \"\$$S_$$f\"" > /lab/scripts/$$f.sh; done
+        for f in seed attacks chaos hosts auth cleanup features; do eval "printf %s \"\$$S_$$f\"" > /lab/scripts/$$f.sh; done
+        printf %s "$$S_feature_routes" > /lab/scripts/feature-routes.json
         exec sleep infinity
     networks: [goproxify_net]
     environment:
@@ -366,10 +401,17 @@ services:
       S_hosts: |
         #!/bin/sh
         # Résout *.lab.test vers l'IP de la passerelle (trouvée par DNS Docker) : évite EDGE_IP et extra_hosts.
+        # La liste doit contenir tous les hôtes de feature-routes.json (features.sh le vérifie).
         ip=$$(getent hosts "$${EDGE_HOST:-goproxify-edge}" | awk '{print $$1; exit}')
         [ -n "$$ip" ] || { echo "goproxify-edge introuvable sur goproxify_net (stack principale démarrée ?)" >&2; exit 1; }
         grep -v '\.lab\.test' /etc/hosts > /tmp/hosts.new
-        for h in lab-fast lab-waf-block lab-waf-detect lab-ratelimit lab-chaos lab-juice; do echo "$$ip $$h.lab.test" >> /tmp/hosts.new; done
+        for h in lab-fast lab-waf-block lab-waf-detect lab-ratelimit lab-chaos lab-juice \
+          lab-lb lab-lb-alias lab-weighted lab-sticky lab-health lab-retry lab-noretry lab-cb lab-transform lab-paths \
+          lab-redirect lab-cors lab-cache lab-ipallow lab-ipdeny lab-vars lab-backpressure lab-limitconn lab-canary \
+          lab-canary-pct lab-shadow lab-cond lab-errpages lab-ws lab-nows lab-body lab-secheaders lab-timeout \
+          lab-basicauth lab-bot lab-wafcustom lab-nohost lab-toggle lab-realistic; do
+          echo "$$ip $$h.lab.test" >> /tmp/hosts.new
+        done
         cat /tmp/hosts.new > /etc/hosts
       S_auth: |
         #!/usr/bin/env bash
@@ -395,6 +437,512 @@ services:
           printf '%-28s %s (%s)\n' "$$name" "$$id" "$$code"
         done
         echo "Vérifier dans l'UI qu'il ne reste aucune route lab-* (révisions en attente comprises)."
+      S_features: |
+        #!/usr/bin/env bash
+        # Suite fonctionnelle des proxies : une route *.lab.test par fonctionnalité, devant les applications simulées
+        # (lab-sim : boutique à 3 instances, canary, shadow, legacy, écho WebSocket). Verdict PASS/FAIL, code retour = nb d'échecs.
+        #
+        #   features.sh seed            crée les routes via l'API Admin (idempotent)
+        #   features.sh run [sections]  exécute les contrôles (ex. : run lb,cache,health) ; sans liste = toutes
+        #   features.sh                 seed + run
+        #
+        # Faible impact : uniquement des routes *.lab.test, une cinquantaine de requêtes par section, quelques rafales de 6 à 8
+        # requêtes concurrentes (backpressure, limit_conn). L'état des instances simulées est remis à zéro en sortie.
+        set -u
+        . /lab/scripts/hosts.sh
+        EDGE_HOST=$${EDGE_HOST:-goproxify-edge}
+        SIM=$${LAB_SIM_CTL:-http://lab-sim:9999}
+        ROUTES=/lab/scripts/feature-routes.json
+        PASSFILE=/tmp/lab-basic.pass
+        fail=0; pass=0
+
+        ok()   { printf '  \033[32mPASS\033[0m %s\n' "$$1"; pass=$$((pass+1)); }
+        ko()   { printf '  \033[31mFAIL\033[0m %s\n' "$$1"; fail=$$((fail+1)); }
+        info() { printf '  info  %s\n' "$$1"; }
+        code() { curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$$@"; }
+        check() { # description got expected...
+          local d=$$1 got=$$2; shift 2
+          for a in "$$@"; do [ "$$got" = "$$a" ] && { ok "$$d ($$got)"; return; }; done
+          ko "$$d : obtenu « $$got », attendu « $$* »"
+        }
+        ge() { awk -v a="$$1" -v b="$$2" 'BEGIN{exit !(a>=b)}'; } # a >= b (réels)
+        u() { echo "http://lab-$$1.lab.test"; }
+        ctl() { curl -s -o /dev/null --max-time 5 "$$SIM/ctl/$$1"; }
+        stats() { curl -s --max-time 5 "$$SIM/ctl/stats"; }
+        rnd() { echo "$$RANDOM$$RANDOM"; }
+        wait_code() { # url attendu secondes [curl args...] : attend la propagation d'une config
+          local url=$$1 want=$$2 n=$$3; shift 3
+          for _ in $$(seq 1 "$$n"); do [ "$$(code "$$@" "$$url")" = "$$want" ] && return 0; sleep 1; done; return 1
+        }
+        spread() { # url n [curl args] -> lignes "instance count" d'après X-Instance
+          local url=$$1 n=$$2; shift 2
+          for _ in $$(seq 1 "$$n"); do curl -s -o /dev/null -D- --max-time 10 "$$@" "$$url" | tr -d '\r' | awk 'tolower($$1)=="x-instance:"{print $$2}'; done | sort | uniq -c | awk '{print $$2, $$1}'
+        }
+        count_of() { echo "$$1" | awk -v k="$$2" '$$1==k{print $$2; f=1} END{if(!f)print 0}'; }
+        burst() { # url n [curl args] : requêtes concurrentes ; renseigne BURST_CODES, BURST_200, BURST_NON200, BURST_RA (appeler sans $$(...))
+          local url=$$1 n=$$2 i; shift 2
+          local tmp; tmp=$$(mktemp -d)
+          for i in $$(seq 1 "$$n"); do ( curl -s -o /dev/null -D "$$tmp/h$$i" -w "%{http_code}\n" --max-time 20 "$$@" "$$url" > "$$tmp/c$$i" ) & done
+          wait
+          BURST_CODES=$$(cat "$$tmp"/c* | sort | uniq -c | awk '{printf "%s×%s ", $$1, $$2}')
+          BURST_200=$$(cat "$$tmp"/c* | grep -c "^200$$")
+          BURST_NON200=$$((n - BURST_200))
+          BURST_RA=0; grep -qi "^retry-after" "$$tmp"/h* && BURST_RA=1
+          rm -rf "$$tmp"
+        }
+        admin_id() { curl -s -H "Authorization: Bearer $$token" "$$LAB_ADMIN_URL/api/v1/proxies" | jq -r --arg h "$$1" '.[]? | select(.name==$$h) | .id' | head -1; }
+
+        # ------------------------------------------------------------------ seed
+        seed() {
+          . /lab/scripts/auth.sh
+          [ -f "$$PASSFILE" ] || openssl rand -hex 8 > "$$PASSFILE"
+          local pass have name body c n
+          pass=$$(cat "$$PASSFILE")
+          have=$$(curl -s -H "Authorization: Bearer $$token" "$$LAB_ADMIN_URL/api/v1/proxies" | jq -r '.[]? | .name // empty')
+          jq -c '.[]' "$$ROUTES" | while read -r r; do
+            name=$$(echo "$$r" | jq -r .host)
+            if echo "$$have" | grep -qx "$$name"; then printf '%-32s déjà présent : ignoré\n' "$$name"; continue; fi
+            body=$$(echo "$$r" | jq -c '{config: (.config + {host: .host, type: "http", tls_enabled: false}) }' | sed "s/__BASIC_PASS__/$$pass/g")
+            if [ -n "$${LAB_RUNNER_CIDR:-}" ]; then body=$$(echo "$$body" | jq -c --arg c "$$LAB_RUNNER_CIDR" '.config.sentinel_whitelist = [$$c]'); fi
+            c=$$(curl -s -o /tmp/fseed.out -w '%{http_code}' -X POST "$$LAB_ADMIN_URL/api/v1/proxies" \
+              -H "Authorization: Bearer $$token" -H 'Content-Type: application/json' -d "$$body")
+            printf '%-32s (%s)\n' "$$name" "$$c"
+            case "$$c" in 2*) ;; *) jq -r '(.dry_run.errors // [])[] | "  erreur : " + .' /tmp/fseed.out 2>/dev/null || head -c 300 /tmp/fseed.out; echo ;; esac
+          done
+          n=$$(jq length "$$ROUTES"); echo "Routes attendues : $$n. Propagation vers la passerelle…"
+          wait_code "$$(u lb)/whoami" 200 60 && echo "lab-lb opérationnelle" || echo "ATTENTION : lab-lb ne répond pas encore (lab-sim démarré ? passerelle joignable ?)"
+        }
+
+        # ------------------------------------------------------------------ garde-fous
+        preflight() {
+          [ "$$(code "$$SIM/ctl/stats")" = 200 ] || { echo "  FAIL lab-sim injoignable ($$SIM) — stack lab déployée ? (compilation ~15 s au démarrage)"; exit 1; }
+          ctl reset
+          wait_code "$$(u lb)/whoami" 200 60 || { echo "  FAIL lab-lb.lab.test indisponible après 60 s (features.sh seed fait ?) — arrêt"; exit 1; }
+          # Les hôtes de routes.json doivent tous être résolus par hosts.sh, sinon les tests échoueraient pour une mauvaise raison.
+          for h in $$(jq -r '.[].host, (.[].config.aliases // [])[]' "$$ROUTES"); do
+            grep -q " $$h\$$" /etc/hosts || echo "  WARN  $$h absent de /etc/hosts (hosts.sh à jour ?)"
+          done
+        }
+
+        want() { [ -z "$${SECTIONS:-}" ] || case ",$$SECTIONS," in *",$$1,"*) return 0;; esac; return 1; }
+        section() { want "$$1" || return 1; echo "== $$2 =="; return 0; }
+
+        # ------------------------------------------------------------------ sections
+        t_lb() { section lb "Équilibrage round-robin sur 3 instances + alias" || return
+          local d; d=$$(spread "$$(u lb)/whoami" 30)
+          for i in a b c; do
+            n=$$(count_of "$$d" $$i); [ "$$n" -ge 5 ] && ok "instance $$i reçoit sa part ($$n/30)" || ko "instance $$i sous-alimentée ($$n/30)"
+          done
+          check "alias de domaine sur la même route" "$$(code "http://lab-lb-alias.lab.test/whoami")" 200
+        }
+
+        t_weighted() { section weighted "Équilibrage pondéré (8/1/1)" || return
+          local d n; d=$$(spread "$$(u weighted)/whoami" 60); n=$$(count_of "$$d" a)
+          [ "$$n" -ge 36 ] && ok "l'instance pondérée a reçoit $$n/60 (≥ 36)" || ko "pondération non respectée : a=$$n/60 ($$(echo $$d | tr '\n' ' '))"
+        }
+
+        t_sticky() { section sticky "Sessions collantes (cookie LABSID)" || return
+          local jar=/tmp/lab-jar.$$$$ first n d
+          rm -f $$jar; first=$$(curl -s -c $$jar -o /dev/null -D- "$$(u sticky)/whoami" | tr -d '\r' | awk 'tolower($$1)=="x-instance:"{print $$2}')
+          grep -q LABSID $$jar && ok "cookie LABSID posé" || ko "aucun cookie LABSID"
+          d=$$(for _ in $$(seq 1 15); do curl -s -b $$jar -o /dev/null -D- "$$(u sticky)/whoami" | tr -d '\r' | awk 'tolower($$1)=="x-instance:"{print $$2}'; done | sort -u | tr '\n' ' ')
+          check "15 requêtes avec cookie → toujours $$first" "$$d" "$$first "
+          n=$$(spread "$$(u sticky)/whoami" 20 | wc -l); [ "$$n" -ge 2 ] && ok "sans cookie : répartition sur $$n instances" || ko "sans cookie : une seule instance"
+          rm -f $$jar
+        }
+
+        t_health() { section health "Health check actif : éjection puis réintégration" || return
+          ctl a/health?up=0
+          info "instance a rendue malsaine, attente de la sonde (≤ 6 s)"
+          local d codes; sleep 6
+          codes=$$(for _ in $$(seq 1 20); do code "$$(u health)/whoami"; echo; done | sort | uniq -c | awk '{printf "%s×%s ", $$1,$$2}')
+          d=$$(spread "$$(u health)/whoami" 20)
+          [ "$$(count_of "$$d" a)" = 0 ] && ok "aucune requête vers l'instance malsaine ($$codes)" || ko "l'instance malsaine reçoit encore du trafic ($$(echo $$d | tr '\n' ' '))"
+          ctl a/health?up=1; sleep 6
+          d=$$(spread "$$(u health)/whoami" 20)
+          [ "$$(count_of "$$d" a)" -ge 3 ] && ok "instance a réintégrée ($$(echo $$d | tr '\n' ' '))" || ko "instance a non réintégrée ($$(echo $$d | tr '\n' ' '))"
+          ctl b/health?up=0; ctl a/health?up=0; sleep 6
+          info "tous les backends malsains : code obtenu $$(code "$$(u health)/whoami")"
+          ctl reset; sleep 5
+        }
+
+        t_retry() { section retry "Politique de retry vs sans retry" || return
+          check "avec retry (3 tentatives) : 502,502 puis 200" "$$(code "$$(u retry)/fail-first?key=$$(rnd)&n=2")" 200
+          check "sans retry : première erreur transmise" "$$(code "$$(u noretry)/fail-first?key=$$(rnd)&n=1")" 502
+        }
+
+        t_cb() { section cb "Circuit breaker (seuil 3, ouverture 8 s)" || return
+          local before after
+          ctl legacy/fail?n=100000
+          for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do code "$$(u cb)/whoami" >/dev/null; done
+          after=$$(stats | jq '.legacy.hits')
+          [ "$$after" -le 8 ] && ok "circuit ouvert : $$after requêtes seulement ont atteint le backend sur 12" || ko "le circuit ne s'ouvre pas ($$after/12 requêtes backend)"
+          ctl legacy/reset; sleep 9
+          check "demi-ouverture puis fermeture après guérison" "$$(code "$$(u cb)/whoami")" 200
+        }
+
+        t_transform() { section transform "Pipeline de transformation (réécriture, en-têtes)" || return
+          local out hdr
+          hdr=$$(mktemp); out=$$(curl -s -D "$$hdr" -H 'X-Secret-Client: topsecret' "$$(u transform)/shop/v1/products")
+          check "réécriture /shop/v1 → /api" "$$(echo "$$out" | jq -r .path)" /api/products
+          check "en-tête ajouté vers le backend" "$$(echo "$$out" | jq -r .marker)" via-proxy
+          check "en-tête client retiré vers le backend" "$$(echo "$$out" | jq -r .secret)" ""
+          grep -qi '^x-lab-resp: transformed' "$$hdr" && ok "en-tête de réponse ajouté" || ko "X-Lab-Resp absent"
+          grep -qi '^x-powered-by' "$$hdr" && ko "X-Powered-By non retiré" || ok "en-tête de réponse retiré (X-Powered-By)"
+          rm -f "$$hdr"
+        }
+
+        t_paths() { section paths "Routage par chemin (locations)" || return
+          check "location /legacy (strip_prefix) → instance legacy" "$$(curl -s "$$(u paths)/legacy/whoami")" legacy
+          check "location regex avec réécriture \$$1" "$$(curl -s "$$(u paths)/v3/items" | jq -r .path)" /api/version-3/items
+          check "chemin par défaut → instance a" "$$(curl -s "$$(u paths)/whoami")" a
+        }
+
+        t_redirect() { section redirect "Réécriture Location / cookies / corps de réponse" || return
+          local loc ck body
+          loc=$$(curl -s -o /dev/null -D- "$$(u redirect)/redirect" | tr -d '\r' | awk 'tolower($$1)=="location:"{print $$2}')
+          check "proxy_redirect" "$$loc" https://shop.lab.test/landing
+          ck=$$(curl -s -o /dev/null -D- "$$(u redirect)/login" | tr -d '\r' | grep -i '^set-cookie:')
+          case "$$ck" in *"Domain=shop.lab.test"*) ok "cookie Domain réécrit";; *) ko "cookie Domain non réécrit : $$ck";; esac
+          case "$$ck" in *"Path=/;"*|*"Path=/") ok "cookie Path réécrit";; *) ko "cookie Path non réécrit : $$ck";; esac
+          body=$$(curl -s "$$(u redirect)/")
+          case "$$body" in *"https://shop.lab.test/products"*) ok "sub_filter : URL interne réécrite";; *) ko "URL interne non réécrite";; esac
+          case "$$body" in *PUBLIC-MARKER*) ok "sub_filter : texte remplacé";; *) ko "BACKEND-MARKER non remplacé";; esac
+        }
+
+        t_cors() { section cors "CORS" || return
+          local h
+          h=$$(curl -s -o /dev/null -D- -X OPTIONS -H 'Origin: https://app.lab.test' -H 'Access-Control-Request-Method: POST' -H 'Access-Control-Request-Headers: content-type' "$$(u cors)/api/x" | tr -d '\r')
+          echo "$$h" | grep -qi '^access-control-allow-origin: https://app.lab.test' && ok "preflight : origine autorisée" || ko "preflight : ACAO absent"
+          echo "$$h" | grep -qi '^access-control-max-age: 600' && ok "preflight : max-age 600" || ko "preflight : max-age absent"
+          h=$$(curl -s -o /dev/null -D- -X OPTIONS -H 'Origin: https://evil.test' -H 'Access-Control-Request-Method: POST' "$$(u cors)/api/x" | tr -d '\r')
+          echo "$$h" | grep -qi '^access-control-allow-origin: https://evil.test' && ko "origine non autorisée acceptée" || ok "origine non autorisée refusée"
+        }
+
+        t_cache() { section cache "Cache disque (TTL, bypass, purge)" || return
+          local p="/static/$$(rnd).js" a b c d id
+          hit() { curl -s -o /dev/null -D- "$$@" | tr -d '\r' | awk 'tolower($$1)=="x-origin-hit:"{print $$2}'; }
+          a=$$(hit "$$(u cache)$$p"); b=$$(hit "$$(u cache)$$p")
+          [ -n "$$a" ] && [ "$$a" = "$$b" ] && ok "2ᵉ GET servi par le cache (X-Origin-Hit=$$a)" || ko "pas de cache : hit origine $$a puis $$b"
+          c=$$(hit -H 'X-No-Cache: 1' "$$(u cache)$$p")
+          [ -n "$$c" ] && [ "$$c" != "$$a" ] && ok "bypass par en-tête (origine $$c)" || ko "bypass ignoré ($$c)"
+          id=$$(admin_id lab-cache.lab.test)
+          if [ -n "$$id" ]; then
+            curl -s -o /dev/null -X POST -H "Authorization: Bearer $$token" "$$LAB_ADMIN_URL/api/v1/proxies/$$id/cache/purge"
+            sleep 1; d=$$(hit "$$(u cache)$$p")
+            [ -n "$$d" ] && [ "$$d" != "$$a" ] && ok "purge via l'API : retour à l'origine ($$d)" || ko "purge sans effet ($$d)"
+          else info "purge ignorée (jeton Admin absent)"; fi
+        }
+
+        t_ip() { section ip "Filtrage IP (allow / deny)" || return
+          check "allow-list sans notre IP → refus" "$$(code "$$(u ipallow)/")" 403
+          check "deny-list sans notre IP → accès" "$$(code "$$(u ipdeny)/")" 200
+        }
+
+        t_vars() { section vars "Variables de requête → en-tête (map nginx)" || return
+          check "X-Plan: gold → premium" "$$(curl -s -H 'X-Plan: gold' "$$(u vars)/echo" | jq -r '.headers["X-Tier"][0]')" premium
+          check "sans X-Plan → standard" "$$(curl -s "$$(u vars)/echo" | jq -r '.headers["X-Tier"][0]')" standard
+        }
+
+        t_backpressure() { section backpressure "Backpressure (max_inflight=2, sans file) et limit_conn (3/IP)" || return
+          burst "$$(u backpressure)/slow?ms=1500" 6
+          [ "$$BURST_NON200" -ge 1 ] && ok "excédent rejeté ($$BURST_CODES)" || ko "aucun rejet ($$BURST_CODES)"
+          [ "$$BURST_200" -ge 2 ] && ok "les requêtes dans la limite passent" || ko "trop peu de requêtes servies ($$BURST_CODES)"
+          [ "$$BURST_RA" = 1 ] && ok "Retry-After présent" || ko "Retry-After absent"
+          sleep 2
+          burst "$$(u limitconn)/slow?ms=1500" 8
+          [ "$$BURST_NON200" -ge 1 ] && [ "$$BURST_200" -ge 3 ] && ok "limit_conn : excédent refusé ($$BURST_CODES)" || ko "limit_conn sans effet ($$BURST_CODES)"
+        }
+
+        t_canary() { section canary "Canary (en-tête, pourcentage)" || return
+          local d n
+          check "en-tête X-Canary → instance canary" "$$(curl -s -H 'X-Canary: 1' "$$(u canary)/whoami")" canary
+          check "sans en-tête → instance a" "$$(curl -s "$$(u canary)/whoami")" a
+          d=$$(spread "$$(u canary-pct)/whoami" 100); n=$$(count_of "$$d" canary)
+          [ "$$n" -ge 10 ] && [ "$$n" -le 55 ] && ok "canary 30 % : $$n/100 requêtes" || ko "canary hors fourchette 10–55 : $$n/100"
+        }
+
+        t_shadow() { section shadow "Shadow mirror" || return
+          local m="m-$$(rnd)" got
+          check "la réponse client vient du backend principal" "$$(curl -s -H "X-Lab-Marker: $$m" "$$(u shadow)/whoami")" a
+          sleep 1.5; got=$$(stats | jq -r '.shadow.last_marker["/whoami"] // ""')
+          check "le miroir a reçu la même requête" "$$got" "$$m"
+        }
+
+        t_cond() { section cond "Routage conditionnel (en-tête, query)" || return
+          check "X-Device: mobile → legacy" "$$(curl -s -H 'X-Device: mobile' "$$(u cond)/whoami")" legacy
+          check "?beta=1 → canary" "$$(curl -s "$$(u cond)/whoami?beta=1")" canary
+          check "défaut → a" "$$(curl -s "$$(u cond)/whoami")" a
+        }
+
+        t_errpages() { section errpages "Page d'erreur personnalisée (backend injoignable)" || return
+          local out; out=$$(curl -s -w ' %{http_code}' "$$(u errpages)/")
+          case "$$out" in *LAB-502-PAGE*) ok "page 502 personnalisée servie";; *) ko "page personnalisée absente : $${out:0:80}";; esac
+          check "code conservé" "$${out##* }" 502
+        }
+
+        ws_exchange() { # host -> sortie brute (première ligne + trames)
+          local out=/tmp/ws.$$$$
+          exec 3<>"/dev/tcp/$$EDGE_HOST/80" || return 1
+          printf 'GET /ws HTTP/1.1\r\nHost: lab-%s.lab.test\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n' "$$1" >&3
+          sleep 0.5
+          printf '\x81\x85\x00\x00\x00\x00hello' >&3
+          timeout 2 cat <&3 > $$out; exec 3>&-
+          cat -v $$out; rm -f $$out
+        }
+        t_ws() { section ws "WebSocket (autorisé / interdit)" || return
+          local o; o=$$(ws_exchange ws)
+          case "$$o" in *"101 "*) ok "upgrade 101";; *) ko "pas d'upgrade : $${o:0:60}";; esac
+          case "$$o" in *"b:hello"*) ok "écho bidirectionnel via la passerelle";; *) ko "pas d'écho WebSocket";; esac
+          o=$$(ws_exchange nows)
+          case "$$o" in *"101 "*) ko "websocket:false n'empêche pas l'upgrade";; *) ok "upgrade refusé (websocket:false) : $$(echo "$$o" | head -1 | tr -d '\r')";; esac
+        }
+
+        t_body() { section body "Taille maximale du corps (1 Mo)" || return
+          head -c 102400 /dev/zero > /tmp/lab-100k; head -c 2097152 /dev/zero > /tmp/lab-2m
+          check "100 Ko acceptés" "$$(code -X POST --data-binary @/tmp/lab-100k "$$(u body)/upload")" 200
+          check "2 Mo refusés (413)" "$$(code -X POST --data-binary @/tmp/lab-2m "$$(u body)/upload")" 413
+          rm -f /tmp/lab-100k /tmp/lab-2m
+        }
+
+        t_secheaders() { section secheaders "En-têtes de sécurité" || return
+          local h; h=$$(curl -s -o /dev/null -D- "$$(u secheaders)/api/x" | tr -d '\r')
+          echo "$$h" | grep -qi '^strict-transport-security: .*max-age=31536000' && ok "HSTS" || ko "HSTS absent"
+          echo "$$h" | grep -qi '^x-frame-options: DENY' && ok "X-Frame-Options" || ko "X-Frame-Options absent"
+          echo "$$h" | grep -qi "^content-security-policy: default-src 'self'" && ok "CSP personnalisée" || ko "CSP absente"
+          echo "$$h" | grep -qi '^x-lab-custom: 1' && ok "en-tête personnalisé" || ko "en-tête personnalisé absent"
+          echo "$$h" | grep -qi '^server: lab-sim' && ko "Server du backend exposé" || ok "empreinte Server masquée"
+          echo "$$h" | grep -qi '^x-powered-by' && ko "X-Powered-By exposé" || ok "X-Powered-By masqué"
+        }
+
+        t_timeout() { section timeout "Délai de réponse backend (1 s)" || return
+          local o c t; o=$$(curl -s -o /dev/null -w '%{http_code} %{time_total}' --max-time 15 "$$(u timeout)/slow?ms=3000"); c=$${o% *}; t=$${o#* }
+          case "$$c" in 502|504) ok "backend trop lent → $$c";; *) ko "attendu 502/504, obtenu $$c";; esac
+          ge 2.5 "$$t" && ok "coupé à $${t}s (≪ 3 s)" || ko "pas de coupure rapide ($${t}s)"
+          check "requête rapide inchangée" "$$(code "$$(u timeout)/slow?ms=200")" 200
+        }
+
+        t_auth() { section auth "Authentification Basic" || return
+          local pass; pass=$$(cat "$$PASSFILE" 2>/dev/null)
+          [ -n "$$pass" ] || { info "mot de passe du seed introuvable ($$PASSFILE) : section ignorée"; return; }
+          check "sans identifiants → 401" "$$(code "$$(u basicauth)/")" 401
+          check "mauvais mot de passe → 401" "$$(code -u lab:mauvais "$$(u basicauth)/")" 401
+          check "bons identifiants → 200" "$$(code -u "lab:$$pass" "$$(u basicauth)/")" 200
+        }
+
+        t_bot() { section bot "Protection bot (liste noire d'User-Agent)" || return
+          check "User-Agent LabBadBot → 403" "$$(code -A LabBadBot "$$(u bot)/")" 403
+          check "navigateur normal → 200" "$$(code -A 'Mozilla/5.0 (X11; Linux x86_64)' "$$(u bot)/")" 200
+        }
+
+        t_wafcustom() { section wafcustom "Règle WAF personnalisée" || return
+          check "motif interdit en query → 403" "$$(code "$$(u wafcustom)/?q=LAB-FORBIDDEN-WORD")" 403
+          check "motif interdit dans le corps → 403" "$$(code -X POST -d 'x=LAB-FORBIDDEN-WORD' "$$(u wafcustom)/echo")" 403
+          check "requête saine → 200" "$$(code "$$(u wafcustom)/?q=stylo")" 200
+        }
+
+        t_headers() { section headers "Host conservé / X-Request-ID / X-Forwarded-*" || return
+          local a b hdr
+          hdr=$$(mktemp); a=$$(curl -s -D "$$hdr" "$$(u lb)/echo")
+          check "défaut : le backend voit le Host public" "$$(echo "$$a" | jq -r .host)" lab-lb.lab.test
+          grep -qi '^x-request-id' "$$hdr" && ok "X-Request-ID renvoyé au client" || ko "X-Request-ID absent par défaut"
+          echo "$$a" | jq -e '.headers["X-Forwarded-For"]' >/dev/null && ok "X-Forwarded-For transmis par défaut" || ko "X-Forwarded-For absent par défaut"
+          b=$$(curl -s -D "$$hdr" "$$(u nohost)/echo")
+          check "preserve_host:false : le backend voit son propre Host" "$$(echo "$$b" | jq -r .host)" lab-sim:9001
+          grep -qi '^x-request-id' "$$hdr" && ko "request_id:false : X-Request-ID présent" || ok "request_id:false : pas de X-Request-ID"
+          echo "$$b" | jq -e '.headers["X-Forwarded-For"]' >/dev/null && ko "forwarded_headers vide mais XFF transmis" || ok "forwarded_headers vide : aucun X-Forwarded-*"
+          rm -f "$$hdr"
+        }
+
+        t_stream() { section stream "Streaming SSE et gros téléchargement" || return
+          local o ttfb tot size
+          o=$$(curl -s -N -o /dev/null -w '%{time_starttransfer} %{time_total}' --max-time 15 "$$(u lb)/sse?n=5&ms=500"); ttfb=$${o% *}; tot=$${o#* }
+          ge 1.0 "$$ttfb" && ge "$$tot" 1.8 && ok "SSE non bufferisé : 1er événement à $${ttfb}s, fin à $${tot}s" || ko "SSE bufferisé ? ttfb=$${ttfb}s total=$${tot}s"
+          size=$$(curl -s -o /dev/null -w '%{size_download}' --max-time 30 "$$(u lb)/bytes?n=5242880")
+          check "téléchargement de 5 Mo intact" "$$size" 5242880
+        }
+
+        t_toggle() { section toggle "Maintenance : désactiver / réactiver un proxy" || return
+          local id; id=$$(admin_id lab-toggle.lab.test)
+          [ -n "$$id" ] || { info "jeton Admin absent ou route introuvable : section ignorée"; return; }
+          check "route active" "$$(code "$$(u toggle)/")" 200
+          curl -s -o /dev/null -X PATCH -H "Authorization: Bearer $$token" -H 'Content-Type: application/json' -d '{"enabled":false}' "$$LAB_ADMIN_URL/api/v1/proxies/$$id"
+          wait_code "$$(u toggle)/" 404 20 && ok "désactivation propagée (404)" || { c=$$(code "$$(u toggle)/"); case "$$c" in 502|503) ok "désactivation propagée ($$c)";; *) ko "route toujours servie ($$c)";; esac; }
+          curl -s -o /dev/null -X PATCH -H "Authorization: Bearer $$token" -H 'Content-Type: application/json' -d '{"enabled":true}' "$$LAB_ADMIN_URL/api/v1/proxies/$$id"
+          wait_code "$$(u toggle)/" 200 20 && ok "réactivation propagée" || ko "route non rétablie"
+        }
+
+        # ------------------------------------------------------------------ main
+        mode=$${1:-all}; SECTIONS=$${2:-}
+        case "$$mode" in
+          seed) seed; exit 0 ;;
+          run|all) ;;
+          *) echo "usage : features.sh [seed|run [sections]|all]"; exit 2 ;;
+        esac
+        [ "$$mode" = all ] && seed
+        if [ -n "$${LAB_ADMIN_TOKEN:-}$${LAB_ADMIN_EMAIL:-}" ]; then . /lab/scripts/auth.sh; else token=""; fi
+        preflight
+        trap 'ctl reset' EXIT
+        for s in lb weighted sticky health retry cb transform paths redirect cors cache ip vars backpressure canary shadow cond errpages ws body secheaders timeout auth bot wafcustom headers stream toggle; do
+          "t_$$s"
+        done
+        echo; echo "Bilan : $$pass PASS, $$fail FAIL"
+        exit $$fail
+      S_feature_routes: |
+        [
+          {"host": "lab-lb.lab.test", "config": {
+            "aliases": ["lab-lb-alias.lab.test"], "lb": "round_robin",
+            "backends": [{"url": "http://lab-sim:9001", "weight": 1}, {"url": "http://lab-sim:9002", "weight": 1}, {"url": "http://lab-sim:9003", "weight": 1}]}},
+
+          {"host": "lab-weighted.lab.test", "config": {
+            "lb": "weighted",
+            "backends": [{"url": "http://lab-sim:9001", "weight": 8}, {"url": "http://lab-sim:9002", "weight": 1}, {"url": "http://lab-sim:9003", "weight": 1}]}},
+
+          {"host": "lab-sticky.lab.test", "config": {
+            "lb": "round_robin", "sticky_cookie": "LABSID",
+            "backends": [{"url": "http://lab-sim:9001", "weight": 1}, {"url": "http://lab-sim:9002", "weight": 1}, {"url": "http://lab-sim:9003", "weight": 1}]}},
+
+          {"host": "lab-health.lab.test", "config": {
+            "lb": "round_robin",
+            "health_check": {"path": "/healthz", "interval": 1000000000, "timeout": 1000000000, "healthy_threshold": 1, "unhealthy_threshold": 1},
+            "backends": [{"url": "http://lab-sim:9001", "weight": 1}, {"url": "http://lab-sim:9002", "weight": 1}]}},
+
+          {"host": "lab-retry.lab.test", "config": {
+            "retry": {"attempts": 3, "initial_wait": 50000000, "max_wait": 200000000},
+            "backends": [{"url": "http://lab-sim:9001", "weight": 1}]}},
+
+          {"host": "lab-noretry.lab.test", "config": {
+            "backends": [{"url": "http://lab-sim:9001", "weight": 1}]}},
+
+          {"host": "lab-cb.lab.test", "config": {
+            "circuit_breaker": {"threshold": 3, "timeout": 8000000000},
+            "backends": [{"url": "http://lab-sim:9006", "weight": 1}]}},
+
+          {"host": "lab-transform.lab.test", "config": {
+            "transform": {
+              "rewrite_from": "/shop/v1", "rewrite_to": "/api",
+              "add_request_headers": {"X-Lab-Marker": "via-proxy"},
+              "remove_request_headers": ["X-Secret-Client"],
+              "add_response_headers": {"X-Lab-Resp": "transformed"},
+              "remove_response_headers": ["X-Powered-By"]},
+            "backends": [{"url": "http://lab-sim:9001", "weight": 1}]}},
+
+          {"host": "lab-paths.lab.test", "config": {
+            "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+            "locations": [
+              {"path": "/legacy", "path_type": "prefix", "strip_prefix": true, "backends": [{"url": "http://lab-sim:9006", "weight": 1}]},
+              {"path": "^/v([0-9]+)/items$$", "path_type": "regex", "path_rewrite": "/api/version-$$1/items"}]}},
+
+          {"host": "lab-redirect.lab.test", "config": {
+            "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+            "proxy_redirects": [{"from": "http://lab-sim:9001/", "to": "https://shop.lab.test/"}],
+            "cookie_domains": [{"from": "lab-sim", "to": "shop.lab.test"}],
+            "cookie_paths": [{"from": "/app", "to": "/"}],
+            "sub_filters": [{"from": "http://lab-sim:9001", "to": "https://shop.lab.test"}, {"from": "BACKEND-MARKER", "to": "PUBLIC-MARKER"}]}},
+
+          {"host": "lab-cors.lab.test", "config": {
+            "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+            "cors": {"allowed_origins": ["https://app.lab.test"], "allowed_methods": ["GET", "POST"], "allowed_headers": ["Content-Type", "Authorization"], "max_age": 600}}},
+
+          {"host": "lab-cache.lab.test", "config": {
+            "backends": [{"url": "http://lab-sim:9003", "weight": 1}],
+            "cache": {"enabled": true, "valid_rules": [{"status_codes": [200], "ttl": "1m"}], "bypass_headers": ["X-No-Cache"]}}},
+
+          {"host": "lab-ipallow.lab.test", "config": {
+            "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+            "ip_filter": {"mode": "allow", "cidrs": ["203.0.113.0/24"]}}},
+
+          {"host": "lab-ipdeny.lab.test", "config": {
+            "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+            "ip_filter": {"mode": "deny", "cidrs": ["203.0.113.0/24"]}}},
+
+          {"host": "lab-vars.lab.test", "config": {
+            "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+            "request_vars": [{"name": "tier", "source": "header", "key": "X-Plan", "default": "standard", "cases": [{"pattern": "gold", "value": "premium"}]}],
+            "headers_manipulation": {"request_set_header": {"X-Tier": "$${tier}"}}}},
+
+          {"host": "lab-backpressure.lab.test", "config": {
+            "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+            "backpressure": {"max_inflight": 2, "queue": 0, "queue_timeout_ms": 200}}},
+
+          {"host": "lab-limitconn.lab.test", "config": {
+            "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+            "limit_conn": {"max_per_ip": 3}}},
+
+          {"host": "lab-canary.lab.test", "config": {
+            "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+            "canary": {"backend": "http://lab-sim:9004", "header": "X-Canary", "header_value": "1"}}},
+
+          {"host": "lab-canary-pct.lab.test", "config": {
+            "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+            "canary": {"backend": "http://lab-sim:9004", "weight": 30}}},
+
+          {"host": "lab-shadow.lab.test", "config": {
+            "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+            "shadow": {"backend": "http://lab-sim:9005"}}},
+
+          {"host": "lab-cond.lab.test", "config": {
+            "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+            "conditions": [
+              {"type": "header", "name": "X-Device", "value": "mobile", "backend": "http://lab-sim:9006"},
+              {"type": "query", "name": "beta", "value": "1", "backend": "http://lab-sim:9004"}]}},
+
+          {"host": "lab-errpages.lab.test", "config": {
+            "backends": [{"url": "http://lab-sim:9009", "weight": 1}],
+            "error_pages": {"pages": {"502": "<h1>LAB-502-PAGE</h1>"}}}},
+
+          {"host": "lab-ws.lab.test", "config": {
+            "websocket": true,
+            "backends": [{"url": "http://lab-sim:9002", "weight": 1}]}},
+
+          {"host": "lab-nows.lab.test", "config": {
+            "websocket": false,
+            "backends": [{"url": "http://lab-sim:9002", "weight": 1}]}},
+
+          {"host": "lab-body.lab.test", "config": {
+            "max_body_size": 1048576,
+            "backends": [{"url": "http://lab-sim:9001", "weight": 1}]}},
+
+          {"host": "lab-secheaders.lab.test", "config": {
+            "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+            "headers": {"hsts": true, "hsts_max_age": 31536000, "x_frame_options": "DENY", "hide_server": true,
+                        "custom": {"X-Lab-Custom": "1", "Content-Security-Policy": "default-src 'self'"}}}},
+
+          {"host": "lab-timeout.lab.test", "config": {
+            "response_timeout": 1000000000,
+            "backends": [{"url": "http://lab-sim:9001", "weight": 1}]}},
+
+          {"host": "lab-basicauth.lab.test", "config": {
+            "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+            "sso": {"enabled": true, "provider": "basic", "realm": "Labo", "basic_users": [{"username": "lab", "password": "__BASIC_PASS__"}]}}},
+
+          {"host": "lab-bot.lab.test", "config": {
+            "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+            "bot": {"enabled": true, "mode": "block", "ua_blacklist": ["LabBadBot"], "js_challenge": false}}},
+
+          {"host": "lab-wafcustom.lab.test", "config": {
+            "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+            "waf": {"enabled": true, "mode": "block", "max_body_mb": 1, "anomaly_threshold": 0,
+                    "custom_rules": [{"id": 990001, "category": "lab", "severity": "high", "pattern": "LAB-FORBIDDEN-WORD", "targets": ["uri", "args", "body"], "message": "mot interdit labo"}]}}},
+
+          {"host": "lab-nohost.lab.test", "config": {
+            "preserve_host": false, "request_id": false,
+            "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+            "headers_manipulation": {"forwarded_headers": []}}},
+
+          {"host": "lab-realistic.lab.test", "config": {
+            "lb": "round_robin",
+            "health_check": {"path": "/healthz", "interval": 2000000000, "timeout": 1000000000, "healthy_threshold": 1, "unhealthy_threshold": 2},
+            "retry": {"attempts": 2, "initial_wait": 50000000, "max_wait": 200000000},
+            "rate_limit": {"rps": 500, "burst": 1000},
+            "sub_filters": [{"from": "http://lab-sim:[0-9]+", "to": "http://lab-realistic.lab.test", "regex": true}],
+            "headers": {"hsts": true, "hsts_max_age": 31536000, "x_frame_options": "SAMEORIGIN", "hide_server": true},
+            "websocket": true,
+            "backends": [{"url": "http://lab-sim:9001", "weight": 1}, {"url": "http://lab-sim:9002", "weight": 1}, {"url": "http://lab-sim:9003", "weight": 1}]}},
+
+          {"host": "lab-toggle.lab.test", "config": {
+            "backends": [{"url": "http://lab-sim:9001", "weight": 1}]}}
+        ]
 
   lab-k6:
     image: grafana/k6:latest
@@ -406,7 +954,7 @@ services:
       - -c
       - |
         mkdir -p /scripts /results
-        for f in common smoke moderate saturation baseline spike stress soak mixed hosts; do eval "printf %s \"\$$K_$$f\"" > /scripts/$$f.js; done
+        for f in common smoke moderate saturation baseline spike stress soak mixed realistic hosts; do eval "printf %s \"\$$K_$$f\"" > /scripts/$$f.js; done
         mv /scripts/hosts.js /hosts.sh
         exec sleep infinity
     networks: [goproxify_net]
@@ -650,14 +1198,495 @@ services:
         }
 
         export const handleSummary = summary("mixed");
+      K_realistic: |
+        // Trafic réaliste sur la boutique simulée (route lab-realistic : 3 instances, health check, retry, rate-limit, réécriture du corps) :
+        // clients web (pages + assets + panier), clients API, lecteurs de flux SSE, échanges WebSocket, téléchargements
+        // et envois de fichiers. Débit imposé (modèle ouvert) avec une courbe de journée ; SHOP_RATE = pic d'itérations/s
+        // des visiteurs (≈ 8 requêtes chacune). Par défaut ~150 req/s au pic pendant 3 min : faible impact sur la production.
+        import http from "k6/http";
+        import ws from "k6/ws";
+        import { check, sleep, group } from "k6";
+        import { summary } from "./common.js";
+
+        const HOST = __ENV.HOST || "lab-realistic.lab.test";
+        const BASE = `http://$${HOST}`;
+        const PEAK = Number(__ENV.SHOP_RATE || 20);
+        const D = __ENV.DURATION || "3m";
+
+        // 404 attendus (liens morts) : ne comptent pas comme échecs.
+        http.setResponseCallback(http.expectedStatuses({ min: 200, max: 399 }, 404));
+
+        export const options = {
+          summaryTrendStats: ["avg", "med", "p(90)", "p(95)", "p(99)", "max"],
+          scenarios: {
+            visiteurs: {
+              executor: "ramping-arrival-rate",
+              exec: "visiteur",
+              startRate: 1,
+              timeUnit: "1s",
+              preAllocatedVUs: 50,
+              maxVUs: 300,
+              stages: [
+                { duration: "20s", target: Math.max(2, Math.round(PEAK / 4)) },
+                { duration: "1m", target: PEAK },
+                { duration: "1m", target: Math.round(PEAK / 2) },
+                { duration: "40s", target: 1 },
+              ],
+            },
+            api: { executor: "constant-arrival-rate", exec: "clientApi", rate: Math.max(1, Math.round(PEAK / 2)), timeUnit: "1s", duration: D, preAllocatedVUs: 20, maxVUs: 100 },
+            flux: { executor: "constant-vus", exec: "fluxSSE", vus: 3, duration: D },
+            chat: { executor: "constant-vus", exec: "chatWS", vus: 3, duration: D },
+            fichiers: { executor: "constant-arrival-rate", exec: "fichiers", rate: 1, timeUnit: "2s", duration: D, preAllocatedVUs: 5, maxVUs: 10 },
+          },
+          thresholds: {
+            "http_req_failed{kind:page}": ["rate<0.01"],
+            "http_req_failed{kind:api}": ["rate<0.01"],
+            "http_req_duration{kind:page}": ["p(95)<300"],
+            "http_req_duration{kind:api}": ["p(95)<300"],
+            "checks": ["rate>0.99"],
+            "dropped_iterations": ["count==0"],
+          },
+        };
+
+        const assets = ["/static/app.js", "/static/vendor.js", "/static/style.css", "/static/logo.svg", "/static/fonts.woff2"];
+        const pause = (min, max) => sleep(min + Math.random() * (max - min));
+
+        export function visiteur() {
+          group("visite", () => {
+            let r = http.get(`$${BASE}/`, { tags: { kind: "page" } });
+            check(r, { "accueil 200": (x) => x.status === 200, "accueil sans URL interne": (x) => !x.body.includes("lab-sim:") });
+            for (const a of assets.slice(0, 3 + Math.floor(Math.random() * 3))) {
+              http.get(`$${BASE}$${a}`, { tags: { kind: "asset" } });
+            }
+            pause(0.5, 2);
+            r = http.get(`$${BASE}/api/products`, { tags: { kind: "page" } });
+            check(r, { "catalogue JSON": (x) => x.status === 200 && x.json("items.0.name") === "stylo" });
+            if (Math.random() < 0.3) {
+              pause(0.5, 1.5);
+              http.get(`$${BASE}/login`, { tags: { kind: "page" } });
+              r = http.post(`$${BASE}/echo`, JSON.stringify({ cart: [1, 2, 3] }), { headers: { "Content-Type": "application/json" }, tags: { kind: "page" } });
+              check(r, { "panier accepté": (x) => x.status === 200 });
+            }
+            if (Math.random() < 0.05) http.get(`$${BASE}/ancienne-page`, { tags: { kind: "page" } }); // 404 légitime côté site
+          });
+        }
+
+        export function clientApi() {
+          const h = { headers: { Authorization: "Bearer lab-token", Accept: "application/json" }, tags: { kind: "api" } };
+          const r = http.get(`$${BASE}/api/v1/orders?page=$${1 + Math.floor(Math.random() * 5)}`, h);
+          check(r, { "api 200": (x) => x.status === 200 });
+          if (Math.random() < 0.1) http.options(`$${BASE}/api/v1/orders`, { headers: { Origin: "https://app.lab.test", "Access-Control-Request-Method": "GET" }, tags: { kind: "api" } });
+          if (Math.random() < 0.2) http.get(`$${BASE}/slow?ms=$${100 + Math.floor(Math.random() * 400)}`, { tags: { kind: "api" } });
+        }
+
+        export function fluxSSE() {
+          const r = http.get(`$${BASE}/sse?n=10&ms=300`, { tags: { kind: "sse" } });
+          check(r, { "flux complet": (x) => x.status === 200 && (x.body.match(/data:/g) || []).length === 10 });
+          pause(1, 3);
+        }
+
+        export function chatWS() {
+          const res = ws.connect(`ws://$${HOST}/ws`, {}, (s) => {
+            let got = 0;
+            s.on("open", () => s.send("bonjour"));
+            s.on("message", (m) => {
+              got++;
+              check(m, { "écho WebSocket": (x) => x.endsWith(":bonjour") || x.endsWith(":msg") });
+              if (got < 5) s.setTimeout(() => s.send("msg"), 400);
+              else s.close();
+            });
+            s.setTimeout(() => s.close(), 10000);
+          });
+          check(res, { "upgrade 101": (r) => r && r.status === 101 });
+          pause(1, 4);
+        }
+
+        export function fichiers() {
+          if (Math.random() < 0.6) {
+            const r = http.get(`$${BASE}/bytes?n=2097152`, { tags: { kind: "download" } });
+            check(r, { "téléchargement 2 Mo": (x) => x.status === 200 && x.body.length === 2097152 });
+          } else {
+            const r = http.post(`$${BASE}/upload`, "z".repeat(512 * 1024), { tags: { kind: "upload" } });
+            check(r, { "envoi 512 Ko": (x) => x.status === 200 && x.body === String(512 * 1024) });
+          }
+        }
+
+        export const handleSummary = summary("realistic");
       K_hosts: |
         #!/bin/sh
         # Résout *.lab.test vers l'IP de la passerelle (trouvée par DNS Docker) : évite EDGE_IP et extra_hosts.
+        # La liste doit contenir tous les hôtes de feature-routes.json (features.sh le vérifie).
         ip=$$(getent hosts "$${EDGE_HOST:-goproxify-edge}" | awk '{print $$1; exit}')
         [ -n "$$ip" ] || { echo "goproxify-edge introuvable sur goproxify_net (stack principale démarrée ?)" >&2; exit 1; }
         grep -v '\.lab\.test' /etc/hosts > /tmp/hosts.new
-        for h in lab-fast lab-waf-block lab-waf-detect lab-ratelimit lab-chaos lab-juice; do echo "$$ip $$h.lab.test" >> /tmp/hosts.new; done
+        for h in lab-fast lab-waf-block lab-waf-detect lab-ratelimit lab-chaos lab-juice \
+          lab-lb lab-lb-alias lab-weighted lab-sticky lab-health lab-retry lab-noretry lab-cb lab-transform lab-paths \
+          lab-redirect lab-cors lab-cache lab-ipallow lab-ipdeny lab-vars lab-backpressure lab-limitconn lab-canary \
+          lab-canary-pct lab-shadow lab-cond lab-errpages lab-ws lab-nows lab-body lab-secheaders lab-timeout \
+          lab-basicauth lab-bot lab-wafcustom lab-nohost lab-toggle lab-realistic; do
+          echo "$$ip $$h.lab.test" >> /tmp/hosts.new
+        done
         cat /tmp/hosts.new > /etc/hosts
+
+
+  # Applications simulées pour features.sh et realistic.js : boutique à 3 instances (9001-9003), canary (9004),
+  # shadow (9005), legacy (9006), écho TCP (9100) ; pilotage de l'état sur 9999 (réseau interne uniquement, aucun port publié).
+  lab-sim:
+    image: golang:1.22-alpine
+    container_name: lab-sim
+    restart: unless-stopped
+    working_dir: /app
+    entrypoint: ["sh", "-c", "mkdir -p /app && printf %s \"$$SIM_main\" > /app/main.go && exec go run /app/main.go"]
+    networks: [goproxify_net]
+    environment:
+      SIM_main: |
+        // lab-sim : applications simulées derrière la passerelle (source canonique, embarquée par gen-compose.sh).
+        //
+        // Plusieurs "instances" d'une même boutique écoutent sur des ports distincts (équilibrage, canary, shadow,
+        // santé, failover) ; un port de contrôle (9999) pilote leur état sans passer par la passerelle.
+        package main
+
+        import (
+        	"crypto/sha1"
+        	"encoding/base64"
+        	"encoding/json"
+        	"fmt"
+        	"io"
+        	"net"
+        	"net/http"
+        	"os"
+        	"strconv"
+        	"strings"
+        	"sync"
+        	"sync/atomic"
+        	"time"
+        )
+
+        type instance struct {
+        	id      string
+        	port    int
+        	healthy atomic.Bool
+        	failN   atomic.Int64 // prochaines requêtes applicatives en 503
+        	latency atomic.Int64 // ms ajoutées à chaque requête applicative
+        	hits    atomic.Int64 // requêtes applicatives (hors /healthz)
+        	probes  atomic.Int64 // sondes /healthz reçues
+        	static  atomic.Int64 // hits d'origine sur /static/*
+        	lastMu  sync.Mutex
+        	last    map[string]string // dernier en-tête vu par chemin (shadow : preuve de miroir)
+        	flaky   sync.Map          // clé -> compteur d'échecs restants (/fail-first)
+        }
+
+        var instances = map[string]*instance{}
+
+        func intQ(r *http.Request, k string, def int) int {
+        	if v, err := strconv.Atoi(r.URL.Query().Get(k)); err == nil && v >= 0 {
+        		return v
+        	}
+        	return def
+        }
+
+        func (in *instance) handler() http.Handler {
+        	mux := http.NewServeMux()
+
+        	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+        		in.probes.Add(1)
+        		if !in.healthy.Load() {
+        			http.Error(w, "down", http.StatusServiceUnavailable)
+        			return
+        		}
+        		w.WriteHeader(http.StatusNoContent)
+        	})
+
+        	// Page d'accueil : contient l'URL interne du backend (sub_filter, proxy_redirect).
+        	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+        		if r.URL.Path != "/" {
+        			http.NotFound(w, r)
+        			return
+        		}
+        		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+        		fmt.Fprintf(w, `<!doctype html><html><body><h1>Boutique LAB</h1><p>instance=%s</p>
+        <a href="http://lab-sim:%d/products">produits</a><p>BACKEND-MARKER</p></body></html>`, in.id, in.port)
+        	})
+
+        	mux.HandleFunc("/whoami", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, in.id) })
+
+        	mux.HandleFunc("/echo", func(w http.ResponseWriter, r *http.Request) {
+        		body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+        		w.Header().Set("Content-Type", "application/json")
+        		_ = json.NewEncoder(w).Encode(map[string]any{
+        			"instance": in.id, "method": r.Method, "host": r.Host, "uri": r.RequestURI, "path": r.URL.Path,
+        			"remote": r.RemoteAddr, "headers": r.Header, "cookies": r.Cookies(), "body_len": len(body),
+        		})
+        	})
+
+        	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+        		w.Header().Set("Content-Type", "application/json")
+        		w.Header().Set("Server", "lab-sim/1.0")
+        		w.Header().Set("X-Powered-By", "lab-sim")
+        		fmt.Fprintf(w, `{"instance":%q,"path":%q,"marker":%q,"secret":%q,"items":[{"id":1,"name":"stylo"},{"id":2,"name":"cahier"}]}`, in.id, r.URL.Path, r.Header.Get("X-Lab-Marker"), r.Header.Get("X-Secret-Client"))
+        	})
+
+        	// Session : cookie lié au domaine/chemin interne (proxy_cookie_domain / proxy_cookie_path).
+        	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+        		http.SetCookie(w, &http.Cookie{Name: "sid", Value: "s-" + in.id, Domain: "lab-sim", Path: "/app", HttpOnly: true})
+        		fmt.Fprint(w, "logged-in")
+        	})
+
+        	// Redirection vers l'URL interne (proxy_redirect).
+        	mux.HandleFunc("/redirect", func(w http.ResponseWriter, r *http.Request) {
+        		http.Redirect(w, r, fmt.Sprintf("http://lab-sim:%d/landing", in.port), http.StatusFound)
+        	})
+
+        	// Ressource statique cacheable : X-Origin-Hit ne change pas tant que le cache sert la réponse.
+        	mux.HandleFunc("/static/", func(w http.ResponseWriter, r *http.Request) {
+        		n := in.static.Add(1)
+        		w.Header().Set("Cache-Control", "public, max-age=60")
+        		w.Header().Set("Content-Type", "application/javascript")
+        		w.Header().Set("X-Origin-Hit", strconv.FormatInt(n, 10))
+        		fmt.Fprintf(w, "console.log('lab asset %s');", r.URL.Path)
+        	})
+
+        	mux.HandleFunc("/status/", func(w http.ResponseWriter, r *http.Request) {
+        		code, err := strconv.Atoi(strings.TrimPrefix(r.URL.Path, "/status/"))
+        		if err != nil || code < 100 || code > 599 {
+        			code = http.StatusBadRequest
+        		}
+        		w.WriteHeader(code)
+        		fmt.Fprintf(w, "status %d from %s", code, in.id)
+        	})
+
+        	// Échoue n fois par clé, puis réussit : valide la politique de retry.
+        	mux.HandleFunc("/fail-first", func(w http.ResponseWriter, r *http.Request) {
+        		key := r.URL.Query().Get("key")
+        		v, _ := in.flaky.LoadOrStore(key, new(atomic.Int64))
+        		c := v.(*atomic.Int64)
+        		if c.Add(1) <= int64(intQ(r, "n", 2)) {
+        			http.Error(w, "boom", http.StatusBadGateway)
+        			return
+        		}
+        		fmt.Fprint(w, "recovered")
+        	})
+
+        	mux.HandleFunc("/slow", func(w http.ResponseWriter, r *http.Request) {
+        		time.Sleep(time.Duration(intQ(r, "ms", 500)) * time.Millisecond)
+        		fmt.Fprint(w, "slow ok")
+        	})
+
+        	mux.HandleFunc("/bytes", func(w http.ResponseWriter, r *http.Request) {
+        		n := intQ(r, "n", 1024)
+        		w.Header().Set("Content-Type", "application/octet-stream")
+        		w.Header().Set("Content-Length", strconv.Itoa(n))
+        		chunk := []byte(strings.Repeat("x", 4096))
+        		for n > 0 {
+        			c := min(n, len(chunk))
+        			if _, err := w.Write(chunk[:c]); err != nil {
+        				return
+        			}
+        			n -= c
+        		}
+        	})
+
+        	mux.HandleFunc("/upload", func(w http.ResponseWriter, r *http.Request) {
+        		n, _ := io.Copy(io.Discard, r.Body)
+        		fmt.Fprintf(w, "%d", n)
+        	})
+
+        	mux.HandleFunc("/sse", func(w http.ResponseWriter, r *http.Request) {
+        		fl, ok := w.(http.Flusher)
+        		if !ok {
+        			http.Error(w, "no flush", http.StatusInternalServerError)
+        			return
+        		}
+        		w.Header().Set("Content-Type", "text/event-stream")
+        		for i := 0; i < intQ(r, "n", 10); i++ {
+        			fmt.Fprintf(w, "data: %d\n\n", i)
+        			fl.Flush()
+        			select {
+        			case <-r.Context().Done():
+        				return
+        			case <-time.After(time.Duration(intQ(r, "ms", 200)) * time.Millisecond):
+        			}
+        		}
+        	})
+
+        	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) { echoWS(w, r, in.id) })
+
+        	return in.wrap(mux)
+        }
+
+        // wrap applique latence, pannes simulées et compteurs ; /healthz n'est jamais compté ni ralenti.
+        func (in *instance) wrap(next http.Handler) http.Handler {
+        	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        		w.Header().Set("X-Instance", in.id)
+        		if r.URL.Path == "/healthz" {
+        			next.ServeHTTP(w, r)
+        			return
+        		}
+        		in.hits.Add(1)
+        		in.lastMu.Lock()
+        		in.last[r.URL.Path] = r.Header.Get("X-Lab-Marker")
+        		in.lastMu.Unlock()
+        		if ms := in.latency.Load(); ms > 0 {
+        			time.Sleep(time.Duration(ms) * time.Millisecond)
+        		}
+        		if in.failN.Load() > 0 && in.failN.Add(-1) >= 0 {
+        			http.Error(w, "simulated failure", http.StatusServiceUnavailable)
+        			return
+        		}
+        		next.ServeHTTP(w, r)
+        	})
+        }
+
+        // echoWS : poignée de main WebSocket minimale + écho des trames texte (charges < 126 octets).
+        func echoWS(w http.ResponseWriter, r *http.Request, id string) {
+        	key := r.Header.Get("Sec-WebSocket-Key")
+        	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") || key == "" {
+        		http.Error(w, "upgrade required", http.StatusUpgradeRequired)
+        		return
+        	}
+        	hj, ok := w.(http.Hijacker)
+        	if !ok {
+        		http.Error(w, "no hijack", http.StatusInternalServerError)
+        		return
+        	}
+        	conn, rw, err := hj.Hijack()
+        	if err != nil {
+        		return
+        	}
+        	defer conn.Close()
+        	sum := sha1.Sum([]byte(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
+        	fmt.Fprintf(rw, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\nX-Instance: %s\r\n\r\n",
+        		base64.StdEncoding.EncodeToString(sum[:]), id)
+        	rw.Flush()
+        	for {
+        		_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+        		hdr := make([]byte, 2)
+        		if _, err := io.ReadFull(rw, hdr); err != nil {
+        			return
+        		}
+        		op, n := hdr[0]&0x0f, int(hdr[1]&0x7f)
+        		if op == 0x8 || n >= 126 {
+        			return
+        		}
+        		var mask [4]byte
+        		if hdr[1]&0x80 != 0 {
+        			if _, err := io.ReadFull(rw, mask[:]); err != nil {
+        				return
+        			}
+        		}
+        		payload := make([]byte, n)
+        		if _, err := io.ReadFull(rw, payload); err != nil {
+        			return
+        		}
+        		for i := range payload {
+        			payload[i] ^= mask[i%4]
+        		}
+        		reply := append([]byte(id+":"), payload...)
+        		if len(reply) >= 126 {
+        			return
+        		}
+        		rw.Write(append([]byte{0x81, byte(len(reply))}, reply...))
+        		rw.Flush()
+        	}
+        }
+
+        func control() http.Handler {
+        	mux := http.NewServeMux()
+        	// /ctl/<id>/<health|fail|latency|reset>?...
+        	mux.HandleFunc("/ctl/", func(w http.ResponseWriter, r *http.Request) {
+        		parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/ctl/"), "/"), "/")
+        		if parts[0] == "stats" {
+        			out := map[string]any{}
+        			for id, in := range instances {
+        				in.lastMu.Lock()
+        				last := map[string]string{}
+        				for k, v := range in.last {
+        					last[k] = v
+        				}
+        				in.lastMu.Unlock()
+        				out[id] = map[string]any{"hits": in.hits.Load(), "probes": in.probes.Load(), "static": in.static.Load(), "healthy": in.healthy.Load(), "last_marker": last}
+        			}
+        			w.Header().Set("Content-Type", "application/json")
+        			_ = json.NewEncoder(w).Encode(out)
+        			return
+        		}
+        		if parts[0] == "reset" {
+        			for _, in := range instances {
+        				in.healthy.Store(true)
+        				in.failN.Store(0)
+        				in.latency.Store(0)
+        				in.hits.Store(0)
+        				in.static.Store(0)
+        				in.flaky.Range(func(k, _ any) bool { in.flaky.Delete(k); return true })
+        			}
+        			fmt.Fprint(w, "reset")
+        			return
+        		}
+        		in := instances[parts[0]]
+        		if in == nil || len(parts) < 2 {
+        			http.NotFound(w, r)
+        			return
+        		}
+        		switch parts[1] {
+        		case "health":
+        			in.healthy.Store(r.URL.Query().Get("up") != "0")
+        		case "fail":
+        			in.failN.Store(int64(intQ(r, "n", 1)))
+        		case "latency":
+        			in.latency.Store(int64(intQ(r, "ms", 0)))
+        		case "reset":
+        			in.healthy.Store(true)
+        			in.failN.Store(0)
+        			in.latency.Store(0)
+        		default:
+        			http.NotFound(w, r)
+        			return
+        		}
+        		fmt.Fprint(w, "ok")
+        	})
+        	return mux
+        }
+
+        func tcpEcho(addr string) {
+        	l, err := net.Listen("tcp", addr)
+        	if err != nil {
+        		fmt.Fprintln(os.Stderr, err)
+        		return
+        	}
+        	for {
+        		c, err := l.Accept()
+        		if err != nil {
+        			return
+        		}
+        		go func() {
+        			defer c.Close()
+        			fmt.Fprint(c, "LAB-TCP-BANNER\n")
+        			io.Copy(c, c)
+        		}()
+        	}
+        }
+
+        func main() {
+        	// a/b/c : pool de la boutique ; canary/shadow : hors pool ; dead : port volontairement non écouté (voir routes).
+        	for id, port := range map[string]int{"a": 9001, "b": 9002, "c": 9003, "canary": 9004, "shadow": 9005, "legacy": 9006} {
+        		in := &instance{id: id, port: port, last: map[string]string{}}
+        		in.healthy.Store(true)
+        		instances[id] = in
+        		go func() {
+        			srv := &http.Server{Addr: fmt.Sprintf(":%d", in.port), Handler: in.handler(), ReadHeaderTimeout: 10 * time.Second}
+        			if err := srv.ListenAndServe(); err != nil {
+        				fmt.Fprintln(os.Stderr, err)
+        				os.Exit(1)
+        			}
+        		}()
+        	}
+        	go tcpEcho(":9100")
+        	srv := &http.Server{Addr: ":9999", Handler: control(), ReadHeaderTimeout: 10 * time.Second}
+        	if err := srv.ListenAndServe(); err != nil {
+        		fmt.Fprintln(os.Stderr, err)
+        		os.Exit(1)
+        	}
+        }
 
   # <<< GENERATED
   # Cible volontairement vulnérable pour valider WAF / Sentinel (profil "vuln")

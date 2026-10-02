@@ -121,6 +121,8 @@ func New(cfg *config.EdgeConfig, cfgPath ...string) (*Server, error) {
 	log := edgelog.New(cfg.Engine.LogLevel, cfg.Engine.LogFormat, cfg.Engine.SystemLogPath)
 	accessLog := edgelog.NewAccessLogger(cfg.Engine.AccessLogPath)
 	accessLog.SetIPAnonymize(cfg.Engine.IPAnonymize)
+	accessLog.SetDisabled(cfg.Engine.AccessLogDisabled)
+	metrics.SetRequestMetricsDisabled(cfg.Engine.MetricsDisabled)
 
 	secret := edgecache.ResolveSecret(cfg.ControlPlane.AuthToken)
 	cachePath := "/etc/goproxify/edge-cache.gpx"

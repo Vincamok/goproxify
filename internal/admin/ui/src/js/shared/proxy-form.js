@@ -643,13 +643,21 @@ window.exportProxies = function(fmt) {
   }
 };
 
-window.openProxyModal = async function(id, initialTab, secTab) {
+window.duplicateProxy = id => openProxyModal(id, undefined, undefined, { clone: true });
+
+window.openProxyModal = async function(id, initialTab, secTab, opts = {}) {
   if (initialTab === 'protection' && secTab === 'waf') { initialTab = 'waf'; secTab = undefined; }
   let existing = null;
   if (id) {
     try { existing = await api('GET', `/proxies/${encodeURIComponent(id)}`); } catch {}
   }
-  const cfg = existing ? (typeof existing.config==='string'?tryJSON(existing.config):existing.config||existing) : {};
+  let cfg = existing ? (typeof existing.config==='string'?tryJSON(existing.config):existing.config||existing) : {};
+  const cloning = !!(opts.clone && existing);
+  if (cloning) {
+    cfg = { ...structuredClone(cfg), host: '', aliases: [] };
+    delete cfg.id;
+    id = '';
+  }
   window._openProxyCfg = cfg;
   try {
     window._errorPageTemplates = await api('GET', '/error-page-templates') || [];
@@ -1155,7 +1163,7 @@ window.openProxyModal = async function(id, initialTab, secTab) {
               </label>
               <div class="field" style="margin:0;"><label class="field-label" style="font-size:11px">Min size (octets)</label><input id="p-gzip-minsize" class="input" type="number" placeholder="1024" value="${cfg.performance?.compression_gzip?.min_length||''}"></div>
             </div>
-            <div class="field" style="margin-top:10px;max-width:50%;"><label class="field-label" style="font-size:11px">Max body client (Mo)</label><input id="p-body-size" class="input" type="number" min="1" placeholder="100" value="${cfg.max_body_size ? Math.round(cfg.max_body_size/1048576) : ''}"></div>
+            <div class="field" style="margin-top:10px;max-width:50%;"><label class="field-label" style="font-size:11px">Max body client (Mo)</label><input id="p-body-size" class="input" type="number" min="1" placeholder="100" value="${cfg.max_body_size > 0 ? Math.round(cfg.max_body_size/1048576) : ''}"></div>
           </div>
           <!-- Cache avancé -->
           <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
@@ -1251,11 +1259,17 @@ window.openProxyModal = async function(id, initialTab, secTab) {
             </button>
           </div>
           <div id="p-yaml-error" style="display:none;background:color-mix(in srgb,var(--error,#e53e3e) 10%,transparent);border:1px solid color-mix(in srgb,var(--error,#e53e3e) 30%,transparent);border-radius:6px;padding:8px 12px;font-size:12px;color:var(--error,#e53e3e);"></div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="proxyDryRun('${esc(id||'')}')">Tester (dry run)</button>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);cursor:pointer;"><input type="checkbox" id="p-dry-probe"> Sonder les backends (DNS, TLS, connexion)</label>
+            <span style="font-size:11px;color:var(--text3);">Valide la config sans rien enregistrer ni pousser.</span>
+          </div>
+          <div id="p-dry-result" style="display:none;"></div>
           <textarea id="p-yaml-editor"
             spellcheck="false"
             style="flex:1;min-height:340px;font-family:ui-monospace,'Fira Code',monospace;font-size:12.5px;line-height:1.6;resize:none;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px;color:var(--text);tab-size:2;outline:none;transition:border-color .15s;"
             onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'"
-            oninput="document.getElementById('p-yaml-error').style.display='none'"
+            oninput="document.getElementById('p-yaml-error').style.display='none';document.getElementById('p-dry-result').style.display='none'"
             placeholder="# Config YAML du proxy&#10;host: app.example.fr&#10;backends:&#10;  - url: http://10.0.0.1:8080"></textarea>
         </div>
 
@@ -1277,12 +1291,14 @@ window.openProxyModal = async function(id, initialTab, secTab) {
     <label class="toggle"><input type="checkbox" id="p-enabled" ${existing?.enabled!==false?'checked':''}><span class="toggle-slider"></span></label>
     <span style="color:var(--text2);">Activé</span>
   </label>`;
-  modal(id ? 'Modifier le proxy' : 'Nouveau proxy', body, footer, true, headerRight);
+  modal(cloning ? 'Dupliquer le proxy' : id ? 'Modifier le proxy' : 'Nouveau proxy', body, footer, true, headerRight);
   document.querySelector('#modal-overlay .dialog')?.classList.add('pm-dialog');
   if (!id) {
-    let mode = 'simple';
-    try { mode = localStorage.getItem('gpx_proxy_mode') === 'advanced' ? 'advanced' : 'simple'; } catch {}
+    let mode = 'simple', saved = null;
+    try { saved = localStorage.getItem('gpx_proxy_mode'); mode = saved === 'advanced' ? 'advanced' : 'simple'; } catch {}
+    if (cloning) mode = 'advanced';
     pmSetMode(mode);
+    if (cloning) try { saved === null ? localStorage.removeItem('gpx_proxy_mode') : localStorage.setItem('gpx_proxy_mode', saved); } catch {}
     pmSimpleTLS('https'); // nouveau proxy : HTTPS (certificat automatique) par défaut, dans les deux modes
   }
   if (initialTab) switchProxyTab(initialTab);
@@ -2325,4 +2341,48 @@ window.saveStreamEdit = async function(id) {
     closeModal();
     refreshProxies();
   } catch(e) { toast(e.message || 'Erreur', 'error'); }
+};
+
+window.proxyDryRun = async function(id) {
+  const out = document.getElementById('p-dry-result');
+  const errEl = document.getElementById('p-yaml-error');
+  const ta = document.getElementById('p-yaml-editor');
+  if (!out || !ta) return;
+  let config;
+  try {
+    config = _yaml.parse(ta.value);
+    if (!config || typeof config !== 'object') throw new Error('La config doit être un objet YAML.');
+  } catch (e) {
+    if (errEl) { errEl.textContent = e.message; errEl.style.display = ''; }
+    return;
+  }
+  if (errEl) errEl.style.display = 'none';
+  out.style.display = '';
+  out.innerHTML = '<div style="font-size:12px;color:var(--text3);">Test en cours…</div>';
+  let r;
+  try {
+    r = await api('POST', '/proxies/dry-run', {
+      id: id || undefined, config,
+      enabled: document.getElementById('p-enabled')?.checked !== false,
+      probe: !!document.getElementById('p-dry-probe')?.checked,
+    });
+  } catch (e) {
+    out.innerHTML = `<div style="font-size:12px;color:var(--error,#e53e3e);">${esc(e.message)}</div>`;
+    return;
+  }
+  const col = { ok: 'var(--green,#34d399)', warning: 'var(--yellow,#f59e0b)', error: 'var(--error,#e53e3e)', skip: 'var(--text3)' };
+  const sym = { ok: '✓', warning: '!', error: '✕', skip: '–' };
+  const row = (name, st, msg, details) => `<div style="display:flex;gap:8px;font-size:12px;padding:3px 0;">
+      <span style="color:${col[st]||col.skip};font-weight:700;width:12px;">${sym[st]||'–'}</span>
+      <div style="flex:1;"><span style="font-weight:600;">${esc(name)}</span> — <span style="color:var(--text2);">${esc(msg||'')}</span>
+      ${details && details.length > 1 ? `<div class="dry-detail" style="display:none;margin:4px 0 0 8px;color:var(--text2);">${details.map(d => `<div>• ${esc(d)}</div>`).join('')}</div>` : ''}</div></div>`;
+  const checks = (r.checks || []).map(c => row(c.check, c.status, c.message, c.details)).join('');
+  const probes = (r.probes || []).map(p => row('sonde ' + p.step, p.status, p.message + (p.latency_ms >= 0 ? ` (${p.latency_ms} ms)` : ''))).join('');
+  const summary = r.summary ? `<pre class="dry-detail" style="display:none;margin:6px 0 0;font-size:11.5px;background:var(--bg2);padding:8px;border-radius:6px;overflow:auto;">${esc(_yaml.dump(r.summary))}</pre>` : '';
+  const routeRaw = r.route ? `<pre class="dry-detail" style="display:none;margin:6px 0 0;font-size:11.5px;background:var(--bg2);padding:8px;border-radius:6px;max-height:220px;overflow:auto;">${esc(JSON.stringify(r.route, null, 2))}</pre>` : '';
+  out.innerHTML = `<div style="border:1px solid ${r.ok ? col.ok : col.error};border-radius:8px;padding:10px 12px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+      <strong style="font-size:13px;color:${r.ok ? col.ok : col.error};">${r.ok ? 'Configuration valide' : 'Configuration invalide'}</strong>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="const o=this.closest('#p-dry-result');const s=o.querySelectorAll('.dry-detail');const show=s[0]&&s[0].style.display==='none';s.forEach(e=>e.style.display=show?'':'none');this.textContent=show?'Masquer les détails':'Afficher les détails'">Afficher les détails</button>
+    </div>${checks}${probes}${summary}${routeRaw}</div>`;
 };

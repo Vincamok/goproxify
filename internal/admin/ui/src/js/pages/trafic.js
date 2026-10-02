@@ -457,6 +457,7 @@ async function renderTraficPage(ctx) {
         !m.isStr && item('shield', esc(t('trafic.security')), `openProxySecModal('${id}')`),
         item('logs', esc(t('trafic.access_logs')), `logsFilters.domain='${host}';navigate('logs')`),
         item('prism', 'Prism', `openPrismForProxy('${host}','${esc(m.p.node_id || m.p.edge_id || '')}')`),
+        !m.isStr && Role.canWrite() && !m.isAuto && item('edit', esc(t('trafic.duplicate')), `duplicateProxy('${id}')`),
         !m.isStr && item('hist', esc(t('backups.history.title') || 'Historique'), `openProxyVersionsModal('${id}','${host}')`),
         item('flow', esc(t('trafic.flow_title')), `openTrafficFlowModal('proxy','${id}')`),
         item('labels', esc(t('trafic.docker_labels')), `openDockerLabelsFromProxy('${id}')`),

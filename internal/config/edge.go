@@ -45,6 +45,10 @@ type EdgeConfig struct {
 		// IPAnonymize : tronque le dernier octet IPv4 (x.x.x.0) et les 80 derniers bits IPv6.
 		// Recommandé pour la conformité RGPD. Ne désactive pas la protection Fail2Ban/Sentinel.
 		IPAnonymize bool `mapstructure:"ip_anonymize"`
+		// MetricsDisabled coupe les métriques Prometheus par requête (benchmark ; /metrics reste servi, compteurs figés).
+		MetricsDisabled bool `mapstructure:"metrics_disabled"`
+		// AccessLogDisabled coupe le log d'accès global : plus de Prism/Logs, ni de signal Fail2Ban/proxy issu du log (benchmark).
+		AccessLogDisabled bool `mapstructure:"access_log_disabled"`
 		// WAFCustomRulesPath : chemin vers un fichier JSON de règles WAF custom.
 		// Surveillé toutes les 10 s — hot-reload sans redémarrage.
 		// Format : tableau de CustomRule. Exemple : /etc/goproxify/waf-custom-rules.json

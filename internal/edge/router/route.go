@@ -64,7 +64,7 @@ type Route struct {
 	ResponseTimeout time.Duration `json:"response_timeout,omitempty"` // attente headers réponse (nginx: proxy_read_timeout)
 	SendTimeout     time.Duration `json:"send_timeout,omitempty"`     // envoi requête backend (nginx: proxy_send_timeout)
 	BufferSize      int           `json:"buffer_size,omitempty"`      // taille buffer réponse en octets (nginx: proxy_buffer_size)
-	MaxBodySize     int64         `json:"max_body_size,omitempty"`    // taille max corps requête client en octets (nginx: client_max_body_size, 0 = illimité)
+	MaxBodySize     int64         `json:"max_body_size,omitempty"`    // taille max corps requête client en octets (nginx: client_max_body_size ; 0 = défaut 100 Mo, -1 = illimité)
 
 	// Résilience
 	LB             LBAlgorithm  `json:"lb"`              // round_robin | weighted | adaptive

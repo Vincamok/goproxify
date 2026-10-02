@@ -394,6 +394,17 @@ Configurable depuis l'UI Admin (Sécurité > Timeouts HTTP/QUIC). Propagé aux p
 
 La passerelle refuse aussi les méthodes `TRACE` et `TRACK` (`405`) sur toutes les routes.
 
+### Benchmark : couper le travail par requête
+
+À réserver aux mesures de performance (`edge.json`, section `engine`, ou variables `GPX_ENGINE_METRICS_DISABLED` / `GPX_ENGINE_ACCESS_LOG_DISABLED`), redémarrage nécessaire :
+
+| Paramètre | Défaut | Effet |
+|---|---|---|
+| `metrics_disabled` | `false` | Plus de métriques Prometheus par requête (`/metrics` reste servi, compteurs figés) |
+| `access_log_disabled` | `false` | Plus de log d'accès global : plus de Prism/Logs, ni de signal Fail2Ban ou proxy issu du log |
+
+Par route, `logging.access_log` vaut `true` quand la clé est absente (un bloc `logging` sans `access_log` ne coupe plus le log). `max_body_size` : voir [labels.md](labels.md) (défaut 100 Mo, `-1` = illimité).
+
 ---
 
 ## Dashboard Sentinel — répartition géographique des bans

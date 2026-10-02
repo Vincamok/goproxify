@@ -1,0 +1,154 @@
+[
+  {"host": "lab-lb.lab.test", "config": {
+    "aliases": ["lab-lb-alias.lab.test"], "lb": "round_robin",
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}, {"url": "http://lab-sim:9002", "weight": 1}, {"url": "http://lab-sim:9003", "weight": 1}]}},
+
+  {"host": "lab-weighted.lab.test", "config": {
+    "lb": "weighted",
+    "backends": [{"url": "http://lab-sim:9001", "weight": 8}, {"url": "http://lab-sim:9002", "weight": 1}, {"url": "http://lab-sim:9003", "weight": 1}]}},
+
+  {"host": "lab-sticky.lab.test", "config": {
+    "lb": "round_robin", "sticky_cookie": "LABSID",
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}, {"url": "http://lab-sim:9002", "weight": 1}, {"url": "http://lab-sim:9003", "weight": 1}]}},
+
+  {"host": "lab-health.lab.test", "config": {
+    "lb": "round_robin",
+    "health_check": {"path": "/healthz", "interval": 1000000000, "timeout": 1000000000, "healthy_threshold": 1, "unhealthy_threshold": 1},
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}, {"url": "http://lab-sim:9002", "weight": 1}]}},
+
+  {"host": "lab-retry.lab.test", "config": {
+    "retry": {"attempts": 3, "initial_wait": 50000000, "max_wait": 200000000},
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}]}},
+
+  {"host": "lab-noretry.lab.test", "config": {
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}]}},
+
+  {"host": "lab-cb.lab.test", "config": {
+    "circuit_breaker": {"threshold": 3, "timeout": 8000000000},
+    "backends": [{"url": "http://lab-sim:9006", "weight": 1}]}},
+
+  {"host": "lab-transform.lab.test", "config": {
+    "transform": {
+      "rewrite_from": "/shop/v1", "rewrite_to": "/api",
+      "add_request_headers": {"X-Lab-Marker": "via-proxy"},
+      "remove_request_headers": ["X-Secret-Client"],
+      "add_response_headers": {"X-Lab-Resp": "transformed"},
+      "remove_response_headers": ["X-Powered-By"]},
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}]}},
+
+  {"host": "lab-paths.lab.test", "config": {
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+    "locations": [
+      {"path": "/legacy", "path_type": "prefix", "strip_prefix": true, "backends": [{"url": "http://lab-sim:9006", "weight": 1}]},
+      {"path": "^/v([0-9]+)/items$", "path_type": "regex", "path_rewrite": "/api/version-$1/items"}]}},
+
+  {"host": "lab-redirect.lab.test", "config": {
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+    "proxy_redirects": [{"from": "http://lab-sim:9001/", "to": "https://shop.lab.test/"}],
+    "cookie_domains": [{"from": "lab-sim", "to": "shop.lab.test"}],
+    "cookie_paths": [{"from": "/app", "to": "/"}],
+    "sub_filters": [{"from": "http://lab-sim:9001", "to": "https://shop.lab.test"}, {"from": "BACKEND-MARKER", "to": "PUBLIC-MARKER"}]}},
+
+  {"host": "lab-cors.lab.test", "config": {
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+    "cors": {"allowed_origins": ["https://app.lab.test"], "allowed_methods": ["GET", "POST"], "allowed_headers": ["Content-Type", "Authorization"], "max_age": 600}}},
+
+  {"host": "lab-cache.lab.test", "config": {
+    "backends": [{"url": "http://lab-sim:9003", "weight": 1}],
+    "cache": {"enabled": true, "valid_rules": [{"status_codes": [200], "ttl": "1m"}], "bypass_headers": ["X-No-Cache"]}}},
+
+  {"host": "lab-ipallow.lab.test", "config": {
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+    "ip_filter": {"mode": "allow", "cidrs": ["203.0.113.0/24"]}}},
+
+  {"host": "lab-ipdeny.lab.test", "config": {
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+    "ip_filter": {"mode": "deny", "cidrs": ["203.0.113.0/24"]}}},
+
+  {"host": "lab-vars.lab.test", "config": {
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+    "request_vars": [{"name": "tier", "source": "header", "key": "X-Plan", "default": "standard", "cases": [{"pattern": "gold", "value": "premium"}]}],
+    "headers_manipulation": {"request_set_header": {"X-Tier": "${tier}"}}}},
+
+  {"host": "lab-backpressure.lab.test", "config": {
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+    "backpressure": {"max_inflight": 2, "queue": 0, "queue_timeout_ms": 200}}},
+
+  {"host": "lab-limitconn.lab.test", "config": {
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+    "limit_conn": {"max_per_ip": 3}}},
+
+  {"host": "lab-canary.lab.test", "config": {
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+    "canary": {"backend": "http://lab-sim:9004", "header": "X-Canary", "header_value": "1"}}},
+
+  {"host": "lab-canary-pct.lab.test", "config": {
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+    "canary": {"backend": "http://lab-sim:9004", "weight": 30}}},
+
+  {"host": "lab-shadow.lab.test", "config": {
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+    "shadow": {"backend": "http://lab-sim:9005"}}},
+
+  {"host": "lab-cond.lab.test", "config": {
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+    "conditions": [
+      {"type": "header", "name": "X-Device", "value": "mobile", "backend": "http://lab-sim:9006"},
+      {"type": "query", "name": "beta", "value": "1", "backend": "http://lab-sim:9004"}]}},
+
+  {"host": "lab-errpages.lab.test", "config": {
+    "backends": [{"url": "http://lab-sim:9009", "weight": 1}],
+    "error_pages": {"pages": {"502": "<h1>LAB-502-PAGE</h1>"}}}},
+
+  {"host": "lab-ws.lab.test", "config": {
+    "websocket": true,
+    "backends": [{"url": "http://lab-sim:9002", "weight": 1}]}},
+
+  {"host": "lab-nows.lab.test", "config": {
+    "websocket": false,
+    "backends": [{"url": "http://lab-sim:9002", "weight": 1}]}},
+
+  {"host": "lab-body.lab.test", "config": {
+    "max_body_size": 1048576,
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}]}},
+
+  {"host": "lab-secheaders.lab.test", "config": {
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+    "headers": {"hsts": true, "hsts_max_age": 31536000, "x_frame_options": "DENY", "hide_server": true,
+                "custom": {"X-Lab-Custom": "1", "Content-Security-Policy": "default-src 'self'"}}}},
+
+  {"host": "lab-timeout.lab.test", "config": {
+    "response_timeout": 1000000000,
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}]}},
+
+  {"host": "lab-basicauth.lab.test", "config": {
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+    "sso": {"enabled": true, "provider": "basic", "realm": "Labo", "basic_users": [{"username": "lab", "password": "__BASIC_PASS__"}]}}},
+
+  {"host": "lab-bot.lab.test", "config": {
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+    "bot": {"enabled": true, "mode": "block", "ua_blacklist": ["LabBadBot"], "js_challenge": false}}},
+
+  {"host": "lab-wafcustom.lab.test", "config": {
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+    "waf": {"enabled": true, "mode": "block", "max_body_mb": 1, "anomaly_threshold": 0,
+            "custom_rules": [{"id": 990001, "category": "lab", "severity": "high", "pattern": "LAB-FORBIDDEN-WORD", "targets": ["uri", "args", "body"], "message": "mot interdit labo"}]}}},
+
+  {"host": "lab-nohost.lab.test", "config": {
+    "preserve_host": false, "request_id": false,
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+    "headers_manipulation": {"forwarded_headers": []}}},
+
+  {"host": "lab-realistic.lab.test", "config": {
+    "lb": "round_robin",
+    "health_check": {"path": "/healthz", "interval": 2000000000, "timeout": 1000000000, "healthy_threshold": 1, "unhealthy_threshold": 2},
+    "retry": {"attempts": 2, "initial_wait": 50000000, "max_wait": 200000000},
+    "rate_limit": {"rps": 500, "burst": 1000},
+    "sub_filters": [{"from": "http://lab-sim:[0-9]+", "to": "http://lab-realistic.lab.test", "regex": true}],
+    "headers": {"hsts": true, "hsts_max_age": 31536000, "x_frame_options": "SAMEORIGIN", "hide_server": true},
+    "websocket": true,
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}, {"url": "http://lab-sim:9002", "weight": 1}, {"url": "http://lab-sim:9003", "weight": 1}]}},
+
+  {"host": "lab-toggle.lab.test", "config": {
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}]}}
+]

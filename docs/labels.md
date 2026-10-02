@@ -49,7 +49,7 @@ L'Agent GoProxify détecte automatiquement les conteneurs portant `goproxify.ena
 | `goproxify.timeout.connect` | `"5s"` | Timeout de connexion au backend. |
 | `goproxify.timeout.response` | `"30s"` | Timeout d'attente de la réponse complète. |
 | `goproxify.timeout.send` | `"10s"` | Timeout d'envoi de la requête. |
-| `goproxify.max_body_size` | `"10m"` | Taille maximale du corps de requête (octets ou suffixe `k`/`m`/`g`). |
+| `goproxify.max_body_size` | `"10m"` | Taille maximale du corps de requête (octets ou suffixe `k`/`m`/`g`). Défaut 100 Mo ; `-1` = illimité. Au-delà : 413. |
 
 ---
 

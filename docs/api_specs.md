@@ -187,6 +187,16 @@ Liste tous les proxies (manuels + labels).
 `source` : `manual` | `label`
 `readonly: true` pour les proxies issus de labels.
 
+### `POST /api/v1/proxies/dry-run`
+
+Valide une config de proxy **sans rien enregistrer ni pousser** (éditeur YAML de la modale proxy, bouton « Tester (dry run) »). Scope `proxies:write` + droit d'écriture sur le domaine.
+
+Corps : `{ "id": "<uuid, optionnel>", "config": {…}, "enabled": true, "probe": false }`.
+`probe: true` ajoute une sonde réseau (DNS, TLS, connexion des backends).
+
+Réponse : `{ "ok": bool, "summary": {…}, "checks": [{ "check", "status": "ok|warning|error|skip", "message", "details": [] }], "probes": [{ "step", "status", "message", "latency_ms" }], "route": {…} }`.
+Contrôles : `syntax`, `structure` (type, host, backends, URLs), `conflicts` (host/alias/port face aux proxies en production des passerelles ; `warning` si aucune passerelle ne répond), `enabled`. (Admin `0.72.0`)
+
 ### `POST /api/v1/proxies`
 
 Crée un proxy manuel. Corps : objet conforme au schéma canonique (section `proxies`).

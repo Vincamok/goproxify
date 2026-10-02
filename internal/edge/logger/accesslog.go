@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gopkg.in/lumberjack.v2"
@@ -29,6 +30,7 @@ type ThreatSignalExtractor func(r *http.Request) string
 // AccessLogger écrit les access logs JSON de façon asynchrone et les pousse
 // vers l'Admin (via SetForwarder et/ou SetRemote).
 type AccessLogger struct {
+	disabled atomic.Bool
 	ch     chan accessEntry
 	shipCh chan accessEntry
 
@@ -368,6 +370,9 @@ func (a *AccessLogger) Reopen(path string) {
 
 // Middleware wraps un http.Handler pour loguer chaque requête.
 func (a *AccessLogger) Middleware(next http.Handler) http.Handler {
+	if a.disabled.Load() {
+		return next
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rw := &statusWriter{ResponseWriter: w, status: 200}
@@ -540,3 +545,6 @@ func (sw *statusWriter) Flush() {
 }
 
 func (sw *statusWriter) Unwrap() http.ResponseWriter { return sw.ResponseWriter }
+
+// SetDisabled court-circuite le middleware (benchmark) : aucun log, aucun tap Fail2Ban/proxy.
+func (a *AccessLogger) SetDisabled(off bool) { a.disabled.Store(off) }

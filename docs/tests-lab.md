@@ -1,6 +1,6 @@
 # Labo de tests — procédure pas à pas
 
-Guide d'exécution du labo `tests/lab/` (charge, sécurité, chaos) sur un daemon Docker distant, avec les résultats du premier passage (2026-09-24). Référence rapide : [tests/lab/README.md](../tests/lab/README.md). Rapport de la dernière campagne : [rapport-tests-2026-09-24.md](rapport-tests-2026-09-24.md).
+Guide d'exécution du labo `tests/lab/` (charge, sécurité, chaos) sur un daemon Docker distant, avec les résultats du premier passage (2026-09-24). Référence rapide : [tests/lab/README.md](../tests/lab/README.md). Rapport de la dernière campagne : [rapport-tests-2026-10-02.md](rapport-tests-2026-10-02.md) (précédent : [rapport-tests-2026-09-24.md](rapport-tests-2026-09-24.md)).
 
 > **Le labo se branche sur la stack existante (`goproxify_net`).** Sur une stack de production, il crée des routes `*.lab.test` dans l'Admin et la passerelle réelles : n'exécuter que les tests « faible impact » (§4) et nettoyer ensuite (§7).
 

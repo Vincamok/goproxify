@@ -20,14 +20,15 @@ if [ "$REMOTE" != 1 ]; then
   [ -f "$ROOT/.env" ] && set -a && . "$ROOT/.env" && set +a
   dc() { docker compose -p goproxify-lab --env-file "$ROOT/.env" -f docker-compose.lab.yml "$@"; }
   run() { dc --profile run run --rm "$@"; }
-  tools() { run tools bash "/lab/scripts/$1"; }
+  tools() { local s=$1; shift; run tools bash "/lab/scripts/$s" "$@"; }
   k6run() { run k6 run "/scripts/$1.js"; }
 else
   ready() { docker exec "$1" true 2>/dev/null || { echo "conteneur $1 absent : déployer d'abord le stack lab." >&2; exit 1; }; }
   tools() {
+    local s=$1; shift
     ready lab-tools
-    docker exec -e LAB_SAFE="${LAB_SAFE:-0}" -e LAB_ADMIN_TOKEN="${LAB_ADMIN_TOKEN:-}" -e LAB_ADMIN_EMAIL="${LAB_ADMIN_EMAIL:-}" -e LAB_ADMIN_PASSWORD="${LAB_ADMIN_PASSWORD:-}" \
-      lab-tools bash "/lab/scripts/$1"
+    docker exec -e LAB_SAFE="${LAB_SAFE:-0}" -e LAB_RUNNER_CIDR="${LAB_RUNNER_CIDR:-}" -e LAB_ADMIN_TOKEN="${LAB_ADMIN_TOKEN:-}" -e LAB_ADMIN_EMAIL="${LAB_ADMIN_EMAIL:-}" -e LAB_ADMIN_PASSWORD="${LAB_ADMIN_PASSWORD:-}" \
+      lab-tools bash "/lab/scripts/$s" "$@"
   }
   k6run() {
     ready lab-k6
@@ -45,8 +46,10 @@ case "$cmd" in
   seed)   tools seed.sh ;;
   attacks) tools attacks.sh ;;
   chaos)   tools chaos.sh ;;
+  seed-features) tools features.sh seed ;;
+  features) tools features.sh run "$@" ;;   # features [lb,cache,...] : sections au choix
 
-  load)   # smoke | moderate | saturation | baseline | spike | stress | soak | mixed
+  load)   # smoke | moderate | saturation | baseline | spike | stress | soak | mixed | realistic
     s=${1:-smoke}; [ -f "load/$s.js" ] || { echo "scénario inconnu : $s"; exit 1; }
     k6run "$s" ;;
 
@@ -67,8 +70,10 @@ case "$cmd" in
 Commandes :
   up | up-vuln | down               cycle de vie (local)
   seed                              crée les routes du labo via l'API Admin
-  load <smoke|moderate|saturation|baseline|spike|stress|soak|mixed>   tests de charge (k6)
+  load <smoke|moderate|saturation|baseline|spike|stress|soak|mixed|realistic>   tests de charge (k6)
   attacks | chaos                   batterie d'attaques / pannes backend
+  seed-features                     crée les routes de la suite fonctionnelle (33 routes lab-*)
+  features [sections]               suite fonctionnelle des proxies sur applications simulées (lab-sim)
   soak | zap | nuclei               endurance + ressources, scanners (local uniquement)
   all                               seed + smoke + attacks + chaos
 Mode distant : LAB_REMOTE=1 LAB_ADMIN_EMAIL=... LAB_ADMIN_PASSWORD=... tests/lab/lab.sh all

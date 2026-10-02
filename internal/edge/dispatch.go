@@ -177,13 +177,26 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 	h := s.handlerForRoute(route, locPath)
 
 	// Métriques
-	metrics.Edge.ActiveRequests.WithLabelValues(host).Inc()
+	metricsOn := metrics.RequestMetricsOn()
+	if metricsOn {
+		metrics.Edge.ActiveRequests.WithLabelValues(host).Inc()
+	}
 	start := time.Now()
 	rw := &statusCapture{ResponseWriter: w}
 	h.ServeHTTP(rw, r)
+	if metricsOn {
+		recordRequestMetrics(host, r, rw, time.Since(start))
+	}
+
+	if s.threatEngine != nil {
+		s.threatEngine.RecordStatus(remoteIP, rw.status)
+	}
+}
+
+func recordRequestMetrics(host string, r *http.Request, rw *statusCapture, dur time.Duration) {
 	metrics.Edge.ActiveRequests.WithLabelValues(host).Dec()
 	metrics.Edge.RequestsTotal.WithLabelValues(host, r.Method, fmt.Sprintf("%d", rw.status)).Inc()
-	metrics.Edge.RequestDuration.WithLabelValues(host).Observe(time.Since(start).Seconds())
+	metrics.Edge.RequestDuration.WithLabelValues(host).Observe(dur.Seconds())
 	if rw.bytes > 0 {
 		metrics.Edge.BytesOut.Add(float64(rw.bytes))
 		metrics.Edge.BytesOutByHost.WithLabelValues(host).Add(float64(rw.bytes))
@@ -193,10 +206,6 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 		metrics.Edge.BytesIn.Add(float64(r.ContentLength))
 		metrics.Edge.BytesInByHost.WithLabelValues(host).Add(float64(r.ContentLength))
 		metrics.Traffic.RequestSizeBytes.WithLabelValues(host).Observe(float64(r.ContentLength))
-	}
-
-	if s.threatEngine != nil {
-		s.threatEngine.RecordStatus(remoteIP, rw.status)
 	}
 }
 

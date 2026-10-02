@@ -25,13 +25,14 @@ cat <<'X'
       - |
         apk add --no-cache bash curl jq netcat-openbsd openssl coreutils >/dev/null
         mkdir -p /lab/scripts
-        for f in seed attacks chaos hosts auth cleanup; do eval "printf %s \"\$$S_$$f\"" > /lab/scripts/$$f.sh; done
+        for f in seed attacks chaos hosts auth cleanup features; do eval "printf %s \"\$$S_$$f\"" > /lab/scripts/$$f.sh; done
+        printf %s "$$S_feature_routes" > /lab/scripts/feature-routes.json
         exec sleep infinity
     networks: [goproxify_net]
     environment:
       LAB_ADMIN_URL: http://goproxify-admin:9443
 X
-emb S_ scripts/seed.sh scripts/attacks.sh scripts/chaos.sh scripts/hosts.sh scripts/auth.sh scripts/cleanup.sh
+emb S_ scripts/seed.sh scripts/attacks.sh scripts/chaos.sh scripts/hosts.sh scripts/auth.sh scripts/cleanup.sh scripts/features.sh scripts/feature-routes.json
 cat <<'X'
 
   lab-k6:
@@ -44,13 +45,28 @@ cat <<'X'
       - -c
       - |
         mkdir -p /scripts /results
-        for f in common smoke moderate saturation baseline spike stress soak mixed hosts; do eval "printf %s \"\$$K_$$f\"" > /scripts/$$f.js; done
+        for f in common smoke moderate saturation baseline spike stress soak mixed realistic hosts; do eval "printf %s \"\$$K_$$f\"" > /scripts/$$f.js; done
         mv /scripts/hosts.js /hosts.sh
         exec sleep infinity
     networks: [goproxify_net]
     environment:
 X
-emb K_ load/common.js load/smoke.js load/moderate.js load/saturation.js load/baseline.js load/spike.js load/stress.js load/soak.js load/mixed.js scripts/hosts.sh
+emb K_ load/common.js load/smoke.js load/moderate.js load/saturation.js load/baseline.js load/spike.js load/stress.js load/soak.js load/mixed.js load/realistic.js scripts/hosts.sh
+echo
+cat <<'X'
+
+  # Applications simulées pour features.sh et realistic.js : boutique à 3 instances (9001-9003), canary (9004),
+  # shadow (9005), legacy (9006), écho TCP (9100) ; pilotage de l'état sur 9999 (réseau interne uniquement, aucun port publié).
+  lab-sim:
+    image: golang:1.22-alpine
+    container_name: lab-sim
+    restart: unless-stopped
+    working_dir: /app
+    entrypoint: ["sh", "-c", "mkdir -p /app && printf %s \"$$SIM_main\" > /app/main.go && exec go run /app/main.go"]
+    networks: [goproxify_net]
+    environment:
+X
+emb SIM_ sim/main.go
 echo
 echo '  # <<< GENERATED'
 }

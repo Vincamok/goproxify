@@ -331,6 +331,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.bodyTooLarge(r) {
+		w.Header().Set("Connection", "close")
+		h.writeError(w, r, http.StatusRequestEntityTooLarge)
+		return
+	}
+
 	// Shadow mirror : le body est pipé en parallèle vers le backend primaire et le miroir.
 	// Un pipe évite de bloquer la goroutine requête sur io.ReadAll avant que le primaire commence.
 	// GetBody est mis à nil : les retries ne peuvent pas rejouer le body (trade-off acceptable
@@ -618,9 +624,8 @@ func (h *Handler) do(w http.ResponseWriter, r *http.Request, b *router.Backend, 
 		return false, false, err
 	}
 
-	// Limite la taille du corps si configurée (nginx: client_max_body_size)
-	if h.route.MaxBodySize > 0 {
-		r.Body = http.MaxBytesReader(w, r.Body, h.route.MaxBodySize)
+	if limit := h.route.EffectiveMaxBodySize(); limit > 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
 	}
 
 	callStart := time.Now()
@@ -636,8 +641,13 @@ func (h *Handler) do(w http.ResponseWriter, r *http.Request, b *router.Backend, 
 	dur := time.Since(callStart)
 	backendHost := target.Host
 	if att.failed {
-		metrics.Backend.ErrorsTotal.WithLabelValues(h.route.Host, backendHost, backendErrorType(att.err)).Inc()
+		if metrics.RequestMetricsOn() {
+			metrics.Backend.ErrorsTotal.WithLabelValues(h.route.Host, backendHost, backendErrorType(att.err)).Inc()
+		}
 		return false, writeOnError, att.err // réponse écrite seulement si writeOnError
+	}
+	if !metrics.RequestMetricsOn() {
+		return true, true, nil
 	}
 	statusStr := fmt.Sprintf("%d", sr.status)
 	metrics.Backend.RequestsTotal.WithLabelValues(h.route.Host, backendHost, statusStr).Inc()
@@ -711,7 +721,7 @@ func (h *Handler) reverseProxyFor(b *router.Backend, target *url.URL) *httputil.
 		Transport:  transport,
 		BufferPool: bufferPoolFor(h.route.BufferSize),
 		ModifyResponse: func(resp *http.Response) error {
-			if resp.Request != nil {
+			if resp.Request != nil && metrics.RequestMetricsOn() {
 				if t, ok := resp.Request.Context().Value(backendCallStartKey{}).(time.Time); ok {
 					metrics.Backend.TTFB.WithLabelValues(h.route.Host, urlHost).Observe(time.Since(t).Seconds())
 				}
@@ -1063,4 +1073,10 @@ func applyRequestHeaderManipulation(req *http.Request, route *router.Route) {
 func (h *Handler) traceBackend(r *http.Request, backendHost string, attempt int) (*http.Request, func(status int, err error)) {
 	ctx, end := tracing.StartBackend(r.Context(), backendHost, attempt)
 	return r.WithContext(ctx), end
+}
+
+// bodyTooLarge rejette dès l'en-tête Content-Length ; les corps chunked restent bornés par MaxBytesReader dans do().
+func (h *Handler) bodyTooLarge(r *http.Request) bool {
+	limit := h.route.EffectiveMaxBodySize()
+	return limit > 0 && r.ContentLength > limit
 }

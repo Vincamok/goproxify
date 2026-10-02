@@ -73,6 +73,8 @@ func Load[T AdminConfig | EdgeConfig | AgentConfig | LandingConfig](configPath s
 	}
 	bindIfMissing(v, "cluster.node_id")
 	bindIfMissing(v, "cluster.raft_port")
+	bindIfMissing(v, "engine.metrics_disabled")
+	bindIfMissing(v, "engine.access_log_disabled")
 
 	var cfg T
 	if err := v.Unmarshal(&cfg); err != nil {
