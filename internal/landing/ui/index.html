@@ -364,6 +364,54 @@
       gap: 16px;
     }
 
+    /* Screenshots */
+    .shots-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+    }
+
+    .shot-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+    }
+
+    .shot-card:hover {
+      border-color: rgba(79,70,229,0.35);
+      box-shadow: var(--shadow-lg);
+      transform: translateY(-2px);
+    }
+
+    .shot-card img {
+      display: block;
+      width: 100%;
+      height: auto;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .shot-card-body {
+      padding: 16px 20px;
+    }
+
+    .shot-card-body h3 {
+      font-size: 0.95rem;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .shot-card-body p {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    @media (max-width: 860px) {
+      .shots-grid { grid-template-columns: 1fr; }
+    }
+
     .feature-card {
       background: var(--bg-card);
       border: 1px solid var(--border);
@@ -886,6 +934,7 @@
     <ul class="nav-links">
       <li><a href="#explain" data-i18n="nav.features">How it works</a></li>
       <li><a href="#architecture" data-i18n="nav.architecture">Setup</a></li>
+      <li><a href="#screenshots" data-i18n="nav.screenshots">Screenshots</a></li>
       <li><a href="#install" data-i18n="nav.install">Install</a></li>
       <li><a href="#alerting" data-i18n="nav.alerting">Alerting</a></li>
       <li><a href="#docs" data-i18n="nav.docs">Docs</a></li>
@@ -1487,6 +1536,54 @@
     </div>
 
     <p class="arch-note fade-in" data-i18n="arch.wizard.note">You can build a layout like this in the Admin with the architecture assistant: place hosts on a board, then get install steps and a QR code per machine.</p>
+  </div>
+</section>
+
+<!-- ============================================================
+     SCREENSHOTS
+============================================================ -->
+<section id="screenshots" class="section">
+  <div class="container">
+    <h2 class="section-title fade-in" data-i18n="sec.screenshots">A look at the Admin</h2>
+    <p class="section-sub fade-in" data-i18n="sec.screenshots.sub">A few screens from a running instance — dashboard, topology editor, security and live logs.</p>
+
+    <div class="shots-grid">
+      <div class="shot-card fade-in">
+        <img src="img/screenshots/dashboard.jpg" alt="GoProxify Admin — Dashboard" loading="lazy">
+        <div class="shot-card-body">
+          <h3 data-i18n="shot.dashboard.title">Dashboard</h3>
+          <p data-i18n="shot.dashboard.body">Fleet health, request rate and recent activity at a glance.</p>
+        </div>
+      </div>
+      <div class="shot-card fade-in">
+        <img src="img/screenshots/architecture.jpg" alt="GoProxify Admin — Architecture assistant" loading="lazy">
+        <div class="shot-card-body">
+          <h3 data-i18n="shot.architecture.title">Architecture assistant</h3>
+          <p data-i18n="shot.architecture.body">Place hosts on a board and let GoProxify turn it into a working setup.</p>
+        </div>
+      </div>
+      <div class="shot-card fade-in">
+        <img src="img/screenshots/securite.jpg" alt="GoProxify Admin — Security" loading="lazy">
+        <div class="shot-card-body">
+          <h3 data-i18n="shot.security.title">Security</h3>
+          <p data-i18n="shot.security.body">Fail2Ban, CrowdSec and WAF status, bans and posture score per gateway.</p>
+        </div>
+      </div>
+      <div class="shot-card fade-in">
+        <img src="img/screenshots/automatisation.jpg" alt="GoProxify Admin — Automation" loading="lazy">
+        <div class="shot-card-body">
+          <h3 data-i18n="shot.automation.title">Automation</h3>
+          <p data-i18n="shot.automation.body">Rules, alert channels and a store of ready-to-install presets.</p>
+        </div>
+      </div>
+      <div class="shot-card fade-in">
+        <img src="img/screenshots/logs.jpg" alt="GoProxify Admin — Access logs" loading="lazy">
+        <div class="shot-card-body">
+          <h3 data-i18n="shot.logs.title">Live access logs</h3>
+          <p data-i18n="shot.logs.body">Every request across every proxy, filterable in real time.</p>
+        </div>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -2400,7 +2497,7 @@ volumes:
 (function() {
   var LANDING_I18N = {
     en: {
-      'nav.features': 'How it works', 'nav.architecture': 'Setup', 'nav.install': 'Install',
+      'nav.features': 'How it works', 'nav.architecture': 'Setup', 'nav.screenshots': 'Screenshots', 'nav.install': 'Install',
       'nav.alerting': 'Alerting', 'nav.docs': 'Docs',
       'hero.strong': 'The reverse proxy that guides every visitor to the right app.',
       'hero.sub': 'Publish your services. GoProxify makes them reachable, protected, and easy to manage — without the jargon.',
@@ -2428,6 +2525,18 @@ volumes:
       'footer.preview': 'Preview software — use at your own risk.',
       'sec.features': 'How GoProxify works',
       'sec.features.sub': 'From the control panel to the architecture assistant — here is what each piece does for you day to day.',
+      'sec.screenshots': 'A look at the Admin',
+      'sec.screenshots.sub': 'A few screens from a running instance — dashboard, topology editor, security and live logs.',
+      'shot.dashboard.title': 'Dashboard',
+      'shot.dashboard.body': 'Fleet health, request rate and recent activity at a glance.',
+      'shot.architecture.title': 'Architecture assistant',
+      'shot.architecture.body': 'Place hosts on a board and let GoProxify turn it into a working setup.',
+      'shot.security.title': 'Security',
+      'shot.security.body': 'Fail2Ban, CrowdSec and WAF status, bans and posture score per gateway.',
+      'shot.automation.title': 'Automation',
+      'shot.automation.body': 'Rules, alert channels and a store of ready-to-install presets.',
+      'shot.logs.title': 'Live access logs',
+      'shot.logs.body': 'Every request across every proxy, filterable in real time.',
       'sec.architecture': 'Two example setups',
       'sec.architecture.sub': 'Many layouts are possible — here are two examples. A home lab needs one Admin, one Edge and one Agent. For production, add a second gateway and an Agent on every host. Read the diagram top to bottom: Internet, gateways, then your apps and hosts.',
       'sec.install': 'Get started in 5 minutes',
@@ -2558,7 +2667,7 @@ volumes:
       'copied': 'Copied!'
     },
     fr: {
-      'nav.features': 'Comment ça marche', 'nav.architecture': 'Configuration', 'nav.install': 'Installation',
+      'nav.features': 'Comment ça marche', 'nav.architecture': 'Configuration', 'nav.screenshots': 'Captures d’écran', 'nav.install': 'Installation',
       'nav.alerting': 'Alerting', 'nav.docs': 'Documentation',
       'hero.strong': 'Le reverse proxy qui guide chaque visiteur vers la bonne application.',
       'hero.sub': 'Vous publiez vos services. GoProxify les rend accessibles, protégés et simples à piloter — sans jargon.',
@@ -2586,6 +2695,18 @@ volumes:
       'footer.preview': 'Logiciel en préversion — usage à vos risques.',
       'sec.features': 'Comment fonctionne GoProxify',
       'sec.features.sub': "Du tableau de bord à l'assistant d'architecture — voici ce que chaque pièce fait pour vous au quotidien.",
+      'sec.screenshots': 'Un aperçu de l’Admin',
+      'sec.screenshots.sub': 'Quelques écrans d’une instance en fonctionnement — tableau de bord, éditeur de topologie, sécurité et logs en direct.',
+      'shot.dashboard.title': 'Tableau de bord',
+      'shot.dashboard.body': 'Santé de la flotte, débit de requêtes et activité récente en un coup d’œil.',
+      'shot.architecture.title': 'Assistant d’architecture',
+      'shot.architecture.body': 'Placez vos hôtes sur une toile et laissez GoProxify en faire une installation fonctionnelle.',
+      'shot.security.title': 'Sécurité',
+      'shot.security.body': 'État de Fail2Ban, CrowdSec et du WAF, bans actifs et score de posture par passerelle.',
+      'shot.automation.title': 'Automatisation',
+      'shot.automation.body': 'Règles automatiques, canaux d’alerte et store de préréglages prêts à installer.',
+      'shot.logs.title': 'Logs d’accès en direct',
+      'shot.logs.body': 'Chaque requête, sur tous les proxies, filtrable en temps réel.',
       'sec.architecture': 'Deux exemples d’architecture',
       'sec.architecture.sub': 'Il existe de multiples architectures, en voici deux exemples. Un home lab tient avec un Admin, une passerelle et un Agent. En production, ajoutez une seconde passerelle et un Agent sur chaque hôte. Lisez le schéma de haut en bas : Internet, passerelles, puis vos applications et hôtes.',
       'sec.install': 'Démarrer en 5 minutes',
@@ -2716,7 +2837,7 @@ volumes:
       'copied': 'Copié !'
     },
     es: {
-      'nav.features': 'Cómo funciona', 'nav.architecture': 'Configuración', 'nav.install': 'Instalación',
+      'nav.features': 'Cómo funciona', 'nav.architecture': 'Configuración', 'nav.screenshots': 'Capturas', 'nav.install': 'Instalación',
       'nav.alerting': 'Alertas', 'nav.docs': 'Documentación',
       'hero.strong': 'El reverse proxy que guía a cada visitante hacia la aplicación correcta.',
       'hero.sub': 'Publica tus servicios. GoProxify los hace accesibles, protegidos y fáciles de gestionar — sin jerga.',
@@ -2744,6 +2865,18 @@ volumes:
       'footer.preview': 'Software en vista previa — úselo bajo su propio riesgo.',
       'sec.features': 'Cómo funciona GoProxify',
       'sec.features.sub': 'Del panel de control al asistente de arquitectura — esto es lo que cada pieza hace por ti a diario.',
+      'sec.screenshots': 'Un vistazo al Admin',
+      'sec.screenshots.sub': 'Algunas pantallas de una instancia en funcionamiento — panel, editor de topología, seguridad y logs en vivo.',
+      'shot.dashboard.title': 'Panel de control',
+      'shot.dashboard.body': 'Salud de la flota, tasa de peticiones y actividad reciente de un vistazo.',
+      'shot.architecture.title': 'Asistente de arquitectura',
+      'shot.architecture.body': 'Coloca tus hosts en un lienzo y deja que GoProxify lo convierta en una instalación funcional.',
+      'shot.security.title': 'Seguridad',
+      'shot.security.body': 'Estado de Fail2Ban, CrowdSec y WAF, baneos activos y puntuación de postura por pasarela.',
+      'shot.automation.title': 'Automatización',
+      'shot.automation.body': 'Reglas automáticas, canales de alerta y una tienda de plantillas listas para instalar.',
+      'shot.logs.title': 'Logs de acceso en vivo',
+      'shot.logs.body': 'Cada petición, en todos los proxies, filtrable en tiempo real.',
       'sec.architecture': 'Dos ejemplos de arquitectura',
       'sec.architecture.sub': 'Hay múltiples arquitecturas posibles; estos son dos ejemplos. Un home lab necesita un Admin, un Edge y un Agent. En producción, añade una segunda pasarela y un Agent en cada host. Lee el esquema de arriba abajo: Internet, pasarelas, y luego tus apps y hosts.',
       'sec.install': 'Empezar en 5 minutos',
@@ -2874,7 +3007,7 @@ volumes:
       'copied': '¡Copiado!'
     },
     de: {
-      'nav.features': "So funktioniert's", 'nav.architecture': 'Aufbau', 'nav.install': 'Installation',
+      'nav.features': "So funktioniert's", 'nav.architecture': 'Aufbau', 'nav.screenshots': 'Screenshots', 'nav.install': 'Installation',
       'nav.alerting': 'Alerting', 'nav.docs': 'Dokumentation',
       'hero.strong': 'Der Reverse-Proxy, der jeden Besucher zur richtigen App führt.',
       'hero.sub': 'Veröffentlichen Sie Ihre Dienste. GoProxify macht sie erreichbar, geschützt und einfach zu steuern — ohne Fachchinesisch.',
@@ -2902,6 +3035,18 @@ volumes:
       'footer.preview': 'Vorschau-Software — Nutzung auf eigene Gefahr.',
       'sec.features': 'So funktioniert GoProxify',
       'sec.features.sub': 'Vom Bedienpanel bis zum Architektur-Assistenten — so hilft Ihnen jeder Baustein im Alltag.',
+      'sec.screenshots': 'Ein Blick in das Admin',
+      'sec.screenshots.sub': 'Ein paar Ansichten einer laufenden Instanz — Dashboard, Topologie-Editor, Sicherheit und Live-Logs.',
+      'shot.dashboard.title': 'Dashboard',
+      'shot.dashboard.body': 'Flottenzustand, Request-Rate und aktuelle Aktivität auf einen Blick.',
+      'shot.architecture.title': 'Architektur-Assistent',
+      'shot.architecture.body': 'Hosts auf einer Fläche platzieren — GoProxify macht daraus eine lauffähige Installation.',
+      'shot.security.title': 'Sicherheit',
+      'shot.security.body': 'Status von Fail2Ban, CrowdSec und WAF, aktive Sperren und Posture-Score pro Gateway.',
+      'shot.automation.title': 'Automatisierung',
+      'shot.automation.body': 'Regeln, Alarmkanäle und ein Store mit installationsfertigen Vorlagen.',
+      'shot.logs.title': 'Live-Zugriffslogs',
+      'shot.logs.body': 'Jede Anfrage, über alle Proxies hinweg, in Echtzeit filterbar.',
       'sec.architecture': 'Zwei Beispiel-Architekturen',
       'sec.architecture.sub': 'Es gibt viele mögliche Architekturen, hier zwei Beispiele. Ein Home Lab braucht einen Admin, einen Edge und einen Agent. In Produktion kommen ein zweites Gateway und ein Agent auf jedem Host dazu. Das Schema von oben nach unten lesen: Internet, Gateways, dann Apps und Hosts.',
       'sec.install': 'In 5 Minuten starten',

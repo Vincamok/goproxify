@@ -7,6 +7,10 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ## [Unreleased]
 
+### Ajouté
+
+- **Landing 0.3.2 — Section « Captures d'écran »** : nouvelle section sur la landing page, entre « Composer son architecture » et « Installation », avec 5 captures d'une instance Admin en fonctionnement (Dashboard, assistant d'architecture, Sécurité, Automatisation, Logs d'accès en direct). Lien de nav ajouté, traductions EN/FR/ES/DE. Images statiques dans `internal/landing/ui/img/screenshots/`. (Landing `0.3.2`)
+
 ### Modifié
 
 - **Admin 0.70.7 — « Routage » devient « Proxies », « En-têtes & certificats » devient « Score par proxy »** : le menu et la page « Routage » listent les proxies HTTP et les flux TCP/UDP (eux aussi des proxies, de couche 4) ; « Routage » se confondait avec « Routage des alertes », « Routage conditionnel » et le routage réseau. L'onglet Sécurité « En-têtes & certificats » note chaque proxy de A à F sur 9 contrôles, dont 5 ne concernent ni les en-têtes ni les certificats (limitation de débit, WAF, anti-bot, filtrage IP, authentification) ; il s'appelait aussi « Posture » dans le titre de page. Libellés de menu, d'onglet et de titre alignés en FR, EN (« Proxies », « Proxy scores »), ES et DE. Interface uniquement. (Admin `0.70.7`)
