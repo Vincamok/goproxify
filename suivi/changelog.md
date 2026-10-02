@@ -9,6 +9,8 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ### Ajouté
 
+- **Landing 0.3.3 — Captures d'écran cliquables (lightbox) + 6e capture HA** : chaque capture de la section « Captures d'écran » s'ouvre désormais en grand format (overlay plein écran, fermeture au clic ou Échap). Ajout d'une 6e capture « Passerelles redondantes, en direct » (page Infrastructure en flux, groupe HA avec 2 passerelles edge-1/edge-2 + 1 Admin). Corrigé : `internal/landing/server.go` n'embarquait que `ui/index.html` — le dossier `ui/img` est désormais inclus dans le binaire (`go:embed`), sinon les images répondaient 404 une fois le binaire landing compilé. (Landing `0.3.3`)
+
 - **Landing 0.3.2 — Section « Captures d'écran »** : nouvelle section sur la landing page, entre « Composer son architecture » et « Installation », avec 5 captures d'une instance Admin en fonctionnement (Dashboard, assistant d'architecture, Sécurité, Automatisation, Logs d'accès en direct). Lien de nav ajouté, traductions EN/FR/ES/DE. Images statiques dans `internal/landing/ui/img/screenshots/`. (Landing `0.3.2`)
 
 ### Modifié

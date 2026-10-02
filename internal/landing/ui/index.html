@@ -391,6 +391,56 @@
       width: 100%;
       height: auto;
       border-bottom: 1px solid var(--border);
+      cursor: zoom-in;
+    }
+
+    .shot-lightbox {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 999;
+      background: rgba(15,23,42,0.88);
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      padding: 40px 20px;
+      cursor: zoom-out;
+    }
+
+    .shot-lightbox.open {
+      display: flex;
+    }
+
+    .shot-lightbox img {
+      max-width: min(1100px, 92vw);
+      max-height: 80vh;
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-lg);
+      cursor: default;
+    }
+
+    .shot-lightbox-caption {
+      color: #fff;
+      margin-top: 16px;
+      font-size: 0.9rem;
+      opacity: 0.85;
+    }
+
+    .shot-lightbox-close {
+      position: absolute;
+      top: 20px;
+      right: 28px;
+      background: none;
+      border: none;
+      color: #fff;
+      font-size: 2rem;
+      line-height: 1;
+      cursor: pointer;
+      opacity: 0.8;
+    }
+
+    .shot-lightbox-close:hover {
+      opacity: 1;
     }
 
     .shot-card-body {
@@ -1549,35 +1599,42 @@
 
     <div class="shots-grid">
       <div class="shot-card fade-in">
-        <img src="img/screenshots/dashboard.jpg" alt="GoProxify Admin — Dashboard" loading="lazy">
+        <img src="img/screenshots/dashboard.jpg" alt="GoProxify Admin — Dashboard" loading="lazy" onclick="landingOpenLightbox(this)">
         <div class="shot-card-body">
           <h3 data-i18n="shot.dashboard.title">Dashboard</h3>
           <p data-i18n="shot.dashboard.body">Fleet health, request rate and recent activity at a glance.</p>
         </div>
       </div>
       <div class="shot-card fade-in">
-        <img src="img/screenshots/architecture.jpg" alt="GoProxify Admin — Architecture assistant" loading="lazy">
+        <img src="img/screenshots/architecture.jpg" alt="GoProxify Admin — Architecture assistant" loading="lazy" onclick="landingOpenLightbox(this)">
         <div class="shot-card-body">
           <h3 data-i18n="shot.architecture.title">Architecture assistant</h3>
           <p data-i18n="shot.architecture.body">Place hosts on a board and let GoProxify turn it into a working setup.</p>
         </div>
       </div>
       <div class="shot-card fade-in">
-        <img src="img/screenshots/securite.jpg" alt="GoProxify Admin — Security" loading="lazy">
+        <img src="img/screenshots/infrastructure-ha.jpg" alt="GoProxify Admin — Infrastructure, HA group with 2 gateways" loading="lazy" onclick="landingOpenLightbox(this)">
+        <div class="shot-card-body">
+          <h3 data-i18n="shot.ha.title">Redundant gateways, live</h3>
+          <p data-i18n="shot.ha.body">Infrastructure view of an HA group — two gateways, one leader, quorum and sync tracked in real time.</p>
+        </div>
+      </div>
+      <div class="shot-card fade-in">
+        <img src="img/screenshots/securite.jpg" alt="GoProxify Admin — Security" loading="lazy" onclick="landingOpenLightbox(this)">
         <div class="shot-card-body">
           <h3 data-i18n="shot.security.title">Security</h3>
           <p data-i18n="shot.security.body">Fail2Ban, CrowdSec and WAF status, bans and posture score per gateway.</p>
         </div>
       </div>
       <div class="shot-card fade-in">
-        <img src="img/screenshots/automatisation.jpg" alt="GoProxify Admin — Automation" loading="lazy">
+        <img src="img/screenshots/automatisation.jpg" alt="GoProxify Admin — Automation" loading="lazy" onclick="landingOpenLightbox(this)">
         <div class="shot-card-body">
           <h3 data-i18n="shot.automation.title">Automation</h3>
           <p data-i18n="shot.automation.body">Rules, alert channels and a store of ready-to-install presets.</p>
         </div>
       </div>
       <div class="shot-card fade-in">
-        <img src="img/screenshots/logs.jpg" alt="GoProxify Admin — Access logs" loading="lazy">
+        <img src="img/screenshots/logs.jpg" alt="GoProxify Admin — Access logs" loading="lazy" onclick="landingOpenLightbox(this)">
         <div class="shot-card-body">
           <h3 data-i18n="shot.logs.title">Live access logs</h3>
           <p data-i18n="shot.logs.body">Every request across every proxy, filterable in real time.</p>
@@ -1586,6 +1643,12 @@
     </div>
   </div>
 </section>
+
+<div class="shot-lightbox" id="shot-lightbox" onclick="landingCloseLightbox(event)">
+  <button type="button" class="shot-lightbox-close" onclick="landingCloseLightbox(event)" aria-label="Close">&times;</button>
+  <img id="shot-lightbox-img" src="" alt="">
+  <div class="shot-lightbox-caption" id="shot-lightbox-caption"></div>
+</div>
 
 <!-- ============================================================
      INSTALLATION
@@ -2531,6 +2594,8 @@ volumes:
       'shot.dashboard.body': 'Fleet health, request rate and recent activity at a glance.',
       'shot.architecture.title': 'Architecture assistant',
       'shot.architecture.body': 'Place hosts on a board and let GoProxify turn it into a working setup.',
+      'shot.ha.title': 'Redundant gateways, live',
+      'shot.ha.body': 'Infrastructure view of an HA group — two gateways, one leader, quorum and sync tracked in real time.',
       'shot.security.title': 'Security',
       'shot.security.body': 'Fail2Ban, CrowdSec and WAF status, bans and posture score per gateway.',
       'shot.automation.title': 'Automation',
@@ -2701,6 +2766,8 @@ volumes:
       'shot.dashboard.body': 'Santé de la flotte, débit de requêtes et activité récente en un coup d’œil.',
       'shot.architecture.title': 'Assistant d’architecture',
       'shot.architecture.body': 'Placez vos hôtes sur une toile et laissez GoProxify en faire une installation fonctionnelle.',
+      'shot.ha.title': 'Passerelles redondantes, en direct',
+      'shot.ha.body': 'Vue Infrastructure d’un groupe HA — deux passerelles, un leader, quorum et synchronisation suivis en temps réel.',
       'shot.security.title': 'Sécurité',
       'shot.security.body': 'État de Fail2Ban, CrowdSec et du WAF, bans actifs et score de posture par passerelle.',
       'shot.automation.title': 'Automatisation',
@@ -2871,6 +2938,8 @@ volumes:
       'shot.dashboard.body': 'Salud de la flota, tasa de peticiones y actividad reciente de un vistazo.',
       'shot.architecture.title': 'Asistente de arquitectura',
       'shot.architecture.body': 'Coloca tus hosts en un lienzo y deja que GoProxify lo convierta en una instalación funcional.',
+      'shot.ha.title': 'Pasarelas redundantes, en vivo',
+      'shot.ha.body': 'Vista de Infraestructura de un grupo HA — dos pasarelas, un líder, quorum y sincronización en tiempo real.',
       'shot.security.title': 'Seguridad',
       'shot.security.body': 'Estado de Fail2Ban, CrowdSec y WAF, baneos activos y puntuación de postura por pasarela.',
       'shot.automation.title': 'Automatización',
@@ -3041,6 +3110,8 @@ volumes:
       'shot.dashboard.body': 'Flottenzustand, Request-Rate und aktuelle Aktivität auf einen Blick.',
       'shot.architecture.title': 'Architektur-Assistent',
       'shot.architecture.body': 'Hosts auf einer Fläche platzieren — GoProxify macht daraus eine lauffähige Installation.',
+      'shot.ha.title': 'Redundante Gateways, live',
+      'shot.ha.body': 'Infrastruktur-Ansicht einer HA-Gruppe — zwei Gateways, ein Leader, Quorum und Sync in Echtzeit.',
       'shot.security.title': 'Sicherheit',
       'shot.security.body': 'Status von Fail2Ban, CrowdSec und WAF, aktive Sperren und Posture-Score pro Gateway.',
       'shot.automation.title': 'Automatisierung',
@@ -3220,6 +3291,28 @@ volumes:
     var i = LANDING_LOCALES.indexOf(cur);
     setLoc(LANDING_LOCALES[(i + 1) % LANDING_LOCALES.length]);
   };
+
+  window.landingOpenLightbox = function(imgEl) {
+    var box = document.getElementById('shot-lightbox');
+    var boxImg = document.getElementById('shot-lightbox-img');
+    var caption = document.getElementById('shot-lightbox-caption');
+    if (!box || !boxImg) return;
+    boxImg.src = imgEl.src;
+    boxImg.alt = imgEl.alt;
+    if (caption) caption.textContent = imgEl.alt;
+    box.classList.add('open');
+    document.body.style.overflow = 'hidden';
+  };
+  window.landingCloseLightbox = function(ev) {
+    if (ev && ev.target && ev.target.id === 'shot-lightbox-img') return;
+    var box = document.getElementById('shot-lightbox');
+    if (!box) return;
+    box.classList.remove('open');
+    document.body.style.overflow = '';
+  };
+  document.addEventListener('keydown', function(ev) {
+    if (ev.key === 'Escape') window.landingCloseLightbox();
+  });
 
   function applyDisplayVersion(vers) {
     if (!vers || !vers.admin) return;

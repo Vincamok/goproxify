@@ -17,7 +17,7 @@ import (
 	"github.com/vincamok/goproxify/internal/config"
 )
 
-//go:embed ui/index.html
+//go:embed ui/index.html ui/img
 var uiFiles embed.FS
 
 // Server sert la page de présentation statique.
