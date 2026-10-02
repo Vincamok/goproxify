@@ -22,6 +22,8 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 - **Landing 0.3.2 — Section « Captures d'écran »** : nouvelle section sur la landing page, entre « Composer son architecture » et « Installation », avec 5 captures d'une instance Admin en fonctionnement (Dashboard, assistant d'architecture, Sécurité, Automatisation, Logs d'accès en direct). Lien de nav ajouté, traductions EN/FR/ES/DE. Images statiques dans `internal/landing/ui/img/screenshots/`. (Landing `0.3.2`)
 
 ### Modifié
+- **Admin 0.73.3 — Topologie en flux : l'agent pointe sur son groupe HA et s'aligne sur sa cible** : un agent dont la cible est un groupe HA est désormais relié au cadre du groupe (et non à sa première passerelle), et chaque agent se cale verticalement sur sa passerelle / son groupe. Interface uniquement. (Admin `0.73.3`)
+
 - **Admin 0.73.2 — Icônes sur les actions du panneau « Passerelle sélectionnée »** : chaque bouton (Proxy, Paramètres, Configuration, Mettre à jour, Rollback, Supprimer, et ceux du panneau agent) porte une icône ; « Trafic » devient « Proxy ». Interface uniquement. (Admin `0.73.2`)
 
 - **Edge 0.18.0 — Interrupteurs de benchmark et défaut `access_log`** : nouveaux réglages `engine.metrics_disabled` et `engine.access_log_disabled` (`edge.json` ou `GPX_ENGINE_METRICS_DISABLED` / `GPX_ENGINE_ACCESS_LOG_DISABLED`, défaut `false`) pour mesurer le coût du chemin chaud sans métriques par requête ni log d'accès global (à éviter en production : plus de Prism/Logs ni de signal Fail2Ban issu du log). Corrigé : un bloc `logging` de route sans clé `access_log` désactivait silencieusement le log d'accès (booléen à `false`), contrairement au défaut documenté `true`. (Edge `0.18.0`)

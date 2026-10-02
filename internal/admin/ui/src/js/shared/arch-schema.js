@@ -295,14 +295,19 @@ function _asFlowHTML(model, o) {
     if (!members.length) return '';
     members.forEach(x => grouped.add(x.s.id));
     const up = members.filter(x => _asState(x.s) === 'ok').length;
-    return `<div class="as-fl-ha"><span class="as-fl-ha-tag">${esc(t('as.flow.ha', { id: g.id, up, n: members.length }))}</span>${members.map(node).join('')}</div>`;
+    return `<div class="as-fl-ha" data-lk="ha:${esc(g.id)}"><span class="as-fl-ha-tag">${esc(t('as.flow.ha', { id: g.id, up, n: members.length }))}</span>${members.map(node).join('')}</div>`;
   }).join('');
   const loose = edges.filter(x => !grouped.has(x.s.id)).map(node).join('');
 
   const links = edges.map(x => ({ from: 'inet', to: x.s.id, k: 'u' }));
   for (const x of agents) {
-    const tgt = _asAgentTarget(model, x);
-    if (tgt) links.push({ from: x.s.id, to: tgt.s.id, k: _asState(x.s) === 'ok' ? 'w' : 'x' });
+    const k = _asState(x.s) === 'ok' ? 'w' : 'x';
+    const tid = x.s.targetEdgeId || '';
+    if (_asAgentGroupTargets(model, x).length) links.push({ from: x.s.id, to: 'ha:' + tid.slice('group:'.length), k, align: true });
+    else {
+      const tgt = _asAgentTarget(model, x);
+      if (tgt) links.push({ from: x.s.id, to: tgt.s.id, k, align: true });
+    }
   }
   if (admin && edges.length) links.push({ from: admin.s.id, to: 'gw', k: 'm' });
   window._asLinks = links;
@@ -338,6 +343,16 @@ function asDrawLinks() {
   };
   const find = id => flow.querySelector(`[data-lk="${CSS.escape(id)}"]`);
   const curveX = (x1, y1, x2, y2) => { const m = (x1 + x2) / 2; return `M${x1} ${y1} C${m} ${y1} ${m} ${y2} ${x2} ${y2}`; };
+  // Chaque agent se cale verticalement sur sa cible (passerelle ou groupe HA).
+  const agentLinks = window._asLinks.filter(lk => lk.align);
+  agentLinks.forEach(lk => { const a = find(lk.from); if (a) a.style.marginTop = ''; });
+  for (const lk of agentLinks) {
+    const a = find(lk.from), b = find(lk.to);
+    if (!a || !b) continue;
+    const A = rect(a), B = rect(b);
+    const delta = B.cy - A.cy;
+    if (delta > 1) a.style.marginTop = Math.round(delta) + 'px';
+  }
   const paths = window._asLinks.map(lk => {
     const a = find(lk.from), b = find(lk.to);
     if (!a || !b) return '';
@@ -349,7 +364,8 @@ function asDrawLinks() {
     return `<path class="as-ln" data-k="${lk.k}" d="${d}"></path>`;
   }).join('');
   const marker = k => `<marker id="as-mk-${k}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="as-mk" data-k="${k}" d="M0 0L10 5L0 10z"></path></marker>`;
-  svg.setAttribute('viewBox', `0 0 ${box.width} ${box.height}`);
+  const fb = flow.getBoundingClientRect();
+  svg.setAttribute('viewBox', `0 0 ${fb.width} ${fb.height}`);
   svg.innerHTML = `<defs>${marker('u')}${marker('w')}${marker('x')}</defs>${paths}`;
 }
 
