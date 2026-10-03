@@ -89,3 +89,22 @@ func TestFormatBansImport(t *testing.T) {
 		t.Errorf("import réel :\n%s", out)
 	}
 }
+
+func TestBansScopeFlag(t *testing.T) {
+	p, err := bansAddPayload(map[string]string{"-ip": "203.0.113.5", "-scope": "group:ha-1"}, time.Now())
+	if err != nil || p["target_scope"] != "group:ha-1" {
+		t.Fatalf("add : %v %v", p, err)
+	}
+	if p, _ := bansAddPayload(map[string]string{"-ip": "203.0.113.5"}, time.Now()); p["target_scope"] != nil {
+		t.Fatalf("portée absente : %v", p)
+	}
+	if got := bansListPath(map[string]string{"-scope": "paris"}); got != "/api/v1/security/bans?scope=paris" {
+		t.Fatalf("liste : %s", got)
+	}
+	if p, _ := bansImportPayload("x", map[string]string{"-scope": "paris"}, time.Now()); p["scope"] != "paris" {
+		t.Fatalf("import : %v", p)
+	}
+	if got := bansEdgeSuffix(map[string]any{"edge_name": "a", "target_scope": "group:g"}); got != "  [a]  → group:g" {
+		t.Fatalf("suffixe : %q", got)
+	}
+}

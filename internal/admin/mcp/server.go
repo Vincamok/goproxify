@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/vincamok/goproxify/internal/admin/alerting"
+	"github.com/vincamok/goproxify/internal/admin/api"
 	"github.com/vincamok/goproxify/internal/admin/archstore"
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
@@ -58,6 +59,8 @@ type Handler struct {
 	ListAgents   func() []AgentInfo
 	ApproveAgent func(agentID string)
 	RevokeAgent  func(agentID string)
+	// Groups (optionnel) — groupes HA, pour valider la portée « group:<nom> » d'un ban.
+	Groups api.GroupResolver
 	// OnBansChange (optionnel) — push_bans vers les passerelles après create/delete ban.
 	OnBansChange func()
 	// OnUnban (optionnel) — lève les bans d'une IP sur les passerelles, y compris ceux qu'elles ont posés
@@ -405,6 +408,7 @@ var tools = []map[string]any{
 			opt("reason", "string", "Motif du ban"),
 			opt("domain", "string", "Domaine ciblé (vide = global)"),
 			opt("expires_at", "string", "Expiration RFC3339 ; omit = permanent"),
+			opt("scope", "string", "Passerelles qui appliquent le ban : nom d'une passerelle ou group:<nom> d'un groupe HA ; omis = toutes"),
 		),
 	},
 	{
@@ -1745,7 +1749,7 @@ func (h *Handler) toolListSecurityBans(r *http.Request, args map[string]any) (an
 		where = " WHERE " + strings.Join(clauses, " AND ")
 	}
 	rows, err := h.DB.QueryContext(r.Context(),
-		`SELECT id, ip, domain, reason, source, edge_name, expires_at, created_at FROM security_bans`+where+
+		`SELECT id, ip, domain, reason, source, edge_name, target_scope, expires_at, created_at FROM security_bans`+where+
 			` ORDER BY created_at DESC LIMIT 200`, qargs...)
 	if err != nil {
 		return nil, err
@@ -1753,15 +1757,15 @@ func (h *Handler) toolListSecurityBans(r *http.Request, args map[string]any) (an
 	defer rows.Close()
 	var out []map[string]any
 	for rows.Next() {
-		var id, ip, domain, reason, source, edgeName string
+		var id, ip, domain, reason, source, edgeName, scope string
 		var exp sql.NullString
 		var createdAt string
-		if err := rows.Scan(&id, &ip, &domain, &reason, &source, &edgeName, &exp, &createdAt); err != nil {
+		if err := rows.Scan(&id, &ip, &domain, &reason, &source, &edgeName, &scope, &exp, &createdAt); err != nil {
 			continue
 		}
 		item := map[string]any{
 			"id": id, "ip": ip, "domain": domain, "reason": reason,
-			"source": source, "edge_name": edgeName, "created_at": createdAt,
+			"source": source, "edge_name": edgeName, "target_scope": scope, "created_at": createdAt,
 		}
 		if exp.Valid {
 			item["expires_at"] = exp.String
@@ -1789,10 +1793,15 @@ func (h *Handler) toolCreateSecurityBan(r *http.Request, args map[string]any) (a
 	if err != nil {
 		return nil, err
 	}
+	rawScope, _ := args["scope"].(string)
+	scope, err := api.NormalizeBanScope(h.DB, h.Groups, rawScope)
+	if err != nil {
+		return nil, err
+	}
 	id := uuid.New().String()
 	_, err = h.DB.ExecContext(r.Context(),
-		`INSERT INTO security_bans (id, ip, domain, reason, source, expires_at) VALUES (?, ?, ?, ?, 'native', ?)`,
-		id, ip, domain, reason, exp)
+		`INSERT INTO security_bans (id, ip, domain, reason, source, expires_at, target_scope) VALUES (?, ?, ?, ?, 'native', ?, ?)`,
+		id, ip, domain, reason, exp, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -1800,7 +1809,7 @@ func (h *Handler) toolCreateSecurityBan(r *http.Request, args map[string]any) (a
 	if h.OnBansChange != nil {
 		h.OnBansChange()
 	}
-	return map[string]any{"id": id, "ip": ip, "permanent": expiresAt == ""}, nil
+	return map[string]any{"id": id, "ip": ip, "permanent": expiresAt == "", "scope": scope}, nil
 }
 
 func (h *Handler) toolDeleteSecurityBan(r *http.Request, id string) (any, error) {

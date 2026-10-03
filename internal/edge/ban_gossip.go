@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/vincamok/goproxify/internal/edge/bansdb"
@@ -91,11 +92,26 @@ func (s *Server) syncBansFromPeer(ctx context.Context, client *http.Client, p pr
 		if t, ok := unbans[r.IP]; ok && !r.CreatedAt.After(t) {
 			continue
 		}
-		list = append(list, router.RuntimeBan{ID: r.ID, IP: r.IP, Reason: r.Reason, Source: r.Source, ExpiresAt: r.ExpiresAt})
+		list = append(list, router.RuntimeBan{ID: r.ID, IP: r.IP, Reason: r.Reason, Source: r.Source, Scope: r.Scope, ExpiresAt: r.ExpiresAt})
 	}
 	if n := s.mergePeerBans(list); n > 0 {
 		s.log.Info("bans: rattrapés auprès d'une passerelle pair", "pair", p.Name, "count", n)
 	}
+}
+
+// banScopeApplies dit si un ban visant `scope` (nom de passerelle ou "group:<nom>", vide = toutes) concerne
+// cette passerelle. Les pairs se partagent leurs bans, mais un ban limité à une passerelle ou à un groupe
+// ne doit pas être adopté par les autres.
+func (s *Server) banScopeApplies(scope string) bool {
+	if scope == "" || scope == s.cfg.Identity.NodeName {
+		return true
+	}
+	if group, ok := strings.CutPrefix(scope, "group:"); ok && s.portal != nil {
+		if g, _, _, has := s.portal.HAGroupInfo(); has && g == group {
+			return true
+		}
+	}
+	return false
 }
 
 // mergePeerBans ajoute les bans non expirés que la passerelle ne connaît pas (même identifiant ou même IP).
@@ -116,10 +132,13 @@ func (s *Server) mergePeerBans(list []router.RuntimeBan) int {
 		if b.IP == "" || b.ID == "" || known[b.ID] || known["ip:"+b.IP] {
 			continue
 		}
+		if !s.banScopeApplies(b.Scope) {
+			continue
+		}
 		if b.ExpiresAt != nil && !b.ExpiresAt.After(now) {
 			continue
 		}
-		if err := s.bansDB.UpsertBan(b.ID, b.IP, "", b.Reason, b.Source, b.ExpiresAt); err != nil {
+		if err := s.bansDB.UpsertScopedBan(b.ID, b.IP, "", b.Reason, b.Source, b.Scope, b.ExpiresAt); err != nil {
 			s.log.Warn("bans: persistance d'un ban de pair échouée", "err", err)
 			continue
 		}

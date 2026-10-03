@@ -834,6 +834,10 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/api/v1/acme/providers/", adminOnly(acmeProvidersH))
 
 	// MCP server — PAT utilisateur uniquement (pas de JWT session)
+	var banGroups api.GroupResolver
+	if archStore != nil {
+		banGroups = api.NewGroupResolver(archStore, s.db)
+	}
 	mcpH := &mcp.Handler{
 		ProxyMetrics: func(points int) (any, any) { return proxyMetricsH.Snapshot(points) },
 		ArchStore:    archStore,
@@ -863,6 +867,7 @@ func (s *Server) Start(ctx context.Context) error {
 		OnUnban:      pushUnban,
 		OnWhitelistChange: pushIPProfiles,
 		RulesEngine:  s.rulesEngine,
+		Groups:       banGroups,
 		Scheduler:    s.schedEngine,
 		Playbooks:    s.pbEngine,
 		CertDeployer: certDeployer,

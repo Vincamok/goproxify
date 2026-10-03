@@ -35,7 +35,7 @@ func TestLoadActiveBansSkipsBansExpiredAMinuteAgo(t *testing.T) {
 		}
 	}
 
-	list, err := NewManager("", db, slog.Default()).loadActiveBans(context.Background())
+	list, err := NewManager("", db, slog.Default()).loadActiveBans(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -41,3 +41,22 @@ func TestBanToolsValidateExpiresAt(t *testing.T) {
 		t.Errorf("%d ban(s) créé(s) avec une expiration invalide", n)
 	}
 }
+
+func TestCreateSecurityBanScope(t *testing.T) {
+	h := setupMCPDB(t)
+	r := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	if _, err := h.DB.Exec(`INSERT INTO tokens (id, token, role, node_name) VALUES ('tok-1', 's', 'edge', 'paris')`); err != nil {
+		t.Fatal(err)
+	}
+	res, err := h.toolCreateSecurityBan(r, map[string]any{"ip": "203.0.113.50", "scope": "tok-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var scope string
+	if err := h.DB.QueryRow(`SELECT target_scope FROM security_bans WHERE id=?`, res.(map[string]any)["id"]).Scan(&scope); err != nil || scope != "paris" {
+		t.Fatalf("target_scope=%q (%v), attendu paris", scope, err)
+	}
+	if _, err := h.toolCreateSecurityBan(r, map[string]any{"ip": "203.0.113.51", "scope": "inconnue"}); err == nil {
+		t.Error("portée inconnue acceptée")
+	}
+}

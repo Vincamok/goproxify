@@ -544,6 +544,7 @@ Crée un ban IP natif (**permanent** si `expires_at` omis) et pousse les bans au
 | `reason`      | string | —      | Motif                               |
 | `domain`      | string | —      | Domaine ciblé (vide = global)       |
 | `expires_at`  | string | —      | Expiration RFC3339, enregistrée en UTC ; omis = permanent ; date illisible → erreur |
+| `scope`       | string | —      | Passerelles qui appliquent le ban : nom d'une passerelle ou `group:<nom>` d'un groupe HA ; omis = toutes ; inconnu → erreur |
 
 **Scope :** `security:write`
 
@@ -574,6 +575,7 @@ Importe une liste d'adresses IP et de CIDR : crée des bans natifs, ou des entr�
 | `reason`     | string  | —      | Motif des bans (ou commentaire des entrées) sans motif propre ; défaut `import` |
 | `domain`     | string  | —      | Domaine ciblé par les bans sans domaine propre (vide = global) |
 | `expires_at` | string  | —      | Expiration RFC3339 des bans sans expiration propre ; omis = permanents |
+| `scope`      | string  | —      | Passerelles qui appliquent les bans : nom d'une passerelle ou `group:<nom>` ; omis = toutes |
 | `dry_run`    | boolean | —      | `true` : analyser sans rien créer |
 
 **Scope :** `security:write` †  

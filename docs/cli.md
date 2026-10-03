@@ -720,11 +720,11 @@ goproxify security threat simulate -file <threat-config.json> [-hours N] [-domai
 # -edge : pour une passerelle membre d'un groupe HA, la config lue/écrite est celle du groupe (poussée à tous les membres)
 
 # Bans
-goproxify security bans list   [-edge <passerelle>] [-source <source>] [-active true|false] [-admin-url …] [-token …]
-goproxify security bans add    -ip <ip|cidr> [-reason <raison>] [-ttl <durée>] [-admin-url …] [-token …]
+goproxify security bans list   [-edge <passerelle>] [-source <source>] [-active true|false] [-scope <passerelle|group:nom>] [-admin-url …] [-token …]
+goproxify security bans add    -ip <ip|cidr> [-reason <raison>] [-ttl <durée>] [-scope <passerelle|group:nom>] [-admin-url …] [-token …]
 goproxify security bans preview -ip <ip|cidr> [-hours N] [-json] [-admin-url …] [-token …]   # impact d'un ban avant de le créer
 goproxify security bans whitelist list|add|delete [-ip <ip|cidr>] [-comment <texte>] [-admin-url …] [-token …]   # liste blanche des bans
-goproxify security bans import -file <chemin|-> [-format auto|text|csv|json] [-target bans|whitelist] [-reason …] [-domain …] [-ttl …] [-dry-run] [-json] [-admin-url …] [-token …]
+goproxify security bans import -file <chemin|-> [-format auto|text|csv|json] [-target bans|whitelist] [-reason …] [-domain …] [-ttl …] [-scope <passerelle|group:nom>] [-dry-run] [-json] [-admin-url …] [-token …]
 goproxify security bans delete -id <ban-id> [-admin-url …] [-token …]
 
 # Parcours d'une IP ou d'un CIDR
@@ -788,6 +788,8 @@ goproxify security bans import -file blocklist.txt -dry-run
 goproxify security bans import -file blocklist.txt -reason "blocklist.de" -ttl 30d
 curl -s https://lists.blocklist.de/lists/ssh.txt | goproxify security bans import -file - -ttl 7d
 goproxify security bans add -ip 203.0.113.0/24 -reason "scanner" -ttl 7d
+goproxify security bans add -ip 198.51.100.7 -scope paris          # appliqué par la seule passerelle « paris »
+goproxify security bans add -ip 198.51.100.7 -scope group:ha-1     # appliqué par les membres du groupe HA ha-1
 goproxify security bans delete -id <ban-id>
 
 goproxify security waf get -proxy app.example.fr

@@ -16,6 +16,8 @@ type RuntimeBan struct {
 	Reason    string     `json:"reason,omitempty"`
 	Source    string     `json:"source,omitempty"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	// Scope : passerelles visées par un ban de l'Admin (nom de la passerelle ou "group:<nom>") ; vide = toutes.
+	Scope string `json:"scope,omitempty"`
 
 	ip   net.IP
 	ipnet *net.IPNet

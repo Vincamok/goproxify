@@ -35,6 +35,9 @@ function bnTime(s) {
 
 const bnExpiry = b => bnTime(b.expires_at);
 const bnEdge = name => _bn.edgeNames.get(name) || name;
+const bnScopeLabel = scope => scope.startsWith('group:') ? t('security.ban_modal.scope_group', { name: scope.slice(6) }) : bnEdge(scope);
+const bnScopeTag = b => b.target_scope
+  ? ` <span class="tag tag-yellow" title="${esc(t('security.ban_scope_title', { scope: bnScopeLabel(b.target_scope) }))}">→ ${esc(bnScopeLabel(b.target_scope))}</span>` : '';
 const bnSrc = b => String(b.source || 'native').split(':')[0];
 
 function bnRemaining(ms) {
@@ -263,7 +266,7 @@ function bnRowHTML(b) {
     <td class="bn-c-sel"><input type="checkbox" ${_bn.sel.has(b.id) ? 'checked' : ''} onchange="bnToggle('${id}',this.checked)" aria-label="Sélectionner ${ip}"></td>
     <td class="mono bn-c-ip">${ip}${rec ? ` <span class="tag tag-yellow" title="${rec} bans sur l'historique">×${rec}</span>` : ''}${b.exempt ? ' <span class="tag tag-green" title="Entièrement couvert par la liste blanche : ce ban ne s\'applique pas">Exempté</span>' : ''}</td>
     <td data-label="Source"><span class="tag tag-neutral"><i class="sent-dot" style="background:${BN_SRC_COLORS[bnSrc(b)] || 'var(--text3)'};margin-right:5px"></i>${esc(_secSourceLabel(bnSrc(b)))}</span></td>
-    ${admin ? `<td data-label="Passerelle" style="font-size:12px">${b.edge_name ? esc(bnEdge(b.edge_name)) : '<span class="tag tag-neutral">Global</span>'}</td>` : `<td data-label="Domaine" style="color:var(--text2)">${esc(b.domain || '—')}</td>`}
+    ${admin ? `<td data-label="Passerelle" style="font-size:12px">${b.edge_name ? esc(bnEdge(b.edge_name)) : '<span class="tag tag-neutral">Global</span>'}${bnScopeTag(b)}</td>` : `<td data-label="Domaine" style="color:var(--text2)">${esc(b.domain || '—')}</td>`}
     <td data-label="Raison" style="color:var(--text2);font-size:12px;max-width:260px" title="${esc(b.reason || '')}">${esc(b.reason || '—')}</td>
     <td data-label="Restant">${bnTtlCell(b)}</td>
     <td class="bn-actions">
@@ -314,7 +317,7 @@ function bnHistoryTableHTML() {
     <tbody>${list.map(b => `<tr>
       <td class="mono bn-c-ip">${esc(b.ip)}</td>
       <td data-label="Source"><span class="tag tag-neutral">${esc(_secSourceLabel(bnSrc(b)))}</span></td>
-      ${admin ? `<td data-label="Passerelle" style="font-size:12px">${b.edge_name ? esc(bnEdge(b.edge_name)) : '<span class="tag tag-neutral">Global</span>'}</td>` : `<td data-label="Domaine" style="color:var(--text2)">${esc(b.domain || '—')}</td>`}
+      ${admin ? `<td data-label="Passerelle" style="font-size:12px">${b.edge_name ? esc(bnEdge(b.edge_name)) : '<span class="tag tag-neutral">Global</span>'}${bnScopeTag(b)}</td>` : `<td data-label="Domaine" style="color:var(--text2)">${esc(b.domain || '—')}</td>`}
       <td data-label="Raison" style="color:var(--text2);font-size:12px">${esc(b.reason || '—')}</td>
       <td data-label="Expiré le" style="font-size:11px">${fmtDate(b.expires_at)}</td>
       <td data-label="Créé le" style="font-size:11px;color:var(--text3)">${fmtDate(b.created_at)}</td></tr>`).join('')}</tbody></table></div>`;
@@ -326,6 +329,7 @@ function bnListCardHTML() {
       <div class="sec-bans-toolbar-row">
         <input id="bn-search" class="input search-input" placeholder="IP, domaine, raison…" value="${esc(_bn.q)}" oninput="bnSearch(this.value)" style="max-width:260px">
         ${bnEdgeSelectHTML()}
+        <span id="bn-views" style="display:inline-flex;gap:6px;align-items:center">${bnViewsHTML()}</span>
         <span id="bn-count" class="sec-bans-count" style="margin-left:auto"></span>
       </div>
       <div class="sec-bans-toolbar-row" id="bn-chips"></div>
@@ -355,6 +359,76 @@ function bnPaint() {
   if (bulk) bulk.innerHTML = bnBulkHTML();
   body.innerHTML = bnActiveTableHTML();
 }
+
+// ── Filtres enregistrés ───────────────────────────────────────────────────────
+// Combinaisons de filtres (recherche, source, expiration, passerelle, tri) gardées dans ce navigateur,
+// séparément pour l'Admin et pour chaque menu de passerelle.
+
+const BN_VIEW_KEYS = ['q', 'src', 'exp', 'edge', 'sort'];
+const bnViewsStore = () => 'gpx.bans.views.' + (_bn.mode || 'admin');
+
+function bnViewsLoad() {
+  try {
+    const v = JSON.parse(localStorage.getItem(bnViewsStore()) || '[]');
+    return Array.isArray(v) ? v.filter(x => x && typeof x.name === 'string' && x.filter) : [];
+  } catch { return []; }
+}
+
+function bnViewsSave(list) {
+  try { localStorage.setItem(bnViewsStore(), JSON.stringify(list)); } catch { /* stockage indisponible */ }
+}
+
+function bnViewsHTML() {
+  const views = bnViewsLoad();
+  const cur = _bn.view || '';
+  const sel = views.length
+    ? `<select class="input" style="height:30px;width:auto;font-size:12px;padding:0 8px" onchange="bnViewApply(this.value)" aria-label="Filtres enregistrés">
+        <option value="">Filtres enregistrés…</option>
+        ${views.map(v => `<option value="${esc(v.name)}"${v.name === cur ? ' selected' : ''}>${esc(v.name)}</option>`).join('')}</select>`
+    : '';
+  const del = cur ? `<button type="button" class="btn btn-ghost btn-sm" onclick="bnViewDelete()" title="Supprimer ce filtre enregistré">Supprimer</button>` : '';
+  return sel + `<button type="button" class="btn btn-ghost btn-sm" onclick="bnViewSave()" title="Enregistrer les filtres actuels">Enregistrer</button>` + del;
+}
+
+function bnViewsRepaint() {
+  const box = document.getElementById('bn-views');
+  if (box) box.innerHTML = bnViewsHTML();
+}
+
+window.bnViewSave = function() {
+  if (!['q', 'src', 'exp', 'edge'].some(k => _bn[k])) { toast('Aucun filtre actif à enregistrer', 'error'); return; }
+  const name = (prompt('Nom du filtre enregistré') || '').trim().slice(0, 40);
+  if (!name) return;
+  const filter = Object.fromEntries(BN_VIEW_KEYS.map(k => [k, _bn[k]]));
+  const list = bnViewsLoad().filter(v => v.name !== name);
+  list.push({ name, filter });
+  list.sort((a, b) => a.name.localeCompare(b.name));
+  bnViewsSave(list);
+  _bn.view = name;
+  bnViewsRepaint();
+  toast('Filtre « ' + name + ' » enregistré', 'success');
+};
+
+window.bnViewApply = function(name) {
+  const v = bnViewsLoad().find(x => x.name === name);
+  _bn.view = v ? name : '';
+  if (v) {
+    for (const k of BN_VIEW_KEYS) _bn[k] = v.filter[k] ?? (k === 'sort' ? 'created_desc' : '');
+    const search = document.getElementById('bn-search');
+    if (search) search.value = _bn.q;
+    const edge = document.getElementById('bn-edge');
+    if (edge) edge.value = _bn.edge;
+  }
+  bnViewsRepaint();
+  bnRefilter();
+};
+
+window.bnViewDelete = function() {
+  if (!_bn.view) return;
+  bnViewsSave(bnViewsLoad().filter(v => v.name !== _bn.view));
+  _bn.view = '';
+  bnViewsRepaint();
+};
 
 // ── Actions ───────────────────────────────────────────────────────────────────
 
@@ -520,17 +594,21 @@ window.openBanImport = function() {
     <div style="display:flex;gap:10px;flex-wrap:wrap">
       <div class="field" style="flex:1;min-width:160px;margin:0"><label class="field-label" id="imp-reason-label">Motif par défaut</label><input id="imp-reason" class="input" placeholder="import"></div>
       <div class="field" id="imp-exp-box" style="flex:1;min-width:190px;margin:0"><label class="field-label">Expire le (optionnel, vide = permanent)</label><input id="imp-exp" type="datetime-local" class="input"></div>
+      <div class="field" id="imp-scope-box" style="flex:1;min-width:190px;margin:0"><label class="field-label">${t('security.ban_modal.scope')}</label><select id="imp-scope" class="input"><option value="">${esc(t('security.ban_modal.scope_all'))}</option></select></div>
     </div>
     <div id="imp-result" style="margin-top:12px"></div>`,
     `<button class="btn btn-secondary" onclick="closeModal();reloadCurrentSecurityPage()">Fermer</button>
      <button class="btn btn-secondary" onclick="bnImportRun(true)">Analyser</button>
      <button class="btn btn-danger" onclick="bnImportRun(false)">Importer</button>`, true);
+  window.fillBanScopes?.('imp-scope');
 };
 
 window.bnImportTarget = function() {
   const wl = document.querySelector('input[name="imp-target"]:checked')?.value === 'whitelist';
   const box = document.getElementById('imp-exp-box');
   if (box) box.style.display = wl ? 'none' : '';
+  const scopeBox = document.getElementById('imp-scope-box');
+  if (scopeBox) scopeBox.style.display = wl ? 'none' : '';
   const label = document.getElementById('imp-reason-label');
   if (label) label.textContent = wl ? 'Commentaire par défaut' : 'Motif par défaut';
 };
@@ -561,6 +639,8 @@ window.bnImportRun = async function(dry) {
   const body = { content, target, dry_run: dry, reason: document.getElementById('imp-reason')?.value.trim() || '' };
   const exp = document.getElementById('imp-exp')?.value;
   if (exp && target === 'bans') body.expires_at = new Date(exp).toISOString();
+  const scope = document.getElementById('imp-scope')?.value;
+  if (scope && target === 'bans') body.scope = scope;
   if (box) box.innerHTML = '<div style="font-size:12.5px;color:var(--text3)">…</div>';
   try {
     const r = await api('POST', '/security/bans/import', body);

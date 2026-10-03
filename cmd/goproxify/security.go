@@ -51,11 +51,11 @@ goproxify security threat set  [-edge <id>] -file <config.json> [-admin-url …]
 goproxify security threat simulate -file <config.json> [-hours N] [-domain <d>] [-edge <id>]
 
 goproxify security bans list   [-admin-url …] [-token …]
-goproxify security bans add    -ip <ip|cidr> [-reason <raison>] [-ttl <durée>] [-admin-url …] [-token …]
+goproxify security bans add    -ip <ip|cidr> [-reason <raison>] [-ttl <durée>] [-scope <passerelle|group:nom>] [-admin-url …] [-token …]
 goproxify security bans preview -ip <ip|cidr> [-hours N] [-json] [-admin-url …] [-token …]   # impact d'un ban avant de le créer
 goproxify security bans delete -id <ban-id> [-admin-url …] [-token …]
 goproxify security bans whitelist list|add|delete [-ip <ip|cidr>] [-comment <texte>] [-admin-url …] [-token …]   # liste blanche des bans
-goproxify security bans import -file <chemin|-> [-format auto|text|csv|json] [-target bans|whitelist] [-reason …] [-domain …] [-ttl …] [-dry-run] [-json] [-admin-url …] [-token …]
+goproxify security bans import -file <chemin|-> [-format auto|text|csv|json] [-target bans|whitelist] [-reason …] [-domain …] [-ttl …] [-scope <passerelle|group:nom>] [-dry-run] [-json] [-admin-url …] [-token …]
 
 goproxify security trace -target <ip|cidr> [-from <date>] [-to <date>] [-order asc|desc] [-limit N] [-offset N] [-json] [-admin-url …] [-token …]
 
@@ -221,6 +221,9 @@ func bansAddPayload(args map[string]string, now time.Time) (map[string]any, erro
 	if r := flagValue(args, "-reason", ""); r != "" {
 		payload["reason"] = r
 	}
+	if sc := flagValue(args, "-scope", ""); sc != "" {
+		payload["target_scope"] = sc
+	}
 	if ttl := flagValue(args, "-ttl", ""); ttl != "" {
 		d, err := parseDurationDays(ttl)
 		if err != nil || d <= 0 {
@@ -234,7 +237,7 @@ func bansAddPayload(args map[string]string, now time.Time) (map[string]any, erro
 // bansListPath ajoute les filtres -edge, -source et -active (true|false) à la liste des bans.
 func bansListPath(args map[string]string) string {
 	q := url.Values{}
-	for flag, param := range map[string]string{"-edge": "edge", "-source": "source", "-active": "active"} {
+	for flag, param := range map[string]string{"-edge": "edge", "-source": "source", "-active": "active", "-scope": "scope"} {
 		if v := flagValue(args, flag, ""); v != "" {
 			q.Set(param, v)
 		}
@@ -249,7 +252,7 @@ func bansListPath(args map[string]string) string {
 // options. -ttl (durée Go ou « 7d ») devient l'expiration par défaut des bans, comme pour « bans add ».
 func bansImportPayload(content string, args map[string]string, now time.Time) (map[string]any, error) {
 	payload := map[string]any{"content": content}
-	for flag, key := range map[string]string{"-format": "format", "-target": "target", "-reason": "reason", "-domain": "domain"} {
+	for flag, key := range map[string]string{"-format": "format", "-target": "target", "-reason": "reason", "-domain": "domain", "-scope": "scope"} {
 		if v := flagValue(args, flag, ""); v != "" {
 			payload[key] = v
 		}
@@ -479,10 +482,14 @@ func formatBanPreview(res map[string]any) string {
 }
 
 func bansEdgeSuffix(b map[string]any) string {
+	out := ""
 	if edge, _ := b["edge_name"].(string); edge != "" {
-		return "  [" + edge + "]"
+		out = "  [" + edge + "]"
 	}
-	return ""
+	if scope, _ := b["target_scope"].(string); scope != "" {
+		out += "  → " + scope
+	}
+	return out
 }
 
 func runSecurityBans() {

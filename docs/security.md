@@ -313,6 +313,12 @@ Chaque entrée est validée comme un ban unitaire ([plages CIDR](#bans-par-plage
 
 **Analyser avant d'importer** : `dry_run` (bouton « Analyser », `-dry-run`) produit le même rapport sans rien écrire. L'import réel crée les bans en une transaction (historique alimenté, import audité) puis les pousse **une seule fois** aux passerelles. Ils sont de source `native` : visibles, prolongeables et supprimables comme n'importe quel ban manuel ; un import répété est sans effet (tout est « déjà couvert »). Une liste publique importée ne se met pas à jour toute seule : pour un abonnement automatique à un flux, utiliser un profil IP à source distante (page Profils IP).
 
+### Ban ciblant une passerelle ou un groupe
+
+Par défaut un ban s'applique sur **toutes** les passerelles. Le champ « S'applique à » du formulaire Bannir et de l'import (`target_scope` côté API, `-scope` en CLI, `scope` pour les outils MCP `create_security_ban` et `import_security_bans`) le limite à **une passerelle** (par son nom) ou aux **membres d'un groupe HA** (`group:<nom>`). L'Admin n'envoie à chaque passerelle que les bans globaux, ceux qui la visent et ceux de son groupe ; une portée inconnue est refusée. Les passerelles pairs se partagent aussi leurs bans entre elles quand l'Admin est injoignable : la portée est conservée avec le ban, et une passerelle n'adopte d'un pair que les bans globaux, ceux qui la visent ou ceux de son groupe HA. La liste des bans affiche la portée (pastille « → … ») et se filtre par `?scope=`.
+
+Limites : la portée se choisit à la création (pour la changer, supprimer le ban et le recréer) ; les bans posés par une passerelle (Fail2Ban, Sentinel, règles) restent partagés avec toutes les autres comme avant ; un déban lève l'adresse sur toutes les passerelles, puis chacune reçoit de nouveau ses propres bans restants.
+
 ### Liste blanche des bans
 
 Page Bans › **Liste blanche** (API `GET|POST|DELETE /security/bans/whitelist`, CLI `security bans whitelist`, outils MCP `list_ban_whitelist` / `add_ban_whitelist` / `remove_ban_whitelist`). Une adresse ou une plage CIDR en liste blanche :

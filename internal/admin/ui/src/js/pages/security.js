@@ -1858,10 +1858,27 @@ window.openBanModal = function() {
      <div id="ban-preview"></div>
      <div class="field"><label class="field-label">${t('security.ban_modal.domain')}</label><input id="ban-domain" class="input" placeholder="${t('security.ban_modal.domain_ph')}"></div>
      <div class="field"><label class="field-label">${t('security.ban_modal.reason')}</label><input id="ban-reason" class="input" placeholder="${t('security.ban_modal.reason_ph')}"></div>
-     <div class="field"><label class="field-label">${t('security.ban_modal.expires')}</label><input id="ban-exp" type="datetime-local" class="input"></div>`,
+     <div class="field"><label class="field-label">${t('security.ban_modal.expires')}</label><input id="ban-exp" type="datetime-local" class="input"></div>
+     <div class="field"><label class="field-label">${t('security.ban_modal.scope')}</label><select id="ban-scope" class="input"><option value="">${esc(t('security.ban_modal.scope_all'))}</option></select></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">${t('common.cancel')}</button>
      <button class="btn btn-secondary" onclick="previewBan()">${t('security.ban_modal.preview')}</button>
      <button class="btn btn-danger" onclick="submitBan()">${t('security.ban_modal.submit')}</button>`);
+  fillBanScopes();
+};
+
+// Passerelles et groupes HA proposés pour limiter un ban ; la liste reste réduite à « toutes » si le chargement échoue.
+window.fillBanScopes = async function(selId = 'ban-scope') {
+  const sel = document.getElementById(selId);
+  if (!sel) return;
+  const [nodes, groups] = await Promise.all([
+    api('GET', '/nodes').catch(() => []),
+    api('GET', '/architecture/groups').catch(() => ({})),
+  ]);
+  const opts = Object.keys(groups || {}).sort().map(g => `<option value="group:${esc(g)}">${esc(t('security.ban_modal.scope_group', { name: g }))}</option>`);
+  for (const n of nodes || []) {
+    if (n.role === 'edge' && n.node_name) opts.push(`<option value="${esc(n.node_name)}">${esc(n.display_name || n.node_name)}</option>`);
+  }
+  sel.insertAdjacentHTML('beforeend', opts.join(''));
 };
 
 // Mesure ce qu'un ban couperait (trafic récent, bans et profils qui recoupent la cible, risques)
@@ -1898,6 +1915,8 @@ window.submitBan = async function() {
   };
   const exp = document.getElementById('ban-exp')?.value;
   if (exp) body.expires_at = new Date(exp).toISOString();
+  const scope = document.getElementById('ban-scope')?.value;
+  if (scope) body.target_scope = scope;
   try {
     await api('POST', '/security/bans', body);
     closeModal();

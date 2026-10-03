@@ -131,3 +131,27 @@ func TestBansAreCaughtUpFromPeersWhenGossipWasMissed(t *testing.T) {
 		t.Fatal("le tirage périodique doit rattraper un envoi manqué")
 	}
 }
+
+func TestScopedBanIsNotAdoptedFromPeersItDoesNotTarget(t *testing.T) {
+	paris, lyon, nice := newBanNode(t, "paris"), newBanNode(t, "lyon"), newBanNode(t, "nice")
+	exp := time.Now().Add(time.Hour)
+	for id, scope := range map[string]string{"global": "", "pour-lyon": "lyon", "pour-paris": "paris"} {
+		ip := map[string]string{"global": "203.0.113.1", "pour-lyon": "203.0.113.2", "pour-paris": "203.0.113.3"}[id]
+		if err := paris.srv.bansDB.UpsertScopedBan(id, ip, "", "test", "native", scope, &exp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	paris.srv.reloadBanStore()
+
+	for _, n := range []*banNode{lyon, nice} {
+		n.srv.syncBansFromPeer(context.Background(), http.DefaultClient, proxy.PeerInfo{Name: "paris", Endpoint: paris.http.URL, Token: "t"})
+	}
+	if !lyon.blocked("203.0.113.1") || !lyon.blocked("203.0.113.2") || lyon.blocked("203.0.113.3") {
+		t.Errorf("lyon : global %v, pour lyon %v, pour paris %v (attendu true true false)",
+			lyon.blocked("203.0.113.1"), lyon.blocked("203.0.113.2"), lyon.blocked("203.0.113.3"))
+	}
+	if !nice.blocked("203.0.113.1") || nice.blocked("203.0.113.2") || nice.blocked("203.0.113.3") {
+		t.Errorf("nice : seul le ban global doit être adopté (%v %v %v)",
+			nice.blocked("203.0.113.1"), nice.blocked("203.0.113.2"), nice.blocked("203.0.113.3"))
+	}
+}

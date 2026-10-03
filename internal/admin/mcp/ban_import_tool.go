@@ -29,6 +29,7 @@ func banImportTools() []map[string]any {
 			opt("reason", "string", "Motif des bans (ou commentaire des entrées) sans motif propre ; défaut « import »"),
 			opt("domain", "string", "Domaine ciblé par les bans sans domaine propre (vide = global)"),
 			opt("expires_at", "string", "Expiration RFC3339 des bans sans expiration propre ; omis = permanents"),
+			opt("scope", "string", "Passerelles qui appliquent les bans : nom d'une passerelle ou group:<nom> ; omis = toutes"),
 			opt("dry_run", "boolean", "true : analyser sans rien créer"),
 		),
 	}}
@@ -41,7 +42,8 @@ func (h *Handler) toolImportSecurityBans(r *http.Request, args map[string]any) (
 	dry, _ := args["dry_run"].(bool)
 	reqBody := api.ImportRequest{
 		Content: str("content"), Format: str("format"), Target: str("target"),
-		Reason: str("reason"), Domain: str("domain"), ExpiresAt: str("expires_at"), DryRun: dry,
+		Reason: str("reason"), Domain: str("domain"), ExpiresAt: str("expires_at"), Scope: str("scope"), DryRun: dry,
+		Groups: h.Groups,
 	}
 	actor := adminauth.ActorFromContext(r.Context())
 	res, err := api.ImportBans(r.Context(), h.DB, reqBody, api.RequesterIP(r), actor)

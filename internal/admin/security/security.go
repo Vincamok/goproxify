@@ -23,8 +23,10 @@ type Ban struct {
 	Reason    string    `json:"reason"`
 	Source    string    `json:"source"` // fail2ban | crowdsec | native
 	EdgeName  string    `json:"edge_name"`
-	ExpiresAt *string   `json:"expires_at"`
-	CreatedAt time.Time `json:"created_at"`
+	// TargetScope : passerelles qui appliquent le ban ; vide = toutes, sinon une passerelle ou "group:<nom>".
+	TargetScope string    `json:"target_scope"`
+	ExpiresAt   *string   `json:"expires_at"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // NormalizeBanExpiry valide une expiration RFC3339 reçue d'un client et la ramène en UTC à la

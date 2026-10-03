@@ -43,7 +43,11 @@ type ImportRequest struct {
 	Domain string `json:"domain"`
 	// ExpiresAt : expiration RFC3339 des bans sans expiration propre ; vide = permanent.
 	ExpiresAt string `json:"expires_at"`
-	DryRun    bool   `json:"dry_run"`
+	// Scope : passerelle ou "group:<nom>" qui appliquera les bans ; vide = toutes.
+	Scope  string `json:"scope"`
+	DryRun bool   `json:"dry_run"`
+	// Groups résout les groupes HA pour valider Scope.
+	Groups GroupResolver `json:"-"`
 }
 
 // ImportIssue situe une entrée ignorée ou rejetée.
@@ -118,6 +122,12 @@ func ImportBans(ctx context.Context, db *sql.DB, req ImportRequest, requester, a
 	reason := req.Reason
 	if reason == "" {
 		reason = "import"
+	}
+	scope := ""
+	if res.Target == ImportTargetBans {
+		if scope, err = NormalizeBanScope(db, req.Groups, req.Scope); err != nil {
+			return res, err
+		}
 	}
 
 	whitelist := security.LoadWhitelist(db)
@@ -242,8 +252,8 @@ func ImportBans(ctx context.Context, db *sql.DB, req ImportRequest, requester, a
 	for _, it := range items {
 		id := uuid.New().String()
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO security_bans (id, ip, domain, reason, source, expires_at) VALUES (?, ?, ?, ?, 'native', ?)`,
-			id, it.target.Value, it.domain, it.reason, it.expiresAt); err != nil {
+			`INSERT INTO security_bans (id, ip, domain, reason, source, expires_at, target_scope) VALUES (?, ?, ?, ?, 'native', ?, ?)`,
+			id, it.target.Value, it.domain, it.reason, it.expiresAt, scope); err != nil {
 			return res, err
 		}
 		if _, err := tx.ExecContext(ctx,
@@ -264,6 +274,7 @@ func (h *SecurityHandler) bansImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorName(r)
+	req.Groups = h.Groups
 	res, err := ImportBans(r.Context(), h.DB, req, RequesterIP(r), actor)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

@@ -99,22 +99,30 @@ func migrate(db *sql.DB) error {
 			return err
 		}
 	}
+	// Colonne ajoutée après coup : l'erreur « duplicate column » sur une base à jour est attendue.
+	_, _ = db.Exec(`ALTER TABLE bans ADD COLUMN scope TEXT NOT NULL DEFAULT ''`)
 	return nil
 }
 
 // --- Bans actifs -----------------------------------------------------------
 
-// UpsertBan insère ou remplace un ban actif.
+// UpsertBan insère ou remplace un ban actif sans restriction de passerelle.
 func (d *DB) UpsertBan(id, ip, domain, reason, source string, expiresAt *time.Time) error {
+	return d.UpsertScopedBan(id, ip, domain, reason, source, "", expiresAt)
+}
+
+// UpsertScopedBan insère ou remplace un ban actif ; scope (nom de passerelle ou "group:<nom>") est conservé
+// pour ne pas le transmettre aux pairs qu'il ne vise pas.
+func (d *DB) UpsertScopedBan(id, ip, domain, reason, source, scope string, expiresAt *time.Time) error {
 	var exp *string
 	if expiresAt != nil && !expiresAt.IsZero() {
 		s := expiresAt.UTC().Format(time.RFC3339)
 		exp = &s
 	}
 	_, err := d.db.Exec(
-		`INSERT OR REPLACE INTO bans (id, ip, domain, reason, source, expires_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		id, ip, domain, reason, source, exp,
+		`INSERT OR REPLACE INTO bans (id, ip, domain, reason, source, scope, expires_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, ip, domain, reason, source, scope, exp,
 	)
 	return err
 }
@@ -134,7 +142,7 @@ func (d *DB) DeleteBansBySource(source string) error {
 // ActiveBans retourne tous les bans non expirés.
 func (d *DB) ActiveBans() ([]BanRow, error) {
 	rows, err := d.db.Query(
-		`SELECT id, ip, domain, reason, source, expires_at, created_at
+		`SELECT id, ip, domain, reason, source, expires_at, created_at, scope
 		 FROM bans WHERE expires_at IS NULL OR expires_at > ?
 		 ORDER BY created_at DESC`,
 		nowExpiry(),
@@ -217,6 +225,7 @@ type BanRow struct {
 	Source    string
 	ExpiresAt *time.Time
 	CreatedAt time.Time
+	Scope     string
 }
 
 func scanBanRows(rows *sql.Rows) ([]BanRow, error) {
@@ -225,7 +234,7 @@ func scanBanRows(rows *sql.Rows) ([]BanRow, error) {
 		var r BanRow
 		var exp, created string
 		var expNull sql.NullString
-		if err := rows.Scan(&r.ID, &r.IP, &r.Domain, &r.Reason, &r.Source, &expNull, &created); err != nil {
+		if err := rows.Scan(&r.ID, &r.IP, &r.Domain, &r.Reason, &r.Source, &expNull, &created, &r.Scope); err != nil {
 			return nil, err
 		}
 		if expNull.Valid {

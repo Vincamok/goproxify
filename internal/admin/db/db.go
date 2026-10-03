@@ -371,6 +371,8 @@ func migrate(db *sql.DB) error {
 		// Passerelle d'origine d'un ban ('' = ban global : admin, CrowdSec/Fail2Ban centraux)
 		`ALTER TABLE security_bans ADD COLUMN edge_name TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE security_ban_history ADD COLUMN edge_name TEXT NOT NULL DEFAULT ''`,
+		// Portée d'un ban : '' = toutes les passerelles, sinon nom d'une passerelle ou "group:<nom>"
+		`ALTER TABLE security_bans ADD COLUMN target_scope TEXT NOT NULL DEFAULT ''`,
 		// Carte Prism : position approximative (ville) des IPs, renseignée par GeoResolver.
 		`ALTER TABLE snippets ADD COLUMN description TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE geoip_cache ADD COLUMN lat REAL`,

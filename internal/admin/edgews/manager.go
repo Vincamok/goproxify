@@ -983,13 +983,13 @@ func (m *Manager) PushIPProfiles(ctx context.Context) {
 
 // PushBans envoie les bans IP actifs (Fail2Ban, CrowdSec, natif) à toutes les passerelles.
 func (m *Manager) PushBans(ctx context.Context) {
-	list, err := m.loadActiveBans(ctx)
-	if err != nil {
-		m.log.Error("edgews/manager: lecture bans", "err", err)
-		return
-	}
 	for _, e := range m.allEntries() {
 		e := e
+		list, err := m.loadActiveBans(ctx, e)
+		if err != nil {
+			m.log.Error("edgews/manager: lecture bans", "err", err)
+			continue
+		}
 		go func() {
 			if err := e.client.PushJSON(edgeWS.TypePushBans, list); err != nil {
 				m.log.Warn("edgews/manager: push bans", "edge", e.nodeName, "err", err)
@@ -1002,17 +1002,17 @@ func (m *Manager) PushBans(ctx context.Context) {
 // elle-même (Fail2Ban, Sentinel, règles) et que la liste des bans ne retirerait pas. La liste suit sur
 // la même connexion : les autres bans encore actifs de ces IPs sont reposés aussitôt.
 func (m *Manager) PushUnban(ctx context.Context, ips []string) {
-	list, err := m.loadActiveBans(ctx)
-	if err != nil {
-		m.log.Error("edgews/manager: lecture bans", "err", err)
-		return
-	}
 	entries := make([]edgeWS.UnbanEntry, 0, len(ips))
 	for _, ip := range ips {
 		entries = append(entries, edgeWS.UnbanEntry{IP: ip})
 	}
 	for _, e := range m.allEntries() {
 		e := e
+		list, err := m.loadActiveBans(ctx, e)
+		if err != nil {
+			m.log.Error("edgews/manager: lecture bans", "err", err)
+			continue
+		}
 		go func() {
 			if err := e.client.PushJSON(edgeWS.TypeUnbanIPs, entries); err != nil {
 				m.log.Warn("edgews/manager: push unban", "edge", e.nodeName, "err", err)
@@ -1406,7 +1406,7 @@ func (m *Manager) pushAllToEntry(ctx context.Context, e *edgeEntry, s Settings) 
 	snippets, _ := m.loadSnippets(ctx)
 	providers, _ := m.loadAuthProviders(ctx)
 	profiles, _ := m.loadIPProfiles(ctx)
-	banList, _ := m.loadActiveBans(ctx)
+	banList, _ := m.loadActiveBans(ctx, e)
 
 	// Routes non envoyées : les fichiers YAML passerelle sont la source de vérité.
 	fsync := map[string]any{
@@ -1730,11 +1730,21 @@ func (m *Manager) loadIPProfiles(ctx context.Context) ([]json.RawMessage, error)
 	return list, nil
 }
 
-func (m *Manager) loadActiveBans(ctx context.Context) ([]router.RuntimeBan, error) {
+// loadActiveBans retourne les bans actifs qui s'appliquent à la passerelle e : ceux de portée globale,
+// de sa portée propre et de son groupe HA. e nil donne les seuls bans globaux.
+func (m *Manager) loadActiveBans(ctx context.Context, e *edgeEntry) ([]router.RuntimeBan, error) {
+	scopes := []any{"", "", "", ""}
+	if e != nil {
+		scopes = []any{"", e.id, e.nodeName, ""}
+		if g := m.groupOf(e); g != "" {
+			scopes[3] = groupScopePrefix + g
+		}
+	}
 	rows, err := m.db.QueryContext(ctx, `
-		SELECT id, ip, reason, source, expires_at
+		SELECT id, ip, reason, source, expires_at, target_scope
 		FROM security_bans
-		WHERE expires_at IS NULL OR expires_at = '' OR datetime(expires_at) > CURRENT_TIMESTAMP`)
+		WHERE (expires_at IS NULL OR expires_at = '' OR datetime(expires_at) > CURRENT_TIMESTAMP)
+		  AND target_scope IN (?, ?, ?, ?)`, scopes...)
 	if err != nil {
 		return []router.RuntimeBan{}, nil
 	}
@@ -1743,7 +1753,7 @@ func (m *Manager) loadActiveBans(ctx context.Context) ([]router.RuntimeBan, erro
 	for rows.Next() {
 		var b router.RuntimeBan
 		var expires sql.NullString
-		if err := rows.Scan(&b.ID, &b.IP, &b.Reason, &b.Source, &expires); err != nil {
+		if err := rows.Scan(&b.ID, &b.IP, &b.Reason, &b.Source, &expires, &b.Scope); err != nil {
 			continue
 		}
 		if expires.Valid && expires.String != "" {

@@ -68,7 +68,7 @@ func (s *Server) applyBans(list []*router.RuntimeBan) {
 			if src == "" {
 				src = "admin"
 			}
-			if err := s.bansDB.UpsertBan(b.ID, b.IP, "", b.Reason, src, b.ExpiresAt); err != nil {
+			if err := s.bansDB.UpsertScopedBan(b.ID, b.IP, "", b.Reason, src, b.Scope, b.ExpiresAt); err != nil {
 				s.log.Warn("edge: persistance ban admin DB échouée", "err", err)
 			}
 		}

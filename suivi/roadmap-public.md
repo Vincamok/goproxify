@@ -140,11 +140,13 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - [x] **Page Bans — bans par plage CIDR** : un ban vise une adresse ou une plage CIDR, validée et normalisée (plage plus large que /16 IPv4 ou /32 IPv6 et auto-verrouillage refusés), avec un aperçu de l'impact avant validation (trafic récent dont les requêtes réussies, bans et profils qui recoupent la cible) ; UI, API, CLI et MCP
 - [x] **Page Bans — liste blanche** : adresses et plages CIDR qu'aucun ban n'atteint (manuel, Fail2Ban, CrowdSec, Sentinel, règles) et que Sentinel n'évalue pas, avec un commentaire ; les bans existants ne sont pas supprimés mais cessent de s'appliquer ; conservée par les passerelles (fonctionne sans l'Admin) ; UI, API, CLI et MCP
 - [x] **Page Bans — import de liste** : création de bans (ou d'entrées de la liste blanche) en une fois depuis un texte, un CSV (dont l'export des bans) ou un JSON ; chaque entrée validée comme un ban unitaire, rapport ligne par ligne, mode analyse sans rien créer ; UI, API, CLI et MCP
-- [ ] **Page Bans — ASN, filtres enregistrés** : bans par ASN (avec le même aperçu), filtres enregistrés, ban ciblant une passerelle ou un groupe
+- [x] **Page Bans — ban ciblant une passerelle ou un groupe** : un ban (manuel ou importé) ne s'applique qu'à une passerelle ou aux membres d'un groupe HA ; chaque passerelle ne reçoit que les bans qui la concernent
+- [x] **Page Bans — filtres enregistrés** : combinaisons de filtres de la liste nommées, rappelées et supprimées depuis la page (gardées dans le navigateur)
+- [ ] **Page Bans — ASN** : bans par ASN (avec le même aperçu)
 
 ### Intégrations Infrastructure as Code
 
-- [ ] **Provider Terraform** : ressources `goproxify_proxy`, `goproxify_route`, `goproxify_domain`, `goproxify_workspace`… — gestion déclarative de la config GoProxify depuis Terraform/OpenTofu, appuyée sur l'API existante
+- [ ] **Provider Terraform — publication et ressources restantes** : le provider est écrit (`integrations/terraform-provider-goproxify` : `goproxify_proxy`, `goproxify_ban`, `goproxify_ban_whitelist_entry`, `goproxify_ip_profile`) ; reste à le publier sur le Registry (dépôt public dédié, clé GPG) et à ajouter `goproxify_domain`, `goproxify_workspace`… — gestion déclarative de la config GoProxify depuis Terraform/OpenTofu, appuyée sur l'API existante
 - [ ] **Collection Ansible** : modules et rôles (`goproxify_proxy`, `goproxify_cert`, `goproxify_access_target`…) pour provisionner et maintenir GoProxify depuis des playbooks
 
 ### Chatbot d'implémentation (landing page)

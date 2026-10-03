@@ -255,12 +255,16 @@ func (h *SecurityHandler) listBans(w http.ResponseWriter, r *http.Request) {
 		clauses = append(clauses, c)
 		args = append(args, a...)
 	}
+	if v := q.Get("scope"); v != "" {
+		clauses = append(clauses, "target_scope=?")
+		args = append(args, v)
+	}
 	where := ""
 	if len(clauses) > 0 {
 		where = " WHERE " + strings.Join(clauses, " AND ")
 	}
 	rows, err := h.DB.QueryContext(r.Context(),
-		`SELECT id, ip, domain, reason, source, edge_name, expires_at, strftime('%Y-%m-%dT%H:%M:%SZ', created_at) FROM security_bans`+where+` ORDER BY created_at DESC`,
+		`SELECT id, ip, domain, reason, source, edge_name, target_scope, expires_at, strftime('%Y-%m-%dT%H:%M:%SZ', created_at) FROM security_bans`+where+` ORDER BY created_at DESC`,
 		args...)
 	if err != nil {
 		secJSONErr(w, err, http.StatusInternalServerError)
@@ -273,7 +277,7 @@ func (h *SecurityHandler) listBans(w http.ResponseWriter, r *http.Request) {
 		var b security.Ban
 		var exp sql.NullString
 		var createdAt string
-		if err := rows.Scan(&b.ID, &b.IP, &b.Domain, &b.Reason, &b.Source, &b.EdgeName, &exp, &createdAt); err != nil {
+		if err := rows.Scan(&b.ID, &b.IP, &b.Domain, &b.Reason, &b.Source, &b.EdgeName, &b.TargetScope, &exp, &createdAt); err != nil {
 			if h.Log != nil {
 				h.Log.Warn("security bans: scan", "err", err)
 			}
@@ -327,10 +331,15 @@ func (h *SecurityHandler) createBan(w http.ResponseWriter, r *http.Request) {
 		}
 		body.ExpiresAt = exp
 	}
+	scope, err := NormalizeBanScope(h.DB, h.Groups, body.TargetScope)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	id := uuid.New().String()
 	_, err = h.DB.ExecContext(r.Context(),
-		`INSERT INTO security_bans (id, ip, domain, reason, source, expires_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		id, body.IP, body.Domain, body.Reason, body.Source, body.ExpiresAt,
+		`INSERT INTO security_bans (id, ip, domain, reason, source, expires_at, target_scope) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, body.IP, body.Domain, body.Reason, body.Source, body.ExpiresAt, scope,
 	)
 	if err != nil {
 		secJSONErr(w, err, http.StatusInternalServerError)
