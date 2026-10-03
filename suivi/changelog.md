@@ -22,6 +22,8 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 - **Landing 0.3.2 — Section « Captures d'écran »** : nouvelle section sur la landing page, entre « Composer son architecture » et « Installation », avec 5 captures d'une instance Admin en fonctionnement (Dashboard, assistant d'architecture, Sécurité, Automatisation, Logs d'accès en direct). Lien de nav ajouté, traductions EN/FR/ES/DE. Images statiques dans `internal/landing/ui/img/screenshots/`. (Landing `0.3.2`)
 
 ### Modifié
+- **Admin 0.73.4 / Agent 0.6.1 — Configuration d'un agent : Discovery Docker et passerelle cible** : la case « Discovery Docker — Activé » reste cochée (l'agent annonçait `docker.enabled=false` alors que la discovery tournait via `docker.runtime`, d'où la case décochée à la réouverture). Le sélecteur « Passerelle auquel cet agent se connecte » propose désormais les groupes HA (« Groupe HA (ha-1) — tous les membres »), présélectionne la cible déclarée et affiche l'URL actuelle ; choisir un groupe enregistre la cible `ha:<groupe>` (topologie) et garde pour la connexion la passerelle actuelle si elle est membre. (Admin `0.73.4`, Agent `0.6.1`)
+
 - **Admin 0.73.3 — Topologie en flux : l'agent pointe sur son groupe HA et s'aligne sur sa cible** : un agent dont la cible est un groupe HA est désormais relié au cadre du groupe (et non à sa première passerelle), et chaque agent se cale verticalement sur sa passerelle / son groupe. Interface uniquement. (Admin `0.73.3`)
 
 - **Admin 0.73.2 — Icônes sur les actions du panneau « Passerelle sélectionnée »** : chaque bouton (Proxy, Paramètres, Configuration, Mettre à jour, Rollback, Supprimer, et ceux du panneau agent) porte une icône ; « Trafic » devient « Proxy ». Interface uniquement. (Admin `0.73.2`)
@@ -30,6 +32,8 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 
 - **Edge 0.18.0 — Corps de requête client borné par défaut (413)** : `max_body_size` vaut désormais **100 Mo par défaut** au lieu de « illimité » (`-1` = illimité, à définir via l'API/YAML). Une requête dont le `Content-Length` dépasse la limite est rejetée en `413 Payload Too Large` dès les en-têtes, sans lire le corps ; les corps chunked sont coupés en cours de lecture (`http.MaxBytesReader`). Les routes qui reçoivent des uploads plus gros doivent relever `max_body_size` (ou le mettre à `-1`). Distinct de `waf.max_body_mb`, qui ne borne que la partie inspectée par le WAF (le corps complet reste transmis). (Edge `0.18.0`)
+
+- **Admin 0.73.2 — Renouveler un certificat depuis la page Certificats ignorait le fournisseur DNS du domaine** : `POST /certs` utilisait toujours le fournisseur DNS global de l'Admin ; il applique maintenant le fournisseur et les identifiants du domaine déclaré (comme `POST /domains/{id}/renew`). (Admin `0.73.2`)
 
 - **Admin 0.70.7 — « Routage » devient « Proxies », « En-têtes & certificats » devient « Score par proxy »** : le menu et la page « Routage » listent les proxies HTTP et les flux TCP/UDP (eux aussi des proxies, de couche 4) ; « Routage » se confondait avec « Routage des alertes », « Routage conditionnel » et le routage réseau. L'onglet Sécurité « En-têtes & certificats » note chaque proxy de A à F sur 9 contrôles, dont 5 ne concernent ni les en-têtes ni les certificats (limitation de débit, WAF, anti-bot, filtrage IP, authentification) ; il s'appelait aussi « Posture » dans le titre de page. Libellés de menu, d'onglet et de titre alignés en FR, EN (« Proxies », « Proxy scores »), ES et DE. Interface uniquement. (Admin `0.70.7`)
 

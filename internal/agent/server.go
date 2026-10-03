@@ -716,7 +716,7 @@ func sanitizedAgentConfig(cfg *config.AgentConfig) map[string]any {
 			"edge_endpoint": cfg.ControlPlane.EdgeEndpoint,
 		},
 		"docker": map[string]any{
-			"enabled":     cfg.Docker.Enabled,
+			"enabled":     cfg.Docker.Enabled || cfg.Docker.Runtime != "",
 			"socket_path": cfg.Docker.SocketPath,
 		},
 		"portainer": map[string]any{

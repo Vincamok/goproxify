@@ -104,8 +104,21 @@ func (h *CertsHandler) obtain(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "ACME non configuré", http.StatusServiceUnavailable)
 		return
 	}
+	obtain := func() error { return h.Manager.ObtainCert(context.Background(), req.Domain) }
+	if pm, ok := h.Manager.(DomainCertObtainer); ok {
+		var dnsProvider, credJSON string
+		err := h.DB.QueryRowContext(r.Context(),
+			`SELECT dns_provider, dns_credentials FROM domains WHERE domain=?`, req.Domain).Scan(&dnsProvider, &credJSON)
+		if err == nil && dnsProvider != "" && dnsProvider != "none" {
+			var creds map[string]any
+			_ = json.Unmarshal([]byte(credJSON), &creds)
+			obtain = func() error {
+				return pm.ObtainCertWithProvider(context.Background(), req.Domain, dnsProvider, creds)
+			}
+		}
+	}
 	go func() {
-		if err := h.Manager.ObtainCert(context.Background(), req.Domain); err != nil {
+		if err := obtain(); err != nil {
 			if !isCtxErr(err) {
 				h.Log.Error("certs: obtention async", "domain", req.Domain, "err", err)
 			}

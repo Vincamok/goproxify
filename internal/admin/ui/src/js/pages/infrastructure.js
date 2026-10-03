@@ -485,6 +485,7 @@ window._addEpEdgeRow = function() {
 async function agentConfigure(nodeName, node) {
   const name = (node && (node.display_name || node.node_name)) || nodeName;
   const formId = 'agent-cfg-form-' + nodeName.replace(/[^a-z0-9]/gi,'_');
+  window._agentCfgCtx = null;
 
   const sectionTitle = (label) =>
     `<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);margin:16px 0 8px;">${label}</div>`;
@@ -504,12 +505,15 @@ async function agentConfigure(nodeName, node) {
   // Chercher la declared config (wizard) pour pré-remplir les champs si l'agent est live.
   // Le declared config stocke des champs plats (portainer_url, portainer_key) contrairement
   // à _agent_config qui utilise un objet imbriqué {portainer: {url, api_key, enabled}}.
-  let declaredCfg = (node && node._declared_config) || null;
-  if (!declaredCfg) {
-    const declaredNodes = await api('GET', '/declared-nodes').catch(() => []);
-    const dn = (Array.isArray(declaredNodes) ? declaredNodes : [])
-      .find(n => n.role === 'agent' && n.name === nodeName);
-    declaredCfg = (dn && dn.config) || null;
+  const declaredNodes = await api('GET', '/declared-nodes').catch(() => []);
+  const declaredList = Array.isArray(declaredNodes) ? declaredNodes : [];
+  const declaredAgent = declaredList.find(n => n.role === 'agent' && n.name === nodeName);
+  let declaredCfg = (node && node._declared_config) || (declaredAgent && declaredAgent.config) || null;
+  // Groupes HA : membres déclarés d'un même cluster_group.
+  const haGroups = {};
+  for (const n of declaredList) {
+    const gid = n.role === 'edge' && n.config && n.config.cluster_group;
+    if (gid) (haGroups[gid] = haGroups[gid] || []).push(n.name);
   }
   const fallback = declaredCfg || {};
   const d = (node && node._agent_config && node._agent_config.docker) || {};
@@ -531,10 +535,15 @@ async function agentConfigure(nodeName, node) {
   const edgeNodes = (window._edgeNodes || []).filter(n => n.status !== 'pending');
   const currentEdgeEP = cp.edge_endpoint || '';
   const knownEdgeMatch = edgeNodes.find(c => edgeURL(c) === currentEdgeEP);
-  const isEdgeOther = currentEdgeEP && !knownEdgeMatch;
+  window._agentCfgCtx = { haGroups, currentEdgeEP, declaredAgent, edgeURLByName: Object.fromEntries(edgeNodes.map(c => [c.node_name, edgeURL(c)])) };
+  const declaredTarget = String(fallback.target_edge || '');
+  const groupIds = Object.keys(haGroups).filter(g => haGroups[g].length > 1);
+  const selGroup = declaredTarget.startsWith('ha:') && groupIds.includes(declaredTarget.slice(3)) ? declaredTarget : '';
+  const isEdgeOther = !selGroup && currentEdgeEP && !knownEdgeMatch;
   const edgeSelectOpts = [
-    `<option value=""${!currentEdgeEP ? ' selected' : ''}>${t('infra.configure.ep_edge_select_placeholder')}</option>`,
-    ...edgeNodes.map(c => `<option value="${esc(edgeURL(c))}"${c === knownEdgeMatch ? ' selected' : ''}>${esc(c.display_name||c.node_name)} — ${esc(edgeURL(c))}</option>`),
+    `<option value=""${!currentEdgeEP && !selGroup ? ' selected' : ''}>${t('infra.configure.ep_edge_select_placeholder')}</option>`,
+    ...edgeNodes.map(c => `<option value="${esc(edgeURL(c))}"${!selGroup && c === knownEdgeMatch ? ' selected' : ''}>${esc(c.display_name||c.node_name)} — ${esc(edgeURL(c))}</option>`),
+    ...groupIds.map(g => `<option value="ha:${esc(g)}"${selGroup === 'ha:' + g ? ' selected' : ''}>${esc(t('arch.opt.target_ha_group', { id: g }))} — ${esc(haGroups[g].join(', '))}</option>`),
     `<option value="__other__"${isEdgeOther ? ' selected' : ''}>${t('infra.configure.ep_edge_other')}</option>`,
   ].join('');
   const selStyle = 'background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text1);font-family:inherit;width:100%;';
@@ -542,6 +551,7 @@ async function agentConfigure(nodeName, node) {
     <select id="cfg-edge-ep-select" style="${selStyle}" onchange="(function(s){const m=document.getElementById('cfg-edge-ep-manual');if(m)m.style.display=s.value==='__other__'?'block':'none';})(this)">${edgeSelectOpts}</select>
     <input id="cfg-edge-ep-manual" type="url" value="${esc(isEdgeOther ? currentEdgeEP : '')}" placeholder="http://edge.example.com:8000"
       style="${selStyle}display:${isEdgeOther ? 'block' : 'none'};margin-top:4px;">
+    ${currentEdgeEP ? `<span style="font-size:11px;">${esc(t('infra.configure.edge_current', { ep: currentEdgeEP }))}</span>` : ''}
   </label>`;
 
   const body = `<form id="${formId}" style="display:flex;flex-direction:column;gap:10px;">
@@ -580,9 +590,18 @@ window._submitAgentConfigure = async function(nodeName, formId) {
   if (btn) { btn.disabled = true; btn.textContent = t('infra.configure.applying'); }
 
   const cfgEdgeSel = document.getElementById('cfg-edge-ep-select');
-  const cfgEdgeEP = cfgEdgeSel?.value === '__other__'
-    ? document.getElementById('cfg-edge-ep-manual')?.value?.trim()
-    : cfgEdgeSel?.value?.trim();
+  const ctx = window._agentCfgCtx || {};
+  const selVal = cfgEdgeSel?.value?.trim() || '';
+  let cfgEdgeEP, declaredTarget;
+  if (selVal.startsWith('ha:')) {
+    // L'agent ne tient qu'une URL : on garde la passerelle actuelle si elle fait partie du groupe, sinon le 1er membre joignable.
+    const urls = (ctx.haGroups?.[selVal.slice(3)] || []).map(n => ctx.edgeURLByName?.[n]).filter(Boolean);
+    cfgEdgeEP = urls.includes(ctx.currentEdgeEP) ? ctx.currentEdgeEP : urls[0];
+    declaredTarget = selVal;
+  } else {
+    cfgEdgeEP = selVal === '__other__' ? document.getElementById('cfg-edge-ep-manual')?.value?.trim() : selVal;
+    declaredTarget = '';
+  }
 
   const patch = {
     ...(cfgEdgeEP ? { control_plane: { edge_endpoint: cfgEdgeEP } } : {}),
@@ -614,6 +633,11 @@ window._submitAgentConfigure = async function(nodeName, formId) {
 
   try {
     await api('POST', `/nodes/${encodeURIComponent(nodeName)}/configure`, patch);
+    const da = ctx.declaredAgent;
+    if (da && ((da.config && da.config.target_edge) || '') !== declaredTarget) {
+      await api('POST', '/declared-nodes', { role: 'agent', name: da.name, region: da.region || '', environment: da.environment || '',
+        config: { ...(da.config || {}), target_edge: declaredTarget } }).catch(() => {});
+    }
     closeModal();
     toast(t('infra.configure.applied'), 'success');
   } catch(e) {
