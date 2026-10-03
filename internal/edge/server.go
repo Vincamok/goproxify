@@ -399,6 +399,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// Sentinel, sur sa dernière config connue, avant l'API interne : une config poussée par l'Admin
 	// ne peut pas arriver avant le moteur.
 	s.threatEngine = threat.New(s.log.Logger(), s.threatBanCallback())
+	s.threatEngine.SetPriorBansFunc(s.priorThreatBans)
 	s.loadThreatConfigFromDisk()
 	s.threatEngine.Start(ctx)
 

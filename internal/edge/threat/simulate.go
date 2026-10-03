@@ -74,12 +74,22 @@ func Simulate(cfg Config, events []SimEvent) SimReport {
 	report := SimReport{ByReason: map[string]int{}, Bans: []SimBan{}, TopIPs: []SimIPStat{}}
 	banned := map[string]time.Time{}
 
-	e := New(slog.New(slog.NewTextHandler(io.Discard, nil)), func(ip, reason string, _ time.Time) {
+	e := New(slog.New(slog.NewTextHandler(io.Discard, nil)), func(ip, reason string, expires time.Time) {
 		report.Bans = append(report.Bans, SimBan{IP: ip, Reason: reason, At: cur})
-		banned[ip] = cur.Add(cfg.BanDuration.Duration)
+		banned[ip] = expires
 	})
 	e.sim = true
 	e.counters.now = func() time.Time { return cur }
+	// Bans graduels : les bans posés pendant le rejeu tiennent lieu d'historique.
+	e.SetPriorBansFunc(func(ip string, since time.Time) int {
+		n := 0
+		for _, b := range report.Bans {
+			if b.IP == ip && !b.At.Before(since) {
+				n++
+			}
+		}
+		return n
+	})
 	e.UpdateConfig(cfg)
 
 	stats := map[string]*SimIPStat{}
@@ -123,7 +133,7 @@ func Simulate(cfg Config, events []SimEvent) SimReport {
 			block(ev, reason)
 			continue
 		}
-		e.RecordStatus(ev.IP, ev.Status)
+		e.RecordResponse(ev.IP, ev.Path, ev.Status)
 	}
 
 	report.BlockedIPs = len(stats)

@@ -228,6 +228,9 @@ func (h *PortalHandler) deleteDestination(w http.ResponseWriter, r *http.Request
 	var edge string
 	_ = h.DB.QueryRow(`SELECT edge_name FROM portal_destinations WHERE id=?`, id).Scan(&edge)
 	res, err := h.DB.Exec(`DELETE FROM portal_destinations WHERE id=?`, id)
+	if err == nil && edge != "" {
+		removeDestFromGroups(h.DB, edge, id)
+	}
 	if err != nil {
 		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
 		return

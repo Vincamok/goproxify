@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/vincamok/goproxify/internal/admin/ipprofile"
+	"github.com/vincamok/goproxify/internal/edge/router"
 )
 
 // IPProfilesHandler gère les profils de filtrage IP.
@@ -198,7 +199,20 @@ func (h *IPProfilesHandler) create(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"id": id}) //nolint:errcheck
 }
 
+// refuseManagedProfile refuse de modifier le profil de la liste blanche des bans : il est recopié
+// depuis la liste blanche (page Bans), toute édition ici serait écrasée au prochain changement.
+func refuseManagedProfile(w http.ResponseWriter, id string) bool {
+	if id != router.WhitelistProfileID {
+		return false
+	}
+	http.Error(w, "profil géré par la liste blanche des bans (page Bans) : le modifier ou le supprimer ici est impossible", http.StatusConflict)
+	return true
+}
+
 func (h *IPProfilesHandler) update(w http.ResponseWriter, r *http.Request, id string) {
+	if refuseManagedProfile(w, id) {
+		return
+	}
 	var body struct {
 		Name             string   `json:"name"`
 		Mode             string   `json:"mode"`
@@ -253,6 +267,9 @@ func (h *IPProfilesHandler) update(w http.ResponseWriter, r *http.Request, id st
 }
 
 func (h *IPProfilesHandler) delete(w http.ResponseWriter, r *http.Request, id string) {
+	if refuseManagedProfile(w, id) {
+		return
+	}
 	h.DB.ExecContext(r.Context(), `DELETE FROM ip_profiles WHERE id=?`, id) //nolint:errcheck
 	h.notifyChange()
 	w.WriteHeader(http.StatusNoContent)

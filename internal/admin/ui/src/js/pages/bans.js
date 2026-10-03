@@ -261,7 +261,7 @@ function bnRowHTML(b) {
   const temp = bnExpiry(b) != null;
   return `<tr>
     <td class="bn-c-sel"><input type="checkbox" ${_bn.sel.has(b.id) ? 'checked' : ''} onchange="bnToggle('${id}',this.checked)" aria-label="Sélectionner ${ip}"></td>
-    <td class="mono bn-c-ip">${ip}${rec ? ` <span class="tag tag-yellow" title="${rec} bans sur l'historique">×${rec}</span>` : ''}</td>
+    <td class="mono bn-c-ip">${ip}${rec ? ` <span class="tag tag-yellow" title="${rec} bans sur l'historique">×${rec}</span>` : ''}${b.exempt ? ' <span class="tag tag-green" title="Entièrement couvert par la liste blanche : ce ban ne s\'applique pas">Exempté</span>' : ''}</td>
     <td data-label="Source"><span class="tag tag-neutral"><i class="sent-dot" style="background:${BN_SRC_COLORS[bnSrc(b)] || 'var(--text3)'};margin-right:5px"></i>${esc(_secSourceLabel(bnSrc(b)))}</span></td>
     ${admin ? `<td data-label="Passerelle" style="font-size:12px">${b.edge_name ? esc(bnEdge(b.edge_name)) : '<span class="tag tag-neutral">Global</span>'}</td>` : `<td data-label="Domaine" style="color:var(--text2)">${esc(b.domain || '—')}</td>`}
     <td data-label="Raison" style="color:var(--text2);font-size:12px;max-width:260px" title="${esc(b.reason || '')}">${esc(b.reason || '—')}</td>
@@ -428,6 +428,8 @@ async function renderBans({ mode }) {
   const ta = document.getElementById('topbar-actions');
   if (ta) ta.innerHTML = `
     <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="exportBansCSV()">Export CSV</button>
+    <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="openBanImport()" title="Créer des bans (ou des entrées de la liste blanche) depuis une liste d'adresses et de CIDR">Importer</button>
+    <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="openBanWhitelist()" title="Adresses et plages qu'aucun ban n'atteint">Liste blanche</button>
     <button class="btn btn-primary btn-sm" onclick="openBanModal()">+ Ban</button>
     <button class="btn btn-secondary btn-sm" onclick="reloadCurrentSecurityPage()" title="Actualiser" aria-label="Actualiser">↺</button>`;
   try {
@@ -448,6 +450,132 @@ async function renderBans({ mode }) {
     bnMount();
   } catch (e) { toast(e.message, 'error'); }
 }
+
+// ── Liste blanche ─────────────────────────────────────────────────────────────
+// Adresses et plages qu'aucun ban n'atteint (manuel, Fail2Ban, CrowdSec, Sentinel, règles) et que
+// Sentinel n'évalue pas. Gérée ici : le profil IP qui la porte n'est pas modifiable depuis Profils IP.
+
+function bnWhitelistBodyHTML(list) {
+  const rows = list.length
+    ? list.map(e => `<tr>
+        <td class="mono">${esc(e.value)}</td>
+        <td style="color:var(--text2);font-size:12px">${esc(e.comment || '—')}${e.bans_exempted ? ` <span class="tag tag-yellow" title="Bans actifs rendus sans effet par cette entrée">${e.bans_exempted} ban${e.bans_exempted > 1 ? 's' : ''} neutralisé${e.bans_exempted > 1 ? 's' : ''}</span>` : ''}</td>
+        <td style="text-align:right"><button type="button" class="btn btn-ghost btn-sm" style="color:var(--red)" data-wl="${esc(e.value)}" onclick="bnWhitelistRemove(this.dataset.wl)">Retirer</button></td></tr>`).join('')
+    : '<tr><td colspan="3" style="color:var(--text3);padding:14px 4px">Liste blanche vide.</td></tr>';
+  return `<p style="font-size:12.5px;color:var(--text2);margin:0 0 10px">Une adresse ou une plage en liste blanche n'est jamais bloquée par un ban (manuel, Fail2Ban, CrowdSec, Sentinel, règles) et n'est pas évaluée par Sentinel. Les bans existants ne sont pas supprimés : ils cessent de s'appliquer à ces adresses.</p>
+    <div class="table-wrap"><table class="bn-table"><tbody>${rows}</tbody></table></div>
+    <div style="display:flex;gap:8px;margin-top:12px;align-items:flex-end;flex-wrap:wrap">
+      <div class="field" style="margin:0;flex:1;min-width:180px"><label class="field-label">Adresse ou plage CIDR</label><input id="wl-ip" class="input" placeholder="203.0.113.10 ou 203.0.113.0/24"></div>
+      <div class="field" style="margin:0;flex:1;min-width:150px"><label class="field-label">Commentaire (optionnel)</label><input id="wl-comment" class="input" placeholder="bureau Paris, supervision…"></div>
+      <button type="button" class="btn btn-primary" onclick="bnWhitelistAdd()">Ajouter</button>
+    </div>`;
+}
+
+async function bnWhitelistRepaint() {
+  const list = await api('GET', '/security/bans/whitelist');
+  const box = document.getElementById('bn-wl-box');
+  if (box) box.innerHTML = bnWhitelistBodyHTML(list);
+}
+
+window.openBanWhitelist = async function() {
+  try {
+    const list = await api('GET', '/security/bans/whitelist');
+    modal('Liste blanche des bans', `<div id="bn-wl-box">${bnWhitelistBodyHTML(list)}</div>`,
+      '<button class="btn btn-secondary" onclick="closeModal();reloadCurrentSecurityPage()">Fermer</button>');
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+window.bnWhitelistAdd = async function() {
+  const ip = document.getElementById('wl-ip')?.value.trim();
+  if (!ip) { toast(t('security.ban_ip_required'), 'error'); return; }
+  try {
+    const r = await api('POST', '/security/bans/whitelist', { ip, comment: document.getElementById('wl-comment')?.value.trim() || '' });
+    toast(r.added === false ? `Déjà couvert par ${r.covered_by}` : 'Ajouté à la liste blanche', r.added === false ? 'info' : 'success');
+    await bnWhitelistRepaint();
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+window.bnWhitelistRemove = async function(value) {
+  if (!confirm(`Retirer ${value} de la liste blanche ? Les bans qu'elle neutralisait s'appliqueront de nouveau.`)) return;
+  try {
+    await api('DELETE', '/security/bans/whitelist?ip=' + encodeURIComponent(value));
+    toast('Retiré de la liste blanche', 'success');
+    await bnWhitelistRepaint();
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+// ── Import de liste ───────────────────────────────────────────────────────────
+// Crée des bans (ou des entrées de la liste blanche) depuis une liste : texte (une adresse ou un CIDR par
+// ligne, comme les listes publiques), CSV (dont l'export des bans) ou JSON. « Analyser » ne crée rien.
+
+window.openBanImport = function() {
+  modal('Importer une liste', `
+    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px">Une adresse ou un CIDR par ligne (commentaires <code>#</code> et <code>;</code>), ou un CSV / JSON, y compris l'export des bans. Chaque entrée est validée comme un ban unitaire ; les doublons et les cibles déjà couvertes sont ignorés. 10 000 entrées et 2 Mo au plus.</p>
+    <div style="display:flex;gap:14px;margin-bottom:8px;font-size:12.5px">
+      <label><input type="radio" name="imp-target" value="bans" checked onchange="bnImportTarget()"> Créer des bans</label>
+      <label><input type="radio" name="imp-target" value="whitelist" onchange="bnImportTarget()"> Ajouter à la liste blanche</label>
+    </div>
+    <div class="field"><textarea id="imp-content" class="input" rows="8" placeholder="203.0.113.5&#10;198.51.100.0/24 ; scanner&#10;# commentaire" style="font-family:var(--mono,monospace);font-size:12px"></textarea></div>
+    <div class="field"><label class="field-label">Ou un fichier (.txt, .csv, .json)</label><input type="file" accept=".txt,.csv,.json,.list,.netset,text/plain" onchange="bnImportFile(this)"></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <div class="field" style="flex:1;min-width:160px;margin:0"><label class="field-label" id="imp-reason-label">Motif par défaut</label><input id="imp-reason" class="input" placeholder="import"></div>
+      <div class="field" id="imp-exp-box" style="flex:1;min-width:190px;margin:0"><label class="field-label">Expire le (optionnel, vide = permanent)</label><input id="imp-exp" type="datetime-local" class="input"></div>
+    </div>
+    <div id="imp-result" style="margin-top:12px"></div>`,
+    `<button class="btn btn-secondary" onclick="closeModal();reloadCurrentSecurityPage()">Fermer</button>
+     <button class="btn btn-secondary" onclick="bnImportRun(true)">Analyser</button>
+     <button class="btn btn-danger" onclick="bnImportRun(false)">Importer</button>`, true);
+};
+
+window.bnImportTarget = function() {
+  const wl = document.querySelector('input[name="imp-target"]:checked')?.value === 'whitelist';
+  const box = document.getElementById('imp-exp-box');
+  if (box) box.style.display = wl ? 'none' : '';
+  const label = document.getElementById('imp-reason-label');
+  if (label) label.textContent = wl ? 'Commentaire par défaut' : 'Motif par défaut';
+};
+
+window.bnImportFile = function(input) {
+  const f = input.files?.[0];
+  if (!f) return;
+  if (f.size > 2 * 1024 * 1024) { toast('Fichier trop volumineux (2 Mo au plus)', 'error'); input.value = ''; return; }
+  const rd = new FileReader();
+  rd.onload = () => { const ta = document.getElementById('imp-content'); if (ta) ta.value = String(rd.result || ''); };
+  rd.readAsText(f);
+};
+
+function bnImportIssues(title, list, color) {
+  if (!list?.length) return '';
+  const shown = list.slice(0, 20);
+  return `<div style="margin-top:8px"><strong style="color:${color}">${title}</strong>
+    <ul style="margin:4px 0 0 16px;padding:0;font-size:12px;color:var(--text2)">${shown.map(i =>
+      `<li>ligne ${i.line} — <span class="mono">${esc(i.value)}</span> : ${esc(i.reason)}</li>`).join('')}
+    ${list.length > shown.length ? `<li>… ${list.length - shown.length} de plus</li>` : ''}</ul></div>`;
+}
+
+window.bnImportRun = async function(dry) {
+  const content = document.getElementById('imp-content')?.value || '';
+  const box = document.getElementById('imp-result');
+  if (!content.trim()) { toast('Liste vide', 'error'); return; }
+  const target = document.querySelector('input[name="imp-target"]:checked')?.value || 'bans';
+  const body = { content, target, dry_run: dry, reason: document.getElementById('imp-reason')?.value.trim() || '' };
+  const exp = document.getElementById('imp-exp')?.value;
+  if (exp && target === 'bans') body.expires_at = new Date(exp).toISOString();
+  if (box) box.innerHTML = '<div style="font-size:12.5px;color:var(--text3)">…</div>';
+  try {
+    const r = await api('POST', '/security/bans/import', body);
+    const what = target === 'whitelist' ? 'entrée(s) de liste blanche' : 'ban(s)';
+    const head = dry
+      ? `Analyse : ${r.created} ${what} seraient créé(s) (${Math.round(r.addresses)} adresse(s)) sur ${r.total} entrée(s) lue(s). Rien n'a été créé.`
+      : `${r.created} ${what} créé(s) sur ${r.total} entrée(s) lue(s).`;
+    if (box) box.innerHTML = `<div style="font-size:12.5px;line-height:1.5;padding:8px 10px;border:1px solid var(--border);border-radius:6px">
+      <strong>${esc(head)}</strong><br>${r.skipped_count} ignorée(s), ${r.rejected_count} rejetée(s).
+      ${bnImportIssues('Rejetées', r.rejected, 'var(--red)')}${bnImportIssues('Ignorées', r.skipped, 'var(--yellow)')}</div>`;
+    if (!dry && r.created > 0) toast(`${r.created} ${what} créé(s)`, 'success');
+  } catch (e) {
+    if (box) box.innerHTML = `<div style="font-size:12.5px;color:var(--red)">${esc(e.message)}</div>`;
+  }
+};
 
 pages['security-bans'] = () => renderBans({ mode: 'admin' });
 pages['edge-security-bans'] = () => renderBans({ mode: 'edge' });

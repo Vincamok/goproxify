@@ -145,8 +145,10 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Moteur de détection automatique (threat engine) — après les bans explicites.
-	if s.threatEngine != nil {
+	// Moteur de détection automatique (threat engine) — après les bans explicites. Les adresses de
+	// la liste blanche des bans ne sont ni évaluées ni comptées.
+	whitelisted := s.profileStore.IsWhitelisted(remoteIP)
+	if s.threatEngine != nil && !whitelisted {
 		if blocked, reason := s.threatEngine.Check(r, remoteIP); reason != "" {
 			r = threat.WithSignal(r, reason)
 			tracing.Event(r.Context(), "sentinel.signal", attribute.String("reason", reason), attribute.Bool("blocked", blocked))
@@ -189,8 +191,8 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 		recordRequestMetrics(host, r, rw, time.Since(start))
 	}
 
-	if s.threatEngine != nil {
-		s.threatEngine.RecordStatus(remoteIP, rw.status)
+	if s.threatEngine != nil && !whitelisted {
+		s.threatEngine.RecordResponse(remoteIP, r.URL.Path, rw.status)
 	}
 }
 

@@ -72,6 +72,7 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - [x] Polish UX Access et docs opérateur
 - [x] **Portail Access en onglets** (Synthèse, Destinations, Utilisateurs, Modèles, Audit, Réglages) — livré
 - [x] **Portail Access : refonte visuelle, thèmes et entrées dédiées** (`/prestataire`, `presta.domaine.fr`… : thème, auth, utilisateurs, groupes et destinations par entrée ; 7 thèmes réglés côté Admin) — livré
+- [x] **Portail Access : groupes de destinations** (Catalogue Access › Groupes ; une entrée offre toutes les machines de ses groupes ; API, CLI, MCP) — livré
 - [x] **Portail Access : sessions en direct** (lister, terminer ; API, CLI, MCP) — livré
 - [x] **Portail Access : accès temporaires avec approbation** (demande depuis le portail, onglet Approbations, expiration automatique ; API, CLI, MCP) — livré
 - [x] **Portail Access : politiques d'accès** (plages horaires, IP autorisées, déconnexion sur inactivité ; onglet Politiques, API, CLI, MCP) — livré
@@ -133,9 +134,13 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - [x] **Dry-run Sentinel via MCP** : `simulate_sentinel_config` rejoue les logs récents contre une config candidate et la compare à l'actuelle
 - [x] **Sentinel — tarpit** : retient la réponse aux IP bloquées ou bannies (délai configurable, nombre de requêtes retenues plafonné, repli sur refus immédiat)
 - [x] **Sentinel — score cumulé par IP avec décroissance** : les signaux s'additionnent d'une requête à l'autre et s'estompent avec le temps (demi-vie réglable), l'IP n'est bannie qu'au seuil ; optionnel, réglable depuis l'UI, la simulation et le MCP
-- [ ] **Sentinel — bans graduels et 4xx pondérés** : durée de ban croissante pour les récidivistes, et erreurs 4xx pondérées par code (hors 401/403/429) et par route, intégrées au score
+- [x] **Sentinel — bans graduels** : la durée du ban croît avec les bans Sentinel précédents de l'IP (facteur, fenêtre et plafond réglables, remise à zéro au déban manuel) ; optionnel, réglable depuis l'UI, la simulation et le MCP
+- [x] **Sentinel — 4xx pondérés** : erreurs 4xx pondérées par code (hors 401/403/429) et par route, intégrées au score cumulé ; optionnel, réglable depuis l'UI, la simulation et le MCP
 - [ ] **Observabilité — fond vectoriel auto-hébergé** : zoomer jusqu'à la rue sur la carte Prism, sans service de tuiles externe
-- [ ] **Page Bans — bans par CIDR ou ASN** (aperçu de l'impact avant validation), liste blanche, import de liste, filtres enregistrés, ban ciblant une passerelle ou un groupe
+- [x] **Page Bans — bans par plage CIDR** : un ban vise une adresse ou une plage CIDR, validée et normalisée (plage plus large que /16 IPv4 ou /32 IPv6 et auto-verrouillage refusés), avec un aperçu de l'impact avant validation (trafic récent dont les requêtes réussies, bans et profils qui recoupent la cible) ; UI, API, CLI et MCP
+- [x] **Page Bans — liste blanche** : adresses et plages CIDR qu'aucun ban n'atteint (manuel, Fail2Ban, CrowdSec, Sentinel, règles) et que Sentinel n'évalue pas, avec un commentaire ; les bans existants ne sont pas supprimés mais cessent de s'appliquer ; conservée par les passerelles (fonctionne sans l'Admin) ; UI, API, CLI et MCP
+- [x] **Page Bans — import de liste** : création de bans (ou d'entrées de la liste blanche) en une fois depuis un texte, un CSV (dont l'export des bans) ou un JSON ; chaque entrée validée comme un ban unitaire, rapport ligne par ligne, mode analyse sans rien créer ; UI, API, CLI et MCP
+- [ ] **Page Bans — ASN, filtres enregistrés** : bans par ASN (avec le même aperçu), filtres enregistrés, ban ciblant une passerelle ou un groupe
 
 ### Intégrations Infrastructure as Code
 

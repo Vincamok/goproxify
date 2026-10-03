@@ -40,6 +40,9 @@ type SecurityHandler struct {
 	// OnUnban lève les bans d'une IP sur les passerelles, y compris ceux qu'elles ont posés elles-mêmes,
 	// puis leur renvoie la liste des bans (remplace OnBansChange pour un déban).
 	OnUnban func(ip string)
+	// OnWhitelistChange pousse aux passerelles les profils IP (la liste blanche des bans en est un)
+	// après un ajout ou un retrait.
+	OnWhitelistChange func()
 	// OnThreatConfigChange envoie la config du moteur de détection à la portée visée (groupe HA ou passerelle)
 	// (scope vide = toutes les passerelles).
 	OnThreatConfigChange func(scope string, cfg any)
@@ -68,6 +71,16 @@ func (h *SecurityHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.bansByCountry(w, r)
 	case r.Method == http.MethodGet && sub == "bans" && id == "export":
 		h.exportBans(w, r)
+	case r.Method == http.MethodGet && sub == "bans" && id == "preview":
+		h.banPreview(w, r)
+	case r.Method == http.MethodPost && sub == "bans" && id == "import":
+		h.bansImport(w, r)
+	case r.Method == http.MethodGet && sub == "bans" && id == "whitelist":
+		h.whitelistList(w, r)
+	case r.Method == http.MethodPost && sub == "bans" && id == "whitelist":
+		h.whitelistAdd(w, r)
+	case r.Method == http.MethodDelete && sub == "bans" && id == "whitelist":
+		h.whitelistRemove(w, r)
 	case r.Method == http.MethodGet && sub == "bans" && id == "intel/kpis":
 		h.intelKPIs(w, r)
 	case r.Method == http.MethodGet && sub == "bans" && id == "intel/by-reason":
@@ -210,6 +223,12 @@ func (h *SecurityHandler) banEdgeClause(r *http.Request, col string) (string, []
 	return "(" + col + "=? OR " + col + "='')", []any{e}
 }
 
+// banListItem ajoute à un ban l'indication qu'il est sans effet : la liste blanche couvre toute sa cible.
+type banListItem struct {
+	security.Ban
+	Exempt bool `json:"exempt,omitempty"`
+}
+
 func (h *SecurityHandler) listBans(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	var clauses []string
@@ -248,7 +267,8 @@ func (h *SecurityHandler) listBans(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
-	var out []security.Ban
+	whitelist := security.LoadWhitelist(h.DB)
+	var out []banListItem
 	for rows.Next() {
 		var b security.Ban
 		var exp sql.NullString
@@ -264,10 +284,14 @@ func (h *SecurityHandler) listBans(w http.ResponseWriter, r *http.Request) {
 			b.ExpiresAt = &s
 		}
 		b.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
-		out = append(out, b)
+		item := banListItem{Ban: b}
+		if p, err := security.ParseTraceTarget(b.IP); err == nil {
+			_, item.Exempt = security.WhitelistCovering(whitelist, p)
+		}
+		out = append(out, item)
 	}
 	if out == nil {
-		out = []security.Ban{}
+		out = []banListItem{}
 	}
 	jsonOK(w, out)
 }
@@ -278,10 +302,20 @@ func (h *SecurityHandler) createBan(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusBadRequest, "api.err.json")
 		return
 	}
-	if body.IP == "" {
-		http.Error(w, "ip requis", http.StatusBadRequest)
+	target, err := BanTargetFromRequest(r, body.IP)
+	if err != nil {
+		status := http.StatusBadRequest
+		if _, lockout := err.(security.ErrBanLockout); lockout {
+			status = http.StatusConflict
+		}
+		http.Error(w, err.Error(), status)
 		return
 	}
+	if err := security.CheckBanWhitelist(h.DB, target); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	body.IP = target.Value
 	if body.Source == "" {
 		body.Source = "native"
 	}
@@ -294,7 +328,7 @@ func (h *SecurityHandler) createBan(w http.ResponseWriter, r *http.Request) {
 		body.ExpiresAt = exp
 	}
 	id := uuid.New().String()
-	_, err := h.DB.ExecContext(r.Context(),
+	_, err = h.DB.ExecContext(r.Context(),
 		`INSERT INTO security_bans (id, ip, domain, reason, source, expires_at) VALUES (?, ?, ?, ?, ?, ?)`,
 		id, body.IP, body.Domain, body.Reason, body.Source, body.ExpiresAt,
 	)

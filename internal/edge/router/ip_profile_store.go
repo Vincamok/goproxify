@@ -38,6 +38,11 @@ func isPrivateIP(ip net.IP) bool {
 	return false
 }
 
+// WhitelistProfileID est l'identifiant du profil allow que l'Admin tient pour la liste blanche des
+// bans. Contrairement aux autres profils allow (qui seulement priment sur les bans et les profils
+// deny), ses adresses sont aussi exemptées de la détection Sentinel.
+const WhitelistProfileID = "bans-whitelist"
+
 // IPProfile est un profil de filtrage IP reçu depuis Admin.
 type IPProfile struct {
 	ID   string `json:"id"`
@@ -105,6 +110,29 @@ func (s *IPProfileStore) IsAllowed(ipStr string) bool {
 	defer s.mu.RUnlock()
 	for _, p := range s.profiles {
 		if p.Mode != "allow" {
+			continue
+		}
+		for _, ipnet := range p.nets {
+			if ipnet.Contains(ip) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// IsWhitelisted indique si l'IP figure dans la liste blanche des bans (WhitelistProfileID). Les
+// adresses privées ne comptent pas ici : elles sont déjà exemptées de bans, mais restent évaluées
+// par Sentinel.
+func (s *IPProfileStore) IsWhitelisted(ipStr string) bool {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, p := range s.profiles {
+		if p.ID != WhitelistProfileID || p.Mode != "allow" {
 			continue
 		}
 		for _, ipnet := range p.nets {

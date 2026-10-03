@@ -25,6 +25,8 @@ func runAccess() {
 		runAccessUsers()
 	case "groups":
 		runAccessGroups()
+	case "destination-groups":
+		runAccessDestGroups()
 	case "recordings":
 		runAccessRecordings()
 	case "policy":
@@ -54,6 +56,7 @@ Ressources :
   destinations   Catalogue de destinations
   users          Utilisateurs Access (invite SMTP, groupes)
   groups         Groupes Access (droits sur les entrées du portail)
+  destination-groups  Groupes de destinations (machines offertes ensemble par une entrée)
   sessions       Connexions Access en cours (lister, observer, terminer)
   requests       Demandes d'accès temporaire (lister, approuver, refuser, révoquer)
   policy         Politique d'accès (plages horaires, IP autorisées, inactivité)
@@ -68,6 +71,10 @@ Exemples :
   goproxify access destinations list -edge edge-a
   goproxify access destinations create -edge edge-a -name bastion -kind ssh -host 10.0.0.1 -port 22 -tags prod
   goproxify access destinations delete -id <uuid>
+  goproxify access destination-groups list -edge edge-a
+  goproxify access destination-groups create -edge edge-a -name Web -targets <id-dest>,<id-dest>
+  goproxify access destination-groups update -id <uuid> -name Web -targets <id-dest>
+  goproxify access destination-groups delete -id <uuid>
   goproxify access users list -edge edge-a
   goproxify access users invite -email user@ex.com -home-edge edge-a -tags prod
   goproxify access users update -id <uuid> -status disabled
@@ -321,6 +328,51 @@ func runAccessDestinations() {
 		printJSON(out)
 	default:
 		fmt.Fprintln(os.Stderr, "usage: goproxify access destinations list|create|delete|preview ...")
+		os.Exit(1)
+	}
+}
+
+func runAccessDestGroups() {
+	action := subcommand(os.Args, 3)
+	args := parseFlags(os.Args[4:])
+	client := mustAdminClient(args)
+	switch action {
+	case "list":
+		edge := requireFlag(args, "-edge", "edge")
+		var out any
+		if _, err := client.DoJSON("GET", "/api/v1/portal/destination-groups?edge="+edge, nil, &out); err != nil {
+			fmt.Fprintf(os.Stderr, "access destination-groups list : %v\n", err)
+			os.Exit(1)
+		}
+		printJSON(out)
+	case "create", "update":
+		body := map[string]any{
+			"name":        requireFlag(args, "-name", "name"),
+			"description": flagValue(args, "-description", ""),
+		}
+		if _, ok := args["-targets"]; ok || action == "create" {
+			body["targets"] = parseCSVFlag(args, "-targets")
+		}
+		method, path := "POST", "/api/v1/portal/destination-groups?edge="+requireFlag(args, "-edge", "edge")
+		if action == "update" {
+			method, path = "PUT", "/api/v1/portal/destination-groups/"+requireFlag(args, "-id", "ID")
+		}
+		var out any
+		if _, err := client.DoJSON(method, path, body, &out, 200, 201); err != nil {
+			fmt.Fprintf(os.Stderr, "access destination-groups %s : %v\n", action, err)
+			os.Exit(1)
+		}
+		printJSON(out)
+	case "delete":
+		id := requireFlag(args, "-id", "ID")
+		var out any
+		if _, err := client.DoJSON("DELETE", "/api/v1/portal/destination-groups/"+id, nil, &out, 200, 204); err != nil {
+			fmt.Fprintf(os.Stderr, "access destination-groups delete : %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("ok")
+	default:
+		fmt.Fprintln(os.Stderr, "usage: goproxify access destination-groups list|create|update|delete ...")
 		os.Exit(1)
 	}
 }

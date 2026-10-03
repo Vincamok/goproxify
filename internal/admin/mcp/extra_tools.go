@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/vincamok/goproxify/internal/admin/scheduler"
+	"github.com/vincamok/goproxify/internal/edge/router"
 )
 
 // extraTools retourne les définitions des outils supplémentaires.
@@ -473,6 +474,9 @@ func (h *Handler) toolCreateIPProfile(r *http.Request, args map[string]any) (any
 }
 
 func (h *Handler) toolDeleteIPProfile(ctx context.Context, id string) (any, error) {
+	if id == router.WhitelistProfileID {
+		return nil, fmt.Errorf("profil géré par la liste blanche des bans : utiliser remove_ban_whitelist")
+	}
 	res, err := h.DB.ExecContext(ctx, `DELETE FROM ip_profiles WHERE id = ?`, id)
 	if err != nil {
 		return nil, err

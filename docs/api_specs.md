@@ -848,6 +848,32 @@ Liste tous les bans correspondant aux filtres, du plus récent au plus ancien. P
 
 Crée un ban manuel. Corps : `{ "ip", "domain", "reason", "expires_at" }`. Réponse `201` : `{ "id" }`.
 
+`ip` est une adresse IPv4/IPv6 **ou une plage CIDR**. La valeur est validée et normalisée avant d'être enregistrée : une plage est ramenée à son adresse de réseau (`203.0.113.7/24` → `203.0.113.0/24`), une adresse seule reste telle quelle (`/32` et `/128` retirés, IPv6 en minuscules, IPv4 mappée dépliée). Une valeur illisible, avec zone IPv6 ou composée (`1.2.3.1-9`) renvoie `400` (avant, elle était enregistrée puis ignorée sans rien dire par les passerelles). Sont aussi refusées : une plage plus large que `/16` en IPv4 ou `/32` en IPv6 (`400` — pour une plage plus large, un profil IP) et une plage qui **contient l'adresse de l'appelant** (`409`, pour ne pas se couper soi-même ; l'adresse est lue dans `X-Forwarded-For` sinon l'adresse distante, et le contrôle ne vise pas une adresse seule). Les passerelles appliquent la plage à toute adresse qu'elle contient, hors réseaux privés. Débannir une adresse située dans une plage bannie ne lève pas le ban de la plage : supprimer la plage elle-même (`DELETE`), ou créer un profil IP en mode allow, qui l'emporte sur les bans.
+
+### `GET|POST|DELETE /api/v1/security/bans/whitelist`
+
+**Liste blanche des bans** : adresses et plages qu'aucun ban n'atteint (manuel, Fail2Ban, CrowdSec, Sentinel, règles automatiques) et que Sentinel n'évalue pas. Réservée aux administrateurs.
+
+- `GET` : `[{ "value", "comment", "added_by", "added_at", "bans_exempted" }]`, `bans_exempted` étant le nombre de bans actifs entièrement couverts par l'entrée (donc sans effet).
+- `POST { "ip", "comment" }` : ajoute une adresse ou un CIDR, validé et normalisé comme pour un ban (`400` si illisible ou plus large que `/16` IPv4 / `/32` IPv6). `201 { "added": true, "entry": {…} }` ; si une entrée existante couvre déjà la cible, `200 { "added": false, "covered_by": "<entrée>" }` et rien ne change ; les entrées plus précises que la nouvelle sont retirées (redondantes).
+- `DELETE ?ip=<valeur enregistrée>` : retire l'entrée (`204`, `404` si elle n'existe pas). Les bans qu'elle neutralisait s'appliquent de nouveau.
+
+Les bans existants ne sont jamais supprimés par un ajout : ils cessent seulement de s'appliquer, et `GET /security/bans` les marque `"exempt": true` quand la liste blanche couvre toute leur cible. Les entrées sont recopiées dans un profil IP en mode `allow` d'identifiant `bans-whitelist` (nom « Liste blanche (bans) ») que les passerelles reçoivent et conservent : elles l'appliquent sans l'Admin, y compris après un redémarrage. Ce profil est **géré ici** : `PUT` et `DELETE /ip-profiles/bans-whitelist` renvoient `409`. À la différence d'un profil allow ordinaire, il exempte aussi de la détection Sentinel (requêtes non évaluées ni comptées). Un ban dont la cible est entièrement en liste blanche est refusé (`409`) ; une plage qui ne fait que recouper une entrée reste permise, l'entrée en restant exemptée. Outils MCP `list_ban_whitelist`, `add_ban_whitelist`, `remove_ban_whitelist` ; CLI `goproxify security bans whitelist`.
+
+### `POST /api/v1/security/bans/import`
+
+**Import de liste** : crée des bans (ou des entrées de la [liste blanche](#getpostdelete-apiv1securitybanswhitelist)) à partir d'une liste d'adresses IP et de CIDR. Corps JSON : `content` (le texte de la liste, 2 Mo et 10 000 entrées au plus), `format` (`auto` par défaut, `text`, `csv` ou `json`), `target` (`bans` par défaut, ou `whitelist`), `reason` (motif des bans, ou commentaire des entrées, sans motif propre ; `import` par défaut), `domain` (domaine ciblé par les bans sans domaine propre), `expires_at` (expiration RFC3339 des bans sans expiration propre ; vide = permanent) et `dry_run`.
+
+Formats : **texte** (une adresse ou un CIDR par ligne, commentaires `#` et `;` ; le commentaire d'une ligne devient son motif — `1.10.16.0/20 ; SBL256894`, liste Spamhaus DROP, donne le motif `SBL256894` —, ce qui permet d'importer les listes publiques FireHOL, blocklist.de ou Spamhaus), **CSV** (colonne `ip`, `cidr` ou `address` ; colonnes facultatives `reason`, `domain`, `expires_at` ; les autres colonnes sont ignorées, donc le CSV de `GET /security/bans/export` se réimporte tel quel ; sans en-tête : `ip[,reason]`) et **JSON** (tableau de chaînes, ou d'objets `ip`/`cidr`, `reason`, `domain`, `expires_at`, donc l'export JSON aussi). Le format est détecté quand `format` est absent.
+
+Chaque entrée est validée comme à la création unitaire : normalisation (`203.0.113.7/24` → `203.0.113.0/24`), plage plus large que `/16` (IPv4) ou `/32` (IPv6) **rejetée**, plage qui contient l'adresse de l'appelant **rejetée** (pour les bans seulement), expiration illisible **rejetée**. Sont **ignorées** (valides mais sans objet) : un doublon dans la liste, une entrée couverte par une plage plus large de la même liste, une cible déjà couverte par un ban actif ou par la liste blanche, une plage privée ou locale (jamais bloquée par les passerelles). Les bans sont créés en une transaction (source `native`, historique alimenté) puis poussés **une seule fois** aux passerelles ; l'import est audité (`import_bans`).
+
+Réponse `200` : `dry_run`, `target`, `format`, `total` (entrées lues), `created` (créées, ou qui le seraient en `dry_run`), `addresses` (adresses couvertes), `skipped` / `rejected` (`[{ "line", "value", "reason" }]`, 200 premières lignes) avec `skipped_count` / `rejected_count` exacts, et `sample` (quelques valeurs créées). `400` si la liste est vide, trop volumineuse, illisible dans le format demandé, ou si `target`, `format` ou `expires_at` sont invalides. Avec `dry_run`, rien n'est écrit ni poussé : à utiliser d'abord. Outil MCP `import_security_bans`, CLI `goproxify security bans import`, bouton « Importer » de la page Bans.
+
+### `GET /api/v1/security/bans/preview`
+
+Aperçu de l'impact d'un ban **avant de le créer**, sans rien modifier. Paramètres : `ip` (adresse ou CIDR, validé comme à la création, `400` sinon) et `hours` (période de trafic analysée, défaut 24, max 168). Réponse : `target` (forme normalisée), `kind` (`ip|cidr`), `prefix_bits`, `addresses` (nombre d'adresses), `private` (réseau privé ou local, jamais bloqué par les passerelles) ; le trafic de la cible sur la période — `requests`, `blocked` (403, 429, WAF ou Sentinel), `ok_requests` et `ok_ips` (requêtes réussies, donc probablement légitimes, et leurs adresses : ce que le ban couperait), `ips`, `top_ips`, `countries`, `scan_limited` ; `existing_bans` (bans actifs qui recoupent la cible, avec `relation` : `same`, `covers` — la cible est déjà couverte —, `inside` — le nouveau ban les englobe — ou `overlaps`) ; `profiles` (profils IP actifs qui la recoupent, un profil `allow` l'emporte sur un ban) ; `requester_in` (la plage contient l'appelant : la création serait refusée) ; `whitelist` (entrées de la [liste blanche](#get-post-delete-apiv1securitybanswhitelist) qui recoupent la cible) et `whitelisted` (la cible est entièrement exemptée : la création serait refusée) ; et `warnings`, une liste de messages lisibles. Mêmes droits que la liste des bans ; outil MCP `preview_security_ban`, CLI `goproxify security bans preview`.
+
 `expires_at` est une date RFC3339 (décalage horaire et fractions de seconde acceptés), enregistrée en UTC à la seconde (`2026-12-31T23:59:59Z`) ; absent, `null` ou `""` → ban permanent. Depuis Admin `0.69.5`, une date illisible renvoie `400` au lieu d'être enregistrée telle quelle (le ban n'était alors jamais actif). Il n'y a pas de champ `ttl` : une durée se convertit en `expires_at` côté client, comme le fait `goproxify security bans add -ttl`.
 
 ### `PATCH /api/v1/security/bans/:id`
@@ -968,6 +994,7 @@ Config du portail (`enabled`, `ssh_port`, `http_port`, `public_host`, `auth_prov
 | `users` | Identifiants (email ou identifiant d'annuaire, comparés sans casse) autorisés sur l'entrée |
 | `groups` | Identifiants de groupes Access (voir ci-dessous) autorisés sur l'entrée. Sans `users` ni `groups`, l'entrée est ouverte à tous les comptes du portail. Un jeton émis sur une entrée n'est valable que sur cette entrée |
 | `target_ids` | Destinations de l'entrée (identifiants du catalogue). Cochées, elles sont offertes à tous les utilisateurs autorisés de l'entrée, sans condition de tags ; vide = destinations habituelles de l'utilisateur (tags) |
+| `dest_groups` | Groupes de destinations de l'entrée (identifiants, voir `/api/v1/portal/destination-groups`) ; toutes leurs destinations sont offertes, en plus de `target_ids` |
 | `require_2fa` | `true`/`false` pour surcharger le réglage du portail ; absent = hérité |
 
 Une entrée s'adresse par un chemin (`domaine.fr/prestataire`), un sous-domaine ou domaine dédié (`presta.domaine.fr`), ou les deux. Un hôte égal à l'hôte public est ramené à un simple chemin. Les groupes et destinations inconnus de la passerelle sont ignorés à l'enregistrement. La passerelle ne reçoit que la liste résolue des membres (utilisateurs + membres des groupes).
@@ -1005,6 +1032,19 @@ Groupes d'utilisateurs du portail, propres à une passerelle (ou à son groupe H
 | `DELETE` | `/api/v1/portal/groups/{id}` | Supprime le groupe et le retire des entrées qui l'utilisaient |
 
 Les utilisateurs (`/api/v1/portal/users`) exposent `groups` (identifiants des groupes dont ils sont membres) ; `invite` et `PUT` acceptent `groups` pour aligner l'appartenance.
+
+### Groupes de destinations Access — `/api/v1/portal/destination-groups`
+
+Groupes de destinations du catalogue, propres à une passerelle (ou à son groupe HA). Une entrée (`views[].dest_groups`) offre toutes les destinations de ses groupes, en plus de ses `target_ids` ; l'Admin développe les groupes en `target_ids` à l'envoi, la passerelle ne les connaît pas. Une modification est poussée à la passerelle.
+
+| Méthode | Chemin | Description |
+|---------|--------|-------------|
+| `GET` | `/api/v1/portal/destination-groups?edge=` | Groupes de la passerelle : `id`, `name`, `description`, `targets` (identifiants de destinations) |
+| `POST` | `/api/v1/portal/destination-groups?edge=` | Crée un groupe : `name` (unique par passerelle, `409` sinon), `description`, `targets` (les identifiants absents du catalogue de la passerelle sont ignorés) |
+| `PUT` | `/api/v1/portal/destination-groups/{id}` | Met à jour `name`, `description`, `targets` (la liste remplace l'existante) |
+| `DELETE` | `/api/v1/portal/destination-groups/{id}` | Supprime le groupe et le retire des entrées qui l'utilisaient |
+
+Supprimer une destination (`DELETE /api/v1/portal/destinations/{id}`) la retire de ses groupes.
 
 ### Accès temporaires — `/api/v1/portal/access-requests`
 

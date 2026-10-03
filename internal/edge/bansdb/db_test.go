@@ -140,3 +140,42 @@ func TestHistoryWindowsSeeTodaysEvents(t *testing.T) {
 		t.Fatalf("seule l'entrée vieille d'1 h doit être purgée : %d restantes", n)
 	}
 }
+
+func TestBanCountForIP(t *testing.T) {
+	d, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	const ip = "203.0.113.7"
+	at := func(ago time.Duration) string { return time.Now().Add(-ago).UTC().Format(sqlTime) }
+	add := func(ip, src string, ago time.Duration) {
+		t.Helper()
+		if _, err := d.db.Exec(`INSERT INTO ban_history (ip, source, created_at) VALUES (?, ?, ?)`, ip, src, at(ago)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add(ip, "threat", 3*24*time.Hour)
+	add(ip, "threat", 2*time.Hour)
+	add(ip, "fail2ban", time.Hour)          // autre source : ignorée
+	add("203.0.113.8", "threat", time.Hour) // autre IP : ignorée
+	add(ip, "threat", 20*24*time.Hour)      // hors fenêtre
+
+	since := time.Now().Add(-7 * 24 * time.Hour)
+	n, err := d.BanCountForIP(ip, "threat", since)
+	if err != nil || n != 2 {
+		t.Fatalf("bans Sentinel de l'IP dans la fenêtre : %d %v, attendu 2", n, err)
+	}
+
+	// Un déban manuel remet la récidive à zéro : seuls les bans postérieurs comptent.
+	if err := d.Unban(ip, time.Now().Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := d.BanCountForIP(ip, "threat", since); n != 0 {
+		t.Fatalf("après déban : %d, attendu 0", n)
+	}
+	add(ip, "threat", time.Minute)
+	if n, _ := d.BanCountForIP(ip, "threat", since); n != 1 {
+		t.Fatalf("ban postérieur au déban : %d, attendu 1", n)
+	}
+}

@@ -70,6 +70,10 @@ func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleGroups(w, r)
 		return
 	}
+	if strings.HasPrefix(r.URL.Path, destGroupsPath) {
+		h.handleDestGroups(w, r)
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, "/api/v1/portal/destinations") {
 		h.handleDestinations(w, r)
 		return

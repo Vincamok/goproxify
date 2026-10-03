@@ -36,9 +36,9 @@ Chaque outil exige un scope, le même que sa route REST équivalente. Les outils
 | `domains:write` | `create_domain`, `renew_domain`, `rotate_cert` |
 | `certs:read` | `list_certs`, `get_cert_status`, `list_cert_deploy_targets`, `list_internal_cas` †, `list_internal_certs` †, `get_ech_status` † |
 | `certs:write` | `obtain_cert`, `import_cert`, `trigger_cert_deploy`, `create_internal_ca` †, `issue_internal_cert` †, `revoke_internal_cert` † |
-| `logs:read` | `list_logs`, `get_prism_anomalies`, `get_prism_geo`, `get_prism_slo`, `simulate_sentinel_config` †, `trace_ip` † |
-| `audit:read` | `get_audit_log`, `list_ip_profiles`, `get_security_overview` †, `list_security_bans` †, `list_security_threats` †, `list_security_cves` †, `list_auth_providers` †, `list_rules` †, `list_rule_history` †, `list_rule_versions` †, `list_pending_actions` †, `list_silences` †, `export_automation` †, `list_scheduled_tasks` †, `list_scheduled_task_runs` †, `list_playbooks` †, `list_playbook_runs` †, `get_playbook_run` † |
-| `security:write` | `create_ip_profile`, `delete_ip_profile`, `create_security_ban` †, `delete_security_ban` †, `ban_ip` †, `unban_ip` †, `create_auth_provider` †, `delete_auth_provider` †, `run_rule` †, `replay_rule_history` †, `restore_rule_version` †, `approve_pending_action` †, `reject_pending_action` †, `create_silence` †, `import_automation` †, `create_scheduled_task` †, `update_scheduled_task` †, `delete_scheduled_task` †, `run_scheduled_task` †, `create_playbook` †, `update_playbook` †, `delete_playbook` †, `run_playbook_now` †, `approve_playbook_run` †, `reject_playbook_run` † |
+| `logs:read` | `list_logs`, `get_prism_anomalies`, `get_prism_geo`, `get_prism_slo`, `simulate_sentinel_config` †, `trace_ip` †, `preview_security_ban` † |
+| `audit:read` | `get_audit_log`, `list_ip_profiles`, `get_security_overview` †, `list_security_bans` †, `list_ban_whitelist` †, `list_security_threats` †, `list_security_cves` †, `list_auth_providers` †, `list_rules` †, `list_rule_history` †, `list_rule_versions` †, `list_pending_actions` †, `list_silences` †, `export_automation` †, `list_scheduled_tasks` †, `list_scheduled_task_runs` †, `list_playbooks` †, `list_playbook_runs` †, `get_playbook_run` † |
+| `security:write` | `create_ip_profile`, `delete_ip_profile`, `create_security_ban` †, `delete_security_ban` †, `ban_ip` †, `unban_ip` †, `add_ban_whitelist` †, `remove_ban_whitelist` †, `import_security_bans` †, `create_auth_provider` †, `delete_auth_provider` †, `run_rule` †, `replay_rule_history` †, `restore_rule_version` †, `approve_pending_action` †, `reject_pending_action` †, `create_silence` †, `import_automation` †, `create_scheduled_task` †, `update_scheduled_task` †, `delete_scheduled_task` †, `run_scheduled_task` †, `create_playbook` †, `update_playbook` †, `delete_playbook` †, `run_playbook_now` †, `approve_playbook_run` †, `reject_playbook_run` † |
 | `portal:read` / `portal:write` | outils Access (`*_portal_*`, `push_portal`) † — voir [GoProxify Access](#goproxify-access-portail) |
 
 Les scopes d'écriture (`proxies:delete`, `nodes:write`, `alerts:write`, `domains:write`, `certs:write`, `security:write`, `import:write`) ainsi que `users:read`, `teams:read` et `portal:*` sont réservés aux rôles admin et superadmin (`proxies:write` et `snippets:write` sont aussi ouverts à un compte `user` qui a un droit d'écriture). Un refus est renvoyé comme erreur d'outil (`isError: true`) :
@@ -540,12 +540,78 @@ Crée un ban IP natif (**permanent** si `expires_at` omis) et pousse les bans au
 
 | Paramètre     | Type   | Requis | Description                         |
 |---------------|--------|--------|-------------------------------------|
-| `ip`          | string | ✓      | Adresse IP                          |
+| `ip`          | string | ✓      | Adresse IP ou plage CIDR (normalisée ; plus large que /16 IPv4 ou /32 IPv6, ou contenant l'appelant → erreur) |
 | `reason`      | string | —      | Motif                               |
 | `domain`      | string | —      | Domaine ciblé (vide = global)       |
 | `expires_at`  | string | —      | Expiration RFC3339, enregistrée en UTC ; omis = permanent ; date illisible → erreur |
 
 **Scope :** `security:write`
+
+---
+
+### `preview_security_ban`
+
+Aperçu de l'impact d'un ban IP ou CIDR **avant de le créer**, sans rien modifier : trafic récent de la cible (requêtes bloquées, requêtes réussies qui seraient coupées, adresses distinctes, pays), bans actifs et profils IP qui la recoupent, et avertissements (plage privée, profil allow, déjà couverte, auto-verrouillage). La cible est normalisée comme à la création ; une plage plus large que `/16` (IPv4) ou `/32` (IPv6) est refusée. Même réponse que `GET /api/v1/security/bans/preview`.
+
+| Paramètre | Type   | Requis | Description |
+|-----------|--------|--------|-------------|
+| `ip`      | string | ✓      | IP ou CIDR (`203.0.113.7`, `198.51.100.0/24`, `2001:db8::/32`) |
+| `hours`   | number | —      | Période de trafic analysée en heures (défaut 24, max 168) |
+
+**Scope :** `logs:read` † (lit les logs d'accès, comme `trace_ip`)
+
+---
+
+### `import_security_bans`
+
+Importe une liste d'adresses IP et de CIDR : crée des bans natifs, ou des entrées de la liste blanche avec `target=whitelist`, en une seule opération (une seule poussée vers les passerelles). Formats : texte (une adresse ou un CIDR par ligne, commentaires `#` et `;`, comme les listes publiques FireHOL ou Spamhaus DROP), CSV (le CSV de l'export des bans se réimporte tel quel) ou JSON. Chaque entrée est validée comme pour `create_security_ban` ; doublons, cibles déjà couvertes et plages privées sont ignorés. Avec `dry_run`, rien n'est créé. Même rapport que `POST /api/v1/security/bans/import`.
+
+| Paramètre    | Type    | Requis | Description |
+|--------------|---------|--------|-------------|
+| `content`    | string  | ✓      | Contenu de la liste (2 Mo, 10 000 entrées au plus) |
+| `format`     | string  | —      | `auto` (défaut), `text`, `csv` ou `json` |
+| `target`     | string  | —      | `bans` (défaut) ou `whitelist` |
+| `reason`     | string  | —      | Motif des bans (ou commentaire des entrées) sans motif propre ; défaut `import` |
+| `domain`     | string  | —      | Domaine ciblé par les bans sans domaine propre (vide = global) |
+| `expires_at` | string  | —      | Expiration RFC3339 des bans sans expiration propre ; omis = permanents |
+| `dry_run`    | boolean | —      | `true` : analyser sans rien créer |
+
+**Scope :** `security:write` †  
+**Réponse :** `{ "dry_run", "target", "format", "total", "created", "addresses", "skipped": [{ "line", "value", "reason" }], "skipped_count", "rejected": […], "rejected_count", "sample": […] }`
+
+---
+
+### `list_ban_whitelist`
+
+Liste la **liste blanche des bans** : adresses et plages qu'aucun ban n'atteint (manuel, Fail2Ban, CrowdSec, Sentinel, règles) et que Sentinel n'évalue pas. Aucun paramètre. Réponse : `[{ "value", "comment", "added_by", "added_at" }]`.
+
+**Scope :** `audit:read` †
+
+---
+
+### `add_ban_whitelist`
+
+Ajoute une adresse IP ou une plage CIDR à la liste blanche et l'envoie aux passerelles. La cible est normalisée (`203.0.113.7/24` → `203.0.113.0/24`) ; plus large que `/16` (IPv4) ou `/32` (IPv6) → erreur. Si une entrée existante la couvre déjà : `{ "added": false, "covered_by": "…" }` ; les entrées plus précises sont retirées. Les bans existants ne sont pas supprimés : ils cessent de s'appliquer à ces adresses. Voir [Liste blanche des bans](security.md#liste-blanche-des-bans).
+
+| Paramètre | Type   | Requis | Description |
+|-----------|--------|--------|-------------|
+| `ip`      | string | ✓      | Adresse IP ou plage CIDR à exempter |
+| `comment` | string | —      | Pourquoi (ex. « bureau Paris ») |
+
+**Scope :** `security:write` †  
+**Réponse :** `{ "added": true, "value": "…", "comment": "…" }`
+
+---
+
+### `remove_ban_whitelist`
+
+Retire une entrée de la liste blanche (valeur exacte telle qu'enregistrée) et l'envoie aux passerelles ; les bans qu'elle neutralisait s'appliquent de nouveau. Erreur si l'entrée n'existe pas.
+
+| Paramètre | Type   | Requis | Description |
+|-----------|--------|--------|-------------|
+| `ip`      | string | ✓      | Adresse IP ou plage CIDR à retirer |
+
+**Scope :** `security:write` †
 
 ---
 
@@ -567,7 +633,7 @@ Banne une IP directement depuis le MCP (insère dans `security_bans`, pousse aux
 
 | Paramètre    | Type   | Requis | Description                               |
 |--------------|--------|--------|-------------------------------------------|
-| `ip`         | string | ✓      | Adresse IP à bannir                       |
+| `ip`         | string | ✓      | Adresse IP ou plage CIDR à bannir (mêmes règles que `create_security_ban`) |
 | `reason`     | string | —      | Motif du ban                              |
 | `expires_at` | string | —      | Expiration RFC3339, enregistrée en UTC ; omis = permanent ; date illisible → erreur |
 
@@ -582,7 +648,7 @@ Lève le ban d'une IP (supprime de `security_bans`) et tous ses bans sur chaque 
 
 | Paramètre | Type   | Requis | Description         |
 |-----------|--------|--------|---------------------|
-| `ip`      | string | ✓      | Adresse IP à débannir |
+| `ip`      | string | ✓      | Adresse IP ou plage CIDR à débannir, telle qu'enregistrée (débannir une adresse d'une plage bannie ne lève pas la plage) |
 
 **Scope :** `security:write` (depuis Admin `0.69.6` ; aucun scope n'était vérifié auparavant)  
 **Réponse :** `{ "ip": "<ip>", "deleted": <n> }` (`deleted` : nombre de bans supprimés de `security_bans`, `0` si l'Admin n'en connaissait aucun — le déban est tout de même envoyé aux passerelles)
@@ -1148,7 +1214,7 @@ Dry-run Sentinel : rejoue les access logs récents contre une config candidate e
 
 | Paramètre | Type    | Requis | Description |
 |-----------|---------|--------|-------------|
-| `config`  | object  | ✓      | Champs Sentinel à surcharger sur la config actuelle (mêmes noms que `threat-config`, config du groupe HA si la passerelle en fait partie : `rate_limit`, `rate_window`, `rate_ban_threshold`, `error_threshold`, `error_window`, `custom_lists`, `whitelist`, `score_threshold`, `ip_score` (`enabled`, `ban_threshold`, `half_life`), `ban_duration`) |
+| `config`  | object  | ✓      | Champs Sentinel à surcharger sur la config actuelle (mêmes noms que `threat-config`, config du groupe HA si la passerelle en fait partie : `rate_limit`, `rate_window`, `rate_ban_threshold`, `error_threshold`, `error_window`, `custom_lists`, `whitelist`, `score_threshold`, `ip_score` (`enabled`, `ban_threshold`, `half_life`, `errors` : `enabled`, `weights`, `default_weight`, `routes`), `escalation` (`enabled`, `factor`, `window`, `max_duration`), `ban_duration`) |
 | `hours`   | number  | —      | Fenêtre rejouée (défaut `1`, max `24`) |
 | `domain`  | string  | —      | Limiter le rejeu à un domaine |
 | `edge`    | string  | —      | Passerelle dont la config actuelle sert de base (défaut : config globale) |
@@ -1505,6 +1571,10 @@ Invitation : `email`, `home_edge`, `tags`, `groups` (IDs de groupes ; SMTP Admin
 ### Groupes — `list_portal_groups`, `create_portal_group`, `update_portal_group`, `delete_portal_group`
 
 Groupes d'utilisateurs Access par passerelle, utilisés pour donner des droits sur les entrées du portail (`views` de `update_portal_config` : `users`, `groups`, `target_ids`, `theme`, `slug`/`host`…). `list_portal_groups` (`edge`, scope `portal:read`) ; `create_portal_group` (`edge`, `name`, `description`, `members`), `update_portal_group` (`id`, `name`, `description`, `members` — la liste remplace l'existante), `delete_portal_group` (`id`) (scope `portal:write`).
+
+### Groupes de destinations — `list_portal_destination_groups`, `create_portal_destination_group`, `update_portal_destination_group`, `delete_portal_destination_group`
+
+Groupes de destinations (machines du catalogue) par passerelle : une entrée du portail (`views[].dest_groups` de `update_portal_config`) offre toutes les destinations de ses groupes. `list_portal_destination_groups` (`edge`, scope `portal:read`) ; `create_portal_destination_group` (`edge`, `name`, `description`, `targets` = IDs de destinations), `update_portal_destination_group` (`id`, `name`, `description`, `targets` — la liste remplace l'existante), `delete_portal_destination_group` (`id`) (scope `portal:write`).
 
 ### Sessions en direct — `list_portal_sessions`, `terminate_portal_session`
 

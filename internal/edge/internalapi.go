@@ -645,6 +645,20 @@ func (s *Server) addBanEvent(ip, source string) {
 	}
 }
 
+// priorThreatBans retourne le nombre de bans Sentinel déjà posés sur l'IP depuis `since`, pour que
+// Sentinel allonge les bans des récidivistes.
+func (s *Server) priorThreatBans(ip string, since time.Time) int {
+	if s.bansDB == nil {
+		return 0
+	}
+	n, err := s.bansDB.BanCountForIP(ip, "threat", since)
+	if err != nil {
+		s.log.Warn("bansdb: BanCountForIP échoué", "err", err)
+		return 0
+	}
+	return n
+}
+
 // recentBanCount retourne le nombre de bans depuis `since` (source="" = toutes).
 func (s *Server) recentBanCount(since time.Time, source string) int {
 	if s.bansDB == nil {

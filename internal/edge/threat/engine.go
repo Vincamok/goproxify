@@ -8,6 +8,7 @@ package threat
 import (
 	"context"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"strings"
@@ -99,6 +100,8 @@ type Engine struct {
 
 	banFn BanCallback
 	sim   bool // rejeu hors production : ni métriques Prometheus ni effets de bord
+
+	priorBans func(ip string, since time.Time) int // bans Sentinel précédents d'une IP (bans graduels)
 
 	tarpitSlots chan struct{} // slots du tarpit ; recréé quand MaxConcurrent change
 	log   *slog.Logger
@@ -285,7 +288,7 @@ func (e *Engine) Check(r *http.Request, ip string) (blocked bool, reason string)
 		} else if topReason != "rate" {
 			// Signal non-rate (path, ip, ua, custom_*) : bannir immédiatement.
 			if e.banFn != nil {
-				expires := time.Now().Add(cfg.BanDuration.Duration)
+				expires := e.banExpiry(ip, cfg)
 				e.inc(threatBansTotal, topReason)
 				e.banFn(ip, "threat: "+topReason, expires)
 			}
@@ -297,6 +300,53 @@ func (e *Engine) Check(r *http.Request, ip string) (blocked bool, reason string)
 	}
 	// detect ou score insuffisant : signale sans bloquer
 	return false, "threat: " + topReason
+}
+
+// SetPriorBansFunc fournit le nombre de bans Sentinel déjà posés sur une IP depuis `since` (hors
+// ceux antérieurs à son dernier déban). Sans elle, les bans ne sont pas graduels.
+func (e *Engine) SetPriorBansFunc(fn func(ip string, since time.Time) int) {
+	e.mu.Lock()
+	e.priorBans = fn
+	e.mu.Unlock()
+}
+
+// banExpiry calcule la fin d'un ban : la durée de base, allongée si l'IP est récidiviste.
+func (e *Engine) banExpiry(ip string, cfg Config) time.Time {
+	now := e.counters.now()
+	d := cfg.BanDuration.Duration
+	if !cfg.Escalation.Enabled {
+		return now.Add(d)
+	}
+	e.mu.RLock()
+	fn := e.priorBans
+	e.mu.RUnlock()
+	if fn == nil {
+		return now.Add(d)
+	}
+	prior := fn(ip, now.Add(-cfg.Escalation.Window.Duration))
+	if prior > 0 {
+		longer := escalatedDuration(d, prior, cfg.Escalation)
+		e.log.Warn("sentinel: ban graduel", "ip", ip, "bans_precedents", prior, "duree", longer, "duree_de_base", d)
+		d = longer
+	}
+	return now.Add(d)
+}
+
+// escalatedDuration retourne base × Factor^prior, plafonnée à MaxDuration sans jamais descendre
+// sous base (un plafond inférieur à la durée de base ne raccourcit pas les bans).
+func escalatedDuration(base time.Duration, prior int, c EscalationConfig) time.Duration {
+	if base <= 0 || prior <= 0 {
+		return base
+	}
+	limit := c.MaxDuration.Duration
+	if limit < base {
+		limit = base
+	}
+	f := float64(base) * math.Pow(c.Factor, float64(prior))
+	if f >= float64(limit) {
+		return limit
+	}
+	return time.Duration(f)
 }
 
 // scoreBan ajoute les points de la requête au score de l'IP et la bannit quand le score cumulé
@@ -312,7 +362,7 @@ func (e *Engine) scoreBan(ip, topReason string, points int, cfg Config) {
 		return
 	}
 	e.counters.resetScore(ip)
-	expires := time.Now().Add(cfg.BanDuration.Duration)
+	expires := e.banExpiry(ip, cfg)
 	reason := "threat: score cumulé"
 	label := "score"
 	if immediate {
@@ -348,24 +398,35 @@ func (e *Engine) maybeRateBan(ip, topReason string, cfg Config) {
 		return
 	}
 	e.counters.resetRateTrigger(ip)
-	expires := time.Now().Add(cfg.BanDuration.Duration)
+	expires := e.banExpiry(ip, cfg)
 	e.log.Warn("sentinel: ban automatique rate", "ip", ip, "threshold", threshold, "window", window)
 	e.inc(threatSignalsTotal, "rate_ban")
 	e.inc(threatBansTotal, "rate")
 	e.banFn(ip, "threat: rate excessif", expires)
 }
 
-// RecordStatus doit être appelé après chaque réponse pour alimenter les compteurs 4xx.
-func (e *Engine) RecordStatus(ip string, status int) {
+// RecordStatus alimente les compteurs 4xx sans connaître le chemin (pas de pondération par route).
+func (e *Engine) RecordStatus(ip string, status int) { e.RecordResponse(ip, "", status) }
+
+// RecordResponse doit être appelé après chaque réponse pour alimenter les compteurs 4xx : le compteur
+// error_threshold / error_window, ou le score cumulé quand ip_score.errors est actif.
+func (e *Engine) RecordResponse(ip, path string, status int) {
 	e.mu.RLock()
 	cfg := e.cfg
 	wl := e.wl
 	e.mu.RUnlock()
 
-	if !cfg.Enabled || cfg.ErrorThreshold <= 0 {
+	if !cfg.Enabled {
 		return
 	}
 	if status < 400 || status >= 500 {
+		return
+	}
+	if cfg.IPScore.Enabled && cfg.IPScore.Errors.Enabled {
+		e.recordErrorScore(ip, path, status, cfg, wl)
+		return
+	}
+	if cfg.ErrorThreshold <= 0 {
 		return
 	}
 	if wl.allowedIP(ip) {
@@ -377,11 +438,34 @@ func (e *Engine) RecordStatus(ip string, status int) {
 		e.log.Warn("sentinel: ban automatique 4xx", "ip", ip, "status", status, "detect", isDetect)
 		e.inc(threatSignalsTotal, "error4xx")
 		if !isDetect && e.banFn != nil {
-			expires := time.Now().Add(cfg.BanDuration.Duration)
+			expires := e.banExpiry(ip, cfg)
 			e.inc(threatBansTotal, "error4xx")
 			e.banFn(ip, "threat: erreurs 4xx répétées", expires)
 		}
 		e.counters.resetErrors(ip)
+	}
+}
+
+// recordErrorScore verse une erreur 4xx pondérée au score de l'IP et la bannit au seuil.
+func (e *Engine) recordErrorScore(ip, path string, status int, cfg Config, wl *whitelist) {
+	if wl.allowedIP(ip) || wl.allowedPath(path) {
+		return
+	}
+	points := cfg.IPScore.Errors.points(status, path)
+	if points <= 0 {
+		return
+	}
+	acc := e.counters.addScore(ip, points, cfg.IPScore.HalfLife.Duration)
+	if acc < cfg.IPScore.BanThreshold {
+		return
+	}
+	e.counters.resetScore(ip)
+	isDetect := strings.EqualFold(cfg.Mode, "detect")
+	e.log.Warn("sentinel: ban sur erreurs 4xx pondérées", "ip", ip, "status", status, "score", acc, "detect", isDetect)
+	e.inc(threatSignalsTotal, "error4xx")
+	if !isDetect && e.banFn != nil {
+		e.inc(threatBansTotal, "error4xx")
+		e.banFn(ip, "threat: erreurs 4xx répétées", e.banExpiry(ip, cfg))
 	}
 }
 

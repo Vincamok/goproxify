@@ -35,6 +35,8 @@ type View struct {
 	// Destinations de l'entrée (identifiants du catalogue) ; vide = celles que l'utilisateur voit déjà.
 	// Une entrée qui en liste les offre à tous ses utilisateurs autorisés, sans condition de tags.
 	TargetIDs []string `json:"target_ids,omitempty"`
+	// Groupes de destinations de l'Admin : développés en TargetIDs à l'envoi, jamais transmis à la passerelle.
+	DestGroups []string `json:"dest_groups,omitempty"`
 }
 
 // ResolvedView est une vue avec ses valeurs héritées du portail.
@@ -81,6 +83,7 @@ func NormalizeView(v View) View {
 	v.Groups = cleanTags(v.Groups)
 	v.Members = cleanIdentities(v.Members)
 	v.TargetIDs = cleanTags(v.TargetIDs)
+	v.DestGroups = cleanTags(v.DestGroups)
 	return v
 }
 

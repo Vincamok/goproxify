@@ -63,6 +63,9 @@ type Handler struct {
 	// OnUnban (optionnel) — lève les bans d'une IP sur les passerelles, y compris ceux qu'elles ont posés
 	// elles-mêmes, puis renvoie la liste des bans (remplace OnBansChange pour un déban).
 	OnUnban func(ip string)
+	// OnWhitelistChange (optionnel) — pousse les profils IP aux passerelles après un changement de la
+	// liste blanche des bans (qui en est un).
+	OnWhitelistChange func()
 	// ResolvePublicURL (optionnel) — base publique Admin pour les tickets bootstrap (QR / curl|bash).
 	ResolvePublicURL func(r *http.Request) string
 	// RulesEngine (optionnel) — moteur de règles automatiques pour l'outil run_rule.
@@ -394,9 +397,11 @@ var tools = []map[string]any{
 	},
 	{
 		"name":        "create_security_ban",
-		"description": "Crée un ban IP natif (permanent par défaut). Pousse les bans aux passerelles.",
+		"description": "Crée un ban IP natif (permanent par défaut) sur une adresse ou une plage CIDR. Pousse les bans aux passerelles. " +
+			"Une plage est normalisée (203.0.113.7/24 devient 203.0.113.0/24), refusée si plus large que /16 (IPv4) ou /32 (IPv6), " +
+			"ou si elle contient l'adresse de l'appelant. Mesurer l'impact avant avec preview_security_ban.",
 		"inputSchema": schema(
-			req("ip", "string", "Adresse IP à bannir"),
+			req("ip", "string", "Adresse IP ou plage CIDR à bannir"),
 			opt("reason", "string", "Motif du ban"),
 			opt("domain", "string", "Domaine ciblé (vide = global)"),
 			opt("expires_at", "string", "Expiration RFC3339 ; omit = permanent"),
@@ -409,17 +414,18 @@ var tools = []map[string]any{
 	},
 	{
 		"name":        "ban_ip",
-		"description": "Banne immédiatement une IP via le moteur Sentinel (ban natif). Pousse aux passerelles.",
+		"description": "Banne immédiatement une IP ou une plage CIDR (ban natif). Pousse aux passerelles. Mêmes règles que create_security_ban.",
 		"inputSchema": schema(
-			req("ip", "string", "Adresse IP à bannir"),
+			req("ip", "string", "Adresse IP ou plage CIDR à bannir"),
 			opt("reason", "string", "Motif du ban (défaut: mcp_ban)"),
 			opt("expires_at", "string", "Expiration RFC3339 ; omit = permanent"),
 		),
 	},
 	{
 		"name":        "unban_ip",
-		"description": "Débanne une IP bannie par son adresse exacte (supprime tous les bans natifs sur cette IP).",
-		"inputSchema": schema(req("ip", "string", "Adresse IP à débannir")),
+		"description": "Débanne une IP ou une plage CIDR par sa valeur exacte (supprime tous les bans natifs portant cette valeur). " +
+			"Débannir une adresse située dans une plage bannie ne lève pas le ban de la plage : supprimer la plage elle-même, ou créer un profil IP allow.",
+		"inputSchema": schema(req("ip", "string", "Adresse IP ou plage CIDR à débannir, telle qu'enregistrée")),
 	},
 	{
 		"name":        "rotate_cert",
@@ -927,6 +933,14 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 		result, toolErr = h.toolUpdatePortalGroup(r, p.Arguments)
 	case "delete_portal_group":
 		result, toolErr = h.toolDeletePortalGroup(r, p.Arguments)
+	case "list_portal_destination_groups":
+		result, toolErr = h.toolListPortalDestGroups(r, p.Arguments)
+	case "create_portal_destination_group":
+		result, toolErr = h.toolCreatePortalDestGroup(r, p.Arguments)
+	case "update_portal_destination_group":
+		result, toolErr = h.toolUpdatePortalDestGroup(r, p.Arguments)
+	case "delete_portal_destination_group":
+		result, toolErr = h.toolDeletePortalDestGroup(r, p.Arguments)
 	case "list_portal_users":
 		result, toolErr = h.toolListPortalUsers(r, p.Arguments)
 	case "invite_portal_user":
@@ -967,6 +981,16 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 		result, toolErr = h.toolPushPortalTemplates(r)
 	case "trace_ip":
 		result, toolErr = h.toolTraceIP(r, p.Arguments)
+	case "preview_security_ban":
+		result, toolErr = h.toolPreviewSecurityBan(r, p.Arguments)
+	case "import_security_bans":
+		result, toolErr = h.toolImportSecurityBans(r, p.Arguments)
+	case "list_ban_whitelist":
+		result, toolErr = h.toolListBanWhitelist()
+	case "add_ban_whitelist":
+		result, toolErr = h.toolAddBanWhitelist(r, p.Arguments)
+	case "remove_ban_whitelist":
+		result, toolErr = h.toolRemoveBanWhitelist(r, p.Arguments)
 	case "simulate_sentinel_config":
 		result, toolErr = h.toolSimulateSentinel(r, p.Arguments)
 	case "get_topology_live":
@@ -1753,9 +1777,10 @@ func (h *Handler) toolListSecurityBans(r *http.Request, args map[string]any) (an
 }
 
 func (h *Handler) toolCreateSecurityBan(r *http.Request, args map[string]any) (any, error) {
-	ip, _ := args["ip"].(string)
-	if ip == "" {
-		return nil, fmt.Errorf("ip requis")
+	rawIP, _ := args["ip"].(string)
+	ip, err := h.banTarget(r, rawIP)
+	if err != nil {
+		return nil, err
 	}
 	reason, _ := args["reason"].(string)
 	domain, _ := args["domain"].(string)
@@ -1818,9 +1843,10 @@ func (h *Handler) notifyUnban(r *http.Request, ip, reason, source, banID string)
 }
 
 func (h *Handler) toolBanIP(r *http.Request, args map[string]any) (any, error) {
-	ip, _ := args["ip"].(string)
-	if ip == "" {
-		return nil, fmt.Errorf("ip requis")
+	rawIP, _ := args["ip"].(string)
+	ip, err := h.banTarget(r, rawIP)
+	if err != nil {
+		return nil, err
 	}
 	reason, _ := args["reason"].(string)
 	if reason == "" {

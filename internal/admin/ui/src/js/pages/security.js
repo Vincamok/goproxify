@@ -1855,11 +1855,36 @@ window.exportBansCSV = function() {
 window.openBanModal = function() {
   modal(t('security.ban_modal.title'),
     `<div class="field"><label class="field-label">${t('security.ban_modal.ip')}</label><input id="ban-ip" class="input" placeholder="${t('security.ban_modal.ip_ph')}"></div>
+     <div id="ban-preview"></div>
      <div class="field"><label class="field-label">${t('security.ban_modal.domain')}</label><input id="ban-domain" class="input" placeholder="${t('security.ban_modal.domain_ph')}"></div>
      <div class="field"><label class="field-label">${t('security.ban_modal.reason')}</label><input id="ban-reason" class="input" placeholder="${t('security.ban_modal.reason_ph')}"></div>
      <div class="field"><label class="field-label">${t('security.ban_modal.expires')}</label><input id="ban-exp" type="datetime-local" class="input"></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">${t('common.cancel')}</button>
+     <button class="btn btn-secondary" onclick="previewBan()">${t('security.ban_modal.preview')}</button>
      <button class="btn btn-danger" onclick="submitBan()">${t('security.ban_modal.submit')}</button>`);
+};
+
+// Mesure ce qu'un ban couperait (trafic récent, bans et profils qui recoupent la cible, risques)
+// avant de le créer.
+window.previewBan = async function() {
+  const ip = document.getElementById('ban-ip')?.value.trim();
+  const box = document.getElementById('ban-preview');
+  if (!box) return;
+  if (!ip) { toast(t('security.ban_ip_required'), 'error'); return; }
+  box.innerHTML = '<div style="font-size:12.5px;color:var(--text3);margin-bottom:10px">…</div>';
+  try {
+    const r = await api('GET', '/security/bans/preview?ip=' + encodeURIComponent(ip));
+    const warns = (r.warnings || []).map(w => `<li>${esc(w)}</li>`).join('');
+    box.innerHTML = `<div style="font-size:12.5px;line-height:1.5;padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin-bottom:10px">
+      <strong>${esc(t('security.ban_modal.preview_title', { target: r.target, addresses: Math.round(r.addresses) }))}</strong><br>
+      ${esc(t('security.ban_modal.preview_traffic', { hours: r.hours, requests: r.requests, ips: r.ips, blocked: r.blocked, ok: r.ok_requests, okips: r.ok_ips }))}
+      ${warns
+        ? `<ul style="margin:6px 0 0 16px;padding:0;color:var(--yellow)">${warns}</ul>`
+        : `<div style="color:var(--green);margin-top:4px">${esc(t('security.ban_modal.preview_none'))}</div>`}
+    </div>`;
+  } catch (e) {
+    box.innerHTML = `<div style="font-size:12.5px;color:var(--red);margin-bottom:10px">${esc(e.message)}</div>`;
+  }
 };
 
 window.submitBan = async function() {

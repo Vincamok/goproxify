@@ -388,6 +388,13 @@ func (s *Server) Start(ctx context.Context) error {
 			go manager.PushUnban(context.Background(), []string{ip})
 		}
 	}
+	// Les profils IP (dont la liste blanche des bans) ne partaient vers les passerelles qu'à leur
+	// connexion : un changement depuis l'Admin n'était appliqué qu'à la reconnexion suivante.
+	pushIPProfiles := func() {
+		if manager != nil {
+			go manager.PushIPProfiles(context.Background())
+		}
+	}
 	f2bEngine.OnBan = func(ip, reason string) {
 		if s.alertingEngine != nil {
 			s.alertingEngine.Emit(alerting.Event{
@@ -425,6 +432,7 @@ func (s *Server) Start(ctx context.Context) error {
 		ScanCtx:      ctx,
 		OnBansChange: pushBans,
 		OnUnban:      pushUnban,
+		OnWhitelistChange: pushIPProfiles,
 		OnThreatConfigChange: func(scope string, cfg any) {
 			if manager != nil {
 				go manager.PushThreatConfig(context.Background(), scope, cfg)
@@ -522,7 +530,10 @@ func (s *Server) Start(ctx context.Context) error {
 			},
 		})
 	}
-	ipProfilesH := &api.IPProfilesHandler{DB: s.db, Log: s.log, Updater: ipUpdater, OnChange: syncConfig}
+	ipProfilesH := &api.IPProfilesHandler{DB: s.db, Log: s.log, Updater: ipUpdater, OnChange: func() {
+		syncConfig()
+		pushIPProfiles()
+	}}
 	syncArch := func() {
 		if archStore != nil {
 			go archStore.SyncDomainsFromDB(context.Background(), s.db) //nolint:errcheck
@@ -850,6 +861,7 @@ func (s *Server) Start(ctx context.Context) error {
 		},
 		OnBansChange: pushBans,
 		OnUnban:      pushUnban,
+		OnWhitelistChange: pushIPProfiles,
 		RulesEngine:  s.rulesEngine,
 		Scheduler:    s.schedEngine,
 		Playbooks:    s.pbEngine,

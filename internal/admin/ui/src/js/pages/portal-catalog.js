@@ -32,7 +32,15 @@ async function renderPortalCatalogPage(ctx) {
     window._portalCatalogAll = destinations;
     window._portalDiscovered = containersRes || [];
 
+    // Groupes de destinations : un appel par passerelle (propres à la passerelle ou à son groupe HA).
+    const groupScopes = isAdmin ? edges.map(n => n.node_name || n.id) : [edgeName];
+    const groupRes = await Promise.all(groupScopes.map(e => api('GET', '/portal/destination-groups?edge=' + encodeURIComponent(e)).catch(() => ({ groups: [] }))));
+    const seenGroups = new Set();
+    window._portalDestGroups = [];
+    groupRes.forEach(r => (r.groups || []).forEach(g => { if (!seenGroups.has(g.id)) { seenGroups.add(g.id); window._portalDestGroups.push(g); } }));
+
     if (!window._pcFilter) window._pcFilter = { edge: '', kind: '', q: '' };
+    if (!window._pcTab) window._pcTab = 'dests';
 
     const filtered = () => {
       const f = window._pcFilter;
@@ -47,16 +55,81 @@ async function renderPortalCatalogPage(ctx) {
       });
     };
 
+    const destName = (id) => (window._portalCatalogAll || []).find(d => d.id === id)?.name || id;
+    const filteredGroups = () => (window._portalDestGroups || []).filter(g => !window._pcFilter.edge || g.edge_name === window._pcFilter.edge)
+      .filter(g => !window._pcFilter.q || (g.name + ' ' + (g.description || '')).toLowerCase().includes(window._pcFilter.q.toLowerCase()));
+
+    const groupsHTML = () => {
+      const items = filteredGroups();
+      if (!items.length) {
+        return `<div style="padding:24px;text-align:center;color:var(--text2);border:1px dashed var(--border);border-radius:8px">
+          ${esc(t('pdgroups.empty') || 'Aucun groupe de destinations. Un groupe rassemble des machines que les entrées du portail offrent ensemble.')}</div>`;
+      }
+      return `<div class="card blueprint" style="padding:0;overflow:hidden"><div class="table-wrap"><table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="text-align:left;color:var(--text2)">
+          <th style="padding:10px 14px">${esc(t('pgroups.name') || 'Groupe')}</th>
+          ${isAdmin ? `<th style="padding:10px 14px">${esc(t('pusers.edge') || 'Passerelle')}</th>` : ''}
+          <th style="padding:10px 14px">${esc(t('pdgroups.targets') || 'Destinations')}</th>
+          <th style="padding:10px 14px"></th></tr></thead>
+        <tbody>${items.map(g => `<tr data-grow="${esc(g.id)}" style="border-top:1px solid var(--border);cursor:pointer">
+          <td style="padding:10px 14px"><b>${esc(g.name)}</b>${g.description ? `<div style="font-size:11px;color:var(--text2)">${esc(g.description)}</div>` : ''}</td>
+          ${isAdmin ? `<td style="padding:10px 14px"><span class="tag tag-outline" style="font-size:10px">${esc(g.edge_name)}</span></td>` : ''}
+          <td style="padding:10px 14px">${(g.targets || []).length ? (g.targets || []).map(id => `<span class="chip" style="font-size:11px">${esc(destName(id))}</span>`).join(' ') : '—'}</td>
+          <td style="padding:10px 14px;text-align:right"><button type="button" class="btn btn-ghost btn-sm" data-gdel="${esc(g.id)}" style="color:var(--danger,#c45c5c)">${esc(t('common.delete') || 'Supprimer')}</button></td>
+        </tr>`).join('')}</tbody></table></div></div>`;
+    };
+
+    // ── Groupe : nom, description, destinations du catalogue (de la même passerelle)
+    const openGroupEditor = async (g) => {
+      const scope = g ? g.edge_name : (isAdmin ? (window._pcFilter.edge || (edges[0] && (edges[0].node_name || edges[0].id)) || '') : edgeName);
+      const cfg = g ? await api('GET', '/portal?edge=' + encodeURIComponent(scope)).catch(() => ({})) : {};
+      const used = (cfg.views || []).filter(v => (v.dest_groups || []).includes(g?.id));
+      const destItemsFor = (sc) => (window._portalCatalogAll || []).filter(d => d.edge_name === sc).map(d => ({ value: d.id, label: d.name, sub: [d.kind, d.kind === 'docker' ? d.container : d.host].filter(Boolean).join(' · ') }));
+      const edgeSel = !g && isAdmin
+        ? `<div class="field" style="margin-bottom:10px"><label class="field-label">${esc(t('pusers.edge') || 'Passerelle')}</label><select class="input" id="pdg-edge">${edges.map(c => { const nn = c.node_name || c.id; return `<option value="${esc(nn)}" ${nn === scope ? 'selected' : ''}>${esc(c.display_name || nn)}</option>`; }).join('')}</select></div>` : '';
+      const ov = PortalUI.modal({
+        title: esc(g ? g.name : (t('pdgroups.new') || 'Nouveau groupe de destinations')),
+        width: 560,
+        body: `${edgeSel}
+          <div class="field" style="margin-bottom:10px"><label class="field-label">${esc(t('pgroups.name') || 'Groupe')}</label><input class="input" id="pdg-name" value="${esc(g?.name || '')}" placeholder="Serveurs web"/></div>
+          <div class="field" style="margin-bottom:10px"><label class="field-label">Description</label><input class="input" id="pdg-desc" value="${esc(g?.description || '')}"/></div>
+          <div class="field" style="margin-bottom:10px"><label class="field-label">${esc(t('pdgroups.targets') || 'Destinations')}</label>
+            <div id="pdg-targets">${PortalUI.picker('targets', destItemsFor(scope), g?.targets || [], t('pdgroups.no_dests') || 'Aucune destination pour cette passerelle.')}</div></div>
+          ${g ? `<div class="field"><label class="field-label">${esc(t('pgroups.used_by') || 'Entrées utilisant ce groupe')}</label>
+            <div style="font-size:12px;color:var(--text2)">${used.length ? used.map(v => esc(v.name || PortalUI.formatURL(v))).join(', ') : esc(t('pdgroups.unused') || 'Aucune — à associer dans Réglages › Entrées dédiées.')}</div></div>` : ''}`,
+        onOk: async (o) => {
+          const body = {
+            name: o.querySelector('#pdg-name').value.trim(),
+            description: o.querySelector('#pdg-desc').value.trim(),
+            targets: PortalUI.picked(o, 'targets'),
+          };
+          if (g) await api('PUT', '/portal/destination-groups/' + g.id, body);
+          else await api('POST', '/portal/destination-groups?edge=' + encodeURIComponent(o.querySelector('#pdg-edge')?.value || scope), body);
+          window._pcTab = 'groups';
+          renderPortalCatalogPage(ctx);
+        },
+      });
+      const sel = ov.querySelector('#pdg-edge');
+      if (sel) sel.onchange = () => {
+        const host = ov.querySelector('#pdg-targets');
+        host.innerHTML = PortalUI.picker('targets', destItemsFor(sel.value), [], t('pdgroups.no_dests') || 'Aucune destination pour cette passerelle.');
+        PortalUI.bindPickers(host);
+      };
+    };
+
     const render = () => {
       const items = filtered();
+      const tab = window._pcTab;
+      const tabBtn = (id, label, n) => `<button type="button" class="chip" data-tab="${id}" style="cursor:pointer;padding:5px 14px;font-size:13px;${tab === id ? 'border-color:var(--accent);color:var(--accent);font-weight:600' : ''}">${esc(label)} <span style="opacity:.7">${n}</span></button>`;
       const chips = isAdmin ? edges.map(c => {
         const nn = c.node_name || c.id;
         const active = window._pcFilter.edge === nn;
         return `<button type="button" class="chip" data-edge="${esc(nn)}" style="cursor:pointer;${active ? 'border-color:var(--accent);color:var(--accent)' : ''}">${esc(c.display_name || nn)}</button>`;
       }).join('') : '';
 
-      document.getElementById('topbar-actions').innerHTML = `
-        <button class="btn btn-primary" id="pc-add">${esc(t('pcatalog.add') || 'Nouvelle destination')}</button>`;
+      document.getElementById('topbar-actions').innerHTML = tab === 'groups'
+        ? `<button class="btn btn-primary" id="pc-add-group">${esc(t('pdgroups.new') || 'Nouveau groupe de destinations')}</button>`
+        : `<button class="btn btn-primary" id="pc-add">${esc(t('pcatalog.add') || 'Nouvelle destination')}</button>`;
 
       content.innerHTML = `
         <div style="margin-bottom:16px">
@@ -69,24 +142,28 @@ async function renderPortalCatalogPage(ctx) {
               : (t('pcatalog.sub_edge') || 'Destinations de {name}.').replace('{name}', '<strong>' + esc(edgeLabel) + '</strong>')}
           </p>
         </div>
+        <div style="display:flex;gap:8px;margin-bottom:14px">
+          ${tabBtn('dests', t('pcatalog.tab_dests') || 'Destinations', filtered().length)}
+          ${tabBtn('groups', t('pcatalog.tab_groups') || 'Groupes', filteredGroups().length)}
+        </div>
         <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;align-items:center">
           <input class="input" id="pc-q" placeholder="${esc(t('pcatalog.search') || 'Rechercher…')}" value="${esc(window._pcFilter.q)}" style="max-width:220px"/>
-          <select class="input" id="pc-kind" style="max-width:140px">
+          ${tab === 'groups' ? '' : `<select class="input" id="pc-kind" style="max-width:140px">
             <option value="">${esc(t('pcatalog.all_kinds') || 'Tous types')}</option>
             <option value="ssh" ${window._pcFilter.kind === 'ssh' ? 'selected' : ''}>SSH</option>
             <option value="docker" ${window._pcFilter.kind === 'docker' ? 'selected' : ''}>Docker</option>
-          </select>
+          </select>`}
           ${isAdmin ? `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
             <button type="button" class="chip" data-edge="" style="cursor:pointer;${!window._pcFilter.edge ? 'border-color:var(--accent);color:var(--accent)' : ''}">${esc(t('pcatalog.all_edges') || 'Tous')}</button>
             ${chips}
           </div>` : ''}
-          <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-left:auto">
+          ${tab === 'groups' ? '' : `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-left:auto">
             <input class="input" id="pc-preview-tags" placeholder="${esc(t('pcatalog.preview_tags') || 'Preview tags…')}" value="${esc(window._pcPreviewTags || '')}" style="max-width:160px"/>
             <button type="button" class="btn btn-secondary btn-sm" id="pc-preview">${esc(t('pcatalog.preview') || 'Preview filtre')}</button>
             ${window._pcPreview ? `<button type="button" class="btn btn-ghost btn-sm" id="pc-preview-clear">${esc(t('pcatalog.preview_clear') || 'Effacer')}</button>` : ''}
-          </div>
+          </div>`}
         </div>
-        ${window._pcPreview ? `<div style="margin-bottom:12px;font-size:12px;color:var(--text2)">
+        ${tab === 'groups' ? groupsHTML() : `${window._pcPreview ? `<div style="margin-bottom:12px;font-size:12px;color:var(--text2)">
           ${(t('pcatalog.preview_result') || 'Visible {v} · masqué {h} pour tags [{tags}]')
             .replace('{v}', String(window._pcPreview.visible_n || 0))
             .replace('{h}', String(window._pcPreview.hidden_n || 0))
@@ -97,13 +174,32 @@ async function renderPortalCatalogPage(ctx) {
             <div style="grid-column:1/-1;padding:24px;text-align:center;color:var(--text2);border:1px dashed var(--border);border-radius:8px">
               ${esc(t('pcatalog.empty') || 'Aucune destination')}
             </div>`}
-        </div>`;
+        </div>`}`;
 
+      content.querySelectorAll('[data-tab]').forEach(btn => { btn.onclick = () => { window._pcTab = btn.getAttribute('data-tab'); render(); }; });
       document.getElementById('pc-q').oninput = (e) => { window._pcFilter.q = e.target.value; render(); };
-      document.getElementById('pc-kind').onchange = (e) => { window._pcFilter.kind = e.target.value; render(); };
       content.querySelectorAll('[data-edge]').forEach(btn => {
         btn.onclick = () => { window._pcFilter.edge = btn.getAttribute('data-edge') || ''; render(); };
       });
+      if (tab === 'groups') {
+        document.getElementById('pc-add-group').onclick = () => openGroupEditor(null);
+        const groupById = (id) => (window._portalDestGroups || []).find(x => x.id === id);
+        content.querySelectorAll('[data-grow]').forEach(row => {
+          row.onclick = (e) => { if (e.target.closest('button')) return; const g = groupById(row.getAttribute('data-grow')); if (g) openGroupEditor(g); };
+        });
+        content.querySelectorAll('[data-gdel]').forEach(btn => {
+          btn.onclick = async () => {
+            if (!confirm(t('pdgroups.confirm_del') || 'Supprimer ce groupe ? Il sera retiré des entrées du portail.')) return;
+            try {
+              await api('DELETE', '/portal/destination-groups/' + encodeURIComponent(btn.getAttribute('data-gdel')));
+              window._portalDestGroups = (window._portalDestGroups || []).filter(x => x.id !== btn.getAttribute('data-gdel'));
+              render();
+            } catch (e) { alert(e.message || e); }
+          };
+        });
+        return;
+      }
+      document.getElementById('pc-kind').onchange = (e) => { window._pcFilter.kind = e.target.value; render(); };
       document.getElementById('pc-add').onclick = () => openEditor(null);
       document.getElementById('pc-preview').onclick = async () => {
         window._pcPreviewTags = document.getElementById('pc-preview-tags').value.trim();
@@ -128,7 +224,9 @@ async function renderPortalCatalogPage(ctx) {
           if (!confirm(t('pcatalog.confirm_del') || 'Supprimer ?')) return;
           try {
             await api('DELETE', '/portal/destinations/' + encodeURIComponent(btn.getAttribute('data-del')));
-            window._portalCatalogAll = (window._portalCatalogAll || []).filter(x => x.id !== btn.getAttribute('data-del'));
+            const delId = btn.getAttribute('data-del');
+            window._portalCatalogAll = (window._portalCatalogAll || []).filter(x => x.id !== delId);
+            (window._portalDestGroups || []).forEach(g => { g.targets = (g.targets || []).filter(x => x !== delId); });
             render();
           } catch (e) { alert(e.message || e); }
         };

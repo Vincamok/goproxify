@@ -161,6 +161,7 @@ func MigratePortalGroups(ctx context.Context, db *sql.DB, g GroupResolver, log *
 				}
 			}
 			_, _ = db.ExecContext(ctx, `UPDATE portal_users SET home_edge=? WHERE home_edge=?`, scope, ref)
+			_, _ = db.ExecContext(ctx, `UPDATE portal_dest_groups SET edge_name=? WHERE edge_name=?`, scope, ref)
 		}
 		// des membres qui déclaraient la même destination : on n'en garde qu'une
 		if res, err := db.ExecContext(ctx, `DELETE FROM portal_destinations WHERE edge_name=? AND rowid NOT IN (

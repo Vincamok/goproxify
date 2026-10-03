@@ -271,6 +271,19 @@ func (d *DB) RecentBanCount(since time.Time, source string) (int, error) {
 	return n, err
 }
 
+// BanCountForIP retourne le nombre de bans de la source posés sur l'IP depuis `since`, sans compter
+// ceux qui précèdent son dernier déban (un déban manuel remet la récidive à zéro).
+func (d *DB) BanCountForIP(ip, source string, since time.Time) (int, error) {
+	var n int
+	err := d.db.QueryRow(
+		`SELECT COUNT(*) FROM ban_history
+		 WHERE ip=? AND source=? AND created_at >= ?
+		   AND created_at > COALESCE((SELECT at FROM unbans WHERE ip=?), '')`,
+		ip, source, since.UTC().Format(sqlTime), ip,
+	).Scan(&n)
+	return n, err
+}
+
 // RepeatBanIP retourne l'IP avec le plus de bans (≥ minCount) depuis `since`.
 func (d *DB) RepeatBanIP(since time.Time, minCount int) (ip string, count int, err error) {
 	row := d.db.QueryRow(

@@ -143,7 +143,7 @@ Le Sentinel s'applique **avant le routage**, indépendamment des proxies. Il ana
 | `path` | Scanning de chemins suspects (score 2) |
 | `custom_ip`, `custom_ua`, `custom_path` | Entrées inline définies dans l'Admin, mêmes scores que les listes |
 | `rate` | Dépassement du rate limit par IP (score 4) |
-| `error4xx` | `error_threshold` erreurs 4xx en `error_window` : ban direct, hors score |
+| `error4xx` | `error_threshold` erreurs 4xx en `error_window` : ban direct, hors score ; avec `ip_score.errors`, chaque 4xx verse des points pondérés au score cumulé |
 | `waf` | Score WAF cumulé par IP au-delà du seuil comportemental : ban direct, hors score |
 | *limite globale* | `global_rps` dépassé : `503` pour tous, sans ban |
 
@@ -151,15 +151,28 @@ Dès qu'un signal (hors `rate`) dépasse le seuil, l'IP est bannie immédiatemen
 
 Les compteurs (rate, erreurs 4xx) sont **bornés en mémoire** (~262 k IPs suivies, éviction au-delà, métrique `gpx_threat_counter_evictions_total`) et les **IPv6 sont comptées par /64** ; le ban, lui, vise l'IP exacte. Par défaut le score n'est pas conservé entre deux requêtes : `score_threshold` ne cumule que les signaux d'une même requête.
 
+#### Bans graduels (`escalation`, optionnel)
+
+Avec `escalation.enabled`, une IP déjà bannie par Sentinel dans la fenêtre l'est plus longtemps : durée = `ban_duration` × `factor`^n, n étant le nombre de ses bans Sentinel précédents (avec les valeurs par défaut : 24 h, 48 h, 96 h… jusqu'à 30 jours). Cela vaut pour tous les bans Sentinel (signal, score cumulé, rate, erreurs 4xx). La récidive est lue dans l'historique des bans de la passerelle, conservé 30 jours et qui survit à un redémarrage ; les bans reçus d'un pair HA ne comptent pas. Un **déban manuel remet le compteur à zéro** (un faux positif corrigé n'alourdit pas le ban suivant). Le rejeu `security threat simulate` applique les durées graduelles.
+
 #### Score cumulé par IP avec décroissance (`ip_score`, optionnel)
 
 Avec `ip_score.enabled`, les points de chaque requête qui déclenche Sentinel s'additionnent **d'une requête à l'autre** pour une même IP, et le score **est divisé par deux à chaque `half_life`** (décroissance exponentielle). L'IP n'est bannie que lorsque son score dépasse `ban_threshold` : quelques signaux isolés (un 404 sur un chemin sensible, un User-Agent suspect) s'estompent, une série rapprochée mène au ban. Les requêtes qui déclenchent restent bloquées avant le ban, le score est remis à zéro au ban et au débannissement.
 
 - Les IP présentes dans les listes de menaces (`ip`, `custom_ip`) restent **bannies immédiatement**.
 - Le signal `rate` passe par le score : `rate_ban_threshold` est alors ignoré.
-- Les erreurs 4xx (`error_threshold`) et le WAF gardent leur propre décision.
+- Les erreurs 4xx (`error_threshold`) et le WAF gardent leur propre décision, sauf si `ip_score.errors` est activé (ci-dessous).
 - Le score est en mémoire (borné comme les autres compteurs, oublié quand il est quasi nul) : il n'est ni conservé après un redémarrage ni partagé entre passerelles, contrairement aux bans.
 - Le rejeu `security threat simulate` applique la décroissance sur l'horloge des logs rejoués.
+
+##### Erreurs 4xx pondérées (`ip_score.errors`, optionnel)
+
+Avec `ip_score.enabled` et `ip_score.errors.enabled`, chaque réponse 4xx verse des **points pondérés par code et par route** au score cumulé de l'IP, au lieu du compteur `error_threshold` / `error_window` (ignorés alors). Un 404 isolé pèse peu, une rafale de 400 ou 405 mène au ban ; les erreurs s'additionnent aux autres signaux et s'estompent avec la demi-vie.
+
+- **Par code** (défaut) : 400, 405, 414, 431 → 1 ; 404 → 0,5 ; autres 4xx → `default_weight` (0,5). **401, 403 et 429 ne comptent pas** : échecs d'authentification, refus déjà prononcés par un ban, le WAF ou une limite, dont d'autres moteurs décident. `weights` (`{"404": 0.2, "403": 1}`) surcharge un code, 0 le neutralise, et peut réintroduire 401/403/429.
+- **Par route** : `routes` (`[{"prefix": "/login", "factor": 3}, {"prefix": "/api/", "factor": 0.5}]`) multiplie les points selon le préfixe du chemin ; le préfixe le plus long l'emporte, 0 ignore les erreurs de la route. Les chemins de la liste blanche ne comptent pas.
+- Les 404 sur un hôte inconnu de la passerelle ne sont pas comptés (ils ne passent pas par une route).
+- Le ban posé porte le motif `threat: erreurs 4xx répétées` ; en mode `detect`, il est seulement journalisé.
 
 ### Paramètres configurables (UI Admin > Sécurité > Sentinel)
 
@@ -171,9 +184,17 @@ Avec `ip_score.enabled`, les points de chaque requête qui déclenche Sentinel s
 | `rate_window` | `1s` | Tolérance de pic : burst max = `rate_limit × rate_window` requêtes |
 | `rate_ban_threshold` | 1 | Déclenchements avant ban (1 = immédiat) |
 | `rate_ban_window` | = `rate_window` | Fenêtre de comptage pour le ban rate |
+| `escalation.enabled` | `false` | Bans graduels : la durée croît avec les bans Sentinel précédents de l'IP |
+| `escalation.factor` | 2 | Multiplicateur par récidive : durée = `ban_duration` × facteur^n |
+| `escalation.window` | `168h` | Période pendant laquelle les bans précédents comptent (max `720h`, rétention de l'historique) |
+| `escalation.max_duration` | `720h` | Plafond de la durée d'un ban (ne raccourcit jamais `ban_duration`) |
 | `ip_score.enabled` | `false` | Score cumulé par IP avec décroissance (voir ci-dessus) |
 | `ip_score.ban_threshold` | 10 | Score cumulé qui déclenche le ban (chemin sensible 2, User-Agent suspect 3, débit 4) |
 | `ip_score.half_life` | `10m` | Durée au bout de laquelle le score est divisé par deux |
+| `ip_score.errors.enabled` | `false` | Verse les erreurs 4xx pondérées au score cumulé (remplace `error_threshold`) |
+| `ip_score.errors.weights` | — | Points par code HTTP, ex. `{"404": 0.2}` (0 = ignoré) |
+| `ip_score.errors.default_weight` | 0,5 | Points d'un 4xx non listé |
+| `ip_score.errors.routes` | — | Multiplicateurs par préfixe de chemin, ex. `[{"prefix":"/login","factor":3}]` |
 | `error_threshold` | 20 | Nb d'erreurs 4xx/5xx avant signal |
 | `error_window` | `10s` | Fenêtre de comptage des erreurs |
 | `global_rps` | 0 | Limite globale toutes IPs confondues (anti-DDoS), 0 = désactivé |
@@ -272,6 +293,39 @@ Les bans sont centralisés dans l'Admin et propagés aux passerelles via WebSock
 | `fail2ban` | Ban reçu de Fail2Ban natif Go |
 | `crowdsec` | Décision LAPI CrowdSec (stream push) |
 
+### Bans par plage CIDR
+
+Un ban manuel (UI, API, CLI `security bans add`, outils MCP `create_security_ban` / `ban_ip`) vise une adresse IPv4/IPv6 **ou une plage CIDR** : les passerelles bloquent toute adresse qu'elle contient (réseaux privés exemptés, comme pour un ban d'adresse). Avant d'enregistrer, la cible est **validée et normalisée** : une plage devient son adresse de réseau (`203.0.113.7/24` → `203.0.113.0/24`), une adresse seule reste telle quelle (`/32` et `/128` retirés, IPv6 en minuscules). Une valeur illisible est refusée, alors qu'elle était auparavant enregistrée puis ignorée sans rien dire.
+
+Garde-fous :
+
+- **Largeur maximale** : `/16` en IPv4, `/32` en IPv6. Pour bloquer plus large (un pays, un opérateur), utiliser un profil IP, avec ses sources et sa priorité allow/deny.
+- **Pas d'auto-verrouillage** : une plage qui contient l'adresse de l'appelant est refusée (`409`). Une adresse seule n'est pas concernée.
+- **Aperçu avant de créer** (`GET /security/bans/preview`, bouton « Aperçu de l'impact » du formulaire de ban, `security bans preview`, outil MCP `preview_security_ban`) : trafic récent de la cible, dont les requêtes **réussies** qu'un ban couperait (signe d'un faux positif), bans actifs qui la recoupent (déjà couverte, ou qui deviendraient redondants), profils IP qui la recoupent, et avertissements. Rien n'est créé.
+
+Limites : débannir une adresse située dans une plage bannie ne lève pas le ban de la plage — supprimer la plage, ou ajouter l'adresse à la [liste blanche](#liste-blanche-des-bans) ; la répartition des bans par pays ne compte pas les plages (elle repose sur la géolocalisation d'adresses précises) ; Fail2Ban, CrowdSec et Sentinel continuent de poser des bans d'adresse (Fail2Ban par /64 en IPv6).
+
+### Import de liste
+
+Page Bans › **Importer** (API `POST /security/bans/import`, CLI `security bans import`, outil MCP `import_security_bans`) : crée des bans, ou des entrées de la [liste blanche](#liste-blanche-des-bans), depuis une liste collée ou un fichier. Formats : **texte** (une adresse ou un CIDR par ligne, commentaires `#` et `;` — le commentaire devient le motif —, ce qui couvre les listes publiques FireHOL, blocklist.de, Spamhaus DROP), **CSV** (colonnes `ip`, `reason`, `domain`, `expires_at` ; l'export des bans se réimporte tel quel) et **JSON** (tableau de chaînes ou d'objets). 10 000 entrées et 2 Mo au plus par import.
+
+Chaque entrée est validée comme un ban unitaire ([plages CIDR](#bans-par-plage-cidr)) : une valeur illisible, une plage trop large (au-delà de `/16` IPv4 ou `/32` IPv6), une plage qui contient l'adresse de l'appelant ou une expiration illisible sont **rejetées**. Sont **ignorées** (valides, mais sans objet) : les doublons, les entrées couvertes par une plage plus large de la même liste, les cibles déjà couvertes par un ban actif ou par la liste blanche, les plages privées ou locales (jamais bloquées). Le rapport donne le nombre d'adresses couvertes et, pour chaque entrée rejetée ou ignorée, sa ligne et la raison.
+
+**Analyser avant d'importer** : `dry_run` (bouton « Analyser », `-dry-run`) produit le même rapport sans rien écrire. L'import réel crée les bans en une transaction (historique alimenté, import audité) puis les pousse **une seule fois** aux passerelles. Ils sont de source `native` : visibles, prolongeables et supprimables comme n'importe quel ban manuel ; un import répété est sans effet (tout est « déjà couvert »). Une liste publique importée ne se met pas à jour toute seule : pour un abonnement automatique à un flux, utiliser un profil IP à source distante (page Profils IP).
+
+### Liste blanche des bans
+
+Page Bans › **Liste blanche** (API `GET|POST|DELETE /security/bans/whitelist`, CLI `security bans whitelist`, outils MCP `list_ban_whitelist` / `add_ban_whitelist` / `remove_ban_whitelist`). Une adresse ou une plage CIDR en liste blanche :
+
+- n'est atteinte par **aucun ban**, quelle qu'en soit la source (manuel, Fail2Ban, CrowdSec, Sentinel, règles automatiques, bans reçus d'un pair) ;
+- **n'est pas évaluée par Sentinel** : ses requêtes ne sont ni bloquées ni comptées (c'est ce qui la distingue d'un profil IP allow ordinaire, qui ne prime que sur les bans et les profils deny).
+
+Les entrées (avec un commentaire) sont validées et normalisées comme la cible d'un ban (`/16` IPv4 et `/32` IPv6 au plus larges). Ajouter une entrée **ne supprime aucun ban** : les bans existants cessent seulement de s'appliquer à ces adresses (la liste des bans les marque « Exempté » quand la liste blanche couvre toute leur cible) et s'appliquent de nouveau si l'entrée est retirée. Une entrée déjà couverte par une plus large ne change rien ; une entrée plus large retire les plus précises. Un ban dont la cible est entièrement en liste blanche est refusé (`409`) ; une plage qui ne fait que recouper une entrée reste permise et l'entrée en reste exemptée.
+
+La liste est recopiée dans un profil IP en mode `allow` d'identifiant `bans-whitelist`, **géré par la page Bans** (Profils IP ne peut ni le modifier ni le supprimer). Comme tout profil IP, les passerelles le reçoivent, le conservent sur leur disque et l'appliquent **sans l'Admin**, y compris après un redémarrage. Les adresses privées ou locales sont de toute façon jamais bloquées par un ban, mais restent évaluées par Sentinel sauf si elles figurent dans la liste blanche.
+
+Les listes blanches propres à chaque moteur (Fail2Ban, Sentinel) subsistent ; la liste blanche des bans est le moyen de tout exempter en un seul endroit.
+
 ### Déban
 
 Débannir une IP depuis l'Admin (UI, CLI `security bans delete`, outils MCP `delete_security_ban` / `unban_ip`) lève **tous** ses bans sur chaque passerelle, y compris ceux que la passerelle a posés elle-même (Fail2Ban, Sentinel, règles automatiques, ban reçu d'un pair HA), et remet à zéro les compteurs Fail2Ban et Sentinel de l'IP. Le déban est conservé sur le disque de la passerelle (survit à un redémarrage) et rejoué à une passerelle qui était déconnectée au moment du déban, à sa reconnexion (débans des 30 derniers jours). Un pair HA qui n'a pas encore reçu le déban ne peut pas réinjecter l'ancien ban ; un ban posé **après** le déban reste appliqué normalement.
@@ -280,7 +334,7 @@ Les 403 servis à une IP bannie ne comptent pas pour Fail2Ban (Admin et passerel
 
 ### Listes blanches et bans existants
 
-Une IP en liste blanche Fail2Ban n'est plus bloquée par les bans Fail2Ban déjà posés ; de même pour la liste blanche Sentinel (globale ou `sentinel.whitelist` d'une route) et les bans Sentinel. Pas besoin d'attendre l'expiration ni de débannir. Les bans manuels et CrowdSec restent appliqués ; pour exempter une IP de tout ban, utiliser un profil IP en mode `allow`.
+Une IP en liste blanche Fail2Ban n'est plus bloquée par les bans Fail2Ban déjà posés ; de même pour la liste blanche Sentinel (globale ou `sentinel.whitelist` d'une route) et les bans Sentinel. Pas besoin d'attendre l'expiration ni de débannir. Les bans manuels et CrowdSec restent appliqués ; pour exempter une IP de tout ban (et de Sentinel), utiliser la [liste blanche des bans](#liste-blanche-des-bans), ou un profil IP en mode `allow` pour les seuls bans.
 
 ### Fail2Ban natif Go
 

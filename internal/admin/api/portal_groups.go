@@ -212,11 +212,28 @@ func sanitizeViewRefs(db *sql.DB, scope string, views []portal.View) {
 	for _, c := range listDestinationsAsCatalog(db, scope) {
 		dests[c.ID] = true
 	}
+	destGroups := map[string]bool{}
+	for _, g := range listPortalDestGroups(db, scope) {
+		destGroups[g.ID] = true
+	}
 	for i := range views {
 		views[i].Groups = keepKnown(views[i].Groups, groups)
 		views[i].TargetIDs = keepKnown(views[i].TargetIDs, dests)
+		views[i].DestGroups = keepKnown(views[i].DestGroups, destGroups)
 		views[i].Members, views[i].Restricted = nil, false // calculés à l'envoi
 	}
+}
+
+func cleanIDs(in []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, x := range in {
+		if x != "" && !seen[x] {
+			seen[x] = true
+			out = append(out, x)
+		}
+	}
+	return out
 }
 
 func keepKnown(in []string, known map[string]bool) []string {
@@ -239,8 +256,20 @@ func resolveViewsForPush(db *sql.DB, scope string, views []portal.View) []portal
 	for _, g := range listPortalGroups(db, scope) {
 		byID[g.ID] = g.Members
 	}
+	destByID := map[string][]string{}
+	for _, g := range listPortalDestGroups(db, scope) {
+		destByID[g.ID] = g.Targets
+	}
 	out := make([]portal.View, len(views))
 	for i, v := range views {
+		if len(v.DestGroups) > 0 {
+			ids := append([]string(nil), v.TargetIDs...)
+			for _, gid := range v.DestGroups {
+				ids = append(ids, destByID[gid]...)
+			}
+			v.TargetIDs = cleanIDs(ids)
+			v.DestGroups = nil
+		}
 		members := append([]string(nil), v.Users...)
 		for _, gid := range v.Groups {
 			members = append(members, byID[gid]...)

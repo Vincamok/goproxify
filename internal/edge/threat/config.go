@@ -8,6 +8,11 @@ import "time"
 const (
 	defaultScoreBanThreshold = 10.0
 	defaultScoreHalfLife     = 10 * time.Minute
+
+	defaultEscalationFactor = 2.0
+	defaultEscalationWindow = 7 * 24 * time.Hour
+	maxEscalationWindow     = 30 * 24 * time.Hour // rétention de l'historique des bans (bansdb)
+	defaultEscalationMax    = 30 * 24 * time.Hour
 )
 
 // Config pilote le moteur de détection. Poussée par Admin via /internal/v1/threat-config.
@@ -42,6 +47,9 @@ type Config struct {
 	// IPScore : score cumulé par IP avec décroissance. Désactivé par défaut (ban au premier signal).
 	IPScore IPScoreConfig `json:"ip_score,omitempty"`
 
+	// Escalation : bans graduels, la durée croît avec le nombre de bans Sentinel précédents de l'IP.
+	Escalation EscalationConfig `json:"escalation,omitempty"`
+
 	// Durée du ban automatique (0 = permanent).
 	BanDuration Duration `json:"ban_duration,omitempty"`
 
@@ -70,6 +78,45 @@ type IPScoreConfig struct {
 	BanThreshold float64 `json:"ban_threshold,omitempty"`
 	// HalfLife : durée au bout de laquelle le score est divisé par deux (défaut 10 min).
 	HalfLife Duration `json:"half_life,omitempty"`
+	// Errors : pondère les erreurs 4xx et les verse au score (voir ErrorScoreConfig).
+	Errors ErrorScoreConfig `json:"errors,omitempty"`
+}
+
+// ErrorScoreConfig verse les erreurs 4xx au score cumulé de l'IP, pondérées par code et par route,
+// au lieu du simple compteur error_threshold / error_window (ignorés quand c'est actif). Nécessite
+// ip_score.enabled. Un 404 isolé pèse peu, une rafale de 400 ou 405 sur un point d'entrée sensible
+// mène au ban. 401, 403 et 429 ne comptent pas (échecs d'authentification, refus déjà prononcés par un
+// ban, le WAF ou une limite : d'autres moteurs en décident).
+type ErrorScoreConfig struct {
+	Enabled bool `json:"enabled,omitempty"`
+	// Weights : points par code HTTP (clé « 404 »), qui complètent ou remplacent les valeurs par défaut.
+	// 0 neutralise un code.
+	Weights map[string]float64 `json:"weights,omitempty"`
+	// DefaultWeight : points d'un 4xx absent de Weights et des valeurs par défaut (défaut 0,5).
+	DefaultWeight float64 `json:"default_weight,omitempty"`
+	// Routes : multiplicateur selon le préfixe du chemin (le préfixe le plus long l'emporte). 0 ignore
+	// les erreurs de cette route, 3 les triple.
+	Routes []RouteWeight `json:"routes,omitempty"`
+}
+
+// RouteWeight applique un multiplicateur aux erreurs d'un préfixe de chemin.
+type RouteWeight struct {
+	Prefix string  `json:"prefix"`
+	Factor float64 `json:"factor"`
+}
+
+// EscalationConfig rend les bans graduels : une IP déjà bannie par Sentinel récemment l'est plus
+// longtemps. Durée = ban_duration × Factor^n, n étant le nombre de bans Sentinel de cette IP dans
+// la fenêtre, plafonnée à MaxDuration. Un déban manuel remet le compteur à zéro. L'historique des
+// bans est conservé 30 jours sur la passerelle : la fenêtre est limitée à cette durée.
+type EscalationConfig struct {
+	Enabled bool `json:"enabled,omitempty"`
+	// Factor : multiplicateur par récidive (défaut 2 : 24 h, 48 h, 96 h…).
+	Factor float64 `json:"factor,omitempty"`
+	// Window : période pendant laquelle les bans précédents comptent (défaut 7 j, max 30 j).
+	Window Duration `json:"window,omitempty"`
+	// MaxDuration : plafond de la durée d'un ban (défaut 30 j).
+	MaxDuration Duration `json:"max_duration,omitempty"`
 }
 
 // CustomListsConfig contient des entrées inline pour chaque liste.
@@ -139,6 +186,18 @@ func (c *Config) defaults() {
 	}
 	if c.BanDuration.Duration == 0 {
 		c.BanDuration.Duration = 24 * time.Hour
+	}
+	if c.Escalation.Factor <= 1 {
+		c.Escalation.Factor = defaultEscalationFactor
+	}
+	if c.Escalation.Window.Duration <= 0 {
+		c.Escalation.Window.Duration = defaultEscalationWindow
+	}
+	if c.Escalation.Window.Duration > maxEscalationWindow {
+		c.Escalation.Window.Duration = maxEscalationWindow
+	}
+	if c.Escalation.MaxDuration.Duration <= 0 {
+		c.Escalation.MaxDuration.Duration = defaultEscalationMax
 	}
 	if c.IPScore.BanThreshold <= 0 {
 		c.IPScore.BanThreshold = defaultScoreBanThreshold

@@ -118,7 +118,7 @@ function sentViewOverview() {
     <div class="sent-chips">
       ${sentChip('Mode', (cfg.mode || 'block') === 'block' ? 'Block' : 'Detect', 'general')}
       ${sentChip('Score seuil', cfg.score_threshold || 0, 'general')}
-      ${sentChip('Durée du ban', esc(cfg.ban_duration || '24h'), 'general')}
+      ${sentChip('Durée du ban', esc(cfg.ban_duration || '24h') + (cfg.escalation?.enabled ? ` ×${cfg.escalation.factor || 2} par récidive` : ''), 'general')}
       ${sentChip('Débit par IP', cfg.rate_limit > 0 ? `${cfg.rate_limit} req/s` : '—', 'detection')}
       ${sentChip('Erreurs 4xx', `${cfg.error_threshold || 0} / ${esc(cfg.error_window || '10s')}`, 'detection')}
       ${sentChip('Score par IP', cfg.ip_score?.enabled ? `ban à ${cfg.ip_score.ban_threshold || 10}, demi-vie ${esc(cfg.ip_score.half_life || '10m')}` : 'Off', 'detection')}
@@ -238,7 +238,12 @@ function sentDrawerForm(cfg) {
     ${sec('general', 'Général', `
       ${fld('Mode', '', `<select id="threat-mode" class="input" style="height:32px"><option value="block" ${mode === 'block' ? 'selected' : ''}>Block — bannir</option><option value="detect" ${mode === 'detect' ? 'selected' : ''}>Detect — journaliser</option></select>`)}
       ${fld('Score seuil', '(0 = premier signal)', `<input id="threat-score" type="number" class="input" value="${cfg.score_threshold || 0}" min="0" placeholder="0">`)}
-      ${fld(t('security.threat.ban_duration'), '', `<input id="threat-dur" class="input" value="${esc(cfg.ban_duration || '24h')}" placeholder="24h">`)}`)}
+      ${fld(t('security.threat.ban_duration'), '', `<input id="threat-dur" class="input" value="${esc(cfg.ban_duration || '24h')}" placeholder="24h">`)}
+      <p style="font-size:12px;color:var(--text2);margin:10px 0">Bans graduels : une IP déjà bannie par Sentinel récemment l'est plus longtemps (durée × facteur à chaque récidive). Un déban manuel remet le compteur à zéro.</p>
+      ${chk('threat-esc-on', cfg.escalation?.enabled, 'Activer les bans graduels')}
+      ${fld('Facteur par récidive', '(défaut 2 : 24 h, 48 h, 96 h…)', `<input id="threat-esc-factor" type="number" class="input" value="${cfg.escalation?.factor || ''}" min="1.1" step="0.1" placeholder="2">`)}
+      ${fld('Fenêtre de récidive', '(défaut 168h = 7 jours, max 720h)', `<input id="threat-esc-window" class="input" value="${esc(cfg.escalation?.window || '')}" placeholder="168h">`)}
+      ${fld('Durée maximale d\'un ban', '(défaut 720h = 30 jours)', `<input id="threat-esc-max" class="input" value="${esc(cfg.escalation?.max_duration || '')}" placeholder="720h">`)}`)}
     ${sec('detection', 'Détection', `
       ${fld(t('security.threat.rate_limit'), '(req/s par IP, 0 = désactivé)', `<input id="threat-rate" type="number" class="input" value="${cfg.rate_limit || 0}" min="0" step="0.5" placeholder="0 = désactivé">`)}
       ${fld('Fenêtre rate', '(ex : 1s)', `<input id="threat-rate-window" class="input" value="${esc(cfg.rate_window || '1s')}" placeholder="1s">`)}
@@ -249,7 +254,11 @@ function sentDrawerForm(cfg) {
       <p style="font-size:12px;color:var(--text2);margin:10px 0">Score cumulé par IP : chaque signal ajoute des points (chemin sensible 2, User-Agent suspect 3, débit 4) qui s'estompent avec le temps. L'IP n'est bannie qu'au seuil ; les IP des listes de menaces le sont tout de suite. Remplace le ban auto rate ci-dessus.</p>
       ${chk('threat-score-on', cfg.ip_score?.enabled, 'Activer le score cumulé par IP')}
       ${fld('Score — seuil de ban', '(défaut 10)', `<input id="threat-score-ban" type="number" class="input" value="${cfg.ip_score?.ban_threshold || ''}" min="1" step="1" placeholder="10">`)}
-      ${fld('Score — demi-vie', '(le score est divisé par deux à chaque demi-vie, défaut 10m)', `<input id="threat-score-halflife" class="input" value="${esc(cfg.ip_score?.half_life || '')}" placeholder="10m">`)}`)}
+      ${fld('Score — demi-vie', '(le score est divisé par deux à chaque demi-vie, défaut 10m)', `<input id="threat-score-halflife" class="input" value="${esc(cfg.ip_score?.half_life || '')}" placeholder="10m">`)}
+      <p style="font-size:12px;color:var(--text2);margin:10px 0">Erreurs 4xx pondérées : chaque 4xx ajoute des points au score (400, 405 : 1 ; 404 et autres : 0,5). 401, 403 et 429 ne comptent pas. Remplace le seuil d'erreurs 4xx ci-dessus. Nécessite le score cumulé.</p>
+      ${chk('threat-err-on', cfg.ip_score?.errors?.enabled, 'Verser les erreurs 4xx au score')}
+      ${fld('Poids par code', '(un par ligne : 404=0.5 ; 0 ignore le code)', ta('threat-err-weights', 3, '404=0.5&#10;400=1&#10;403=0', Object.entries(cfg.ip_score?.errors?.weights || {}).map(([k, v]) => `${k}=${v}`)))}
+      ${fld('Poids par route', '(un par ligne : /login=3 ; préfixe de chemin, 0 ignore la route)', ta('threat-err-routes', 3, '/login=3&#10;/api/=0.5', (cfg.ip_score?.errors?.routes || []).map(r => `${r.prefix}=${r.factor}`)))}`)}
     ${sec('ddos', 'Anti-DDoS', `
       ${fld('Global req/s max', '(toutes IPs, 0 = désactivé)', `<input id="threat-global-rps" type="number" class="input" value="${cfg.global_rps || 0}" min="0" step="10" placeholder="0 = désactivé">`)}
       ${fld('Global burst', '(0 = 2× global req/s)', `<input id="threat-global-burst" type="number" class="input" value="${cfg.global_burst || 0}" min="0" step="10" placeholder="0 = 2×RPS">`)}`)}
@@ -361,6 +370,9 @@ function sentCollectConfig(enabled) {
   const $ = id => document.getElementById(id);
   const num = (id, def, float) => (float ? parseFloat($(id)?.value || def) : parseInt($(id)?.value || def, 10)) || 0;
   const lines = id => ($(id)?.value || '').split('\n').map(s => s.trim()).filter(Boolean);
+  // « clé=nombre » par ligne ; les lignes invalides sont ignorées.
+  const kv = id => lines(id).filter(l => l.includes('=')).map(l => { const i = l.lastIndexOf('='); return [l.slice(0, i).trim(), parseFloat(l.slice(i + 1))]; })
+    .filter(([k, v]) => k && Number.isFinite(v) && v >= 0);
   return {
     enabled,
     mode: $('threat-mode')?.value || 'block',
@@ -376,10 +388,21 @@ function sentCollectConfig(enabled) {
     rate_ban_window: $('threat-rate-ban-window')?.value || '',
     global_rps: num('threat-global-rps', '0', true),
     global_burst: num('threat-global-burst', '0'),
+    escalation: {
+      enabled: $('threat-esc-on')?.checked ?? false,
+      factor: num('threat-esc-factor', '0', true),
+      window: $('threat-esc-window')?.value || '',
+      max_duration: $('threat-esc-max')?.value || '',
+    },
     ip_score: {
       enabled: $('threat-score-on')?.checked ?? false,
       ban_threshold: num('threat-score-ban', '0', true),
       half_life: $('threat-score-halflife')?.value || '',
+      errors: {
+        enabled: $('threat-err-on')?.checked ?? false,
+        weights: Object.fromEntries(kv('threat-err-weights').map(([k, v]) => [k, v])),
+        routes: kv('threat-err-routes').map(([k, v]) => ({ prefix: k, factor: v })),
+      },
     },
     error_threshold: parseInt($('threat-errs')?.value || '20', 10),
     error_window: $('threat-ewin')?.value || '10s',

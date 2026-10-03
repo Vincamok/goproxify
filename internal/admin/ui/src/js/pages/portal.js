@@ -90,14 +90,15 @@ pages['portal-settings'] = async function() {
   content.innerHTML = `<div class="muted">${esc(t('common.loading') || '…')}</div>`;
   try {
     const eq = '?edge=' + encodeURIComponent(edgeName);
-    const [cfg, metricsPt, usersRes, groupsRes, destsRes] = await Promise.all([
+    const [cfg, metricsPt, usersRes, groupsRes, destsRes, destGroupsRes] = await Promise.all([
       api('GET', '/portal' + eq).catch(() => ({})),
       api('GET', '/metrics/summary').catch(() => null),
       api('GET', '/portal/users' + eq).catch(() => ({})),
       api('GET', '/portal/groups' + eq).catch(() => ({})),
       api('GET', '/portal/destinations' + eq).catch(() => ({})),
+      api('GET', '/portal/destination-groups' + eq).catch(() => ({})),
     ]);
-    _portalRefs = { users: usersRes.users || [], groups: groupsRes.groups || [], dests: destsRes.destinations || [] };
+    _portalRefs = { users: usersRes.users || [], groups: groupsRes.groups || [], dests: destsRes.destinations || [], destGroups: destGroupsRes.groups || [] };
     renderPortalPage(cfg || {}, edgeName, edgeLabel, metricsPt);
   } catch (e) {
     content.innerHTML = `<div class="err">${esc(e.message || e)}</div>`;
@@ -105,7 +106,7 @@ pages['portal-settings'] = async function() {
 };
 
 // Utilisateurs, groupes et destinations de la passerelle : alimentent les droits des entrées.
-let _portalRefs = { users: [], groups: [], dests: [] };
+let _portalRefs = { users: [], groups: [], dests: [], destGroups: [] };
 
 function renderPortalPage(cfg, edgeName, edgeLabel, metricsData) {
   const content = document.getElementById('content');
@@ -212,6 +213,7 @@ function renderPortalPage(cfg, edgeName, edgeLabel, metricsData) {
   const userItems = refs.users.map((u) => ({ value: String(u.email).toLowerCase(), label: u.email, sub: u.status === 'active' ? '' : u.status }));
   const knownUsers = new Set(userItems.map((i) => i.value));
   const groupItems = refs.groups.map((g) => ({ value: g.id, label: g.name, sub: (g.members || []).length + ' ' + (t('portal.members') || 'membre(s)') }));
+  const destGroupItems = (refs.destGroups || []).map((g) => ({ value: g.id, label: g.name, sub: (g.targets || []).length + ' ' + (t('pdgroups.dests_n') || 'destination(s)') }));
   const destItems = refs.dests.map((d) => ({ value: d.id, label: d.name, sub: [d.kind, d.host].filter(Boolean).join(' · ') }));
   const viewsHost = document.getElementById('portal-views');
   const themeOpts = (cur) => [['', 'portal.theme_inherit', '(thème du portail)'], ['auto', 'portal.theme_auto', 'Automatique (suit le système)'], ['clair', 'portal.theme_clair', 'Clair'], ['sombre', 'portal.theme_sombre', 'Sombre'], ['ocean', 'portal.theme_ocean', 'Océan'], ['foret', 'portal.theme_foret', 'Forêt'], ['amethyste', 'portal.theme_amethyste', 'Améthyste'], ['contraste', 'portal.theme_contraste', 'Contraste élevé']]
@@ -223,10 +225,11 @@ function renderPortalPage(cfg, edgeName, edgeLabel, metricsData) {
     const full = (v.host || host || '…') + (v.slug ? '/' + v.slug : '');
     const extra = (v.users || []).filter((x) => !knownUsers.has(x));
     const nAcc = (v.users || []).length + (v.groups || []).length;
+    const nDest = new Set([...(v.target_ids || []), ...(v.dest_groups || []).flatMap((id) => ((refs.destGroups || []).find((g) => g.id === id) || {}).targets || [])]).size;
     return `<details class="portal-view" ${open ? 'open' : ''} style="border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:10px">
       <summary style="cursor:pointer;display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap">
         <span><b>${esc(v.name || urlTxt || (t('portal.view_new') || 'Nouvelle entrée'))}</b> <code style="font-size:12px;color:var(--text2)">https://${esc(full)}</code></span>
-        <span style="font-size:11px;color:var(--text2)">${esc(t('portal.theme_' + (v.theme || 'inherit')) || v.theme || '')} · ${nAcc ? nAcc + ' ' + (t('portal.view_rights') || 'droit(s)') : esc(t('portal.view_open') || 'ouvert à tous')} · ${(v.target_ids || []).length || esc(t('portal.view_dest_default') || 'destinations par défaut')}${(v.target_ids || []).length ? ' ' + esc(t('portal.view_dest') || 'destination(s)') : ''}</span>
+        <span style="font-size:11px;color:var(--text2)">${esc(t('portal.theme_' + (v.theme || 'inherit')) || v.theme || '')} · ${nAcc ? nAcc + ' ' + (t('portal.view_rights') || 'droit(s)') : esc(t('portal.view_open') || 'ouvert à tous')} · ${nDest || esc(t('portal.view_dest_default') || 'destinations par défaut')}${nDest ? ' ' + esc(t('portal.view_dest') || 'destination(s)') : ''}</span>
       </summary>
       <div style="margin-top:12px">
         ${f('url', t('portal.view_url') || 'Adresse (URL)', urlTxt, 'presta.domaine.fr  ·  domaine.fr/prestataire  ·  /prestataire')}
@@ -247,6 +250,7 @@ function renderPortalPage(cfg, edgeName, edgeLabel, metricsData) {
         ${section(t('portal.view_groups') || 'Groupes autorisés', t('portal.view_rights_hint') || 'Sans utilisateur ni groupe, l’entrée est ouverte à tous les comptes du portail.', PortalUI.picker('groups', groupItems, v.groups, t('portal.no_groups') || 'Aucun groupe — créez-en dans Users Access › Groupes.'))}
         ${section(t('portal.view_users') || 'Utilisateurs autorisés', '', PortalUI.picker('users', userItems, v.users, t('portal.no_users') || 'Aucun utilisateur invité.') +
           `<textarea class="input" data-f="users_extra" rows="2" style="margin-top:6px" placeholder="${esc(t('portal.view_users_extra') || 'Autres identifiants (annuaire LDAP/OIDC), un par ligne')}">${esc(extra.join('\n'))}</textarea>`)}
+        ${section(t('portal.view_dest_groups') || 'Groupes de destinations', t('portal.view_dest_groups_hint') || 'Toutes les destinations des groupes cochés sont offertes aux utilisateurs autorisés de l’entrée.', PortalUI.picker('destgroups', destGroupItems, v.dest_groups, t('portal.no_dest_groups') || 'Aucun groupe de destinations — créez-en dans Catalogue Access › Groupes.'))}
         ${section(t('portal.view_targets') || 'Destinations', t('portal.view_targets_hint') || 'Cochées : offertes à tous les utilisateurs autorisés de l’entrée. Aucune : l’utilisateur voit ses destinations habituelles (tags).', PortalUI.picker('dests', destItems, v.target_ids, t('portal.no_dests') || 'Aucune destination dans le catalogue.'))}
         <div style="text-align:right;margin-top:12px"><button type="button" class="btn btn-secondary btn-sm" data-act="rm">${esc(t('common.delete') || 'Supprimer')}</button></div>
       </div>
@@ -272,6 +276,7 @@ function renderPortalPage(cfg, edgeName, edgeLabel, metricsData) {
       groups: PortalUI.picked(el, 'groups'),
       users: [...new Set([...PortalUI.picked(el, 'users'), ...PortalUI.split(g('users_extra')).map((x) => x.toLowerCase())])],
       target_ids: PortalUI.picked(el, 'dests'),
+      dest_groups: PortalUI.picked(el, 'destgroups'),
     };
     const tf = g('require_2fa');
     if (tf !== '') v.require_2fa = tf === 'true';

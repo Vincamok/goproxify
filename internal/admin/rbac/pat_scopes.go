@@ -112,21 +112,22 @@ var mcpTools = []string{
 	"list_domains", "create_domain", "renew_domain", "rotate_cert",
 	"list_certs", "get_cert_status", "list_cert_deploy_targets", "list_internal_cas", "list_internal_certs", "get_ech_status",
 	"obtain_cert", "import_cert", "trigger_cert_deploy", "create_internal_ca", "issue_internal_cert", "revoke_internal_cert",
-	"list_logs", "simulate_sentinel_config", "trace_ip", "get_prism_anomalies", "get_prism_geo", "get_prism_slo", "list_teams",
+	"list_logs", "simulate_sentinel_config", "trace_ip", "preview_security_ban", "get_prism_anomalies", "get_prism_geo", "get_prism_slo", "list_teams",
 	"get_audit_log", "get_security_overview", "list_security_bans", "list_security_threats", "list_security_cves",
 	"list_ip_profiles", "list_auth_providers",
 	"list_rules", "list_rule_history", "list_pending_actions", "list_rule_versions", "list_silences", "export_automation",
 	"list_scheduled_tasks", "list_scheduled_task_runs", "list_playbooks", "list_playbook_runs", "get_playbook_run",
-	"create_security_ban", "delete_security_ban", "ban_ip", "unban_ip",
+	"create_security_ban", "delete_security_ban", "ban_ip", "unban_ip", "list_ban_whitelist", "add_ban_whitelist", "remove_ban_whitelist", "import_security_bans",
 	"create_ip_profile", "delete_ip_profile", "create_auth_provider", "delete_auth_provider",
 	"run_rule", "replay_rule_history", "approve_pending_action", "reject_pending_action", "restore_rule_version",
 	"create_silence", "import_automation",
 	"create_scheduled_task", "update_scheduled_task", "delete_scheduled_task", "run_scheduled_task",
 	"create_playbook", "update_playbook", "delete_playbook", "run_playbook_now", "approve_playbook_run", "reject_playbook_run",
-	"get_portal_config", "list_portal_destinations", "preview_portal_destinations",
+	"get_portal_config", "list_portal_destinations", "preview_portal_destinations", "list_portal_destination_groups",
 	"list_portal_users", "list_portal_groups", "list_portal_audit", "list_portal_sessions", "terminate_portal_session", "list_portal_access_requests", "decide_portal_access_request", "get_portal_policy", "set_portal_policy", "list_portal_recordings", "delete_portal_recording", "list_portal_templates", "get_portal_template",
 	"update_portal_config", "push_portal",
 	"create_portal_destination", "update_portal_destination", "delete_portal_destination",
+	"create_portal_destination_group", "update_portal_destination_group", "delete_portal_destination_group",
 	"invite_portal_user", "create_portal_group", "update_portal_group", "delete_portal_group", "update_portal_user", "delete_portal_user", "resend_portal_invite",
 	"upsert_portal_template", "delete_portal_template", "push_portal_templates",
 }
@@ -260,12 +261,12 @@ func ToolRequiredScope(tool string) string {
 	case "obtain_cert", "import_cert", "trigger_cert_deploy",
 		"create_internal_ca", "issue_internal_cert", "revoke_internal_cert":
 		return ScopeCertsWrite
-	case "list_logs", "simulate_sentinel_config", "trace_ip", "get_prism_anomalies", "get_prism_geo", "get_prism_slo":
+	case "list_logs", "simulate_sentinel_config", "trace_ip", "preview_security_ban", "get_prism_anomalies", "get_prism_geo", "get_prism_slo":
 		return ScopeLogsRead
 	case "list_teams":
 		return ScopeTeamsRead
 	case "get_audit_log",
-		"get_security_overview", "list_security_bans",
+		"get_security_overview", "list_security_bans", "list_ban_whitelist",
 		"list_security_threats", "list_security_cves",
 		"list_ip_profiles", "list_auth_providers",
 		"list_rules", "list_rule_history", "list_pending_actions", "list_rule_versions",
@@ -273,7 +274,7 @@ func ToolRequiredScope(tool string) string {
 		"list_scheduled_tasks", "list_scheduled_task_runs",
 		"list_playbooks", "list_playbook_runs", "get_playbook_run":
 		return ScopeAuditRead
-	case "create_security_ban", "delete_security_ban", "ban_ip", "unban_ip",
+	case "create_security_ban", "delete_security_ban", "ban_ip", "unban_ip", "add_ban_whitelist", "remove_ban_whitelist", "import_security_bans",
 		"create_ip_profile", "delete_ip_profile", "create_auth_provider", "delete_auth_provider",
 		"run_rule", "replay_rule_history", "approve_pending_action", "reject_pending_action",
 		"restore_rule_version", "create_silence", "import_automation",
@@ -281,11 +282,12 @@ func ToolRequiredScope(tool string) string {
 		"create_playbook", "update_playbook", "delete_playbook", "run_playbook_now",
 		"approve_playbook_run", "reject_playbook_run":
 		return ScopeSecurityWrite
-	case "get_portal_config", "list_portal_destinations", "preview_portal_destinations",
+	case "get_portal_config", "list_portal_destinations", "preview_portal_destinations", "list_portal_destination_groups",
 		"list_portal_users", "list_portal_groups", "list_portal_audit", "list_portal_sessions", "list_portal_access_requests", "get_portal_policy", "list_portal_recordings", "list_portal_templates", "get_portal_template":
 		return ScopePortalRead
 	case "update_portal_config", "push_portal",
 		"create_portal_destination", "update_portal_destination", "delete_portal_destination",
+		"create_portal_destination_group", "update_portal_destination_group", "delete_portal_destination_group",
 		"invite_portal_user", "create_portal_group", "update_portal_group", "delete_portal_group", "update_portal_user", "delete_portal_user", "resend_portal_invite",
 		"terminate_portal_session", "decide_portal_access_request", "set_portal_policy", "delete_portal_recording", "upsert_portal_template", "delete_portal_template", "push_portal_templates":
 		return ScopePortalWrite
@@ -307,7 +309,7 @@ func ToolRequiresAdmin(tool string) bool {
 		"get_architecture",
 		"list_backups", "list_users", "list_teams",
 		"get_security_overview", "list_security_bans", "list_security_threats", "list_security_cves",
-		"create_security_ban", "delete_security_ban", "ban_ip", "unban_ip", "simulate_sentinel_config", "trace_ip",
+		"create_security_ban", "delete_security_ban", "ban_ip", "unban_ip", "simulate_sentinel_config", "trace_ip", "preview_security_ban", "list_ban_whitelist", "add_ban_whitelist", "remove_ban_whitelist", "import_security_bans",
 		"list_auth_providers", "create_auth_provider", "delete_auth_provider",
 		"list_internal_cas", "list_internal_certs", "get_ech_status", "create_internal_ca", "issue_internal_cert", "revoke_internal_cert",
 		"list_rules", "run_rule", "list_rule_history", "replay_rule_history",

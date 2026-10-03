@@ -721,7 +721,10 @@ goproxify security threat simulate -file <threat-config.json> [-hours N] [-domai
 
 # Bans
 goproxify security bans list   [-edge <passerelle>] [-source <source>] [-active true|false] [-admin-url …] [-token …]
-goproxify security bans add    -ip <ip> [-reason <raison>] [-ttl <durée>] [-admin-url …] [-token …]
+goproxify security bans add    -ip <ip|cidr> [-reason <raison>] [-ttl <durée>] [-admin-url …] [-token …]
+goproxify security bans preview -ip <ip|cidr> [-hours N] [-json] [-admin-url …] [-token …]   # impact d'un ban avant de le créer
+goproxify security bans whitelist list|add|delete [-ip <ip|cidr>] [-comment <texte>] [-admin-url …] [-token …]   # liste blanche des bans
+goproxify security bans import -file <chemin|-> [-format auto|text|csv|json] [-target bans|whitelist] [-reason …] [-domain …] [-ttl …] [-dry-run] [-json] [-admin-url …] [-token …]
 goproxify security bans delete -id <ban-id> [-admin-url …] [-token …]
 
 # Parcours d'une IP ou d'un CIDR
@@ -741,6 +744,12 @@ goproxify security cve sla set -file <sla.json> [-admin-url …] [-token …]
 **`security threat simulate`** — rejoue les access logs récents (`-hours`, défaut 1, max 24 ; `-domain` pour un seul domaine) contre la config candidate du fichier, surchargée sur la config actuelle, et affiche le résultat en JSON : requêtes bloquées, faux positifs probables (`legit_blocked`), IP et bans, actuel vs candidat. Ne modifie rien. Voir `POST /api/v1/security/threat-config/simulate`.
 
 **`security bans`** — liste, ajoute ou supprime des IPs bannies manuellement. `-ttl` accepte une durée Go (`30m`, `1h`, `24h`) ou un nombre entier de jours (`7d`), convertie par la CLI en date d'expiration (`expires_at`) au moment de l'appel ; sans `-ttl`, le ban est permanent. Une durée invalide ou nulle est refusée sans rien créer (avant Admin `0.69.5`, `-ttl` était ignoré et le ban toujours permanent). `list` accepte `-edge` (nom du nœud ou id du token : les bans de cette passerelle et les bans globaux), `-source` et `-active true` (non expirés) ou `false` (expirés) ; la passerelle d’origine est affichée entre crochets.
+
+`add` et `preview` acceptent une adresse IP **ou une plage CIDR** (`-ip 203.0.113.0/24`) : la valeur est normalisée (`203.0.113.7/24` devient `203.0.113.0/24`), une valeur invalide ou une plage plus large que `/16` (IPv4) ou `/32` (IPv6) est refusée, ainsi qu'une plage qui contient votre propre adresse. `preview` mesure l'impact sans rien créer : trafic de la cible sur `-hours` heures (24 par défaut, 168 au plus) dont les requêtes réussies qui seraient coupées, bans et profils IP qui la recoupent, avertissements ; `-json` affiche la réponse brute (`GET /api/v1/security/bans/preview`).
+
+`security bans import` crée des bans (ou, avec `-target whitelist`, des entrées de la liste blanche) depuis une liste lue dans `-file` (`-` = entrée standard) : texte (une adresse ou un CIDR par ligne, commentaires `#` et `;`, comme les listes publiques FireHOL, blocklist.de ou Spamhaus DROP), CSV (l'export des bans se réimporte tel quel) ou JSON ; `-format` force le format, détecté sinon. `-reason` (motif par défaut, `import` sinon), `-domain` et `-ttl` (durée Go ou `7d`, expiration par défaut ; sans, permanents) s'appliquent aux entrées qui n'ont pas les leurs. Chaque entrée est validée comme `bans add` ; les doublons, cibles déjà couvertes et plages privées sont ignorés. **`-dry-run` analyse sans rien créer** : à lancer d'abord. Le rapport liste les entrées rejetées et ignorées avec leur ligne ; `-json` affiche la réponse brute (`POST /api/v1/security/bans/import`).
+
+`security bans whitelist` gère la **liste blanche des bans** : `list` affiche les entrées (avec le nombre de bans actifs qu'elles neutralisent), `add -ip <ip|cidr> [-comment …]` ajoute une adresse ou une plage (normalisée comme un ban, `/16` IPv4 et `/32` IPv6 au plus larges), `delete -ip <valeur>` la retire. Une adresse en liste blanche n'est atteinte par aucun ban et n'est pas évaluée par Sentinel ; les bans existants ne sont pas supprimés.
 
 **`security trace`** — reconstitue tout ce qu'une IP ou un CIDR a fait : synthèse (requêtes, bloquées, IP distinctes, épisodes, bans/débans, détections, bans en cours, profils IP) puis les étapes (épisodes d'activité, bans, débans, détections) avec leur date. `-from` / `-to` acceptent une date `AAAA-MM-JJ` ou RFC3339 (défaut : 30 derniers jours) ; `-order desc` met le plus récent en premier ; `-limit` / `-offset` paginent (500 étapes par défaut) ; `-json` renvoie la réponse brute de `GET /api/v1/security/ip-trace`. Exemple : `goproxify security trace -target 198.51.100.0/24 -from 2026-01-01`. Les requêtes remontent aussi loin que la rétention des logs d'accès.
 
@@ -772,6 +781,13 @@ goproxify security threat set -file threat.json
 
 goproxify security bans list
 goproxify security bans add -ip 1.2.3.4 -reason "scan" -ttl 24h
+goproxify security bans preview -ip 203.0.113.0/24
+goproxify security bans whitelist add -ip 198.51.100.0/24 -comment "bureau Paris"
+goproxify security bans whitelist list
+goproxify security bans import -file blocklist.txt -dry-run
+goproxify security bans import -file blocklist.txt -reason "blocklist.de" -ttl 30d
+curl -s https://lists.blocklist.de/lists/ssh.txt | goproxify security bans import -file - -ttl 7d
+goproxify security bans add -ip 203.0.113.0/24 -reason "scanner" -ttl 7d
 goproxify security bans delete -id <ban-id>
 
 goproxify security waf get -proxy app.example.fr
@@ -944,6 +960,10 @@ goproxify access groups list         -edge <nom>
 goproxify access groups create       -edge <nom> -name <n> [-description <d>] [-members a@example.com,b@example.com]
 goproxify access groups update       -id <uuid> -name <n> [-description <d>] [-members a@example.com,b@example.com]
 goproxify access groups delete       -id <uuid>
+goproxify access destination-groups list   -edge <nom>
+goproxify access destination-groups create -edge <nom> -name <n> [-description <d>] [-targets <id-dest>,<id-dest>]
+goproxify access destination-groups update -id <uuid> -name <n> [-description <d>] [-targets <id-dest>,<id-dest>]
+goproxify access destination-groups delete -id <uuid>
 
 goproxify access policy get           -edge <nom>
 goproxify access policy set           -edge <nom> [-hours true -days 1,2,3,4,5 -start 07:00 -end 20:00 -tz Europe/Paris -ip <cidr,…> -idle <min> -record true -retention <jours>]
