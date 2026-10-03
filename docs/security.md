@@ -289,6 +289,8 @@ Bouncer LAPI en mode stream : les décisions CrowdSec sont poussées en temps r�
 - **CIDR** : toutes les IP du préfixe sont réunies ; l'en-tête donne leurs requêtes cumulées et les IP les plus actives. Un ban posé sur un CIDR apparaît dans le parcours d'une IP qu'il contient.
 - **Limites** : les requêtes remontent aussi loin que la rétention des logs d'accès (365 jours par défaut, réglable dans les réglages des Logs) ; les bans et détections ont leur propre historique. Les IP pseudonymisées ou tronquées par la passerelle (RGPD) ne peuvent pas être retrouvées.
 
+**Raccourci** : une loupe « Analyser l'IP » à côté des IP publiques (page Bans, menaces, Sentinel, Prism, tiroir des logs) ouvre ce parcours pour l'IP seule ou sa plage (`/24`, `/16` ; `/64`, `/48` en IPv6). Les adresses privées, pseudonymisées ou tronquées n'ont pas de bouton.
+
 API : `GET /api/v1/security/ip-trace` ; CLI : `goproxify security trace` ; MCP : `trace_ip`.
 
 ---

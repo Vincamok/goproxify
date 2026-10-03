@@ -145,7 +145,7 @@ func TraceIP(ctx context.Context, db *sql.DB, qy TraceQuery) (map[string]any, er
 		ActiveBans   []traceBan            `json:"active_bans"`
 		Profiles     []traceProfile        `json:"profiles"`
 		ScanLimited  bool                  `json:"scan_limited"`
-	}{Statuses: map[string]int{}}
+	}{Statuses: map[string]int{}, ActiveBans: []traceBan{}, Profiles: []traceProfile{}}
 	seen := func(t time.Time) {
 		if sum.FirstSeen == nil || t.Before(*sum.FirstSeen) {
 			c := t

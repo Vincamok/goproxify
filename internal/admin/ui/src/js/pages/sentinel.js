@@ -131,7 +131,7 @@ function sentViewOverview() {
           const label = s.labels[sentDetectionKey(b.reason)] || esc(b.reason || 'Autre motif');
           return `<div style="display:flex;align-items:center;gap:8px;font-size:12px;padding:5px 8px;border-radius:6px;background:var(--bg2)">
             <span class="tag ${on ? 'tag-red' : 'tag-neutral'}" style="min-width:52px;text-align:center;font-size:10px">${on ? 'ACTIF' : 'EXPIRÉ'}</span>
-            <span style="font-family:monospace;color:var(--text1)">${esc(b.ip)}</span>
+            <span style="font-family:monospace;color:var(--text1)">${esc(b.ip)}</span>${trBtn(b.ip)}
             <span style="color:var(--text2);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${label}</span>
             <span style="color:var(--text3);font-size:11px;white-space:nowrap">${sentAgo(b.created_at)}</span></div>`;
         }).join('')}</div>`)}

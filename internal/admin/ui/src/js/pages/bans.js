@@ -268,6 +268,7 @@ function bnRowHTML(b) {
     <td data-label="Restant">${bnTtlCell(b)}</td>
     <td class="bn-actions">
       ${bnIcon('prism', `openPrismForBanIP('${ip}')`, 'Voir dans Prism')}
+      ${trBtn(b.ip)}
       ${bnIcon('history', `showBanHistory('${ip}')`, 'Historique de cette IP')}
       ${temp ? bnIcon('extend', `bnProlong(['${id}'])`, 'Prolonger de 24 h') : ''}
       ${temp ? bnIcon('permanent', `makeBanPermanent('${id}','${ip}')`, 'Rendre permanent') : ''}

@@ -606,6 +606,7 @@ async function renderPrismPage() {
               <button type="button" class="btn btn-ghost btn-icon btn-sm" data-prism="to-logs" data-ip="${esc(i.ip)}" title="${esc(t('prism.filter_logs'))}">
                 <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 8h10M7 12h10M7 16h6"/></svg>
               </button>
+              ${actionable ? trBtn(i.ip) : ''}
               ${actionable ? `<button type="button" class="btn btn-ghost btn-icon btn-sm" data-prism="rescan" data-ip="${esc(i.ip)}" title="${esc(t('pz.rescan_ip'))}">${icoRescan}</button>` : ''}
               ${!actionable ? ''
                 : banned
@@ -800,6 +801,7 @@ async function renderPrismPage() {
         ${(d.top_paths || []).length ? d.top_paths.map(x => `<div class="prism-bantech"><span class="mono" style="overflow:hidden;text-overflow:ellipsis" title="${esc(x.path)}">${esc(x.path)}</span><b>${x.requests}${x.errors ? ` <span style="color:var(--red);font-weight:500">(${x.errors} err.)</span>` : ''}</b></div>`).join('') : `<p class="prism-muted">${t('pz.no_request')}</p>`}
         <div style="display:flex;gap:8px;margin-top:18px;flex-wrap:wrap">
           <button type="button" class="btn btn-secondary btn-sm" data-prism="rescan" data-ip="${esc(d.ip)}">${icoRescan} ${esc(t('pz.rescan'))}</button>
+          ${d.ip_truncated ? '' : trBtn(d.ip, 'btn btn-secondary btn-sm')}
           <button type="button" class="btn btn-secondary btn-sm" data-prism="to-logs" data-ip="${esc(d.ip)}">→ Logs</button>
           ${d.verdict !== 'banned' && !d.ip_truncated ? `<button type="button" class="btn btn-ghost btn-sm" style="color:var(--red)" data-prism="ban" data-ip="${esc(d.ip)}">${esc(t('pz.ban_btn'))}</button>` : ''}
         </div>`;

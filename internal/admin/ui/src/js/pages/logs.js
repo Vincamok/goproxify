@@ -1109,7 +1109,7 @@ function openLogDrawer(en, i) {
   const ipCell = !en.ip ? '' : pseudo
     ? `<span class="mono" id="log-drawer-ip">${esc(t('logs.ip_pseudonymized'))}</span>
        ${Role.canRevealIP() ? `<button type="button" id="log-drawer-reveal" class="btn btn-ghost btn-sm" data-log-dact="reveal" data-log-di="${i}">${esc(t('logs.reveal_ip'))}</button>` : ''}`
-    : `<span class="mono">${logCellFilter('ip', en.ip)}</span>
+    : `<span class="mono">${logCellFilter('ip', en.ip)}</span> ${truncated ? '' : trBtn(en.ip)}
        ${truncated ? `<span class="tag tag-neutral" style="font-size:11px">${esc(t('logs.ip_truncated'))}</span>` : ''}`;
 
   col.hidden = false;

@@ -121,3 +121,32 @@ func TestIPTraceFollowsACIDRAcrossSources(t *testing.T) {
 		t.Errorf("cible invalide : %d", rec.Code)
 	}
 }
+
+// Les listes vides doivent sortir en [] : la page appelle .map dessus et plante sur null.
+func TestIPTraceEmptyListsAreNeverNull(t *testing.T) {
+	db, err := admindb.Open(filepath.Join(t.TempDir(), "admin.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	rec := httptest.NewRecorder()
+	(&SecurityHandler{DB: db}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/security/ip-trace?target=198.51.100.9", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	var res struct {
+		Summary map[string]json.RawMessage `json:"summary"`
+		Steps   json.RawMessage            `json:"steps"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"active_bans", "profiles", "days", "top_ips", "top_domains", "top_paths", "waf_matches", "threat_signals", "countries", "statuses"} {
+		if string(res.Summary[k]) == "null" || res.Summary[k] == nil {
+			t.Errorf("summary.%s = %s", k, res.Summary[k])
+		}
+	}
+	if string(res.Steps) != "[]" {
+		t.Errorf("steps = %s", res.Steps)
+	}
+}

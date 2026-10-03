@@ -61,7 +61,7 @@ function trStepHTML(s) {
     if (b.ip_count > 1) meta.push(t('trace.step.ips', { n: b.ip_count }));
     const st = Object.entries(b.statuses || {}).sort().map(([c, n]) => `${esc(c)} <i>×${n}</i>`).join(' · ');
     body = `<div class="tr-meta">${meta.join(' · ')}${st ? ' · ' + st : ''}</div>
-      ${b.ip_count > 1 ? `<div class="tr-row">${trChips(b.ips)}${b.ip_count > b.ips.length ? '<span class="tr-chip">…</span>' : ''}</div>` : ''}
+      ${b.ip_count > 1 ? `<div class="tr-row">${trChips(b.ips || [])}${b.ip_count > (b.ips || []).length ? '<span class="tr-chip">…</span>' : ''}</div>` : ''}
       <div class="tr-row">${trChips(b.domains)}</div>
       <div class="tr-row tr-mono">${trChips(b.top_paths)}</div>
       ${b.waf_matches?.length ? `<div class="tr-row">${trChips(b.waf_matches, 'var(--red)')}</div>` : ''}
@@ -104,10 +104,10 @@ function trSummaryHTML() {
   const d = _tr.data, s = d.summary;
   const tile = (v, label, color) => `<div class="bn-kpi"><b style="color:${color || 'var(--text1)'}">${v}</b><span>${esc(label)}</span></div>`;
   const state_ = [
-    ...s.active_bans.map(b => `<span class="tr-badge" style="--c:var(--red)">⛔ ${esc(t('trace.state.banned'))} · ${esc(b.ip)}${b.expires_at ? '' : ' · ' + esc(t('trace.state.permanent'))}</span>`),
-    ...s.profiles.map(p => `<span class="tr-badge" style="--c:var(--orange,#d97706)">${esc(t('trace.state.profile'))} · ${esc(p.name)} (${esc(p.mode)})</span>`),
+    ...(s.active_bans || []).map(b => `<span class="tr-badge" style="--c:var(--red)">⛔ ${esc(t('trace.state.banned'))} · ${esc(b.ip)}${b.expires_at ? '' : ' · ' + esc(t('trace.state.permanent'))}</span>`),
+    ...(s.profiles || []).map(p => `<span class="tr-badge" style="--c:var(--orange,#d97706)">${esc(t('trace.state.profile'))} · ${esc(p.name)} (${esc(p.mode)})</span>`),
   ].join('');
-  const list = (title, items, mono) => items?.length ? `<div class="tr-list"><h4>${esc(title)}</h4>${items.map(i => `<div><span${mono ? ' class="tr-mono"' : ''}>${esc(i.value)}</span><b>${i.count}</b></div>`).join('')}</div>` : '';
+  const list = (title, items, mono, link) => items?.length ? `<div class="tr-list"><h4>${esc(title)}</h4>${items.map(i => `<div><span${mono ? ' class="tr-mono"' : ''}>${link ? `<a href="#" onclick="openIPTrace('${esc(i.value)}');return false">${esc(i.value)}</a>` : esc(i.value)}</span><b>${i.count}</b></div>`).join('')}</div>` : '';
   return `<div class="bn-kpis">
       ${tile(s.requests, t('trace.kpi.requests'))}
       ${tile(s.blocked, t('trace.kpi.blocked'), s.blocked ? 'var(--red)' : '')}
@@ -119,9 +119,9 @@ function trSummaryHTML() {
     <div class="card blueprint" style="padding:16px;margin-bottom:16px">
       <div class="tr-meta" style="margin-bottom:8px">${esc(t('trace.first_seen'))} <b>${esc(fmtDate(s.first_seen))}</b> · ${esc(t('trace.last_seen'))} <b>${esc(fmtDate(s.last_seen))}</b>${d.kind === 'cidr' ? ' · ' + esc(t('trace.kind_cidr')) : ''}</div>
       ${state_ ? `<div class="tr-row" style="margin-bottom:10px">${state_}</div>` : ''}
-      ${trDaysChart(s.days)}
+      ${trDaysChart(s.days || [])}
       <div class="tr-lists">
-        ${d.kind === 'cidr' ? list(t('trace.top_ips'), s.top_ips, true) : ''}
+        ${d.kind === 'cidr' ? list(t('trace.top_ips'), s.top_ips, true, true) : ''}
         ${list(t('trace.top_domains'), s.top_domains)}
         ${list(t('trace.top_paths'), s.top_paths, true)}
         ${list(t('trace.top_waf'), s.waf_matches)}
@@ -153,7 +153,8 @@ function trPaint(body) {
 function trPaintResult() {
   const d = _tr.data;
   const order = `<button class="btn btn-ghost btn-sm" onclick="trToggleOrder()">${esc(t(_tr.order === 'desc' ? 'trace.order_desc' : 'trace.order_asc'))}</button>`;
-  trPaint(`<h3 class="tr-title"><span class="tr-mono">${esc(d.target)}</span></h3>${trSummaryHTML()}
+  const widen = d.kind === 'ip' && trIsPublic(d.target) ? trRanges(d.target.split('/')[0]).slice(1).map(([l, x]) => `<button type="button" class="btn btn-ghost btn-sm" onclick="openIPTrace('${esc(x)}')">${esc(t('trace.widen'))} ${esc(l)}</button>`).join('') : '';
+  trPaint(`<h3 class="tr-title"><span class="tr-mono">${esc(d.target)}</span> ${widen}</h3>${trSummaryHTML()}
     <div class="card blueprint" style="padding:16px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
       <h4 style="margin:0">${esc(t('trace.timeline'))} <span class="tr-meta">(${d.total_steps})</span></h4>${order}</div>${trTimelineHTML()}</div>`);
 }
@@ -213,4 +214,51 @@ pages['security-trace'] = () => {
   }
   if (_tr.data) return trPaintResult();
   trPaint(`<p class="tr-empty">${esc(t('trace.empty_hint'))}</p>`);
+};
+
+// ── Raccourci « Analyser » depuis les pages qui affichent des IP ─────────────────
+
+// Adresse (ou base d'un CIDR) publique : les plages privées, loopback, link-local, CGNAT et
+// documentation n'ont rien à tracer côté attaquant.
+function trIsPublic(target) {
+  const ip = String(target || '').split('/')[0].trim();
+  const m = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (m) {
+    const [a, b] = [+m[1], +m[2]];
+    if ([+m[1], +m[2], +m[3], +m[4]].some(n => n > 255)) return false;
+    return !(a === 0 || a === 10 || a === 127 || a >= 224 || (a === 100 && b >= 64 && b <= 127) ||
+      (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) ||
+      (a === 192 && b === 0 && +m[3] <= 2) || (a === 198 && (b === 18 || b === 19)));
+  }
+  if (!ip.includes(':') || !/^[0-9a-f:.]+$/i.test(ip)) return false;
+  const l = ip.toLowerCase();
+  return !(l === '::' || l === '::1' || /^f[cdef]/.test(l) || l.startsWith('2001:db8'));
+}
+
+// Plages proposées autour d'une IP : [libellé, cible].
+function trRanges(ip) {
+  const m = ip.match(/^(\d+)\.(\d+)\.(\d+)\.\d+$/);
+  if (m) return [[ip, ip], [`${m[1]}.${m[2]}.${m[3]}.0/24`, `${m[1]}.${m[2]}.${m[3]}.0/24`], [`${m[1]}.${m[2]}.0.0/16`, `${m[1]}.${m[2]}.0.0/16`]];
+  const [head, tail = ''] = ip.split('::');
+  const g = head.split(':').filter(Boolean);
+  const rest = tail.split(':').filter(Boolean);
+  if (ip.includes('::')) while (g.length + rest.length < 8) g.push('0');
+  const full = ip.includes('::') ? g.concat(rest) : head.split(':');
+  const pre = n => full.slice(0, n).join(':') + '::/' + n * 16;
+  return [[ip, ip], [pre(4), pre(4)], [pre(3), pre(3)]];
+}
+
+function trBtn(target, cls = 'btn btn-ghost btn-icon btn-sm') {
+  if (!trIsPublic(target)) return '';
+  const label = t('trace.analyze');
+  return `<button type="button" class="${cls}" onclick="openIPTraceChoice('${esc(target)}')" title="${esc(label)}" aria-label="${esc(label)}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>`;
+}
+
+window.openIPTraceChoice = function(target) {
+  if (target.includes('/')) return openIPTrace(target);
+  const rows = trRanges(target).map(([label, tgt], i) =>
+    `<button type="button" class="btn ${i ? 'btn-secondary' : 'btn-primary'}" style="justify-content:space-between;width:100%" onclick="openIPTrace('${esc(tgt)}')">
+      <span class="tr-mono">${esc(label)}</span><span style="font-size:11px;opacity:.8">${esc(t(i === 0 ? 'trace.choice.ip' : 'trace.choice.range'))}</span></button>`).join('');
+  modal(`${esc(t('trace.analyze'))} · <span class="tr-mono">${esc(target)}</span>`,
+    `<p class="tr-meta" style="margin:0 0 12px">${esc(t('trace.choice.hint'))}</p><div style="display:grid;gap:8px">${rows}</div>`, '');
 };
