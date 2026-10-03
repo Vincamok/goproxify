@@ -4,6 +4,7 @@
 package ipprofile
 
 import (
+	"fmt"
 	"net/netip"
 	"slices"
 	"strings"
@@ -92,4 +93,14 @@ func normalizeCIDRs(in []string, dropNonPublic bool) []string {
 		res[i] = p.String()
 	}
 	return res
+}
+
+// ValidateCIDRs refuse toute entrée qui n'est ni une IP ni un CIDR, puis déduplique et agrège le reste.
+func ValidateCIDRs(in []string) ([]string, error) {
+	for _, s := range in {
+		if _, ok := parseCIDR(s); !ok {
+			return nil, fmt.Errorf("IP/CIDR invalide : %q", strings.TrimSpace(s))
+		}
+	}
+	return normalizeCIDRs(in, false), nil
 }

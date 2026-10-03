@@ -137,6 +137,7 @@ func (h *IPProfilesHandler) create(w http.ResponseWriter, r *http.Request) {
 		FeedURLs         []string `json:"feed_urls"`
 		FeedFormat       string   `json:"feed_format"`
 		RefreshIntervalH int      `json:"refresh_interval_h"`
+		CIDRs            []string `json:"cidrs"`
 		Enabled          bool     `json:"enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -150,23 +151,43 @@ func (h *IPProfilesHandler) create(w http.ResponseWriter, r *http.Request) {
 	if body.Mode == "" {
 		body.Mode = "deny"
 	}
+	if body.Mode != "deny" && body.Mode != "allow" {
+		jsonErrF(w, fmt.Errorf("mode doit être deny ou allow"), http.StatusBadRequest)
+		return
+	}
+	if body.ProfileType == "" {
+		body.ProfileType = "custom"
+	}
+	cidrs, err := manualCIDRs(body.FeedURLs, body.CIDRs)
+	if err != nil {
+		jsonErrF(w, err, http.StatusBadRequest)
+		return
+	}
+	if len(body.FeedURLs) == 0 && len(cidrs) == 0 {
+		jsonErrF(w, fmt.Errorf("feed_urls ou cidrs requis"), http.StatusBadRequest)
+		return
+	}
 	if body.FeedFormat == "" {
 		body.FeedFormat = "plain"
 	}
 	if body.RefreshIntervalH == 0 {
 		body.RefreshIntervalH = 24
 	}
+	if body.FeedURLs == nil {
+		body.FeedURLs = []string{}
+	}
 	furlsJSON, _ := json.Marshal(body.FeedURLs)
+	cidrsJSON, _ := json.Marshal(cidrs)
 	id := uuid.New().String()
 	enabled := 0
 	if body.Enabled {
 		enabled = 1
 	}
-	_, err := h.DB.ExecContext(r.Context(),
+	_, err = h.DB.ExecContext(r.Context(),
 		`INSERT INTO ip_profiles (id, name, profile_type, mode, feed_urls, feed_format, refresh_interval_h, cidrs, enabled)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, body.Name, body.ProfileType, body.Mode,
-		string(furlsJSON), body.FeedFormat, body.RefreshIntervalH, enabled)
+		string(furlsJSON), body.FeedFormat, body.RefreshIntervalH, string(cidrsJSON), enabled)
 	if err != nil {
 		jsonErrF(w, err, http.StatusInternalServerError)
 		return
@@ -184,23 +205,45 @@ func (h *IPProfilesHandler) update(w http.ResponseWriter, r *http.Request, id st
 		FeedURLs         []string `json:"feed_urls"`
 		FeedFormat       string   `json:"feed_format"`
 		RefreshIntervalH int      `json:"refresh_interval_h"`
+		CIDRs            []string `json:"cidrs"`
 		Enabled          *bool    `json:"enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonErrF(w, err, http.StatusBadRequest)
 		return
 	}
+	if body.FeedURLs == nil {
+		body.FeedURLs = []string{}
+	}
 	furlsJSON, _ := json.Marshal(body.FeedURLs)
 	enabled := 1
 	if body.Enabled != nil && !*body.Enabled {
 		enabled = 0
 	}
-	_, err := h.DB.ExecContext(r.Context(),
-		`UPDATE ip_profiles
-		 SET name=?, mode=?, feed_urls=?, feed_format=?, refresh_interval_h=?, enabled=?, updated_at=?
-		 WHERE id=?`,
-		body.Name, body.Mode, string(furlsJSON), body.FeedFormat,
-		body.RefreshIntervalH, enabled, time.Now().UTC().Format(time.RFC3339), id)
+	now := time.Now().UTC().Format(time.RFC3339)
+	var err error
+	// cidrs absent : la liste stockée reste telle quelle (bascule actif/inactif, profil à feed).
+	if body.CIDRs != nil {
+		var cidrs []string
+		if cidrs, err = manualCIDRs(body.FeedURLs, body.CIDRs); err != nil {
+			jsonErrF(w, err, http.StatusBadRequest)
+			return
+		}
+		cidrsJSON, _ := json.Marshal(cidrs)
+		_, err = h.DB.ExecContext(r.Context(),
+			`UPDATE ip_profiles
+			 SET name=?, mode=?, feed_urls=?, feed_format=?, refresh_interval_h=?, cidrs=?, enabled=?, updated_at=?
+			 WHERE id=?`,
+			body.Name, body.Mode, string(furlsJSON), body.FeedFormat,
+			body.RefreshIntervalH, string(cidrsJSON), enabled, now, id)
+	} else {
+		_, err = h.DB.ExecContext(r.Context(),
+			`UPDATE ip_profiles
+			 SET name=?, mode=?, feed_urls=?, feed_format=?, refresh_interval_h=?, enabled=?, updated_at=?
+			 WHERE id=?`,
+			body.Name, body.Mode, string(furlsJSON), body.FeedFormat,
+			body.RefreshIntervalH, enabled, now, id)
+	}
 	if err != nil {
 		jsonErrF(w, err, http.StatusInternalServerError)
 		return
@@ -221,6 +264,18 @@ func (h *IPProfilesHandler) refresh(w http.ResponseWriter, r *http.Request, id s
 		return
 	}
 	jsonOK(w, map[string]string{"status": "refreshed"})
+}
+
+// manualCIDRs valide les CIDR saisis à la main. Ils ne se combinent pas avec un feed : le
+// rafraîchissement remplacerait la liste.
+func manualCIDRs(feedURLs, cidrs []string) ([]string, error) {
+	if len(cidrs) == 0 {
+		return []string{}, nil
+	}
+	if len(feedURLs) > 0 {
+		return nil, fmt.Errorf("cidrs et feed_urls sont exclusifs : un feed remplace la liste à chaque rafraîchissement")
+	}
+	return ipprofile.ValidateCIDRs(cidrs)
 }
 
 func jsonErrF(w http.ResponseWriter, err error, code int) {

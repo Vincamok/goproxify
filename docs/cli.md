@@ -687,15 +687,14 @@ goproxify ip-profile delete <id> [-y] [-admin-url …] [-token …]
 
 `list` affiche une colonne `ETAT` : `ok`, ou `échec xN` après N échecs consécutifs du rafraîchissement automatique (détail : `ip-profile get <id>`, champs `last_error` et `next_attempt_at`).
 
-Exemple de fichier `profile.json` :
+Exemple de fichier `profile.json` (liste manuelle ; pour un feed, remplacer `cidrs` par `feed_urls`, `feed_format` et `refresh_interval_h`, les deux étant exclusifs) :
 
 ```json
 {
-  "name": "blocklist-scanners",
-  "action": "block",
-  "cidrs": ["1.2.3.0/24", "5.6.7.8"],
-  "countries": ["CN", "RU"],
-  "description": "IPs de scanners connus"
+  "name": "bureaux",
+  "mode": "allow",
+  "cidrs": ["203.0.113.0/24", "198.51.100.7"],
+  "enabled": true
 }
 ```
 

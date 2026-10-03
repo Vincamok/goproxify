@@ -611,6 +611,16 @@ Après un échec (réseau, HTTP ≠ 200, parsing, liste rejetée par le garde-fo
 
 Force un rafraîchissement complet (téléchargement inconditionnel, garde-fou de taille ignoré). `200 {"status":"refreshed"}`, ou `400 {"error":…}` en cas d'échec (profil sans feed, feed injoignable…). Le rafraîchissement automatique rejette une nouvelle liste qui perd plus de la moitié d'une liste d'au moins 10 entrées (feed vide ou tronqué) : la liste actuelle est conservée et l'échec est enregistré ; ce endpoint permet de l'accepter.
 
+### `POST /api/v1/ip-profiles` · `PUT /api/v1/ip-profiles/:id`
+
+Création / modification. Une liste vient soit d'un feed (`feed_urls`, `feed_format`, `refresh_interval_h`), soit d'une saisie manuelle (`cidrs` : IP ou CIDR, validés, dédupliqués et agrégés). Les deux sont exclusifs, car un rafraîchissement remplacerait la liste manuelle, et un profil manuel n'est jamais rafraîchi. `mode` : `deny` (défaut) ou `allow` ; `profile_type` vaut `custom` par défaut. Un profil s'applique à tout le trafic de chaque passerelle, `allow` prime sur `deny`, les adresses privées ne sont jamais bloquées.
+
+| Cas | Réponse |
+|---|---|
+| CIDR invalide, `mode` inconnu, `cidrs` avec `feed_urls`, ni `feed_urls` ni `cidrs` (création) | `400 {"error":…}` |
+| Création réussie | `201 {"id":…}` |
+| Modification réussie | `204` ; sans `cidrs` dans le corps, la liste stockée est conservée |
+
 ---
 
 ## Snippets
