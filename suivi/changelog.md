@@ -22,6 +22,8 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 - **Landing 0.3.2 — Section « Captures d'écran »** : nouvelle section sur la landing page, entre « Composer son architecture » et « Installation », avec 5 captures d'une instance Admin en fonctionnement (Dashboard, assistant d'architecture, Sécurité, Automatisation, Logs d'accès en direct). Lien de nav ajouté, traductions EN/FR/ES/DE. Images statiques dans `internal/landing/ui/img/screenshots/`. (Landing `0.3.2`)
 
 ### Modifié
+- **Admin 0.73.5 — Topologie : un agent co-hébergé avec une passerelle reste lié à son groupe HA** : la cible `ha:<groupe>` déclarée n'était pas appliquée quand l'agent partageait l'hôte d'un membre du groupe (le flux pointait sur cette passerelle). Interface uniquement. (Admin `0.73.5`)
+
 - **Admin 0.73.4 / Agent 0.6.1 — Configuration d'un agent : Discovery Docker et passerelle cible** : la case « Discovery Docker — Activé » reste cochée (l'agent annonçait `docker.enabled=false` alors que la discovery tournait via `docker.runtime`, d'où la case décochée à la réouverture). Le sélecteur « Passerelle auquel cet agent se connecte » propose désormais les groupes HA (« Groupe HA (ha-1) — tous les membres »), présélectionne la cible déclarée et affiche l'URL actuelle ; choisir un groupe enregistre la cible `ha:<groupe>` (topologie) et garde pour la connexion la passerelle actuelle si elle est membre. (Admin `0.73.4`, Agent `0.6.1`)
 
 - **Admin 0.73.3 — Topologie en flux : l'agent pointe sur son groupe HA et s'aligne sur sa cible** : un agent dont la cible est un groupe HA est désormais relié au cadre du groupe (et non à sa première passerelle), et chaque agent se cale verticalement sur sa passerelle / son groupe. Interface uniquement. (Admin `0.73.3`)

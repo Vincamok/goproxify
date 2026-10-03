@@ -219,10 +219,11 @@ function _archHydrateFromExisting(nodes, declared) {
     if (effectiveEdgeKey && edgeSvcByName.has(effectiveEdgeKey)) svc.targetEdgeId = edgeSvcByName.get(effectiveEdgeKey).id;
     const hostEdge = host.services.find(s => s.type === 'edge');
     if (cfg.host) {
-      if (hostEdge) { svc.placement = 'colocated'; svc.targetEdgeId = hostEdge.id; } else if (!svc.placement) svc.placement = 'remote';
+      if (hostEdge) { svc.placement = 'colocated'; if (!groupTarget) svc.targetEdgeId = hostEdge.id; } else if (!svc.placement) svc.placement = 'remote';
     } else if (colocate) svc.placement = 'colocated';
     else if (!svc.placement) svc.placement = 'remote';
-    if (groupTarget && !cfg.host) { svc.targetEdgeId = 'group:' + groupTarget; svc.placement = 'remote'; }
+    // Le groupe HA déclaré prime sur la passerelle de l'hôte (un agent co-hébergé avec un membre reste lié au groupe).
+    if (groupTarget) { svc.targetEdgeId = 'group:' + groupTarget; if (!cfg.host) svc.placement = 'remote'; }
     host.services.push(svc);
   }
 
