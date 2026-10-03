@@ -108,7 +108,9 @@ input,select,textarea{font-family:inherit;font-size:inherit}
 .nav-item-chevron{
   margin-left:auto;opacity:.45;transition:transform .15s;
   width:12px;height:12px;flex-shrink:0;
+  box-sizing:content-box;padding:10px 12px;margin:-10px -6px -10px auto;border-radius:6px;cursor:pointer;
 }
+.nav-item-chevron:hover{opacity:1;background:rgba(128,128,128,.15)}
 .nav-group.open > .nav-item > .nav-item-chevron{transform:rotate(90deg);opacity:.7}
 .nav-group.open > .nav-item.parent-active:not(.active){
   color:var(--text);background:transparent;

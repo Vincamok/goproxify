@@ -708,8 +708,8 @@ pages['edge-ipfilter'] = async function() {
 
 // Certificats TLS passerelle → pages['edge-certs'] dans domains.js (renderCertsPage)
 
-// ── PAGE: Tokens d'appairage (récap lecture seule) ───────────────────────
-// La CRUD complète (création, scopes, révocation) reste dans Accès → Tokens :
+// ── PAGE: Appairage (détail de la passerelle + récap lecture seule des tokens) ──
+// La CRUD complète (création, scopes, révocation) reste dans Infrastructure → Appairage :
 // un token sert à appairer une passerelle qui n'existe pas encore, la gestion ne
 // peut donc pas être scopée à une passerelle déjà appairée.
 pages['edge-tokens'] = async function() {
@@ -743,6 +743,13 @@ pages['edge-tokens'] = async function() {
       </div>`;
     }));
 
+    const statusOnline = edge.status === 'online';
+    const statusPending = edge.status === 'pending';
+    const statusColor = statusOnline ? 'var(--green)' : statusPending ? 'var(--yellow,#f59e0b)' : 'var(--red)';
+    const statusLabel = statusOnline ? t('edgepage.general.status_connected') : statusPending ? t('edgepage.general.status_pending') : t('edgepage.general.status_offline');
+    const detail = (label, valueHtml) => `<div>
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.07em;opacity:0.4;margin-bottom:3px;">${label}</div>${valueHtml}</div>`;
+
     content.innerHTML = `
       <div style="margin-bottom:16px;">
         <h1 style="margin:0 0 4px;font-size:24px;font-family:var(--font-heading);font-weight:600;">${t('edgetokens.title')}</h1>
@@ -751,6 +758,19 @@ pages['edge-tokens'] = async function() {
       <div style="margin-bottom:16px;padding:10px 12px;background:color-mix(in srgb,var(--accent) 7%,transparent);border:1px solid color-mix(in srgb,var(--accent) 22%,transparent);border-radius:6px;font-size:12px;color:var(--text2);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
         <span>${t('edgetokens.banner')}</span>
         <button class="btn btn-secondary btn-sm" onclick="navigate('tokens')">${t('edgetokens.manage_btn')}</button>
+      </div>
+      <div class="card blueprint" style="padding:16px 20px;margin-bottom:16px;">
+        <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+          <h6 style="margin:0;font-size:11px;text-transform:uppercase;letter-spacing:0.09em;opacity:0.5;">${t('edgetokens.edge_card')}</h6>
+          <span style="display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:600;color:${statusColor};"><span style="width:8px;height:8px;border-radius:50%;background:${statusColor};"></span>${esc(statusLabel)}</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(155px,100%),1fr));gap:10px;">
+          ${detail(t('edgepage.general.endpoint'), `<span style="font-family:monospace;font-size:11px;word-break:break-all;">${esc(edge.endpoint || '—')}</span>`)}
+          ${detail(t('edgepage.general.version'), `<span style="font-family:monospace;font-size:12px;">${esc(edge.version || '—')}</span>`)}
+          ${detail(t('edgepage.general.last_seen'), `<span style="font-size:12px;">${esc(edge.last_seen_at ? fmtDate(edge.last_seen_at) : '—')}</span>`)}
+          ${detail(t('edgepage.general.cpu_mem'), `<span style="font-family:monospace;font-size:12px;">${edge.cpu_pct != null ? Math.round(edge.cpu_pct) + '%' : '—'} / ${edge.mem_pct != null ? Math.round(edge.mem_pct) + '%' : '—'}</span>`)}
+        </div>
       </div>
       ${rows.length ? rows.join('') : `<p style="color:var(--text3);font-size:13px;">${t('edgetokens.empty')}</p>`}`;
   } catch(e) {
@@ -1061,7 +1081,6 @@ pages['edge-settings'] = function() {
         { page: 'edge-waf',      icon: '<path d="M8 2l5 3v4c0 3-2.5 5.5-5 6.5C5.5 14.5 3 12 3 9V5l5-3z"/><path d="M6 8h4M8 6v4"/>', label: t('edgesettings.item.waf'), desc: t('edgesettings.item.waf_desc') },
         { page: 'edge-ipfilter', icon: '<circle cx="8" cy="8" r="6"/><path d="M5 8h6M8 5v6"/>', label: t('edgesettings.item.ipfilter'), desc: t('edgesettings.item.ipfilter_desc') },
         { page: 'edge-auth',     icon: '<rect x="4" y="8" width="8" height="6" rx="1"/><path d="M6 8V6a2 2 0 014 0v2"/>', label: t('edgesettings.item.auth'), desc: t('edgesettings.item.auth_desc') },
-        { page: 'edge-tokens',   icon: '<path d="M7 11a4 4 0 100-8 4 4 0 000 8zM11 11l4 4"/>', label: t('edgesettings.item.tokens'), desc: t('edgesettings.item.tokens_desc') },
       ]
     },
     {
@@ -1083,8 +1102,7 @@ pages['edge-settings'] = function() {
       desc: t('edgesettings.section.infra_desc'),
       items: [
         { page: 'edge-cluster', icon: '<circle cx="8" cy="8" r="2"/><circle cx="2" cy="4" r="1.5"/><circle cx="14" cy="4" r="1.5"/><circle cx="8" cy="14" r="1.5"/><path d="M3.2 4.8L6.5 7M9.5 7l3.3-2.2M8 9.5V12"/>', label: t('edgesettings.item.cluster'), desc: t('edgesettings.item.cluster_desc') },
-        { page: 'edge-portal-catalog', icon: '<rect x="3" y="5" width="10" height="8" rx="1"/><path d="M6 8h6"/>', label: t('edgesettings.item.pcatalog'), desc: t('edgesettings.item.pcatalog_desc') },
-        { page: 'edge-portal-users', icon: '<circle cx="8" cy="5" r="2.5"/><path d="M3 13c0-2.2 2.2-4 5-4s5 1.8 5 4"/>', label: t('edgesettings.item.pusers'), desc: t('edgesettings.item.pusers_desc') },
+        { page: 'edge-tokens', icon: '<path d="M7 11a4 4 0 100-8 4 4 0 000 8zM11 11l4 4"/>', label: t('edgesettings.item.tokens'), desc: t('edgesettings.item.tokens_desc') },
         { page: 'edge-general', icon: '<circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.2 3.2l1.4 1.4M11.4 11.4l1.4 1.4M3.2 12.8l1.4-1.4M11.4 4.6l1.4-1.4"/>', label: t('edgesettings.item.general'), desc: t('edgesettings.item.general_desc') },
         { page: 'edge-http-timeouts', icon: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>', label: t('edgesettings.item.http_timeouts'), desc: t('edgesettings.item.http_timeouts_desc') },
       ]

@@ -1,4 +1,4 @@
-// ── PAGE: Tokens d'appairage
+// ── PAGE: Appairage (tokens passerelle/Agent + détail des passerelles)
 // Extrait de pages-all.js — phase 4.
 
 // ── PAGE: Tokens ───────────────────────────────────────────────────────────
@@ -34,7 +34,12 @@ function _tokenScopeTypeLabels() {
 async function refreshTokens() {
   const content = document.getElementById('content');
   try {
-    const list = await api('GET', '/tokens') || [];
+    const [tokenList, nodeList] = await Promise.all([
+      api('GET', '/tokens'),
+      api('GET', '/nodes').catch(() => []),
+    ]);
+    const list = tokenList || [];
+    const edges = (nodeList || []).filter(n => n.role === 'edge');
     const now = new Date();
     const actifs  = list.filter(tok => !tok.revoked && (!tok.expires_at || new Date(tok.expires_at) > now)).length;
     const revokes = list.filter(tok => tok.revoked).length;
@@ -152,6 +157,35 @@ async function refreshTokens() {
                   </td>
                 </tr>`;
               }).join('') : `<tr><td colspan="7" class="empty"><p>${t('tokens.empty')}</p></td></tr>`}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card blueprint" style="margin-bottom:16px;padding:16px 20px">
+        <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h6 style="margin:0 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:0.09em;opacity:0.5;">${t('tokens.edges_title')}</h6>
+        <p style="margin:0 0 10px;font-size:12px;color:var(--text2);">${t('tokens.edges_hint')}</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>${t('tokens.col_edge')}</th><th>${t('trafic.status')}</th><th>${t('edgepage.general.endpoint')}</th><th>${t('edgepage.general.version')}</th><th>${t('edgepage.general.last_seen')}</th><th>${t('tokens.col_token')}</th>
+            </tr></thead>
+            <tbody>
+              ${edges.length ? edges.map(n => {
+                const tok = list.find(x => x.node_name === n.node_name || x.id === n.id);
+                const st = tok ? _tokenStatus(tok) : null;
+                const online = n.status === 'online';
+                const dot = online ? 'var(--green)' : n.status === 'pending' ? 'var(--yellow,#f59e0b)' : 'var(--red)';
+                return `<tr>
+                  <td><div style="font-weight:600;font-size:13px">${esc(n.display_name || n.node_name)}</div>${n.display_name ? `<div style="font-size:10px;color:var(--text2);font-family:monospace;margin-top:2px">${esc(n.node_name)}</div>` : ''}</td>
+                  <td><span style="display:inline-flex;align-items:center;gap:6px;font-size:12px"><span style="width:8px;height:8px;border-radius:50%;background:${dot}"></span>${esc(n.status || '—')}</span></td>
+                  <td class="mono" style="font-size:11px;color:var(--text2)">${esc(n.endpoint || '—')}</td>
+                  <td class="mono" style="font-size:12px">${esc(n.version || '—')}</td>
+                  <td style="font-size:12px">${n.last_seen_at ? fmtDate(n.last_seen_at) : '—'}</td>
+                  <td>${st ? `<span class="tag ${st.cls}" style="font-size:10px">${esc(st.label)}</span>` : `<span style="font-size:12px;color:var(--text3)">${t('tokens.no_token')}</span>`}</td>
+                </tr>`;
+              }).join('') : '<tr><td colspan="6" class="empty"><p>—</p></td></tr>'}
             </tbody>
           </table>
         </div>

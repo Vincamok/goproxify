@@ -223,6 +223,7 @@ function renderNavItem(item) {
 // même rubrique quand on change d'espace.
 const SPACE_EQUIV = {
   'admin-trafic': 'edge-trafic',
+  'tokens': 'edge-tokens',
   'admin-observability': 'edge-observability',
   'obs-synthese': 'edge-obs-synthese',
   'obs-metrics': 'edge-metrics',

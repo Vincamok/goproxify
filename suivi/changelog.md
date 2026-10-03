@@ -19,6 +19,8 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ### Ajouté
 
+- **Admin 0.79.0 — « Appairage » : déplacé sous Infrastructure, avec le détail des passerelles** : la page « Tokens d'appairage » quitte le menu **Accès** et **Paramètres › Accès** pour devenir **Infrastructure › Appairage** (sous-menu « Vue d'ensemble » / « Appairage »), réservée aux rôles `admin` et `superadmin`. Elle gagne une section « Détail des passerelles » (état, endpoint, version, dernier contact et statut du token de chaque passerelle). Côté passerelle, la page **Paramètres › Infrastructure › Appairage** affiche le détail de la passerelle sélectionnée en plus de ses tokens (lecture seule ; création et révocation restent dans l'Admin, car une passerelle à appairer n'existe pas encore). Libellé « Tokens d'appairage » renommé « Appairage » (FR/EN/ES/DE).
+
 - **Landing 0.3.4 — RGPD mis en avant** : neuvième carte « Vie privée — Pensé pour le RGPD » dans « Comment fonctionne GoProxify » (IP entières, anonymisées ou pseudonymisées en AES-256, révélation par les seuls comptes autorisés — super-admin, DPO, délégation — avec motif au journal d'audit, rétention réglable et droit à l'effacement par IP ou utilisateur, auto-hébergement). La grille passe à 3×3. Badge « Pensé pour le RGPD » dans le hero, carte « Guide RGPD » (`docs/rgpd.md`) dans la documentation. Traductions EN/FR/ES/DE. Corrigé : la carte « Moteurs de sécurité » ne pointait vers rien (lien vers `docs/security.md` manquant). (Landing `0.3.4`)
 
 - **Admin 0.78.0 — RGPD : délégation du droit de révéler les IP pseudonymisées** : réservée jusqu'ici au superadmin, la révélation (`gdpr:reveal`) peut être déléguée de trois façons, par le superadmin seul :
@@ -56,6 +58,9 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 - **Landing 0.3.2 — Section « Captures d'écran »** : nouvelle section sur la landing page, entre « Composer son architecture » et « Installation », avec 5 captures d'une instance Admin en fonctionnement (Dashboard, assistant d'architecture, Sécurité, Automatisation, Logs d'accès en direct). Lien de nav ajouté, traductions EN/FR/ES/DE. Images statiques dans `internal/landing/ui/img/screenshots/`. (Landing `0.3.2`)
 
 ### Modifié
+
+- **Admin 0.79.1 — Paramètres : plus de doublons avec le menu** : les pages de Paramètres qui ont déjà leur entrée dans le menu latéral ne sont plus répétées. **Paramètres Admin** : la section « Alertes » (Routage, Canaux) est retirée — ces pages restent sous Automatisation › Alertes. **Paramètres passerelle** : « Catalogue Access » et « Utilisateurs Access » sont retirés — ils restent des onglets de Portail Access.
+
 - **Admin 0.73.5 — Topologie : un agent co-hébergé avec une passerelle reste lié à son groupe HA** : la cible `ha:<groupe>` déclarée n'était pas appliquée quand l'agent partageait l'hôte d'un membre du groupe (le flux pointait sur cette passerelle). Interface uniquement. (Admin `0.73.5`)
 
 - **Admin 0.73.4 / Agent 0.6.1 — Configuration d'un agent : Discovery Docker et passerelle cible** : la case « Discovery Docker — Activé » reste cochée (l'agent annonçait `docker.enabled=false` alors que la discovery tournait via `docker.runtime`, d'où la case décochée à la réouverture). Le sélecteur « Passerelle auquel cet agent se connecte » propose désormais les groupes HA (« Groupe HA (ha-1) — tous les membres »), présélectionne la cible déclarée et affiche l'URL actuelle ; choisir un groupe enregistre la cible `ha:<groupe>` (topologie) et garde pour la connexion la passerelle actuelle si elle est membre. (Admin `0.73.4`, Agent `0.6.1`)

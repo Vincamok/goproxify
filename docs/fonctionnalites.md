@@ -167,7 +167,7 @@ Endpoints on `:9443` — two families:
 | Proxy dry run | YAML editor: "Test (dry run)" button validates the config without saving or pushing (structure, host/alias/port conflicts, optional backend probes) with an expandable detailed report — `POST /api/v1/proxies/dry-run` (Admin `0.72.0`) |
 | Users | Create, edit, delete, password reset; roles `admin`, `user`, `dpo` (data protection officer: user rights + revealing pseudonymised IPs). Superadmin and accounts holding the reveal right can only be changed, reset or deleted by the superadmin (Admin `0.78.0`) |
 | Teams | Access organization by scope; the superadmin can grant a team the right to reveal pseudonymised IPs (`gdpr:reveal`), its membership then being superadmin-only (Admin `0.78.0`) |
-| Pairing tokens | Generate, list, revoke (`gpx_edge_*`, `gpx_join_*`) |
+| Pairing (Infrastructure › Pairing) | Generate, list, revoke pairing tokens (`gpx_edge_*`, `gpx_join_*`) and see each Edge's details (status, endpoint, version, last contact, token); read-only view in Edge settings › Infrastructure › Pairing (Admin `0.79.0`) |
 | User API tokens (PAT) | Self-service `/api/v1/me/tokens` — resource scopes, optional expiry; writes need the matching `:write` scope (`alerts:write`, `domains:write`, `certs:write`, `logs:write`, `security:write`…, admin roles only) |
 | Snippets | Reusable profiles: IP, TLS, CORS, rate-limit, auth providers, DNS providers |
 | Nodes | Registration, cluster state, accept/reject pending |

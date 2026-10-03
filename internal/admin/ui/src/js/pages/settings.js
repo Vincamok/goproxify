@@ -8,7 +8,6 @@ pages.settings = async function() {
       label: t('settings.sec.access'),
       desc: t('settings.sec.access_desc'),
       items: [
-        { page: 'tokens', icon: '<path d="M7 11a4 4 0 100-8 4 4 0 000 8zM11 11l4 4"/>', label: gpxPageLabel('tokens'), desc: t('settings.item.tokens_desc') },
         { page: 'api-tokens', icon: '<path d="M7 11a4 4 0 100-8 4 4 0 000 8zM11 11l4 4M3 13l4 4"/>', label: gpxPageLabel('api-tokens'), desc: t('settings.item.api_tokens_desc') },
         { page: 'users', icon: '<circle cx="8" cy="6" r="3"/><path d="M2 14c0-3 2.7-5 6-5s6 2 6 5"/>', label: gpxPageLabel('users'), desc: t('settings.item.users_desc') },
         { page: 'access-policies', icon: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M5 7h6M5 9.5h4"/>', label: gpxPageLabel('access-policies'), desc: t('settings.item.access_policies_desc') || 'Vue matricielle domaines × sujets' },
@@ -25,14 +24,6 @@ pages.settings = async function() {
         { page: 'error-pages', icon: '<path d="M8 2v4M6 8h4M4 14h8M4 18h5"/><rect x="2" y="6" width="12" height="14" rx="2"/>', label: gpxPageLabel('error-pages'), desc: t('settings.item.error_pages_desc') },
         { page: 'portal-templates', icon: '<path d="M4 3h8v12H4zM6 6h4M6 9h4"/><path d="M10 15l2 2 4-4"/>', label: gpxPageLabel('portal-templates', 'Templates Access'), desc: t('settings.item.portal_tpl_desc') || 'HTML Access (login, catalogue…) poussé aux passerelles' },
         { page: 'ip-profiles', icon: '<path d="M8 2a6 6 0 100 12A6 6 0 008 2zM8 6v4M8 10h.01"/>', label: gpxPageLabel('ip-profiles'), desc: t('settings.item.ip_profiles_desc') },
-      ]
-    },
-    {
-      label: t('settings.sec.alerts'),
-      desc: t('settings.sec.alerts_desc'),
-      items: [
-        { page: 'alerts', icon: '<path d="M8 2a6 6 0 016 6c0 4-1.5 5-1.5 5H3.5S2 12 2 8a6 6 0 016-6zm-1 12h2"/>', label: gpxPageLabel('alerts'), desc: t('settings.item.alerts_desc') },
-        { page: 'alert-channels', icon: '<path d="M3 8h10M8 3v10"/><circle cx="8" cy="8" r="6"/>', label: gpxPageLabel('alert-channels'), desc: t('settings.item.channels_desc') },
       ]
     },
     {

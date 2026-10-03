@@ -116,6 +116,20 @@ const APP_CONFIG = {
       label: 'Infrastructure',
       section: 'Plateforme',
       icon: '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="4" r="1.5"/><circle cx="3" cy="12" r="1.5"/><circle cx="13" cy="12" r="1.5"/><path d="M8 5.5v3M8 8.5L3 10.5M8 8.5L13 10.5"/></svg>',
+      children: [
+        {
+          page: 'infrastructure',
+          navKey: 'nav.auto.overview',
+          label: 'Vue d\'ensemble',
+          icon: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z"/></svg>',
+        },
+        {
+          page: 'tokens',
+          label: 'Appairage',
+          icon: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 11a4 4 0 100-8 4 4 0 000 8zM11 11l4 4"/></svg>',
+          guard: (u) => u?.role === 'superadmin' || u?.role === 'admin',
+        },
+      ],
     },
     {
       page: 'automation',
@@ -161,11 +175,6 @@ const APP_CONFIG = {
       icon: '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="8" cy="8" r="3"/><path d="M2 18c0-3 2.7-5 6-5"/><path d="M16 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/><path d="M16 14v4M14 16h4"/></svg>',
       guard: (u) => u?.role === 'superadmin' || u?.role === 'admin',
       children: [
-        {
-          page: 'tokens',
-          label: 'Tokens d\'appairage',
-          icon: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 11a4 4 0 100-8 4 4 0 000 8zM11 11l4 4"/></svg>',
-        },
         {
           page: 'workspaces',
           label: 'Gestion d\'équipe',
@@ -357,7 +366,8 @@ const APP_CONFIG = {
     snippets:           'Snippets',
     'error-pages':      'Pages d\'erreur',
     'docker-labels':    'Labels Docker / Kubernetes',
-    tokens:             'Tokens d\'appairage',
+    tokens:             'Appairage',
+    'edge-tokens':      'Appairage',
     'api-tokens':        'Mes tokens API',
     access:              'Accès',
     'access-policies':   'Politiques d\'accès',
