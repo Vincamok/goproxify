@@ -279,18 +279,23 @@ Gestion des utilisateurs de l'Administration.
 ```
 goproxify user list   [-admin-url …] [-token …]
 goproxify user get    <id> [-admin-url …] [-token …]
-goproxify user create -email <email> [-password <mdp>] [-role admin|operator|viewer] [-admin-url …] [-token …]
-goproxify user update <id> [-role admin|operator|viewer] [-status active|disabled] [-admin-url …] [-token …]
+goproxify user create -email <email> -password <mdp> [-role admin|user|dpo] [-permissions gdpr:reveal] [-admin-url …] [-token …]
+goproxify user update <id> [-role admin|user|dpo] [-permissions gdpr:reveal|none] [-admin-url …] [-token …]
 goproxify user passwd <id> -password <nouveau-mdp> [-admin-url …] [-token …]
 goproxify user delete <id> [-y] [-admin-url …] [-token …]
 ```
+
+- `list` affiche le rôle et les permissions effectives de chaque compte.
+- `-role dpo` (délégué à la protection des données) et `-permissions gdpr:reveal` (révélation des IP pseudonymisées) ne sont acceptés que du superadmin ; `-permissions none` retire les permissions accordées en propre. Un compte superadmin ou détenteur de ce droit n'est modifiable (`update`, `passwd`, `delete`) que par le superadmin. Voir [rgpd.md](rgpd.md).
+- Depuis Admin `0.78.0`, `-role` est réellement transmis (il était ignoré : les comptes étaient toujours créés en `user`) ; `-status` est retiré, l'API ne l'a jamais pris en charge.
 
 Exemples :
 
 ```bash
 goproxify user list
-goproxify user create -email ops@example.fr -role operator
-goproxify user update <id> -status disabled
+goproxify user create -email ops@example.fr -password s3cret -role user
+goproxify user create -email dpo@example.fr -password s3cret -role dpo
+goproxify user update <id> -permissions gdpr:reveal
 goproxify user passwd <id> -password s3cret
 goproxify user delete <id> -y
 ```
@@ -648,7 +653,11 @@ goproxify teams delete <id> [-y] [-admin-url …] [-token …]
 goproxify teams members list   <team-id> [-admin-url …] [-token …]
 goproxify teams members add    <team-id> -user <user-id> [-admin-url …] [-token …]
 goproxify teams members remove <team-id> -user <user-id> [-admin-url …] [-token …]
+
+goproxify teams permissions <team-id> [-permissions gdpr:reveal|none] [-admin-url …] [-token …]
 ```
+
+`teams permissions` affiche les permissions accordées aux membres de l'équipe ; avec `-permissions`, les remplace (`none` = aucune). `gdpr:reveal` permet aux membres de révéler les IP pseudonymisées (RGPD). Modifier ces permissions, les membres d'une équipe qui en porte, ou supprimer une telle équipe est réservé au superadmin.
 
 Exemples :
 
@@ -658,6 +667,7 @@ goproxify teams create ops-team -role operator
 goproxify teams members list   <team-id>
 goproxify teams members add    <team-id> -user <user-id>
 goproxify teams members remove <team-id> -user <user-id>
+goproxify teams permissions <team-id> -permissions gdpr:reveal
 goproxify teams delete <team-id> -y
 ```
 

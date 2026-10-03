@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
+	"github.com/vincamok/goproxify/internal/admin/rbac"
 )
 
 // TeamsHandler gère le CRUD des équipes et de leurs membres/scopes.
@@ -64,6 +65,11 @@ func (h *TeamsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.addMember(w, r, id)
 	case r.Method == http.MethodDelete && sub == "members" && subID != "":
 		h.removeMember(w, r, id, subID)
+	// Permissions (superadmin)
+	case r.Method == http.MethodGet && sub == "permissions":
+		jsonOK(w, map[string][]string{"permissions": orEmpty(rbac.TeamPermissions(r.Context(), h.DB, id))})
+	case r.Method == http.MethodPut && sub == "permissions":
+		h.setPermissions(w, r, id)
 	// Scopes
 	case r.Method == http.MethodGet && sub == "scopes":
 		h.listScopes(w, r, id)
@@ -84,6 +90,48 @@ type teamRow struct {
 	CreatedAt   time.Time `json:"created_at"`
 	MemberCount int       `json:"member_count"`
 	ScopeCount  int       `json:"scope_count"`
+	Permissions []string  `json:"permissions"`
+}
+
+// setPermissions remplace les permissions accordées aux membres de l'équipe (superadmin).
+func (h *TeamsHandler) setPermissions(w http.ResponseWriter, r *http.Request, teamID string) {
+	actor := adminauth.UserIDFromContext(r.Context())
+	if !rbac.IsSuperAdmin(r.Context(), h.DB, actor) {
+		writeErr(w, r, http.StatusForbidden, "api.err.superadmin_required")
+		return
+	}
+	var req struct {
+		Permissions []string `json:"permissions"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, r, http.StatusBadRequest, "api.err.json_body")
+		return
+	}
+	perms, ok := rbac.NormalizePermissions(req.Permissions)
+	if !ok {
+		writeErr(w, r, http.StatusBadRequest, "api.err.unknown_permission")
+		return
+	}
+	var exists int
+	h.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM teams WHERE id=?`, teamID).Scan(&exists) //nolint:errcheck
+	if exists == 0 {
+		writeErr(w, r, http.StatusNotFound, "api.err.team_not_found")
+		return
+	}
+	if _, err := h.DB.ExecContext(r.Context(), `DELETE FROM team_permissions WHERE team_id=?`, teamID); err != nil {
+		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
+		return
+	}
+	for _, p := range perms {
+		if _, err := h.DB.ExecContext(r.Context(),
+			`INSERT INTO team_permissions (team_id, permission) VALUES (?, ?)`, teamID, p); err != nil {
+			writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
+			return
+		}
+	}
+	_ = admindb.WriteAudit(h.DB, actor, "set_permissions", "team:"+teamID, "permissions="+strings.Join(perms, ","))
+	h.notifyChange()
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *TeamsHandler) listTeams(w http.ResponseWriter, r *http.Request) {
@@ -103,6 +151,10 @@ func (h *TeamsHandler) listTeams(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&t.ID, &t.Name, &t.CreatedAt, &t.MemberCount, &t.ScopeCount); err == nil {
 			result = append(result, t)
 		}
+	}
+	rows.Close()
+	for i := range result {
+		result[i].Permissions = orEmpty(rbac.TeamPermissions(r.Context(), h.DB, result[i].ID))
 	}
 	jsonOK(w, result)
 }
@@ -141,6 +193,7 @@ func (h *TeamsHandler) getTeam(w http.ResponseWriter, r *http.Request, id string
 		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
 		return
 	}
+	t.Permissions = orEmpty(rbac.TeamPermissions(r.Context(), h.DB, id))
 	jsonOK(w, t)
 }
 
@@ -170,6 +223,9 @@ func (h *TeamsHandler) updateTeam(w http.ResponseWriter, r *http.Request, id str
 }
 
 func (h *TeamsHandler) deleteTeam(w http.ResponseWriter, r *http.Request, id string) {
+	if !h.guardTeamPermissions(w, r, id) {
+		return
+	}
 	res, err := h.DB.ExecContext(r.Context(), `DELETE FROM teams WHERE id=?`, id)
 	if err != nil {
 		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
@@ -183,6 +239,7 @@ func (h *TeamsHandler) deleteTeam(w http.ResponseWriter, r *http.Request, id str
 	// Cascade manuelle (SQLite sans FK activées)
 	h.DB.ExecContext(r.Context(), `DELETE FROM team_members WHERE team_id=?`, id) //nolint:errcheck
 	h.DB.ExecContext(r.Context(), `DELETE FROM team_scopes WHERE team_id=?`, id)  //nolint:errcheck
+	h.DB.ExecContext(r.Context(), `DELETE FROM team_permissions WHERE team_id=?`, id) //nolint:errcheck
 	actor := adminauth.UserIDFromContext(r.Context())
 	_ = admindb.WriteAudit(h.DB, actor, "delete", "team:"+id, "")
 	h.notifyChange()
@@ -218,6 +275,17 @@ func (h *TeamsHandler) listMembers(w http.ResponseWriter, r *http.Request, teamI
 	jsonOK(w, result)
 }
 
+// guardTeamPermissions refuse (403) qu'un non-superadmin change la composition d'une équipe
+// qui porte une permission : ce serait accorder ou retirer cette permission.
+func (h *TeamsHandler) guardTeamPermissions(w http.ResponseWriter, r *http.Request, teamID string) bool {
+	if len(rbac.TeamPermissions(r.Context(), h.DB, teamID)) > 0 &&
+		!rbac.IsSuperAdmin(r.Context(), h.DB, adminauth.UserIDFromContext(r.Context())) {
+		writeErr(w, r, http.StatusForbidden, "api.err.superadmin_required")
+		return false
+	}
+	return true
+}
+
 func (h *TeamsHandler) addMember(w http.ResponseWriter, r *http.Request, teamID string) {
 	var req struct {
 		UserID string `json:"user_id"`
@@ -229,6 +297,9 @@ func (h *TeamsHandler) addMember(w http.ResponseWriter, r *http.Request, teamID 
 	}
 	if req.UserID == "" {
 		http.Error(w, "user_id requis", http.StatusBadRequest)
+		return
+	}
+	if !h.guardTeamPermissions(w, r, teamID) {
 		return
 	}
 	if _, err := h.DB.ExecContext(r.Context(),
@@ -244,6 +315,9 @@ func (h *TeamsHandler) addMember(w http.ResponseWriter, r *http.Request, teamID 
 }
 
 func (h *TeamsHandler) removeMember(w http.ResponseWriter, r *http.Request, teamID, userID string) {
+	if !h.guardTeamPermissions(w, r, teamID) {
+		return
+	}
 	res, err := h.DB.ExecContext(r.Context(),
 		`DELETE FROM team_members WHERE team_id=? AND user_id=?`, teamID, userID)
 	if err != nil {

@@ -226,6 +226,12 @@ type CacheConfig struct {
 	BypassHeaders []string `json:"bypass_headers,omitempty"`
 	// BypassCookies : si l'un de ces cookies est présent, le cache est ignoré.
 	BypassCookies []string `json:"bypass_cookies,omitempty"`
+	// IgnoreCookies : met en cache même si la requête porte des cookies (ils ne
+	// participent pas à la clé). Sans cette option ni VaryCookies, toute requête
+	// avec cookie ou Authorization contourne le cache.
+	IgnoreCookies bool `json:"ignore_cookies,omitempty"`
+	// VaryCookies : cookies dont la valeur fait partie de la clé de cache (autorise le cache avec cookies).
+	VaryCookies []string `json:"vary_cookies,omitempty"`
 	// Methods : méthodes mises en cache (défaut : ["GET", "HEAD"]).
 	Methods []string `json:"methods,omitempty"`
 }

@@ -30,14 +30,19 @@ func runUser() {
 			fmt.Println("(aucun utilisateur)")
 			return
 		}
-		fmt.Printf("%-36s  %-30s  %-10s  %s\n", "ID", "EMAIL", "RÔLE", "STATUT")
+		fmt.Printf("%-36s  %-30s  %-10s  %s\n", "ID", "EMAIL", "RÔLE", "PERMISSIONS")
 		fmt.Println(strings.Repeat("-", 90))
 		for _, u := range users {
 			id, _ := u["id"].(string)
 			email, _ := u["email"].(string)
-			role, _ := u["platform_role"].(string)
-			status, _ := u["status"].(string)
-			fmt.Printf("%-36s  %-30s  %-10s  %s\n", id, email, role, status)
+			role, _ := u["role"].(string)
+			var perms []string
+			for _, p := range asSlice(u["effective_permissions"]) {
+				if s, ok := p.(string); ok {
+					perms = append(perms, s)
+				}
+			}
+			fmt.Printf("%-36s  %-30s  %-10s  %s\n", id, email, role, strings.Join(perms, ","))
 		}
 
 	case "get":
@@ -64,9 +69,9 @@ func runUser() {
 		args := parseFlags(os.Args[3:])
 		email := flagValue(args, "-email", "")
 		password := flagValue(args, "-password", "")
-		role := flagValue(args, "-role", "viewer")
+		role := flagValue(args, "-role", "user")
 		if email == "" {
-			fmt.Fprintln(os.Stderr, "usage: goproxify user create -email <email> [-password <mdp>] [-role admin|operator|viewer]")
+			fmt.Fprintln(os.Stderr, "usage: goproxify user create -email <email> -password <mdp> [-role admin|user|dpo] [-permissions gdpr:reveal]")
 			os.Exit(1)
 		}
 		client, err := newAdminClient(args)
@@ -74,9 +79,12 @@ func runUser() {
 			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
 			os.Exit(1)
 		}
-		payload := map[string]any{"email": email, "platform_role": role}
+		payload := map[string]any{"email": email, "role": role}
 		if password != "" {
 			payload["password"] = password
+		}
+		if perms, ok := permissionsFlag(args); ok {
+			payload["permissions"] = perms
 		}
 		var result map[string]any
 		if _, err := client.DoJSON("POST", "/api/v1/users", payload, &result, 200, 201); err != nil {
@@ -90,18 +98,18 @@ func runUser() {
 		args := parseFlags(os.Args[3:])
 		id := firstPositional(os.Args[3:], args)
 		if id == "" {
-			fmt.Fprintln(os.Stderr, "usage: goproxify user update <id> [-role admin|operator|viewer] [-status active|disabled]")
+			fmt.Fprintln(os.Stderr, "usage: goproxify user update <id> [-role admin|user|dpo] [-permissions gdpr:reveal|none]")
 			os.Exit(1)
 		}
 		patch := map[string]any{}
 		if r := flagValue(args, "-role", ""); r != "" {
-			patch["platform_role"] = r
+			patch["role"] = r
 		}
-		if s := flagValue(args, "-status", ""); s != "" {
-			patch["status"] = s
+		if perms, ok := permissionsFlag(args); ok {
+			patch["permissions"] = perms
 		}
 		if len(patch) == 0 {
-			fmt.Fprintln(os.Stderr, "rien à modifier : spécifier -role ou -status")
+			fmt.Fprintln(os.Stderr, "rien à modifier : spécifier -role ou -permissions")
 			os.Exit(1)
 		}
 		client, err := newAdminClient(args)
@@ -179,22 +187,46 @@ Sous-commandes :
   list    Liste les utilisateurs
   get     Affiche un utilisateur
   create  Crée un utilisateur
-  update  Modifie le rôle ou le statut
+  update  Modifie le rôle ou les permissions
   passwd  Change le mot de passe
   delete  Supprime un utilisateur
 
 goproxify user list   [-admin-url …] [-token …]
 goproxify user get    <id> [-admin-url …] [-token …]
-goproxify user create -email <email> [-password <mdp>] [-role admin|operator|viewer] [-admin-url …] [-token …]
-goproxify user update <id> [-role admin|operator|viewer] [-status active|disabled] [-admin-url …] [-token …]
+goproxify user create -email <email> -password <mdp> [-role admin|user|dpo] [-permissions gdpr:reveal] [-admin-url …] [-token …]
+goproxify user update <id> [-role admin|user|dpo] [-permissions gdpr:reveal|none] [-admin-url …] [-token …]
 goproxify user passwd <id> -password <nouveau-mdp> [-admin-url …] [-token …]
 goproxify user delete <id> [-y] [-admin-url …] [-token …]
+
+Le rôle dpo et la permission gdpr:reveal (révélation des IP pseudonymisées) ne sont
+attribuables que par le superadmin ; un compte qui les détient n'est modifiable que par lui.
 `)
 	default:
 		fmt.Fprintf(os.Stderr, "sous-commande user inconnue : %q\n", sub)
 		fmt.Fprintln(os.Stderr, "utilisez : goproxify user help")
 		os.Exit(1)
 	}
+}
+
+// permissionsFlag lit -permissions (liste séparée par des virgules ; « none » = aucune).
+// ok vaut false si le flag est absent : les permissions restent alors inchangées.
+func permissionsFlag(args map[string]string) (perms []string, ok bool) {
+	v, ok := args["-permissions"]
+	if !ok {
+		return nil, false
+	}
+	perms = []string{}
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" && p != "none" {
+			perms = append(perms, p)
+		}
+	}
+	return perms, true
+}
+
+func asSlice(v any) []any {
+	s, _ := v.([]any)
+	return s
 }
 
 // firstPositional retourne le premier argument non-flag de la liste.

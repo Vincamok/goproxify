@@ -141,3 +141,117 @@ func TestMiddlewareWithConfig_BypassSkipsCache(t *testing.T) {
 		t.Errorf("bypass should call backend every time, got %d", calls)
 	}
 }
+
+func cacheTestHandler(calls *int, hdr map[string]string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*calls++
+		for k, v := range hdr {
+			w.Header().Set(k, v)
+		}
+		w.Write([]byte("who=" + r.Header.Get("X-User") + r.Header.Get("Cookie"))) //nolint:errcheck
+	})
+}
+
+func cacheTestCfg() *router.CacheConfig {
+	return &router.CacheConfig{Enabled: true, ValidRules: []router.CacheValidRule{{StatusCodes: []int{200}, TTL: "1m"}}}
+}
+
+func TestCache_RequestWithCookieOrAuthNeverCachedNorServed(t *testing.T) {
+	for _, tc := range []struct{ name, k, v string }{
+		{"cookie", "Cookie", "sid=alice"},
+		{"authorization", "Authorization", "Bearer alice"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			h := New(t.TempDir()).MiddlewareWithConfig(cacheTestCfg())(cacheTestHandler(&calls, nil))
+			req := httptest.NewRequest("GET", "/me", nil)
+			req.Header.Set(tc.k, tc.v)
+			h.ServeHTTP(httptest.NewRecorder(), req)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest("GET", "/me", nil))
+			if rec.Header().Get("X-Cache") == "HIT" || calls != 2 {
+				t.Fatalf("réponse authentifiée resservie à l'anonyme (calls=%d)", calls)
+			}
+		})
+	}
+}
+
+func TestCache_PrivateNoStoreSetCookieNotStored(t *testing.T) {
+	for _, hdr := range []map[string]string{
+		{"Cache-Control": "private, max-age=60"},
+		{"Cache-Control": "no-store"},
+		{"Set-Cookie": "sid=x"},
+		{"Vary": "*"},
+	} {
+		calls := 0
+		h := New(t.TempDir()).MiddlewareWithConfig(cacheTestCfg())(cacheTestHandler(&calls, hdr))
+		req := httptest.NewRequest("GET", "/x", nil)
+		h.ServeHTTP(httptest.NewRecorder(), req)
+		h.ServeHTTP(httptest.NewRecorder(), req)
+		if calls != 2 {
+			t.Errorf("%v : réponse mise en cache (calls=%d)", hdr, calls)
+		}
+	}
+}
+
+func TestCache_PublicStillCachedWithoutCookie(t *testing.T) {
+	calls := 0
+	h := New(t.TempDir()).MiddlewareWithConfig(cacheTestCfg())(cacheTestHandler(&calls, map[string]string{"Cache-Control": "public, max-age=60"}))
+	req := httptest.NewRequest("GET", "/s.css", nil)
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if calls != 1 {
+		t.Fatalf("ressource publique non mise en cache (calls=%d)", calls)
+	}
+}
+
+func TestCache_VaryHonored(t *testing.T) {
+	calls := 0
+	h := New(t.TempDir()).MiddlewareWithConfig(cacheTestCfg())(cacheTestHandler(&calls, map[string]string{"Vary": "X-User"}))
+	get := func(u string) string {
+		req := httptest.NewRequest("GET", "/v", nil)
+		req.Header.Set("X-User", u)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Body.String()
+	}
+	if get("a") != "who=a" || get("b") != "who=b" || get("a") != "who=a" {
+		t.Fatal("variante servie au mauvais client")
+	}
+	if calls != 2 {
+		t.Fatalf("attendu 2 appels backend (a, b ; a en HIT), got %d", calls)
+	}
+}
+
+func TestCache_VaryCookiesAndIgnoreCookies(t *testing.T) {
+	cfg := cacheTestCfg()
+	cfg.VaryCookies = []string{"lang"}
+	calls := 0
+	h := New(t.TempDir()).MiddlewareWithConfig(cfg)(cacheTestHandler(&calls, nil))
+	get := func(c string) string {
+		req := httptest.NewRequest("GET", "/l", nil)
+		req.Header.Set("Cookie", c)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Body.String()
+	}
+	if get("lang=fr") == get("lang=en") {
+		t.Fatal("vary_cookies : valeurs distinctes mélangées")
+	}
+	get("lang=fr")
+	if calls != 2 {
+		t.Fatalf("lang=fr devait être en HIT, calls=%d", calls)
+	}
+
+	cfg2 := cacheTestCfg()
+	cfg2.IgnoreCookies = true
+	calls = 0
+	h = New(t.TempDir()).MiddlewareWithConfig(cfg2)(cacheTestHandler(&calls, nil))
+	req := httptest.NewRequest("GET", "/i", nil)
+	req.Header.Set("Cookie", "a=1")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if calls != 1 {
+		t.Fatalf("ignore_cookies : attendu 1 appel, got %d", calls)
+	}
+}

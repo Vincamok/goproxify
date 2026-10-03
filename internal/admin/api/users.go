@@ -6,14 +6,17 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
+	"github.com/vincamok/goproxify/internal/admin/rbac"
 )
 
 // UsersHandler gère le CRUD des utilisateurs.
@@ -63,6 +66,9 @@ type userRow struct {
 	Role      string    `json:"role"`
 	CreatedAt time.Time `json:"created_at"`
 	TeamNames string    `json:"team_names,omitempty"`
+	// Permissions : accordées en propre ; EffectivePermissions : y compris rôle et équipes.
+	Permissions          []string `json:"permissions"`
+	EffectivePermissions []string `json:"effective_permissions"`
 }
 
 type userTeam struct {
@@ -77,12 +83,34 @@ type userScope struct {
 }
 
 type userDetail struct {
-	ID        string      `json:"id"`
-	Email     string      `json:"email"`
-	Role      string      `json:"role"`
-	CreatedAt time.Time   `json:"created_at"`
-	Teams     []userTeam  `json:"teams"`
-	Scopes    []userScope `json:"scopes"`
+	ID                   string      `json:"id"`
+	Email                string      `json:"email"`
+	Role                 string      `json:"role"`
+	CreatedAt            time.Time   `json:"created_at"`
+	Teams                []userTeam  `json:"teams"`
+	Scopes               []userScope `json:"scopes"`
+	Permissions          []string    `json:"permissions"`
+	EffectivePermissions []string    `json:"effective_permissions"`
+}
+
+// orEmpty évite un null JSON pour une liste vide.
+func orEmpty(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
+func replaceUserPermissions(db *sql.DB, userID string, perms []string) error {
+	if _, err := db.Exec(`DELETE FROM user_permissions WHERE user_id=?`, userID); err != nil {
+		return err
+	}
+	for _, p := range perms {
+		if _, err := db.Exec(`INSERT INTO user_permissions (user_id, permission) VALUES (?, ?)`, userID, p); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (h *UsersHandler) list(w http.ResponseWriter, r *http.Request) {
@@ -110,6 +138,11 @@ func (h *UsersHandler) list(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		result = append(result, u)
+	}
+	rows.Close()
+	for i := range result {
+		result[i].Permissions = orEmpty(rbac.DirectPermissions(r.Context(), h.DB, result[i].ID))
+		result[i].EffectivePermissions = orEmpty(rbac.UserPermissions(r.Context(), h.DB, result[i].ID))
 	}
 	jsonOK(w, result)
 }
@@ -145,7 +178,10 @@ func (h *UsersHandler) get(w http.ResponseWriter, r *http.Request, id string) {
 	}
 
 	scopes := listUserScopes(h.DB, r, id)
-	jsonOK(w, userDetail{ID: u.ID, Email: u.Email, Role: u.Role, CreatedAt: u.CreatedAt, Teams: teams, Scopes: scopes})
+	jsonOK(w, userDetail{ID: u.ID, Email: u.Email, Role: u.Role, CreatedAt: u.CreatedAt, Teams: teams, Scopes: scopes,
+		Permissions:          orEmpty(rbac.DirectPermissions(r.Context(), h.DB, id)),
+		EffectivePermissions: orEmpty(rbac.UserPermissions(r.Context(), h.DB, id)),
+	})
 }
 
 func listUserScopes(db *sql.DB, r *http.Request, userID string) []userScope {
@@ -167,7 +203,7 @@ func listUserScopes(db *sql.DB, r *http.Request, userID string) []userScope {
 
 func normalizePlatformRole(role string) (string, bool) {
 	switch role {
-	case "admin", "user":
+	case "admin", "user", rbac.RoleDPO:
 		return role, true
 	case "operator", "viewer":
 		return "user", true // compat douce
@@ -211,10 +247,34 @@ func replaceUserScopes(db *sql.DB, userID string, scopes []userScope) error {
 }
 
 type updateUserRequest struct {
-	Email    string       `json:"email"`
-	Role     string       `json:"role"`
-	Password string       `json:"password"`
-	Scopes   *[]userScope `json:"scopes"`
+	Email       string       `json:"email"`
+	Role        string       `json:"role"`
+	Password    string       `json:"password"`
+	Scopes      *[]userScope `json:"scopes"`
+	Permissions *[]string    `json:"permissions"`
+}
+
+// actorIsSuper indique si l'auteur de la requête est le superadmin.
+func (h *UsersHandler) actorIsSuper(r *http.Request) bool {
+	return rbac.IsSuperAdmin(r.Context(), h.DB, adminauth.UserIDFromContext(r.Context()))
+}
+
+// guardProtected refuse (403) qu'un non-superadmin agisse sur un compte protégé.
+func (h *UsersHandler) guardProtected(w http.ResponseWriter, r *http.Request, id string) bool {
+	if !h.actorIsSuper(r) && rbac.IsProtectedAccount(r.Context(), h.DB, id) {
+		writeErr(w, r, http.StatusForbidden, "api.err.protected_account")
+		return false
+	}
+	return true
+}
+
+// grantChange indique si la requête attribue ou retire une permission : rôle dpo gagné ou
+// perdu, ou permissions en propre modifiées. Réservé au superadmin.
+func grantChange(r *http.Request, db *sql.DB, id, oldRole, newRole string, perms *[]string, newPerms []string) bool {
+	if (oldRole == rbac.RoleDPO) != (newRole == rbac.RoleDPO) {
+		return true
+	}
+	return perms != nil && !slices.Equal(newPerms, rbac.DirectPermissions(r.Context(), db, id))
 }
 
 func (h *UsersHandler) update(w http.ResponseWriter, r *http.Request, id string) {
@@ -242,6 +302,10 @@ func (h *UsersHandler) update(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 
+	if !h.guardProtected(w, r, id) {
+		return
+	}
+
 	role := currentRole
 	if currentRole == "superadmin" {
 		// Superadmin : email / mdp / grants OK ; rôle plateforme immuable.
@@ -253,6 +317,19 @@ func (h *UsersHandler) update(w http.ResponseWriter, r *http.Request, id string)
 			return
 		}
 		role = normalized
+	}
+	var perms []string
+	if req.Permissions != nil {
+		var ok bool
+		if perms, ok = rbac.NormalizePermissions(*req.Permissions); !ok {
+			writeErr(w, r, http.StatusBadRequest, "api.err.unknown_permission")
+			return
+		}
+	}
+	permsChanged := grantChange(r, h.DB, id, currentRole, role, req.Permissions, perms)
+	if permsChanged && !h.actorIsSuper(r) {
+		writeErr(w, r, http.StatusForbidden, "api.err.superadmin_required")
+		return
 	}
 
 	res, err := h.DB.ExecContext(r.Context(),
@@ -286,18 +363,30 @@ func (h *UsersHandler) update(w http.ResponseWriter, r *http.Request, id string)
 			return
 		}
 	}
+	if req.Permissions != nil {
+		if err := replaceUserPermissions(h.DB, id, perms); err != nil {
+			h.Log.Error("users: update permissions", "err", err)
+			writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
+			return
+		}
+	}
 
 	actor := adminauth.UserIDFromContext(r.Context())
 	_ = admindb.WriteAudit(h.DB, actor, "update", "user:"+id, req.Email)
+	if permsChanged {
+		_ = admindb.WriteAudit(h.DB, actor, "set_permissions", "user:"+id,
+			fmt.Sprintf("role=%s permissions=%s", role, strings.Join(rbac.DirectPermissions(r.Context(), h.DB, id), ",")))
+	}
 	h.notifyChange()
 	w.WriteHeader(http.StatusNoContent)
 }
 
 type createUserRequest struct {
-	Email    string       `json:"email"`
-	Password string       `json:"password"`
-	Role     string       `json:"role"`
-	Scopes   *[]userScope `json:"scopes"`
+	Email       string       `json:"email"`
+	Password    string       `json:"password"`
+	Role        string       `json:"role"`
+	Scopes      *[]userScope `json:"scopes"`
+	Permissions []string     `json:"permissions"`
 }
 
 func (h *UsersHandler) create(w http.ResponseWriter, r *http.Request) {
@@ -316,6 +405,15 @@ func (h *UsersHandler) create(w http.ResponseWriter, r *http.Request) {
 	role, ok := normalizePlatformRole(req.Role)
 	if !ok || role == "superadmin" {
 		writeErr(w, r, http.StatusBadRequest, "api.err.role_admin_user")
+		return
+	}
+	perms, ok := rbac.NormalizePermissions(req.Permissions)
+	if !ok {
+		writeErr(w, r, http.StatusBadRequest, "api.err.unknown_permission")
+		return
+	}
+	if (role == rbac.RoleDPO || len(perms) > 0) && !h.actorIsSuper(r) {
+		writeErr(w, r, http.StatusForbidden, "api.err.superadmin_required")
 		return
 	}
 
@@ -348,9 +446,18 @@ func (h *UsersHandler) create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if err := replaceUserPermissions(h.DB, id, perms); err != nil {
+		h.Log.Error("users: create permissions", "err", err)
+		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
+		return
+	}
 
 	actor := adminauth.UserIDFromContext(r.Context())
 	_ = admindb.WriteAudit(h.DB, actor, "create", "user:"+id, req.Email)
+	if role == rbac.RoleDPO || len(perms) > 0 {
+		_ = admindb.WriteAudit(h.DB, actor, "set_permissions", "user:"+id,
+			fmt.Sprintf("role=%s permissions=%s", role, strings.Join(perms, ",")))
+	}
 	h.notifyChange()
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -369,6 +476,9 @@ func (h *UsersHandler) changePassword(w http.ResponseWriter, r *http.Request, id
 	}
 	if req.Password == "" {
 		http.Error(w, "password requis", http.StatusBadRequest)
+		return
+	}
+	if !h.guardProtected(w, r, id) {
 		return
 	}
 
@@ -409,6 +519,9 @@ func (h *UsersHandler) delete(w http.ResponseWriter, r *http.Request, id string)
 		http.Error(w, "impossible de supprimer le superadmin", http.StatusForbidden)
 		return
 	}
+	if !h.guardProtected(w, r, id) {
+		return
+	}
 	res, err := h.DB.ExecContext(r.Context(), `DELETE FROM users WHERE id=?`, id)
 	if err != nil {
 		if !isCtxErr(err) {
@@ -424,6 +537,7 @@ func (h *UsersHandler) delete(w http.ResponseWriter, r *http.Request, id string)
 	}
 	h.DB.ExecContext(r.Context(), `DELETE FROM user_scopes WHERE user_id=?`, id)     //nolint:errcheck
 	h.DB.ExecContext(r.Context(), `DELETE FROM team_members WHERE user_id=?`, id) //nolint:errcheck
+	h.DB.ExecContext(r.Context(), `DELETE FROM user_permissions WHERE user_id=?`, id) //nolint:errcheck
 
 	actor := adminauth.UserIDFromContext(r.Context())
 	_ = admindb.WriteAudit(h.DB, actor, "delete", "user:"+id, "")

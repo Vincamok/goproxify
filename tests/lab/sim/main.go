@@ -5,11 +5,19 @@
 package main
 
 import (
+	"crypto"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -58,8 +66,15 @@ func (in *instance) handler() http.Handler {
 	mux.HandleFunc("/healthz", health)
 	mux.HandleFunc("/health", health) // chemin sondé par défaut par la passerelle
 
+	var api http.HandlerFunc
+
 	// Page d'accueil : contient l'URL interne du backend (sub_filter, proxy_redirect).
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Backend insensible à la casse (IIS/ASP.NET) : /API/V1/ADMIN et /api/v1/Admin atteignent l'API.
+		if strings.HasPrefix(strings.ToLower(r.URL.Path), "/api/") {
+			api(w, r)
+			return
+		}
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
 			return
@@ -67,6 +82,26 @@ func (in *instance) handler() http.Handler {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprintf(w, `<!doctype html><html><body><h1>Boutique LAB</h1><p>instance=%s</p>
 <a href="http://lab-sim:%d/products">produits</a><p>BACKEND-MARKER</p></body></html>`, in.id, in.port)
+	})
+
+	// Contenu dépendant du cookie : détection de fuite par le cache (cache deception).
+	mux.HandleFunc("/me", func(w http.ResponseWriter, r *http.Request) {
+		c, _ := r.Cookie("sid")
+		user := "anonyme"
+		if c != nil {
+			user = c.Value
+		} else if a := r.Header.Get("Authorization"); a != "" {
+			user = a
+		}
+		// private : l'application signale une réponse personnalisée, qu'un cache partagé ne doit pas resservir.
+		w.Header().Set("Cache-Control", "private, max-age=60")
+		fmt.Fprintf(w, "user=%s", user)
+	})
+
+	// Reflète les en-têtes de routage : empoisonnement de cache par en-tête non clé.
+	mux.HandleFunc("/reflect", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=60")
+		fmt.Fprintf(w, "xfh=%s host=%s", r.Header.Get("X-Forwarded-Host"), r.Host)
 	})
 
 	mux.HandleFunc("/whoami", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, in.id) })
@@ -80,12 +115,13 @@ func (in *instance) handler() http.Handler {
 		})
 	})
 
-	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+	api = func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Server", "lab-sim/1.0")
 		w.Header().Set("X-Powered-By", "lab-sim")
 		fmt.Fprintf(w, `{"instance":%q,"path":%q,"marker":%q,"secret":%q,"items":[{"id":1,"name":"stylo"},{"id":2,"name":"cahier"}]}`, in.id, r.URL.Path, r.Header.Get("X-Lab-Marker"), r.Header.Get("X-Secret-Client"))
-	})
+	}
+	mux.HandleFunc("/api/", api)
 
 	// Session : cookie lié au domaine/chemin interne (proxy_cookie_domain / proxy_cookie_path).
 	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
@@ -262,8 +298,19 @@ func echoWS(w http.ResponseWriter, r *http.Request, id string) {
 func control() http.Handler {
 	mux := http.NewServeMux()
 	// /ctl/<id>/<health|fail|latency|reset>?...
+	mux.HandleFunc("/jwks.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{{
+			"kty": "RSA", "kid": "lab1", "use": "sig", "alg": "RS256",
+			"n": b64(jwtKey.N.Bytes()), "e": b64(big.NewInt(int64(jwtKey.E)).Bytes()),
+		}}})
+	})
 	mux.HandleFunc("/ctl/", func(w http.ResponseWriter, r *http.Request) {
 		parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/ctl/"), "/"), "/")
+		if parts[0] == "jwt" {
+			fmt.Fprint(w, mintJWT(r))
+			return
+		}
 		if parts[0] == "stats" {
 			out := map[string]any{}
 			for id, in := range instances {
@@ -360,4 +407,51 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// ---- JWT de test : clé RSA éphémère, JWKS sur le port de contrôle, jetons forgés à la demande ----
+// (la passerelle n'accepte que des clés RSA dans le JWKS)
+
+var jwtKey, _ = rsa.GenerateKey(rand.Reader, 2048)
+
+func b64(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
+
+// pubPEM : clé publique PKIX en PEM, utilisée comme secret HMAC dans l'attaque par confusion d'algorithme.
+func pubPEM() []byte {
+	der, _ := x509.MarshalPKIXPublicKey(&jwtKey.PublicKey)
+	return pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
+}
+
+// mintJWT : /ctl/jwt?alg=RS256|none|HS256&iss=&aud=&exp=<secondes, négatif = expiré>&sub=&tamper=1
+func mintJWT(r *http.Request) string {
+	q := r.URL.Query()
+	get := func(k, def string) string {
+		if v, ok := q[k]; ok {
+			return v[0]
+		}
+		return def
+	}
+	alg := get("alg", "RS256")
+	exp, _ := strconv.Atoi(get("exp", "300"))
+	hdr, _ := json.Marshal(map[string]string{"alg": alg, "typ": "JWT", "kid": "lab1"})
+	claims := map[string]any{"iss": get("iss", "https://issuer.lab.test"), "aud": get("aud", "lab-api"), "sub": get("sub", "alice"), "exp": time.Now().Add(time.Duration(exp) * time.Second).Unix(), "iat": time.Now().Unix()}
+	pl, _ := json.Marshal(claims)
+	signing := b64(hdr) + "." + b64(pl)
+	var sig []byte
+	switch alg {
+	case "none":
+	case "HS256":
+		m := hmac.New(sha256.New, pubPEM())
+		m.Write([]byte(signing))
+		sig = m.Sum(nil)
+	default:
+		h := sha256.Sum256([]byte(signing))
+		sig, _ = rsa.SignPKCS1v15(rand.Reader, jwtKey, crypto.SHA256, h[:])
+	}
+	if q.Get("tamper") == "1" {
+		claims["sub"] = "admin"
+		pl, _ = json.Marshal(claims)
+		signing = b64(hdr) + "." + b64(pl)
+	}
+	return signing + "." + b64(sig)
 }

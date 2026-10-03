@@ -399,6 +399,17 @@ func migrate(db *sql.DB) error {
 			access_mode TEXT NOT NULL DEFAULT 'read' CHECK(access_mode IN ('read','write')),
 			UNIQUE(team_id, scope_type, scope_value)
 		)`,
+		// Permissions de capacité (ex. gdpr:reveal) accordées par le superadmin, en propre ou via une équipe.
+		`CREATE TABLE IF NOT EXISTS user_permissions (
+			user_id    TEXT NOT NULL,
+			permission TEXT NOT NULL,
+			PRIMARY KEY (user_id, permission)
+		)`,
+		`CREATE TABLE IF NOT EXISTS team_permissions (
+			team_id    TEXT NOT NULL,
+			permission TEXT NOT NULL,
+			PRIMARY KEY (team_id, permission)
+		)`,
 		// Mise à jour du CHECK sur users.role pour inclure 'operator'
 		// SQLite ne supporte pas ALTER TABLE … MODIFY, on l'ignore si déjà présent.
 	} {

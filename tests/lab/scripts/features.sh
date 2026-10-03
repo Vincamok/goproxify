@@ -219,7 +219,6 @@ t_vars() { section vars "Variables de requête → en-tête (map nginx)" || retu
 }
 
 t_backpressure() { section backpressure "Backpressure (max_inflight=2, sans file) et limit_conn (3/IP)" || return
-  code "$(u backpressure)/whoami" >/dev/null; code "$(u limitconn)/whoami" >/dev/null  # amorce les handlers : à froid, des requêtes concurrentes créent chacune leur propre limiteur
   burst "$(u backpressure)/slow?ms=1500" 6
   [ "$BURST_NON200" -ge 1 ] && ok "excédent rejeté ($BURST_CODES)" || ko "aucun rejet ($BURST_CODES)"
   [ "$BURST_200" -ge 2 ] && ok "les requêtes dans la limite passent" || ko "trop peu de requêtes servies ($BURST_CODES)"

@@ -6,6 +6,8 @@ Dans l'Admin : page **Domaines** → cocher « Déléguer vers une autre passere
 
 Rappel : **Passerelle d'entrée ≠ droits**. La passerelle d'entrée reçoit le trafic ; les **périmètres domaine** du token passerelle décident qui reçoit routes et certificats.
 
+Le **Passerelle d'entrée** peut être un **groupe HA** entier (`ha:<groupe>`) : tous ses membres reçoivent alors la délégation et le périmètre du domaine. La cible reste une passerelle unique.
+
 ---
 
 ## Les deux modes

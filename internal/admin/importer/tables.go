@@ -176,8 +176,14 @@ func TableCounts(tables map[string][]map[string]any) map[string]int {
 	return out
 }
 
+func teamHasPermission(db *sql.DB, teamID any) bool {
+	var n int
+	db.QueryRow(`SELECT COUNT(*) FROM team_permissions WHERE team_id = ?`, teamID).Scan(&n) //nolint:errcheck
+	return n > 0
+}
+
 // applyTables restaure les tables de configuration ; retourne le nombre de lignes écrites.
-func applyTables(db *sql.DB, tables map[string][]map[string]any, overwrite bool) (written, skipped int) {
+func applyTables(db *sql.DB, tables map[string][]map[string]any, overwrite, allowPrivileged bool) (written, skipped int) {
 	verb := `INSERT OR IGNORE`
 	if overwrite {
 		verb = `INSERT OR REPLACE`
@@ -193,6 +199,12 @@ func applyTables(db *sql.DB, tables map[string][]map[string]any, overwrite bool)
 			continue
 		}
 		for _, row := range rows {
+			// Membres d'une équipe portant une permission (gdpr:reveal) : composition réservée
+			// au superadmin, une restauration ne doit pas y ajouter quelqu'un.
+			if table == "team_members" && !allowPrivileged && teamHasPermission(db, row["team_id"]) {
+				skipped++
+				continue
+			}
 			var cols []string
 			var args []any
 			var ph []string

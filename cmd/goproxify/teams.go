@@ -121,6 +121,39 @@ func runTeams() {
 	case "members":
 		runTeamMembers()
 
+	case "permissions":
+		args := parseFlags(os.Args[3:])
+		id := firstPositional(os.Args[3:], args)
+		perms, set := permissionsFlag(args)
+		if id == "" {
+			fmt.Fprintln(os.Stderr, "usage: goproxify teams permissions <id> [-permissions gdpr:reveal|none]")
+			os.Exit(1)
+		}
+		client, err := newAdminClient(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+			os.Exit(1)
+		}
+		path := "/api/v1/teams/" + url.PathEscape(id) + "/permissions"
+		if set {
+			if _, err := client.DoJSON("PUT", path, map[string]any{"permissions": perms}, nil, 200, 204); err != nil {
+				fmt.Fprintf(os.Stderr, "teams permissions : %v\n", err)
+				os.Exit(1)
+			}
+		}
+		var out struct {
+			Permissions []string `json:"permissions"`
+		}
+		if _, err := client.DoJSON("GET", path, nil, &out); err != nil {
+			fmt.Fprintf(os.Stderr, "teams permissions : %v\n", err)
+			os.Exit(1)
+		}
+		if len(out.Permissions) == 0 {
+			fmt.Println("(aucune permission)")
+			return
+		}
+		fmt.Println(strings.Join(out.Permissions, "\n"))
+
 	case "delete", "rm":
 		args := parseFlags(os.Args[3:])
 		id := firstPositional(os.Args[3:], args)
@@ -158,6 +191,7 @@ Sous-commandes :
   create   Crée une équipe
   update   Modifie une équipe
   members  Gestion des membres (list / add / remove)
+  permissions  Affiche ou remplace les permissions accordées aux membres (superadmin)
   delete   Supprime une équipe
 
 goproxify teams list   [-admin-url …] [-token …]
@@ -169,6 +203,10 @@ goproxify teams delete <id> [-y] [-admin-url …] [-token …]
 goproxify teams members list   <team-id> [-admin-url …] [-token …]
 goproxify teams members add    <team-id> -user <user-id> [-admin-url …] [-token …]
 goproxify teams members remove <team-id> -user <user-id> [-admin-url …] [-token …]
+
+goproxify teams permissions <id> [-permissions gdpr:reveal|none] [-admin-url …] [-token …]
+  Sans -permissions : affiche. gdpr:reveal = révélation des IP pseudonymisées (RGPD).
+  Modifier ces permissions, ou les membres d'une équipe qui en porte, est réservé au superadmin.
 `)
 	default:
 		fmt.Fprintf(os.Stderr, "sous-commande teams inconnue : %q\n", sub)

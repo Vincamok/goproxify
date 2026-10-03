@@ -535,6 +535,9 @@ func (s *Server) Start(ctx context.Context) error {
 	proxyMetricsH := api.NewProxyMetricsSampler(s.db, s.log)
 	go proxyMetricsH.Run(ctx)
 	domainsH := &api.DomainsHandler{DB: s.db, Log: s.log, Pusher: manager, OnChange: syncArch}
+	if archStore != nil {
+		domainsH.Groups = api.NewGroupResolver(archStore, s.db)
+	}
 	agentsH := &api.AgentsHandler{
 		Log:   s.log,
 		Store: agentStore,
@@ -745,6 +748,9 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/api/v1/alert-rules/", adminWrites(rulesH))
 	mux.Handle("/api/v1/logs", adminWrites(logsH))
 	mux.Handle("/api/v1/logs/", adminWrites(logsH))
+	// Révélation : ouverte aux détenteurs de gdpr:reveal (rôle dpo, droit délégué), pas
+	// seulement aux admins ; le handler vérifie la permission.
+	mux.Handle("/api/v1/logs/reveal-ip", protected(logsH))
 	mux.Handle("/api/v1/security", adminOnly(securityH))
 	mux.Handle("/api/v1/security/", adminOnly(securityH))
 	mux.Handle("/api/v1/rules-engine/", adminOnly(reH))

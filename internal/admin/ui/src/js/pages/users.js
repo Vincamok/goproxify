@@ -19,8 +19,14 @@ async function refreshUsers(content) {
 
     function roleTag(r) {
       if (r === 'admin' || r === 'superadmin') return 'tag-accent';
+      if (r === 'dpo') return 'tag-outline';
       return 'tag-neutral';
     }
+    // Droit de révélation obtenu autrement que par le rôle (en propre ou via une équipe).
+    const revealBadge = u => (u.effective_permissions || []).includes('gdpr:reveal') && u.role !== 'superadmin' && u.role !== 'dpo'
+      ? ` <span class="tag tag-outline" style="font-size:10px;" title="${esc(t('users.reveal_badge_title'))}">${esc(t('users.reveal_badge'))}</span>` : '';
+    const canDeleteUser = u => u.role !== 'superadmin' && (Role.isSuperAdmin() || !(u.effective_permissions || []).length);
+    const teamHasReveal = team => (team.permissions || []).includes('gdpr:reveal');
     function teamNames(u) {
       return u.team_names || '—';
     }
@@ -56,9 +62,15 @@ async function refreshUsers(content) {
               <td>${t('users.no')}</td>
               <td>${t('users.user_proxies')}</td>
             </tr>
+            <tr>
+              <td><span class="tag tag-outline">dpo</span></td>
+              <td>${t('users.no')}</td>
+              <td>${t('users.user_proxies')}</td>
+            </tr>
           </tbody>
         </table>
         <p style="margin:10px 0 0;font-size:11.5px;opacity:0.5;line-height:1.45;">${t('users.team_inherit')}</p>
+        <p style="margin:6px 0 0;font-size:11.5px;opacity:0.5;line-height:1.45;">${esc(t('users.reveal_note'))}</p>
       </div>
 
       <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:24px;">
@@ -71,12 +83,12 @@ async function refreshUsers(content) {
             <tbody>
               ${list.length ? list.map(u => `<tr>
                 <td style="font-weight:500;font-family:monospace;font-size:13px;">${esc(u.email)}</td>
-                <td><span class="tag ${roleTag(u.role)}">${esc(u.role||'user')}</span></td>
+                <td><span class="tag ${roleTag(u.role)}">${esc(u.role||'user')}</span>${revealBadge(u)}</td>
                 <td style="opacity:0.7;font-size:12px;">${esc(teamNames(u))}</td>
                 <td style="opacity:0.6;font-size:12px;">${fmtDate(u.created_at)}</td>
                 <td style="text-align:right;"><div style="display:inline-flex;gap:6px;">
                   <button class="btn btn-ghost btn-icon" onclick="openUserModal('${esc(u.id)}')" title="${esc(t('common.edit'))}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-                  ${u.role==='superadmin'?'':`<button class="btn btn-ghost btn-icon" onclick="deleteUser('${esc(u.id)}')" title="${esc(t('common.delete'))}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>`}
+                  ${!canDeleteUser(u)?'':`<button class="btn btn-ghost btn-icon" onclick="deleteUser('${esc(u.id)}')" title="${esc(t('common.delete'))}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>`}
                 </div></td>
               </tr>`).join('') : `<tr><td colspan="5" class="empty"><p>${t('users.empty')}</p></td></tr>`}
             </tbody>
@@ -102,10 +114,10 @@ async function refreshUsers(content) {
           <div class="card blueprint" style="display:flex;flex-direction:column;gap:0;padding:0;overflow:hidden;">
             <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
             <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:14px 16px 12px;">
-              <div class="card-title" style="font-size:14px;font-weight:600;">${esc(team.name)}</div>
+              <div class="card-title" style="font-size:14px;font-weight:600;">${esc(team.name)}${teamHasReveal(team) ? ` <span class="tag tag-outline" style="font-size:10px;" title="${esc(t('users.reveal_badge_title'))}">${esc(t('users.reveal_badge'))}</span>` : ''}</div>
               <div style="display:inline-flex;gap:4px;flex-shrink:0;">
                 <button class="btn btn-ghost btn-icon" onclick="openTeamModal('${esc(team.id)}')" title="${esc(t('common.edit'))}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-                <button class="btn btn-ghost btn-icon" onclick="deleteTeam('${esc(team.id)}')" title="${esc(t('common.delete'))}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>
+                ${teamHasReveal(team) && !Role.isSuperAdmin() ? '' : `<button class="btn btn-ghost btn-icon" onclick="deleteTeam('${esc(team.id)}')" title="${esc(t('common.delete'))}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>`}
               </div>
             </div>
             <div style="display:flex;gap:0;border-top:1px solid var(--border);">
@@ -154,6 +166,16 @@ window.openUserModal = async function(id) {
   let role = u?.role || 'user';
   if (role === 'operator' || role === 'viewer') role = 'user';
   const isSuper = role === 'superadmin';
+  // Rôle dpo et droit de révélation : attribués par le superadmin seul ; un compte qui les
+  // détient (ou le superadmin) n'est modifiable que par lui (rbac.IsProtectedAccount).
+  const actorSuper = Role.isSuperAdmin();
+  const locked = !actorSuper && (isSuper || (u?.effective_permissions || []).length > 0);
+  const directReveal = (u?.permissions || []).includes('gdpr:reveal');
+  const roleOpt = (value, desc, disabled) => `
+              <label style="display:flex;align-items:flex-start;gap:10px;cursor:${disabled ? 'not-allowed' : 'pointer'};font-size:13px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;${role===value?'border-color:var(--accent);background:var(--accent-alpha,rgba(58,134,255,0.06));':''}${disabled ? 'opacity:0.55;' : ''}">
+                <input type="radio" name="um-role" value="${value}" ${role===value?'checked':''} ${disabled ? 'disabled' : ''} style="margin-top:2px;">
+                <div><strong>${value}</strong> — ${desc}</div>
+              </label>`;
   const scopes = (u?.scopes || []).map(sc => ({
     id: sc.id,
     type: sc.scope_type,
@@ -177,16 +199,15 @@ window.openUserModal = async function(id) {
       </div>`
     : `<div class="field"><label>${t('users.platform_role')}</label>
             <div style="display:flex;flex-direction:column;gap:6px;margin-top:2px;">
-              <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:13px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;${role==='admin'?'border-color:var(--accent);background:var(--accent-alpha,rgba(58,134,255,0.06));':''}">
-                <input type="radio" name="um-role" value="admin" ${role==='admin'?'checked':''} style="margin-top:2px;">
-                <div><strong>admin</strong> — ${t('users.role_admin_desc')}</div>
-              </label>
-              <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:13px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;${role!=='admin'?'border-color:var(--accent);background:var(--accent-alpha,rgba(58,134,255,0.06));':''}">
-                <input type="radio" name="um-role" value="user" ${role!=='admin'?'checked':''} style="margin-top:2px;">
-                <div><strong>user</strong> — ${t('users.role_user_desc')}</div>
-              </label>
+              ${roleOpt('admin', t('users.role_admin_desc'), false)}
+              ${roleOpt('user', t('users.role_user_desc'), false)}
+              ${roleOpt('dpo', esc(t('users.role_dpo_desc')), !actorSuper)}
             </div>
-          </div>`;
+          </div>
+          <label style="display:flex;align-items:flex-start;gap:10px;font-size:13px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;cursor:${actorSuper ? 'pointer' : 'not-allowed'};${actorSuper ? '' : 'opacity:0.55;'}">
+            <input type="checkbox" id="um-perm-reveal" ${directReveal ? 'checked' : ''} ${actorSuper ? '' : 'disabled'} style="margin-top:2px;">
+            <div><strong>${esc(t('users.perm_reveal'))}</strong><div style="font-size:11.5px;opacity:0.6;margin-top:2px;">${esc(t('users.perm_reveal_hint'))}</div></div>
+          </label>`;
 
   document.getElementById('user-modal-backdrop')?.remove();
   document.body.insertAdjacentHTML('beforeend', `
@@ -195,6 +216,7 @@ window.openUserModal = async function(id) {
         <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
         <div class="dialog-title">${id ? t('users.edit_user') : t('users.new_user')}</div>
         <div class="dialog-body" style="display:flex;flex-direction:column;gap:16px;">
+          ${locked ? `<p style="margin:0;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:12.5px;">${esc(t('users.protected_note'))}</p>` : ''}
           <div class="field"><label>${t('users.col.email')}</label><input class="input" id="u-email" type="email" placeholder="alice@corp.io" value="${esc(u?.email||'')}"></div>
           <div class="field"><label>${id ? (t('users.new_password') + ' <span style="opacity:0.5;font-weight:400;">' + t('users.pass_unchanged') + '</span>') : t('users.password')}</label><input class="input" id="u-pass" type="password" placeholder="••••••••" autocomplete="new-password"></div>
           ${roleField}
@@ -220,9 +242,11 @@ window.openUserModal = async function(id) {
             <div style="display:flex;flex-direction:column;gap:6px;margin-top:2px;">
               ${teams.map(team => {
                 const checked = !!userTeams.find(ut => ut.team_id === team.id);
-                return `<label style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:13px;">
-                  <input type="checkbox" name="um-team" value="${esc(team.id)}" ${checked?'checked':''} style="flex-shrink:0;">
-                  <span style="flex:1;font-weight:500;">${esc(team.name)}</span>
+                const reveal = (team.permissions || []).includes('gdpr:reveal');
+                const off = reveal && !actorSuper;
+                return `<label style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;cursor:${off ? 'not-allowed' : 'pointer'};font-size:13px;${off ? 'opacity:0.55;' : ''}">
+                  <input type="checkbox" name="um-team" value="${esc(team.id)}" ${checked?'checked':''} ${off ? 'disabled' : ''} style="flex-shrink:0;">
+                  <span style="flex:1;font-weight:500;">${esc(team.name)}${reveal ? ` <span class="tag tag-outline" style="font-size:10px;" title="${esc(t('users.reveal_badge_title'))}">${esc(t('users.reveal_badge'))}</span>` : ''}</span>
                   <span style="font-size:11px;opacity:0.45;">${team.scope_count||0} ${(team.scope_count||0)!==1?t('users.grants_lbl'):t('users.grant_lbl')}</span>
                 </label>`;
               }).join('')}
@@ -232,7 +256,7 @@ window.openUserModal = async function(id) {
         </div>
         <div class="dialog-actions">
           <button class="btn btn-secondary blueprint" onclick="document.getElementById('user-modal-backdrop').remove()"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>${t('common.cancel')}</button>
-          <button class="btn btn-primary blueprint" onclick="saveUser('${esc(id||'')}', ${isSuper})"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>${id ? t('common.save') : t('common.create')}</button>
+          ${locked ? '' : `<button class="btn btn-primary blueprint" onclick="saveUser('${esc(id||'')}', ${isSuper})"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>${id ? t('common.save') : t('common.create')}</button>`}
         </div>
       </div>
     </div>`);
@@ -253,7 +277,6 @@ window.openUserModal = async function(id) {
 };
 
 window.saveUser = async function(id, isSuper) {
-  const checkedEls = [...document.querySelectorAll('input[name="um-team"]:checked')];
   const scopes = (window._userScopes || []).map(sc => ({
     scope_type: sc.type || sc.scope_type,
     value: sc.value || sc.scope_value,
@@ -268,6 +291,9 @@ window.saveUser = async function(id, isSuper) {
   };
   // Le backend ignore le rôle demandé pour un superadmin ; on envoie quand même un rôle valide.
   if (!payload.password && id) delete payload.password;
+  // Droit de révélation : envoyé par le superadmin seul (absent = inchangé côté API).
+  const permEl = document.getElementById('um-perm-reveal');
+  if (Role.isSuperAdmin() && permEl) payload.permissions = permEl.checked ? ['gdpr:reveal'] : [];
   try {
     let uid = id;
     if (id) {
@@ -277,15 +303,18 @@ window.saveUser = async function(id, isSuper) {
       uid = created.id;
     }
 
-    const checkedIds = new Set(checkedEls.map(cb => cb.value));
-    for (const cb of checkedEls) {
-      await api('POST', `/teams/${cb.value}/members`, { user_id: uid }).catch(() => {});
+    // Équipes : une case désactivée (équipe portant un droit, hors superadmin) n'est pas touchée.
+    const failed = [];
+    const teamName = tid => document.querySelector(`input[name="um-team"][value="${tid}"]`)?.closest('label')?.querySelector('span')?.textContent?.trim() || tid;
+    const origIds = new Set((window._userOrigTeams || []).map(o => o.team_id));
+    for (const cb of document.querySelectorAll('input[name="um-team"]:not(:disabled)')) {
+      if (cb.checked === origIds.has(cb.value)) continue;
+      try {
+        if (cb.checked) await api('POST', `/teams/${cb.value}/members`, { user_id: uid });
+        else await api('DELETE', `/teams/${cb.value}/members/${uid}`);
+      } catch { failed.push(teamName(cb.value)); }
     }
-    for (const orig of (window._userOrigTeams || [])) {
-      if (!checkedIds.has(orig.team_id)) {
-        await api('DELETE', `/teams/${orig.team_id}/members/${uid}`).catch(() => {});
-      }
-    }
+    if (failed.length) toast(t('users.member_errors', { teams: failed.join(', ') }), 'error');
 
     toast(t('users.saved'), 'success');
     document.getElementById('user-modal-backdrop')?.remove();
@@ -316,6 +345,9 @@ window.openTeamModal = async function(id) {
     } catch {}
   }
   window._scopesOrig = [...scopes];
+  const teamReveal = (team?.permissions || []).includes('gdpr:reveal');
+  window._teamRevealOrig = teamReveal;
+  const actorSuper = Role.isSuperAdmin();
 
   let _acProxies = [];
   try { _acProxies = await api('GET', '/proxies').catch(() => []); } catch {}
@@ -342,6 +374,10 @@ window.openTeamModal = async function(id) {
         <div class="dialog-title">${id ? t('users.edit_team') : t('users.new_team')}</div>
         <div class="dialog-body" style="display:flex;flex-direction:column;gap:14px;">
           <div class="field"><label>${t('users.team_name')}</label><input class="input" id="tm-name" placeholder="Backend" value="${esc(team?.name||'')}"></div>
+          <label style="display:flex;align-items:flex-start;gap:10px;font-size:13px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;cursor:${actorSuper ? 'pointer' : 'not-allowed'};${actorSuper ? '' : 'opacity:0.55;'}">
+            <input type="checkbox" id="tm-perm-reveal" ${teamReveal ? 'checked' : ''} ${actorSuper ? '' : 'disabled'} style="margin-top:2px;">
+            <div><strong>${esc(t('users.team_perm_reveal'))}</strong><div style="font-size:11.5px;opacity:0.6;margin-top:2px;">${esc(t('users.team_perm_hint'))}</div></div>
+          </label>
           <div style="display:flex;flex-direction:column;gap:8px;">
             <label style="font-size:13px;font-weight:500;">${t('users.grants_scope')}</label>
             <p style="margin:0;font-size:11px;opacity:0.55;">${t('users.team_grants_hint')}</p>
@@ -479,6 +515,11 @@ window.saveTeam = async function(id) {
         value: sc.value || sc.scope_value,
         access_mode: sc.mode || sc.access_mode || 'read',
       }).catch(() => {});
+    }
+
+    const reveal = !!document.getElementById('tm-perm-reveal')?.checked;
+    if (Role.isSuperAdmin() && reveal !== !!window._teamRevealOrig) {
+      await api('PUT', `/teams/${tid}/permissions`, { permissions: reveal ? ['gdpr:reveal'] : [] });
     }
 
     toast(t('users.team_saved'), 'success');

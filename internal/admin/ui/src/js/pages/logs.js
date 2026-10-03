@@ -1102,13 +1102,13 @@ function openLogDrawer(en, i) {
     : `<span class="tag tag-green" style="font-size:11px">${esc(t('lg.sentinel_clean'))}</span>`;
 
   // IP pseudonymisée ou tronquée par l'anonymisation (RGPD) : ni bannissable ni analysable ;
-  // un super-admin peut révéler une IP pseudonymisée.
+  // un détenteur de gdpr:reveal (super-admin, DPO, droit délégué) peut révéler une IP pseudonymisée.
   const pseudo = en.ip === LOGS_PSEUDONYMIZED_IP;
   const truncated = !pseudo && en.ip_truncated;
   const actionable = obsIPActionable(en);
   const ipCell = !en.ip ? '' : pseudo
     ? `<span class="mono" id="log-drawer-ip">${esc(t('logs.ip_pseudonymized'))}</span>
-       ${Role.isSuperAdmin() ? `<button type="button" id="log-drawer-reveal" class="btn btn-ghost btn-sm" data-log-dact="reveal" data-log-di="${i}">${esc(t('logs.reveal_ip'))}</button>` : ''}`
+       ${Role.canRevealIP() ? `<button type="button" id="log-drawer-reveal" class="btn btn-ghost btn-sm" data-log-dact="reveal" data-log-di="${i}">${esc(t('logs.reveal_ip'))}</button>` : ''}`
     : `<span class="mono">${logCellFilter('ip', en.ip)}</span>
        ${truncated ? `<span class="tag tag-neutral" style="font-size:11px">${esc(t('logs.ip_truncated'))}</span>` : ''}`;
 

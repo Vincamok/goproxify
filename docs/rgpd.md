@@ -137,17 +137,31 @@ Les utilisateurs possédant le scope `gdpr:reveal` peuvent obtenir l'IP réelle 
 
 ### Qui peut avoir ce droit ?
 
-| Rôle | `gdpr:reveal` |
+| Compte | `gdpr:reveal` |
 |---|---|
-| Super-admin | ✓ (session UI, ou token API portant le scope `gdpr:reveal`) |
-| Admin | ❌ |
-| Utilisateur | ❌ |
+| Super-admin | ✓ toujours |
+| Rôle `dpo` (délégué à la protection des données) | ✓ — droits d'un compte `user`, plus la révélation |
+| Compte auquel le super-admin a accordé le droit | ✓ — quel que soit son rôle (DPO externe, juriste, RSSI…) |
+| Membre d'une équipe à laquelle le super-admin a accordé le droit | ✓ — tant qu'il en est membre |
+| Admin, utilisateur sans délégation | ❌ |
 
-La délégation de ce droit à un compte non super-admin (DPO, juriste, RSSI) n'est pas encore disponible : elle est suivie dans la feuille de route.
+Avec un token API, le scope `gdpr:reveal` doit en plus figurer sur le token ; un compte ne peut le placer sur ses tokens que s'il détient le droit.
+
+**Seul le super-admin délègue** : lui seul attribue ou retire le rôle `dpo`, accorde ou retire le droit à un compte ou à une équipe, et change les membres d'une équipe qui le porte. Chaque attribution est inscrite au journal d'audit (`set_permissions`).
+
+**Comptes protégés** : un compte super-admin ou détenteur du droit ne peut être modifié, voir son mot de passe changé ou être supprimé que par le super-admin. Sinon, un admin pourrait réinitialiser le mot de passe d'un DPO et révéler des IP sous son identité. De même, un import ou une restauration de sauvegarde lancé par un admin n'attribue jamais ce droit (rôle `dpo`, membres d'une équipe qui le porte).
+
+Pour déléguer :
+
+- **Interface** : page **Utilisateurs** → modifier le compte → rôle **dpo**, ou case **Révélation des IP pseudonymisées (RGPD)** ; pour une équipe → modifier l'équipe → case **Les membres peuvent révéler les IP pseudonymisées**. Ces contrôles ne sont actifs que pour le super-admin.
+- **CLI** : `goproxify user create -email dpo@example.com -password … -role dpo`, `goproxify user update <id> -permissions gdpr:reveal` (`none` pour retirer), `goproxify teams permissions <id> -permissions gdpr:reveal`.
+- **API** : `role: "dpo"` ou `permissions: ["gdpr:reveal"]` sur `POST/PUT /api/v1/users`, `PUT /api/v1/teams/{id}/permissions` (voir [api_specs.md](api_specs.md#utilisateurs-équipes-et-permissions--apiv1users-apiv1teams)).
+
+Un admin ne peut toujours rien révéler, mais il peut désactiver la pseudonymisation : les nouvelles entrées sont alors conservées en clair. La séparation protège les entrées déjà pseudonymisées, pas la configuration future.
 
 ### Via l'interface
 
-Page **Logs** → cliquer une entrée dont l'IP est « Pseudonymisée » → **Révéler l'IP** (bouton visible du seul super-admin) → saisir le motif légal → **Révéler**. L'IP s'affiche dans le panneau de détail uniquement.
+Page **Logs** → cliquer une entrée dont l'IP est « Pseudonymisée » → **Révéler l'IP** (bouton visible des seuls détenteurs du droit) → saisir le motif légal → **Révéler**. L'IP s'affiche dans le panneau de détail uniquement.
 
 ### Via API
 
@@ -227,7 +241,7 @@ These integrations are **opt-in** and configured by the operator. GoProxify send
 Before going to production, ensure:
 
 - [ ] IP anonymisation enabled (`ip_anonymize: true`) if no legitimate need to store full IPs — or pseudonymisation if real IPs must remain obtainable for legal requests
-- [ ] Only the accounts that need it are admins (they can change these settings and erase logs) or superadmins (they can reveal pseudonymised IPs)
+- [ ] Only the accounts that need it are admins (they can change these settings and erase logs) or can reveal pseudonymised IPs (superadmin, `dpo` role, right granted to an account or a team — review the GDPR badges on the Users page)
 - [ ] Log retention set to the shortest period that meets your legal obligations
 - [ ] Admin user list reviewed — remove test accounts
 - [ ] SSH portal vault entries reviewed — remove unused targets

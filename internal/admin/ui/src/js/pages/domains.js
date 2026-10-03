@@ -25,11 +25,12 @@ async function renderCertsPage(ctx) {
   }
 
   try {
-    const [allDomains, tokens, nodes, tlsMetrics] = await Promise.all([
+    const [allDomains, tokens, nodes, tlsMetrics, haGroups] = await Promise.all([
       api('GET', '/domains').catch(() => []),
       api('GET', '/tokens?role=edge').catch(() => []),
       api('GET', '/nodes').catch(() => []),
       api('GET', '/metrics/summary').catch(() => null),
+      _loadDomainHaGroups(),
     ]);
     const tlsMap = {};
     for (const c of (tlsMetrics?.tls?.certs || [])) {
@@ -37,6 +38,7 @@ async function renderCertsPage(ctx) {
     }
     const edges = _buildDomainEdges(tokens, nodes);
     const edgeName = id => {
+      if (String(id || '').startsWith('ha:')) return t('domains.ha_group_option', { group: id.slice(3), members: (haGroups.find(g => g.value === id)?.members || []).join(', ') || '—' });
       const c = edges.find(c => c.id === id || c.node_name === id);
       return c ? (c.display_name || c.node_name || c.id) : (id || '—');
     };
@@ -64,8 +66,9 @@ async function renderCertsPage(ctx) {
       const receiveAll = matchingTokens.length > 0 &&
         (rbacRole === 'admin' || rbacRole === 'superadmin') && scopes.length === 0;
       const coversDomain = (domain) => domainScopes.some(v => _domainScopeCovers(v, domain));
+      const myGroups = new Set(haGroups.filter(g => g.refs.some(r => refs.has(r))).map(g => g.value));
       rows = rows.filter(d => {
-        if (tokenIds.has(d.edge_id) || tokenIds.has(d.delegated_to_edge_id)) return true;
+        if (tokenIds.has(d.edge_id) || tokenIds.has(d.delegated_to_edge_id) || myGroups.has(d.edge_id)) return true;
         if (matchingTokens.length && (receiveAll || hasEdgeScope)) return true;
         if (matchingTokens.length && coversDomain(d.domain)) return true;
         return false;
@@ -145,6 +148,19 @@ async function refreshDomains() {
 }
 
 /** Passerelles réels pour le sélecteur Domaines : tokens actifs (+ endpoint ou nœud online), dédup node_name. */
+// Groupes HA déclarés (architecture.json) : un domaine peut avoir pour entrée "ha:<groupe>".
+async function _loadDomainHaGroups() {
+  const groups = await api('GET', '/architecture/groups').catch(() => null);
+  return Object.entries(groups || {})
+    .filter(([, members]) => (members || []).length)
+    .map(([gid, members]) => ({
+      gid,
+      value: 'ha:' + gid,
+      members: members.map(m => m.name || m.id),
+      refs: members.flatMap(m => [m.id, m.name]).filter(Boolean),
+    }));
+}
+
 function _buildDomainEdges(tokens, nodes) {
   const now = Date.now();
   const onlineNames = new Set(
@@ -208,12 +224,15 @@ window.openDomainModal = async function(id) {
   let edges = [];
   let tokens = [];
   let scopeByToken = {};
+  let haGroups = [];
   try {
-    const [d, toks, nodes] = await Promise.all([
+    const [d, toks, nodes, groups] = await Promise.all([
       id ? api('GET', `/domains/${id}`).catch(()=>null) : Promise.resolve(null),
       api('GET', '/tokens?role=edge').catch(() => []),
       api('GET', '/nodes').catch(() => []),
+      _loadDomainHaGroups(),
     ]);
+    haGroups = groups;
     existing = d;
     tokens = toks || [];
     edges = _buildDomainEdges(tokens, nodes);
@@ -229,6 +248,7 @@ window.openDomainModal = async function(id) {
   } catch {}
 
   window._dmEdges = edges;
+  window._dmHaGroups = haGroups;
   window._dmScopeByToken = scopeByToken;
 
   const sel = existing?.dns_provider || 'none';
@@ -239,10 +259,11 @@ window.openDomainModal = async function(id) {
   const matchesEdge = (c, ref) => !!ref && (c.id === ref || c.node_name === ref || c.display_name === ref);
   const selectedEdge = edges.find(c => matchesEdge(c, existing?.edge_id));
   const selectedDelegatedEdge = edges.find(c => matchesEdge(c, existing?.delegated_to_edge_id));
-  const selectedEdgeValue = selectedEdge ? selectedEdge.id : '';
+  const selectedEdgeValue = selectedEdge ? selectedEdge.id : (haGroups.some(g => g.value === existing?.edge_id) ? existing.edge_id : '');
   const selectedDelegatedEdgeValue = selectedDelegatedEdge ? selectedDelegatedEdge.id : '';
   const edgeOptions = [
     `<option value="">${t('domains.choose_edge')}</option>`,
+    ...haGroups.map(g => `<option value="${esc(g.value)}" ${selectedEdgeValue===g.value?'selected':''}>${esc(t('domains.ha_group_option', { group: g.gid, members: g.members.join(', ') }))}</option>`),
     ...edges.map(c => `<option value="${esc(c.id)}" ${selectedEdgeValue===c.id?'selected':''}>${esc(c.display_name||c.node_name||c.id)}</option>`),
   ].join('');
   const delegatedEdgeOptions = [
@@ -361,7 +382,15 @@ window.dmRefreshSoftWarn = function() {
   if (domain && !edgeId) {
     msgs.push(t('domains.warn_pick_edge', { domain: esc(domain) }));
   }
-  if (domain && edgeId) {
+  const group = (window._dmHaGroups || []).find(g => g.value === edgeId);
+  if (domain && group) {
+    const memberEdges = edges.filter(c => group.refs.includes(c.node_name) || group.refs.includes(c.id));
+    const memberIds = new Set(memberEdges.map(c => c.id));
+    const others = edges.filter(c => !memberIds.has(c.id)).filter(c => (scopeByToken[c.id] || []).some(v => _domainScopeCovers(v, domain)));
+    if (others.length) {
+      msgs.push(t('domains.warn_other_scopes', { edges: others.map(c => `<code>${esc(c.node_name)}</code>`).join(', ') }));
+    }
+  } else if (domain && edgeId) {
     const edge = edges.find(c => c.id === edgeId);
     const scopes = scopeByToken[edgeId] || [];
     const role = (edge?.rbac_role || 'admin').toLowerCase();

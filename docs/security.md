@@ -198,6 +198,16 @@ goproxify.sentinel.whitelist.self: "true"     # IP actuelle du conteneur
 goproxify.sentinel.whitelist.network: "true"  # sous-réseau Docker du conteneur
 ```
 
+
+## Cache disque : isolation entre utilisateurs
+
+Le cache d'une route (`cache.enabled`) est partagé entre tous les clients ; il ne doit jamais faire fuiter la réponse d'un utilisateur vers un autre :
+
+- une requête portant `Authorization` ou un cookie n'est ni servie depuis le cache ni stockée, sauf option explicite : `cache.ignore_cookies` (cookies ignorés, à réserver aux routes dont la réponse ne dépend pas d'eux) ou `cache.vary_cookies` (la valeur des cookies listés entre dans la clé) ;
+- une réponse avec `Cache-Control: private` ou `no-store`, un `Set-Cookie` ou `Vary: *` n'est jamais stockée ;
+- `Vary` est respecté : la clé inclut la valeur des en-têtes de requête listés ;
+- `bypass_headers` et `bypass_cookies` restent disponibles pour d'autres critères de contournement.
+
 ---
 
 ## Backpressure par route

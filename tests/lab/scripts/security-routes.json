@@ -1,0 +1,51 @@
+[
+  {"host": "lab-sec-plain.lab.test", "config": {
+    "tls_enabled": false,
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}]}},
+
+  {"host": "lab-sec-acl.lab.test", "config": {
+    "tls_enabled": false,
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}],
+    "locations": [
+      {"path": "/api/v1/admin", "path_type": "prefix",
+       "auth": {"enabled": true, "provider": "basic", "realm": "Sec", "basic_users": [{"username": "lab", "password": "__BASIC_PASS__"}]}}]}},
+
+  {"host": "lab-sec-ratelimit.lab.test", "config": {
+    "tls_enabled": false,
+    "rate_limit": {"rps": 5, "burst": 5},
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}]}},
+
+  {"host": "lab-sec-waf.lab.test", "config": {
+    "tls_enabled": false,
+    "waf": {"enabled": true, "mode": "block", "max_body_mb": 1, "anomaly_threshold": 0},
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}]}},
+
+  {"host": "lab-sec-cache.lab.test", "config": {
+    "tls_enabled": false,
+    "cache": {"enabled": true, "valid_rules": [{"status_codes": [200], "ttl": "1m"}]},
+    "backends": [{"url": "http://lab-sim:9003", "weight": 1}]}},
+
+  {"host": "lab-sec-ws.lab.test", "config": {
+    "tls_enabled": false, "websocket": true,
+    "cors": {"allowed_origins": ["https://app.lab.test"], "allowed_methods": ["GET"], "allowed_headers": ["Content-Type"], "max_age": 600},
+    "backends": [{"url": "http://lab-sim:9002", "weight": 1}]}},
+
+  {"host": "lab-sec-jwt.lab.test", "config": {
+    "tls_enabled": false,
+    "jwt": {"enabled": true, "jwks_url": "http://lab-sim:9999/jwks.json", "issuer": "https://issuer.lab.test", "audience": "lab-api", "claims_header": "X-Claims"},
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}]}},
+
+  {"host": "lab-sec-jwt-authz.lab.test", "config": {
+    "tls_enabled": false,
+    "jwt": {"enabled": true, "jwks_url": "http://lab-sim:9999/jwks.json", "issuer": "https://issuer.lab.test", "audience": "lab-api", "header_name": "Authorization"},
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}]}},
+
+  {"host": "lab-sec-errleak.lab.test", "config": {
+    "tls_enabled": false,
+    "backends": [{"url": "http://lab-sim:9009", "weight": 1}]}},
+
+  {"host": "lab-sec-tls.lab.test", "config": {
+    "tls_enabled": true, "sticky_cookie": "LABSID",
+    "headers": {"hsts": true, "hsts_max_age": 31536000, "x_frame_options": "DENY"},
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}, {"url": "http://lab-sim:9002", "weight": 1}]}}
+]

@@ -25,14 +25,15 @@ cat <<'X'
       - |
         apk add --no-cache bash curl jq netcat-openbsd openssl coreutils >/dev/null
         mkdir -p /lab/scripts
-        for f in seed attacks chaos hosts auth cleanup features; do eval "printf %s \"\$$S_$$f\"" > /lab/scripts/$$f.sh; done
+        for f in seed attacks chaos hosts auth cleanup features security; do eval "printf %s \"\$$S_$$f\"" > /lab/scripts/$$f.sh; done
         printf %s "$$S_feature_routes" > /lab/scripts/feature-routes.json
+        printf %s "$$S_security_routes" > /lab/scripts/security-routes.json
         exec sleep infinity
     networks: [goproxify_net]
     environment:
       LAB_ADMIN_URL: http://goproxify-admin:9443
 X
-emb S_ scripts/seed.sh scripts/attacks.sh scripts/chaos.sh scripts/hosts.sh scripts/auth.sh scripts/cleanup.sh scripts/features.sh scripts/feature-routes.json
+emb S_ scripts/seed.sh scripts/attacks.sh scripts/chaos.sh scripts/hosts.sh scripts/auth.sh scripts/cleanup.sh scripts/features.sh scripts/feature-routes.json scripts/security.sh scripts/security-routes.json
 cat <<'X'
 
   lab-k6:

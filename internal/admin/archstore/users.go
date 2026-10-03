@@ -45,6 +45,7 @@ type UserEntry struct {
 	PasswordHash string                `yaml:"password_hash"` // bcrypt, non réversible
 	Role         string                `yaml:"role"`
 	Scopes       []UserScopeEntry      `yaml:"scopes,omitempty"`
+	Permissions  []string              `yaml:"permissions,omitempty"` // ex. gdpr:reveal
 	MFAMethods   []UserMFAEntry        `yaml:"mfa_methods,omitempty"`
 	BackupCodes  []UserBackupCodeEntry `yaml:"backup_codes,omitempty"`
 }
@@ -72,8 +73,9 @@ type TeamScopeEntry struct {
 type TeamEntry struct {
 	ID      string           `yaml:"id"`
 	Name    string           `yaml:"name"`
-	Members []string         `yaml:"members,omitempty"` // user IDs
-	Scopes  []TeamScopeEntry `yaml:"scopes,omitempty"`
+	Members     []string         `yaml:"members,omitempty"` // user IDs
+	Scopes      []TeamScopeEntry `yaml:"scopes,omitempty"`
+	Permissions []string         `yaml:"permissions,omitempty"` // accordées aux membres
 }
 
 // UsersArchive est la racine de users.yaml.
@@ -127,6 +129,10 @@ func (s *UserStore) LoadIntoDB(ctx context.Context, db *sql.DB) error {
 					`INSERT OR IGNORE INTO user_scopes(id, user_id, scope_type, scope_value, access_mode) VALUES(?,?,?,?,?)`,
 					sc.ID, u.ID, sc.ScopeType, sc.ScopeValue, sc.AccessMode)
 			}
+			for _, p := range u.Permissions {
+				db.ExecContext(ctx, //nolint:errcheck
+					`INSERT OR IGNORE INTO user_permissions(user_id, permission) VALUES(?,?)`, u.ID, p)
+			}
 			for _, m := range u.MFAMethods {
 				db.ExecContext(ctx, //nolint:errcheck
 					`INSERT OR IGNORE INTO user_mfa(id, user_id, method, config, enabled, verified) VALUES(?,?,?,?,1,1)`,
@@ -170,6 +176,10 @@ func (s *UserStore) LoadIntoDB(ctx context.Context, db *sql.DB) error {
 				db.ExecContext(ctx, //nolint:errcheck
 					`INSERT OR IGNORE INTO team_scopes(id, team_id, scope_type, scope_value, access_mode) VALUES(?,?,?,?,?)`,
 					sc.ID, te.ID, sc.ScopeType, sc.ScopeValue, sc.AccessMode)
+			}
+			for _, p := range te.Permissions {
+				db.ExecContext(ctx, //nolint:errcheck
+					`INSERT OR IGNORE INTO team_permissions(team_id, permission) VALUES(?,?)`, te.ID, p)
 			}
 		}
 	}
@@ -218,6 +228,19 @@ func (s *UserStore) buildFromDB(ctx context.Context, db *sql.DB) (*UsersArchive,
 			}
 		}
 		usrows.Close()
+	}
+
+	uprows, _ := db.QueryContext(ctx, `SELECT user_id, permission FROM user_permissions ORDER BY user_id, permission`)
+	if uprows != nil {
+		for uprows.Next() {
+			var uid, p string
+			if uprows.Scan(&uid, &p) == nil {
+				if idx, ok := userIdx[uid]; ok {
+					archive.Users[idx].Permissions = append(archive.Users[idx].Permissions, p)
+				}
+			}
+		}
+		uprows.Close()
 	}
 
 	// user_mfa — méthodes vérifiées, attachées à chaque UserEntry
@@ -327,6 +350,19 @@ func (s *UserStore) buildFromDB(ctx context.Context, db *sql.DB) (*UsersArchive,
 				}
 			}
 			tsrows.Close()
+		}
+
+		tprows, _ := db.QueryContext(ctx, `SELECT team_id, permission FROM team_permissions ORDER BY team_id, permission`)
+		if tprows != nil {
+			for tprows.Next() {
+				var tid, p string
+				if tprows.Scan(&tid, &p) == nil {
+					if idx, ok := teamIdx[tid]; ok {
+						archive.Teams[idx].Permissions = append(archive.Teams[idx].Permissions, p)
+					}
+				}
+			}
+			tprows.Close()
 		}
 	}
 

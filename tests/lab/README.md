@@ -71,6 +71,7 @@ docker exec -e LAB_ADMIN_TOKEN=... lab-tools bash /lab/scripts/cleanup.sh
 | Chaos | `lab.sh chaos` | Toxiproxy | latence, backend coupé, RST, timeout amont, bande passante : erreur rapide + reprise automatique |
 | Fonctionnalités | `lab.sh seed-features && lab.sh features [sections]` | bash/curl + `lab-sim` | 29 sections, une route `lab-*.lab.test` par fonctionnalité du proxy : équilibrage (round-robin, pondéré, sticky), health check, failover/retry, circuit breaker, transformation d'URL/en-têtes, locations, proxy_redirect/cookies, sub_filter, CORS, cache + purge, filtrage IP, request_vars, backpressure, limit_conn, canary, shadow, routage conditionnel, pages d'erreur, WebSocket, taille de corps, en-têtes de sécurité, délai de réponse, Basic auth, bot, règle WAF, en-têtes transmis, SSE/gros fichiers, maintenance (API Admin) |
 | Trafic réaliste | `lab.sh load realistic` | k6 + `lab-sim` | visiteurs (pages, assets, panier), clients API (CORS, requêtes lentes), flux SSE, WebSocket, téléchargements/envois ; courbe de journée à débit imposé (`SHOP_RATE`, défaut 20 itérations/s au pic ≈ 150 req/s ; `DURATION`) ; seuils par type de requête |
+| Sécurité | `lab.sh seed-security && lab.sh security [sections]` | bash/curl/openssl + `lab-sim` | 12 sections, 9 routes `lab-sec-*` (dont TLS) : contournement de contrôle d'accès par le chemin, usurpation d'IP et rate-limit, injection d'en-têtes/Host/SSRF, smuggling et entrées malformées, corpus d'évasion WAF + faux positifs, cache (fuite entre utilisateurs, empoisonnement), WebSocket (origine), JWT (jetons forgés, expirés, confusion d'algorithme), fuites d'information, API Admin, TLS (protocoles, suites, certificat, HTTP/2, cookies) |
 | Scanners | `lab.sh up-vuln && lab.sh zap` / `nuclei` | ZAP, Nuclei, Juice Shop | détection de vulnérabilités via le WAF (mode detect) |
 
 Chaque contrôle d'`attacks` et `chaos` affiche PASS/FAIL ; le code retour est le nombre d'échecs (utilisable en CI).
@@ -91,7 +92,7 @@ Un seul conteneur, plusieurs « serveurs » derrière les reverse proxy (routes 
 | 9007 / 9008 | `h1`, `h2` : dédiés au health check (la config de sonde est partagée par URL de backend, voir le rapport) |
 | 9009 | volontairement fermé : backend mort |
 | 9100 | écho TCP (bannière `LAB-TCP-BANNER`) |
-| 9999 | contrôle, réseau interne seulement : `/ctl/stats`, `/ctl/reset`, `/ctl/<id>/health?up=0\|1`, `/ctl/<id>/fail?n=` (503), `/ctl/<id>/drop?n=` (connexion coupée), `/ctl/<id>/latency?ms=` |
+| 9999 | contrôle, réseau interne seulement : `/ctl/stats`, `/ctl/reset`, `/ctl/<id>/health?up=0\|1`, `/ctl/<id>/fail?n=` (503), `/ctl/<id>/drop?n=` (connexion coupée), `/ctl/<id>/latency?ms=`, `/jwks.json` et `/ctl/jwt?alg=RS256|none|HS256&iss=&aud=&exp=&tamper=1` (jetons de test, clé RSA éphémère) |
 
 ## Prérequis
 

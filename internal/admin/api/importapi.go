@@ -15,8 +15,10 @@ import (
 	"database/sql"
 
 	"github.com/google/uuid"
+	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	"github.com/vincamok/goproxify/internal/admin/backup"
 	"github.com/vincamok/goproxify/internal/admin/importer"
+	"github.com/vincamok/goproxify/internal/admin/rbac"
 	"github.com/vincamok/goproxify/internal/edge/router"
 )
 
@@ -86,6 +88,7 @@ func (h *ImportHandler) backupApply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	body.Selection.AllowPrivileged = rbac.IsSuperAdmin(r.Context(), h.DB, adminauth.UserIDFromContext(r.Context()))
 	result := importer.Apply(h.DB, b, body.Selection)
 	if h.Scheduler != nil && body.Selection.ImportConfig {
 		h.Scheduler.Reload()

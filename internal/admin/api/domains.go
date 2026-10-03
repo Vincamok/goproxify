@@ -39,7 +39,11 @@ type DomainsHandler struct {
 	Manager  DomainCertObtainer
 	Pusher   DomainRoutePusher
 	OnChange func()
+	// Groups résout les groupes HA (nil sans architecture.json) : edge_id peut valoir "ha:<groupe>".
+	Groups GroupResolver
 }
+
+const haEntryPrefix = "ha:"
 
 func (h *DomainsHandler) notifyChange() {
 	if h.OnChange != nil {
@@ -105,12 +109,49 @@ func (h *DomainsHandler) resolveEdgeRef(ctx context.Context, ref string) (string
 	return id, nil
 }
 
+// resolveEntryRef résout la passerelle d'entrée : un token passerelle, ou "ha:<groupe>" pour tout un
+// groupe HA (les membres suivent le groupe, le domaine n'est pas lié à l'un d'eux).
+func (h *DomainsHandler) resolveEntryRef(ctx context.Context, ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	group, ok := strings.CutPrefix(ref, haEntryPrefix)
+	if !ok {
+		return h.resolveEdgeRef(ctx, ref)
+	}
+	if h.Groups == nil || len(h.Groups.GroupMembers(group)) == 0 {
+		return "", errors.New("groupe HA introuvable: " + group)
+	}
+	return haEntryPrefix + group, nil
+}
+
+// entryTokenIDs retourne les tokens passerelle visés par edge_id : le token lui-même, ou ceux des
+// membres du groupe pour "ha:<groupe>" (un membre sans token actif est ignoré).
+func (h *DomainsHandler) entryTokenIDs(ctx context.Context, ref string) []string {
+	group, ok := strings.CutPrefix(ref, haEntryPrefix)
+	if !ok {
+		return []string{ref}
+	}
+	if h.Groups == nil {
+		return nil
+	}
+	var out []string
+	for _, n := range h.Groups.GroupMembers(group) {
+		for _, m := range []string{n.ID, n.Name} {
+			if id, err := h.resolveEdgeRef(ctx, m); err == nil && id != "" {
+				out = append(out, id)
+				break
+			}
+		}
+	}
+	return out
+}
+
 // ensureDomainScopesForEdges ajoute le périmètre domaine manquant sur les tokens
-// Passerelle d'entrée / délégué (no-op si admin global sans scopes).
+// Passerelle d'entrée (ou tous les membres de son groupe HA) / délégué (no-op si admin global sans scopes).
 func (h *DomainsHandler) ensureDomainScopesForEdges(ctx context.Context, domain, entryEdgeID, delegatedEdgeID string) []string {
 	var ensured []string
 	seen := map[string]struct{}{}
-	for _, tokenID := range []string{entryEdgeID, delegatedEdgeID} {
+	tokenIDs := append(h.entryTokenIDs(ctx, strings.TrimSpace(entryEdgeID)), delegatedEdgeID)
+	for _, tokenID := range tokenIDs {
 		tokenID = strings.TrimSpace(tokenID)
 		if tokenID == "" {
 			continue
@@ -285,7 +326,7 @@ func (h *DomainsHandler) create(w http.ResponseWriter, r *http.Request) {
 	if req.DelegationMode == "" {
 		req.DelegationMode = "passthrough"
 	}
-	resolvedEdgeID, err := h.resolveEdgeRef(r.Context(), req.EdgeID)
+	resolvedEdgeID, err := h.resolveEntryRef(r.Context(), req.EdgeID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -358,7 +399,7 @@ func (h *DomainsHandler) update(w http.ResponseWriter, r *http.Request, id strin
 	if req.DelegationMode == "" {
 		req.DelegationMode = "passthrough"
 	}
-	resolvedEdgeID, err := h.resolveEdgeRef(r.Context(), req.EdgeID)
+	resolvedEdgeID, err := h.resolveEntryRef(r.Context(), req.EdgeID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

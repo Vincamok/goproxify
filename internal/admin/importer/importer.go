@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/vincamok/goproxify/internal/admin/auth"
 	"github.com/vincamok/goproxify/internal/admin/edgeproxy"
+	"github.com/vincamok/goproxify/internal/admin/rbac"
 	"github.com/vincamok/goproxify/internal/edge/router"
 	"github.com/vincamok/goproxify/internal/sqltime"
 )
@@ -123,6 +124,10 @@ type ImportSelection struct {
 	OnConflict     string   `json:"on_conflict"`     // skip | overwrite
 	RestoreConfigs bool     `json:"restore_configs"` // écrire les fichiers config sur disque
 	ImportConfig   bool     `json:"import_config"`   // restaurer les tables de configuration (règles auto, équipes, domaines, settings…)
+	// AllowPrivileged : import lancé par le superadmin. Sinon, ni le rôle dpo ni la composition
+	// d'une équipe portant une permission ne sont importés (attribution réservée au superadmin),
+	// et le rôle superadmin ne l'est jamais. Positionné par l'API, jamais lu depuis le JSON.
+	AllowPrivileged bool `json:"-"`
 }
 
 // ImportResult décrit ce qui a été importé.
@@ -226,12 +231,21 @@ func Apply(db *sql.DB, b *Backup, sel ImportSelection) ImportResult {
 				id = uuid.New().String()
 			}
 			hash, _ := auth.HashPassword(uuid.New().String()) // mot de passe aléatoire pour les nouveaux comptes
-			if overwrite {
+			// Rôle non importable (superadmin, ou dpo hors superadmin) : compte créé en user,
+			// rôle d'un compte existant laissé tel quel.
+			role, keepRole := u.Role, false
+			if role == "superadmin" || (role == rbac.RoleDPO && !sel.AllowPrivileged) {
+				role, keepRole = "user", true
+			}
+			if overwrite && !keepRole {
 				// Mettre à jour email et rôle sans toucher au mot de passe de l'utilisateur existant.
+				// Jamais le superadmin ; un dpo n'est rétrogradé que par le superadmin.
 				_, err := db.Exec(
 					`INSERT INTO users (id, email, password_hash, role) VALUES (?,?,?,?)
-					 ON CONFLICT(email) DO UPDATE SET role=excluded.role WHERE id != excluded.id OR role != excluded.role`,
-					id, u.Email, hash, u.Role)
+					 ON CONFLICT(email) DO UPDATE SET role=excluded.role
+					 WHERE users.role != 'superadmin' AND (? OR users.role != 'dpo')
+					   AND (users.id != excluded.id OR users.role != excluded.role)`,
+					id, u.Email, hash, role, sel.AllowPrivileged)
 				if err == nil {
 					res.Users++
 				} else {
@@ -240,7 +254,7 @@ func Apply(db *sql.DB, b *Backup, sel ImportSelection) ImportResult {
 				continue
 			}
 			_, err := db.Exec(`INSERT OR IGNORE INTO users (id, email, password_hash, role) VALUES (?,?,?,?)`,
-				id, u.Email, hash, u.Role)
+				id, u.Email, hash, role)
 			if err == nil {
 				res.Users++
 			} else {
@@ -430,7 +444,7 @@ func Apply(db *sql.DB, b *Backup, sel ImportSelection) ImportResult {
 	}
 
 	if sel.ImportConfig {
-		w, sk := applyTables(db, b.Tables, overwrite)
+		w, sk := applyTables(db, b.Tables, overwrite, sel.AllowPrivileged)
 		res.Config += w
 		res.Skipped += sk
 	}

@@ -13,9 +13,11 @@ import (
 	"strings"
 	"time"
 
+	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	"github.com/vincamok/goproxify/internal/admin/backup"
 	"github.com/vincamok/goproxify/internal/admin/edgeproxy"
 	"github.com/vincamok/goproxify/internal/admin/importer"
+	"github.com/vincamok/goproxify/internal/admin/rbac"
 )
 
 // BackupHandler gère les sauvegardes planifiées et l'historique des proxies.
@@ -187,6 +189,7 @@ func (h *BackupHandler) restoreSnapshot(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 	}
+	sel.AllowPrivileged = rbac.IsSuperAdmin(r.Context(), h.DB, adminauth.UserIDFromContext(r.Context()))
 	result := importer.Apply(h.DB, bk, sel)
 	if sel.ImportConfig {
 		h.Scheduler.Reload()

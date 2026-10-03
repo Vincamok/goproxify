@@ -3,7 +3,7 @@ const state = {
   token:        localStorage.getItem('gpx_token') || '',
   page:         'dashboard',
   selectedEdge: null,
-  user:         null, // rempli après login : { id, email, role, is_super, teams, effective_scopes }
+  user:         null, // rempli après login : { id, email, role, is_super, teams, effective_scopes, permissions }
   timezone:     localStorage.getItem('gpx_tz') || '', // IANA (ex. Europe/Paris) — sync via /health
 };
 
@@ -22,6 +22,9 @@ const Role = {
 
   // L'utilisateur peut-il écrire (créer/modifier/désactiver) ?
   canWrite: () => Role.isOperator(),
+
+  // RGPD : révéler l'IP réelle d'une entrée pseudonymisée (superadmin, rôle dpo, droit délégué).
+  canRevealIP: () => (state.user?.permissions || []).includes('gdpr:reveal'),
 
   // Snippets : admin, ou user avec au moins un grant write (rbac.RequireOperator côté API).
   canWriteSnippets: () => Role.isAdmin() || (state.user?.effective_scopes || []).some(s => s.access_mode === 'write'),

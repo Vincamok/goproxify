@@ -60,6 +60,14 @@ func TestElevatedH1_PairingSecretAdminOnly(t *testing.T) {
 	}
 }
 
+// TestRevealRouteOpenToPermissionHolders — un DPO (non admin) doit atteindre reveal-ip :
+// la route est sortie de adminWrites, le handler vérifie gdpr:reveal.
+func TestRevealRouteOpenToPermissionHolders(t *testing.T) {
+	if !strings.Contains(adminServerSource(t), `mux.Handle("/api/v1/logs/reveal-ip", protected(logsH))`) {
+		t.Fatal("/api/v1/logs/reveal-ip doit être montée sous protected(), hors garde admin")
+	}
+}
+
 // TestWriteRoutesGuardedForJWT — EnforcePATScope ignore les sessions UI : sans garde
 // de rôle, un user connecté mute certificats, domaines, alertes, profils IP et snippets.
 func TestWriteRoutesGuardedForJWT(t *testing.T) {

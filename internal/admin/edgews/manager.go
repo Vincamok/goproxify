@@ -1268,6 +1268,9 @@ func (m *Manager) PushDelegations(ctx context.Context) {
 		if len(delegs) == 0 {
 			delegs = byEdgeID[e.nodeName]
 		}
+		if g := m.groupOf(e); g != "" {
+			delegs = append(append([]delegation(nil), delegs...), byEdgeID["ha:"+g]...)
+		}
 		go func() {
 			routes := make([]router.Route, 0, len(delegs))
 			for _, d := range delegs {

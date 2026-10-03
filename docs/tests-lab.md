@@ -13,7 +13,7 @@ Guide d'exécution du labo `tests/lab/` (charge, sécurité, chaos, fonctionnali
 | `lab-tools` | Runner bash : `seed.sh`, `attacks.sh`, `chaos.sh`, `cleanup.sh` |
 | `lab-k6` | Runner de charge (scénarios `smoke`, `moderate`, `baseline`, `spike`, `stress`, `soak`, `mixed`) |
 | `lab-juice` | Cible vulnérable optionnelle (profil `vuln`) |
-| `lab-sim` | Applications simulées pour la suite fonctionnelle et le trafic réaliste : boutique à 3 instances, canary, shadow, legacy, 2 instances de sonde, écho WebSocket/TCP, port de contrôle interne (détail : [tests/lab/README.md](../tests/lab/README.md)) |
+| `lab-sim` | Applications simulées pour les suites fonctionnelle et sécurité et le trafic réaliste : boutique à 3 instances, canary, shadow, legacy, 2 instances de sonde, écho WebSocket/TCP, port de contrôle interne (détail : [tests/lab/README.md](../tests/lab/README.md)) |
 
 Aucun build ni montage de fichier : les scripts sont embarqués dans `docker-compose.lab.yml` par `tests/lab/gen-compose.sh` (à relancer après toute modification de `scripts/` ou `load/`). Les runners retrouvent eux-mêmes l'IP de la passerelle (`scripts/hosts.sh`).
 
@@ -55,6 +55,7 @@ Chaque commande affiche PASS/FAIL ; le code retour de `attacks.sh` et `chaos.sh`
 | — | `spike`, `stress`, `baseline`, `soak`, `mixed` | `k6 run /scripts/<nom>.js` | **Élevé** : à réserver à un environnement isolé ou à une fenêtre de maintenance |
 | 6 | Fonctionnalités (34 routes, 29 sections) | `docker exec lab-tools bash /lab/scripts/features.sh seed` puis `docker exec lab-tools bash /lab/scripts/features.sh run` | Faible : routes `lab-*`, ~500 requêtes au total, quelques rafales de 6 à 8 requêtes concurrentes. Créer les routes demande un PAT (`proxies:write`) ; `LAB_RUNNER_CIDR` ajoute le poste de test à la liste blanche Sentinel des routes pour éviter qu'il soit banni par ses propres 403/502 attendus |
 | 7 | Trafic réaliste (~150 req/s au pic, 3 min ; `SHOP_RATE`, `DURATION` réglables) | `docker exec lab-k6 sh -c "sh /hosts.sh && k6 run /scripts/realistic.js"` | Faible à modéré (route `lab-realistic`) |
+| 8 | Sécurité (9 routes `lab-sec-*`, 12 sections) | `docker exec lab-tools bash /lab/scripts/security.sh seed` puis `docker exec lab-tools bash /lab/scripts/security.sh run` | Modéré : une centaine de 403/401/400 volontaires et quelques rafales ; le seed importe un certificat auto-signé `*.lab.test` dans l'Admin et place l'IP du poste (ou `LAB_RUNNER_CIDR`) dans la liste blanche Sentinel des routes `lab-sec-*`. `LAB_BRUTE=1` ajoute un brute-force du login Admin (échecs de connexion réels : stack jetable seulement) |
 
 Toutes les commandes `docker` s'écrivent avec `sudo` sur la VM.
 
@@ -65,6 +66,7 @@ Toutes les commandes `docker` s'écrivent avec `sudo` sur la VM.
 - **Charge** : `moderate` fixe le débit (modèle ouvert) pour mesurer la latence de service (p95 < 100 ms, p99 < 300 ms, aucune itération abandonnée) ; `saturation` lance 50 utilisateurs sans pause pour mesurer le débit atteint (facteur limitant : k6, Passerelle ou VM). En modèle fermé la latence reflète la file d'attente (loi de Little : latence moyenne ≈ VUs / débit), d'où l'absence de seuil de latence.
 - **Fonctionnalités** (`features.sh`) : une route `lab-*.lab.test` par fonctionnalité du proxy, devant les applications simulées de `lab-sim`. Chaque section vérifie le comportement observable de bout en bout (instance qui répond, en-têtes reçus par le backend, en-têtes reçus par le client, codes, délais) et pas seulement le code retour. Sections : `lb weighted sticky health retry cb transform paths redirect subfilter cors cache ip vars backpressure canary shadow cond errpages ws body secheaders timeout auth bot wafcustom headers stream toggle` (`features.sh run lb,cache` pour en lancer quelques-unes). L'état des instances simulées est remis à zéro en sortie.
 - **Trafic réaliste** (`realistic.js`) : visiteurs (page, 3 à 5 assets, catalogue JSON, 30 % se connectent et valident un panier), clients API, flux SSE de 3 s, échanges WebSocket, téléchargements de 2 Mo et envois de 512 Ko, avec une courbe de journée à débit imposé (modèle ouvert). Les seuils sont posés par type de requête (`page`, `api`, `slow`, `asset`, `sse`, `download`, `upload`) et le résumé les détaille.
+- **Sécurité** (`security.sh`) : sections `trust acl ratelimit inject protocol waf cache ws jwt errleak admin tls`. Un pair en réseau privé est un proxy de confiance par défaut : `trust` le détecte et les contrôles d'usurpation d'IP sont alors ignorés (à tester depuis une source non privée). Résultats du premier passage : [rapport-securite-2026-10-03.md](rapport-securite-2026-10-03.md).
 
 ## 6. Résultats (2026-09-24, VM partagée avec la production)
 

@@ -13,6 +13,7 @@ import (
 
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
+	"github.com/vincamok/goproxify/internal/admin/rbac"
 )
 
 // MeHandler gère /api/v1/me — profil de l'utilisateur connecté.
@@ -43,11 +44,13 @@ type meTeam struct {
 type meResponse struct {
 	ID              string     `json:"id"`
 	Email           string     `json:"email"`
-	Role            string     `json:"role"` // "superadmin" | "admin" | "user"
+	Role            string     `json:"role"` // "superadmin" | "admin" | "user" | "dpo"
 	IsSuper         bool       `json:"is_super"`
 	CreatedAt       *time.Time `json:"created_at,omitempty"`
 	Teams           []meTeam   `json:"teams"`
 	EffectiveScopes []meScope  `json:"effective_scopes"`
+	// Permissions effectives (rôle, en propre, équipes), ex. ["gdpr:reveal"].
+	Permissions []string `json:"permissions"`
 }
 
 func (h *MeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -99,6 +102,7 @@ func (h *MeHandler) getMe(w http.ResponseWriter, r *http.Request, userID string)
 		me.CreatedAt = &createdAt.Time
 	}
 	me.IsSuper = me.Role == "superadmin"
+	me.Permissions = orEmpty(rbac.UserPermissions(r.Context(), h.DB, userID))
 
 	// Équipes + grants ; effective = union user_scopes + team_scopes (max mode côté client via mode)
 	rows, err := h.DB.QueryContext(r.Context(), `

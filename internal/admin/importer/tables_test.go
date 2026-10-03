@@ -31,7 +31,7 @@ func TestTablesRoundTripAndRedaction(t *testing.T) {
 
 	db.Exec(`DELETE FROM rules_engine_rules`)
 	db.Exec(`DELETE FROM settings WHERE key='mcp.allowed_ips'`)
-	w, _ := applyTables(db, bk.Tables, false)
+	w, _ := applyTables(db, bk.Tables, false, false)
 	if w != 2 {
 		t.Fatalf("écrites=%d", w)
 	}
@@ -77,10 +77,10 @@ func TestTablesRoundTripKeepsCurrentTimestampFormat(t *testing.T) {
 	// Sauvegarde antérieure au correctif : date exportée en RFC3339.
 	legacy := map[string][]map[string]any{"rules_engine_rules": {{"id": "r2", "name": "R2", "condition_json": "{}", "action_json": "{}", "last_fired_at": "2026-09-29T10:00:00Z"}}}
 	db.Exec(`DELETE FROM rules_engine_rules`) //nolint:errcheck
-	if w, _ := applyTables(db, tables, false); w != 1 {
+	if w, _ := applyTables(db, tables, false, false); w != 1 {
 		t.Fatalf("écrites=%d", w)
 	}
-	if w, _ := applyTables(db, legacy, false); w != 1 {
+	if w, _ := applyTables(db, legacy, false, false); w != 1 {
 		t.Fatalf("écrites (ancienne sauvegarde)=%d", w)
 	}
 	rows, err := db.Query(`SELECT id, CAST(last_fired_at AS TEXT) FROM rules_engine_rules`)

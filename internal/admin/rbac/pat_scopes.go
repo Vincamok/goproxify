@@ -174,17 +174,21 @@ func AvailableScopesForUser(ctx context.Context, db *sql.DB, userID string) []st
 		add(ScopeProxiesWrite, ScopeProxiesDelete, ScopeSnippetsWrite, ScopeUsersRead, ScopeTeamsRead,
 			ScopeNodesWrite, ScopeAlertsWrite, ScopeDomainsWrite, ScopeCertsWrite, ScopeLogsWrite,
 			ScopeSecurityWrite, ScopeImportWrite, ScopePairingRead,
-			ScopePortalRead, ScopePortalWrite, ScopeGDPRReveal)
+			ScopePortalRead, ScopePortalWrite)
 	case IsAdminRole(role):
 		add(ScopeProxiesWrite, ScopeProxiesDelete, ScopeSnippetsWrite, ScopeUsersRead, ScopeTeamsRead,
 			ScopeNodesWrite, ScopeAlertsWrite, ScopeDomainsWrite, ScopeCertsWrite, ScopeLogsWrite,
 			ScopeSecurityWrite, ScopeImportWrite, ScopePairingRead,
 			ScopePortalRead, ScopePortalWrite)
 	default:
-		// user (et legacy operator/viewer normalisés) : write PAT si grant write effectif
+		// user, dpo (et legacy operator/viewer normalisés) : write PAT si grant write effectif
 		if UserHasWriteGrant(ctx, db, userID) {
 			add(ScopeProxiesWrite, ScopeSnippetsWrite)
 		}
+	}
+	// Superadmin, rôle dpo, ou permission accordée en propre / via une équipe.
+	if HasPermission(ctx, db, userID, PermGDPRReveal) {
+		add(ScopeGDPRReveal)
 	}
 	return out
 }

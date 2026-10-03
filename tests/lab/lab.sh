@@ -47,6 +47,8 @@ case "$cmd" in
   attacks) tools attacks.sh ;;
   chaos)   tools chaos.sh ;;
   seed-features) tools features.sh seed ;;
+  seed-security) tools security.sh seed ;;
+  security) tools security.sh run "$@" ;;   # security [waf,jwt,tls,...] : sections au choix
   features) tools features.sh run "$@" ;;   # features [lb,cache,...] : sections au choix
 
   load)   # smoke | moderate | saturation | baseline | spike | stress | soak | mixed | realistic
@@ -74,6 +76,8 @@ Commandes :
   attacks | chaos                   batterie d'attaques / pannes backend
   seed-features                     crée les routes de la suite fonctionnelle (33 routes lab-*)
   features [sections]               suite fonctionnelle des proxies sur applications simulées (lab-sim)
+  seed-security                     certificat TLS de test + routes lab-sec-* (suite de sécurité)
+  security [sections]               suite de sécurité (accès, WAF, cache, JWT, TLS…) sur applications simulées
   soak | zap | nuclei               endurance + ressources, scanners (local uniquement)
   all                               seed + smoke + attacks + chaos
 Mode distant : LAB_REMOTE=1 LAB_ADMIN_EMAIL=... LAB_ADMIN_PASSWORD=... tests/lab/lab.sh all

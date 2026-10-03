@@ -94,7 +94,8 @@ Routes ouvertes en lecture à tout compte authentifié mais dont les écritures 
 |---|---|---|
 | `/api/v1/certs` (dont `deploy-targets`, `pull-tokens`), `/domains`, `/alert-channels`, `/alert-rules` (dont `simulate`), `/alert-events` (`ack`), `/ip-profiles` (dont `refresh`) | tout compte | admin / superadmin — sinon `403 accès réservé aux administrateurs` |
 | `/api/v1/snippets` | tout compte | admin / superadmin, ou `user` disposant d'au moins un grant `write` (équipe ou direct) — sinon `403 accès insuffisant` |
-| `/api/v1/logs` (`settings`, `by-ip`, `by-user`, `reveal-ip`) | tout compte | admin / superadmin — sinon `403 accès réservé aux administrateurs` ; `reveal-ip` exige en plus `gdpr:reveal` (superadmin) |
+| `/api/v1/logs` (`settings`, `by-ip`, `by-user`) | tout compte | admin / superadmin — sinon `403 accès réservé aux administrateurs` |
+| `/api/v1/logs/reveal-ip` | — | détenteur de `gdpr:reveal` (superadmin, rôle `dpo`, droit accordé en propre ou via une équipe), admin ou non — sinon `403` (depuis Admin `0.78.0` ; superadmin seul auparavant) |
 
 Depuis Admin `0.70.4` pour `/logs` : un compte `user` pouvait désactiver l'anonymisation ou la pseudonymisation des IP, réduire la rétention et effacer des logs par IP ou par utilisateur.
 
@@ -480,6 +481,8 @@ Supprime un fournisseur DNS nommé.
 Demande un certificat ACME. La méthode suit `domains.cert_method` du domaine : DNS-01 (`dns` + `dns_provider`), HTTP-01 (`acme-http`) ou TLS-ALPN-01 (`acme-tls-alpn`). Avec HTTP-01 / TLS-ALPN-01, l'Admin pose la réponse du challenge sur les passerelles connectées (port 80 / 443 publics du domaine) ; un wildcard est refusé (`400` sur `POST`/`PUT /api/v1/domains`, `cert_method` `acme-http` ou `acme-tls-alpn`).
 
 **Corps :**
+`edge_id` (passerelle d'entrée) accepte un token passerelle, un `node_name`, ou `ha:<groupe>` pour un groupe HA déclaré dans `architecture.json` : le périmètre domaine est alors posé sur tous les membres et les délégations sont poussées à chacun. Un groupe sans membre renvoie `400 groupe HA introuvable`. `delegated_to_edge_id` reste une passerelle unique.
+
 ```json
 { "domain": "*.example.fr", "dns_provider": "ovh_prod" }
 ```
@@ -1304,6 +1307,31 @@ Tous les messages WS utilisent l'enveloppe suivante :
 
 ---
 
+## Utilisateurs, équipes et permissions — `/api/v1/users`, `/api/v1/teams`
+
+Routes réservées aux admins (`adminOnly`, scope PAT `users:read` / `teams:read`). Rôles plateforme : `superadmin` (unique, non attribuable), `admin`, `user`, `dpo`. Le rôle `dpo` a les droits d'un compte `user` plus la permission `gdpr:reveal`.
+
+**Permissions** : droits de capacité, distincts des grants de ressources (`domain`, `server`, `proxy`, `edge`). Seule permission connue : `gdpr:reveal` (révéler l'IP réelle d'une entrée de log pseudonymisée, voir [Logs RGPD](#logs-rgpd--apiv1logs)). Elle est détenue par le superadmin, par le rôle `dpo`, en propre (`user_permissions`) ou via une équipe (`team_permissions`). Une permission inconnue renvoie `400`.
+
+| Méthode | Endpoint | Description |
+|---|---|---|
+| GET | `/api/v1/users` · `/api/v1/users/{id}` | Comptes ; chaque compte porte `permissions` (accordées en propre) et `effective_permissions` (y compris rôle et équipes) |
+| POST | `/api/v1/users` | `{email, password, role, scopes?, permissions?}` |
+| PUT | `/api/v1/users/{id}` | `{email, role, password?, scopes?, permissions?}` ; `permissions` absent = inchangé, `[]` = retirées |
+| PUT | `/api/v1/users/{id}/password` | `{password}` |
+| DELETE | `/api/v1/users/{id}` | — |
+| GET | `/api/v1/teams` · `/api/v1/teams/{id}` | Équipes ; chacune porte `permissions` (accordées à ses membres) |
+| GET · PUT | `/api/v1/teams/{id}/permissions` | `{permissions: [...]}` ; `PUT` remplace la liste |
+| POST · DELETE | `/api/v1/teams/{id}/members[/{user_id}]` | Membres |
+| GET | `/api/v1/me` | Compte courant ; `permissions` = permissions effectives |
+
+Règles (depuis Admin `0.78.0`), contrôlées pour les sessions UI comme pour les PAT :
+
+- **attribuer ou retirer** une permission est réservé au superadmin : rôle `dpo` donné ou retiré, `permissions` d'un compte modifiées, `PUT /teams/{id}/permissions`, ajout ou retrait de membres et suppression d'une équipe qui porte une permission — sinon `403` (`api.err.superadmin_required`). Chaque attribution est auditée (`set_permissions`) ;
+- **compte protégé** : un compte superadmin ou détenteur d'une permission (par n'importe quelle voie) ne peut être modifié (`PUT /users/{id}`), voir son mot de passe changé ou être supprimé que par le superadmin — sinon `403` (`api.err.protected_account`). Auparavant, un admin pouvait changer le mot de passe de n'importe quel compte, superadmin compris.
+
+Les permissions sont copiées dans `users.yaml` (comptes et équipes). Elles ne font pas partie des sauvegardes de configuration (`team_permissions` est exclue). Un import ou une restauration (`POST /api/v1/import/backup/apply`, `POST /api/v1/backups/snapshots/{id}/restore`) lancé par un admin n'attribue jamais le rôle `superadmin` ni `dpo` (compte créé en `user`, rôle d'un compte existant conservé), ne modifie pas le rôle du superadmin ni d'un `dpo`, et n'ajoute aucun membre à une équipe qui porte une permission. Lancé par le superadmin, il restaure le rôle `dpo` et ces membres ; le rôle `superadmin` n'est jamais importé. Auparavant, un import en `overwrite` réécrivait le rôle de tout compte existant, superadmin compris.
+
 ## Workspaces — `/api/v1/workspaces`
 
 > Accès : admin / superadmin uniquement.
@@ -1332,7 +1360,7 @@ Tous les messages WS utilisent l'enveloppe suivante :
 | GET | `/api/v1/logs/correlate` | `logs:read` | Entrées voisines d'un événement : `request_id`, ou `domain`+`ts`+`window` (secondes, défaut 30) |
 | GET | `/api/v1/logs/settings` | `logs:read` | Paramètres de rétention et de pseudonymisation |
 | PUT | `/api/v1/logs/settings` | `logs:write` + admin | Modifier rétention, `ip_anonymize`, `ip_pseudonymize`. Les deux modes sont exclusifs : `400` si la requête les laisserait actifs ensemble (en tenant compte de la valeur déjà enregistrée ; envoyer les deux champs pour basculer). Un mode modifié est audité (`logs_ip_anonymize`, `logs_ip_pseudonymize`) et poussé aux passerelles en un seul message `push_settings` portant les deux champs ; une valeur inchangée n'est ni auditée ni poussée. Une entrée pseudonymisée a `ip` = `[pseudonymisé]` dans `GET /logs` |
-| POST | `/api/v1/logs/reveal-ip` | `gdpr:reveal` (superadmin) | Révéler l'IP réelle d'une entrée pseudonymisée |
+| POST | `/api/v1/logs/reveal-ip` | `gdpr:reveal` (superadmin, rôle `dpo`, droit délégué — voir [Utilisateurs, équipes et permissions](#utilisateurs-équipes-et-permissions--apiv1users-apiv1teams)) | Révéler l'IP réelle d'une entrée pseudonymisée |
 | DELETE | `/api/v1/logs/by-ip/{ip}` | `logs:write` + admin | Effacement RGPD Art.17 par IP, entrées pseudonymisées comprises (empreinte `ip_hmac`), IPv6 quelle que soit sa notation → `{deleted, ip}`. `{ip}` doit être une adresse IP (`400` sinon). L'audit (`rgpd_erasure_ip`) et le log système ne contiennent que l'empreinte de l'IP (`hmac:…`) |
 | DELETE | `/api/v1/logs/by-user/{user_id}` | `logs:write` + admin | Effacement RGPD Art.17 par utilisateur |
 | GET | `/api/v1/logs/histogram` | `logs:read` | Entrées par tranche de temps et par niveau : mêmes filtres que la liste plus `bucket` (`minute`, `hour`, `day` ; défaut selon l'étendue, 24 h sans `date_from`) → `{bucket, points:[{bucket, total, warn, error}]}` |
