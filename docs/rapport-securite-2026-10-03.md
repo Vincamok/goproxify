@@ -38,7 +38,7 @@ Poste de test et réseaux locaux : le runner est sur un réseau privé, donc **p
 |---|---|---|---|
 | S1 | **Haute** | Le cache partagé sert à un autre client la réponse personnalisée d'un utilisateur : la clé de cache ne tient pas compte du `Cookie` ni de `Authorization`, et `Cache-Control: private` n'est pas respecté. Une route avec `cache.enabled` qui sert des pages authentifiées fuit des données entre utilisateurs | 3 |
 | S2 | Moyenne | L'upgrade WebSocket n'est pas filtré par `cors.allowed_origins` : une page de `https://evil.test` ou une origine `null` ouvre le WebSocket de la route (détournement entre sites si l'authentification repose sur un cookie) | 2 |
-| S3 | Moyenne à haute | Les `locations` comparent le chemin en sensible à la casse : `/API/V1/ADMIN/x` et `/api/v1/%41dmin/x` contournent l'authentification d'une location `/api/v1/admin` face à un backend insensible à la casse (IIS, ASP.NET…) | 2 |
+| S3 | Moyenne à haute | Les `locations` comparent le chemin en sensible à la casse : `/API/V1/ADMIN/x` et `/api/v1/%41dmin/x` contournent l'authentification d'une location `/api/v1/admin` face à un backend insensible à la casse (IIS, ASP.NET…) | 2 | **Corrigé en Edge 0.21.3** (locations sans casse par défaut si auth/ip_filter/rate_limit).
 | S4 | Moyenne | Avec `jwt.header_name: "Authorization"` (configuration naturelle), la valeur brute `Bearer …` est validée au lieu du jeton : tout jeton valide reçoit 401. Sans `header_name`, la validation fonctionne. Par ailleurs le JWKS n'accepte que des clés RSA : un fournisseur qui signe en ES256 n'est pas supporté | 1 |
 | S5 | Moyenne à faible | WAF : non bloqués `admin'--` en formulaire, l'injection SQL dans un cookie, `$(id)`, `\|\| id`, `{{7*7}}` et `${7*7}` ; **faux positif** sur la phrase `select an option from the list`. Les cookies, les expressions de commande et les gabarits (SSTI) sont un trou de couverture ; le faux positif bloque du contenu légitime | 7 |
 
@@ -62,3 +62,7 @@ docker compose -f tests/lab/docker-compose.local.yml exec lab-tools bash /lab/sc
 docker compose -f tests/lab/docker-compose.local.yml exec -e LAB_BRUTE=1 lab-tools bash /lab/scripts/security.sh run admin
 docker compose -f tests/lab/docker-compose.local.yml down -v
 ```
+
+## 8. Après correction (2026-10-03, `main` `28928981`)
+
+Les 5 constats S1 à S5 sont corrigés sur `main` : cache (`7e94c860`), WebSocket (`28928981`), locations (`5b7de746`), JWT (`48e9486c`) et WAF (`15893d42`). Même suite, stack locale neuve avec une passerelle recompilée depuis les sources : **146 PASS, 0 FAIL, 5 ignorés** (usurpation d'IP depuis un pair privé, brute-force du login hors `LAB_BRUTE`, trois suites TLS faibles non testables depuis le client OpenSSL du runner). Le nombre de PASS monte de 126 à 146 : les 15 échecs sont devenus des PASS et les contrôles ajoutés par les correctifs (JWT ES256 et EdDSA) s'y ajoutent. La suite fonctionnelle reste à **87 PASS, 0 FAIL**. Les §1, §3 et §4 ci-dessus décrivent l'état avant correctifs.

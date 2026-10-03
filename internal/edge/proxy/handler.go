@@ -333,6 +333,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if isUpgrade(r) && h.route.CORS != nil && len(h.route.CORS.AllowedOrigins) > 0 {
+		if o, ok := r.Header["Origin"]; ok && !middleware.OriginAllowed(o[0], h.route.CORS.AllowedOrigins) {
+			h.writeError(w, r, http.StatusForbidden)
+			return
+		}
+	}
+
 	if h.bodyTooLarge(r) {
 		w.Header().Set("Connection", "close")
 		h.writeError(w, r, http.StatusRequestEntityTooLarge)
@@ -717,7 +724,11 @@ func (h *Handler) reverseProxyFor(b *router.Backend, target *url.URL) *httputil.
 			req.URL.Scheme = urlScheme
 			req.URL.Host = urlHost
 			if prefix := h.route.StripPrefix; prefix != "" {
-				req.URL.Path = router.StripPathPrefix(req.URL.Path, prefix)
+				if h.route.StripPrefixFold {
+					req.URL.Path = router.StripPathPrefixFold(req.URL.Path, prefix)
+				} else {
+					req.URL.Path = router.StripPathPrefix(req.URL.Path, prefix)
+				}
 				req.URL.RawPath = ""
 			}
 			if h.route.PathRewrite != "" && h.route.PathRewritePattern != "" {

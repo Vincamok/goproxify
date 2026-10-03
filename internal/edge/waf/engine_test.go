@@ -455,3 +455,59 @@ func TestMiddlewareRouteCustomRules(t *testing.T) {
 		t.Fatalf("other route must not block, got %d", c)
 	}
 }
+
+func TestWAFCorpusS5(t *testing.T) {
+	e := NewEngine(nil, slog.Default())
+	form := "application/x-www-form-urlencoded"
+	type tc struct {
+		name, method, uri, body, ct, cookie string
+	}
+	attacks := []tc{
+		{"sqli form commentaire", "POST", "/echo", "user=admin'--&pw=x", form, ""},
+		{"sqli cookie", "GET", "/", "", "", "sid=1' OR '1'='1"},
+		{"sqli cookie encodé", "GET", "/", "", "", "sid=1%27%20OR%20%271%27%3D%271"},
+		{"cmd $(id)", "GET", "/?c=%24(id)", "", "", ""},
+		{"cmd backticks", "GET", "/?c=%60whoami%60", "", "", ""},
+		{"cmd ||", "GET", "/?c=1%20%7C%7C%20id", "", "", ""},
+		{"ssti {{7*7}}", "GET", "/?n=%7B%7B7*7%7D%7D", "", "", ""},
+		{"ssti ${7*7}", "GET", "/?n=%24%7B7*7%7D", "", "", ""},
+		{"ssti erb", "GET", "/?n=%3C%25%3D7*7%25%3E", "", "", ""},
+		{"ssti jinja config", "GET", "/?n=%7B%7Bconfig.items()%7D%7D", "", "", ""},
+		{"union select", "GET", "/?q=1+UNION+SELECT+password+FROM+users", "", "", ""},
+		{"select * from", "GET", "/?q=select+*+from+users", "", "", ""},
+		{"select après quote", "GET", "/?q=1%27%3Bselect+password+from+users", "", "", ""},
+	}
+	legit := []tc{
+		{"phrase select/from", "GET", "/?q=select+an+option+from+the+list", "", "", ""},
+		{"O'Brien", "GET", "/?q=O%27Brien", "", "", ""},
+		{"union européenne", "GET", "/?q=union+europ%C3%A9enne+et+s%C3%A9lection", "", "", ""},
+		{"report..final.pdf", "GET", "/?f=report..final.pdf", "", "", ""},
+		{"json drop by", "POST", "/echo", `{"name":"D'Artagnan","bio":"drop by anytime"}`, "application/json", ""},
+		{"1+1=2", "GET", "/?q=1%2B1%3D2", "", "", ""},
+		{"static js", "GET", "/static/javascript/app.js", "", "", ""},
+		{"form ordinaire", "POST", "/echo", "name=Alice&comment=Bonjour+tout+le+monde", form, ""},
+		{"handlebars simple", "POST", "/echo", "tpl=Bonjour+%7B%7Bname%7D%7D", form, ""},
+		{"cookie ordinaire", "GET", "/", "", "", "sid=abc123; theme=dark"},
+		{"prix", "GET", "/?q=%245+%7C%7C+10+euros", "", "", ""},
+	}
+	run := func(c tc) []Match {
+		r := httptest.NewRequest(c.method, c.uri, strings.NewReader(c.body))
+		if c.ct != "" {
+			r.Header.Set("Content-Type", c.ct)
+		}
+		if c.cookie != "" {
+			r.Header.Set("Cookie", c.cookie)
+		}
+		return e.Inspect(r, 1)
+	}
+	for _, c := range attacks {
+		if len(run(c)) == 0 {
+			t.Errorf("attaque non détectée : %s", c.name)
+		}
+	}
+	for _, c := range legit {
+		if m := run(c); len(m) != 0 {
+			t.Errorf("faux positif : %s → %#v", c.name, m)
+		}
+	}
+}

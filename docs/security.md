@@ -66,11 +66,16 @@ Chaque règle contribue un score (1–5 selon la sévérité). Le seuil `anomaly
 | `java` | 944100–944999 | Java / Log4Shell (`${jndi:ldap://…}`), Spring EL, gadgets de désérialisation |
 | `rfi` | 931100–931999 | Remote File Inclusion (URLs distantes, wrappers PHP : `php://filter`, `phar://`) |
 | `nodejs` | 934200–934999 | NodeJS / Prototype Pollution (`__proto__`, `constructor.prototype`, `require()`) |
+| `ssti` | 934300 | Server-Side Template Injection (`{{7*7}}`, `{{config.…}}`, `${7*7}`, `<%=`) |
 | `smuggling` | 920200–920999 | HTTP Request Smuggling (TE+CL simultanés, chunked encoding obfusqué) |
 | `restricted` | 930200–930999 | Accès à des fichiers sensibles (`.env`, `.git/`, `wp-config.php`, dumps SQL, `phpinfo.php`) |
 | `leakage` | 951100–951999 | **Inspection de la réponse** : erreurs SQL, stack traces PHP/Java, clés AWS dans les corps de réponse |
 
 Les jeux de règles sont activés par défaut. Chaque catégorie peut être désactivée individuellement dans l'UI Admin (page passerelle > WAF) ou via `exclude_ids`.
+
+Les cookies (lus bruts, y compris espaces et guillemets) et les corps `x-www-form-urlencoded` (valeurs décodées) sont inspectés par les règles SQLi, injection de commande (`932120` substitution `$(cmd)` / backticks, `932130` `|| cmd`, commandes connues uniquement) et SSTI (`934300`). La règle SQLi `select … from` exige un contexte SQL (guillemet, `;`, commentaire, `*`, liste de colonnes, `distinct`…) : une phrase comme « select an option from the list » passe.
+
+**Exclusions de plateforme** : une application qui accepte des gabarits saisis par l'utilisateur (jinja, twig, handlebars, mustache, EJS, éditeur d'e-mails) doit exclure `934300` (`exclude_ids`) sur la route concernée. `{{variable}}` seul n'est de toute façon pas bloqué ; seules les expressions (`{{7*7}}`, `{{config.x}}`) le sont.
 
 ### Inspection de la réponse (CRS 951xxx)
 
@@ -209,6 +214,12 @@ Le cache d'une route (`cache.enabled`) est partagé entre tous les clients ; il 
 - `bypass_headers` et `bypass_cookies` restent disponibles pour d'autres critères de contournement.
 
 ---
+
+## Validation JWT (JWKS)
+
+La clé est choisie par `kid` dans le JWKS du fournisseur : `kty` `RSA` (RS256/384/512), `EC` (ES256 sur P-256, ES384 sur P-384, ES512 sur P-521) et `OKP` Ed25519 (EdDSA). Le type de clé doit correspondre à l'algorithme annoncé par le jeton (pas de confusion RS/ES). `alg: none` et les algorithmes HS* sont toujours refusés. `iss`, `aud` et `exp` sont contrôlés.
+
+Le jeton est lu dans `Authorization: Bearer <jeton>` (préfixe insensible à la casse) ; avec `header_name: Authorization` le préfixe est retiré comme sans `header_name`, et dans un en-tête personnalisé (`X-Token`) le jeton peut être brut ou précédé de `Bearer `.
 
 ## Backpressure par route
 
@@ -518,3 +529,13 @@ gpx_bans_active_total
 ```
 
 L'access log JSON inclut les décisions WAF (`waf_matches`, `waf_score`) sur chaque requête. La page **Prism** permet d'analyser le trafic par IP, code HTTP et domaine, avec accès direct aux bans depuis la table des IPs.
+
+---
+
+## Locations et casse du chemin
+
+Les locations `prefix`/`exact` portant `auth`, `ip_filter` ou `rate_limit` sont comparées **sans tenir compte de la casse** (chemin décodé, normalisé, mis en minuscules) : face à un backend insensible à la casse (IIS, ASP.NET), `/API/V1/ADMIN/x` et `/api/v1/%41dmin/x` atteignent sinon `/api/v1/admin` sans authentification (constat S3). Les autres locations restent sensibles à la casse ; l'option `case_insensitive` (`true`/`false`) sur la location force l'un ou l'autre. Les locations `regex` ne sont jamais repliées (utiliser `(?i)`). Ne forcer `case_insensitive: false` sur une location protégée que si le backend est lui-même sensible à la casse.
+
+## WebSocket : contrôle d'Origin (CSWSH)
+
+Quand une route définit `cors.allowed_origins` (liste non vide), l'upgrade WebSocket est refusé en `403` si l'en-tête `Origin` est présent et absent de la liste, y compris `Origin: null`. Une origine listée, ou une requête sans `Origin` (client non navigateur), passe. Le joker `*` n'est pas accepté (comme pour CORS) : une liste réduite à `*` refuse donc toute origine. Sans `cors.allowed_origins`, aucun contrôle n'est appliqué : à renseigner dès que l'authentification repose sur un cookie.

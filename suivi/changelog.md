@@ -9,7 +9,13 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ### Corrigé
 
+- **Edge 0.21.3 — JWT : `header_name: Authorization` et clés EC/Ed25519 (constat S4)** : avec `jwt.header_name: "Authorization"` la valeur brute `Bearer …` était validée au lieu du jeton, donc tout jeton valide recevait 401 ; le préfixe `Bearer ` (insensible à la casse) est désormais retiré, un jeton brut restant accepté dans un en-tête personnalisé. Le JWKS accepte en plus les clés EC (ES256/ES384/ES512, P-256/384/521) et OKP Ed25519 (EdDSA), le type de clé devant correspondre à l'algorithme ; `none` et HS* restent refusés. Labo : le simulateur publie des clés EC et Ed25519, `security.sh run jwt` couvre ES256/EdDSA.
+
+- **Edge 0.21.4 — WAF : charges non bloquées (constat S5)** : le commentaire SQL en fin de valeur (`admin'--` en formulaire), le SQLi dans un cookie, la substitution de commande (`$(id)`, backticks, `1 || id`) et le SSTI (`{{7*7}}`, `${7*7}`, `<%=`) passaient. Les cookies sont désormais lus bruts et inspectés par les règles SQLi/RCE ; nouvelles règles `932120`, `932130`, `934300` (exclure `934300` pour une appli de gabarits). Faux positif corrigé : `select an option from the list` n'est plus bloqué (`942100` exige un contexte SQL).
 - **Edge 0.21.2 — cache disque : fuite de réponses entre utilisateurs (constat S1)** : une route avec `cache.enabled` servait à un client la réponse personnalisée d'un autre (clé = URL seule). Désormais une requête avec `Authorization` ou cookie contourne le cache (ni stockée ni servie), une réponse `Cache-Control: private`/`no-store`, `Set-Cookie` ou `Vary: *` n'est jamais stockée, `Vary` est respecté. Options par route `cache.ignore_cookies` et `cache.vary_cookies`.
+- **Edge 0.21.3 — locations : contournement par la casse du chemin (constat S3)** : `/API/V1/ADMIN/x` et `/api/v1/%41dmin/x` contournaient l'`auth` d'une location `/api/v1/admin` face à un backend insensible à la casse. Les locations `prefix`/`exact` portant `auth`, `ip_filter` ou `rate_limit` sont désormais comparées sans casse (défaut sûr) ; option `case_insensitive` par location pour forcer l'un ou l'autre, `strip_prefix` suit la même règle, les regex restent explicites.
+
+- **Edge 0.21.5 — WebSocket : contrôle d'Origin (S2, CSWSH)** : une route avec `cors.allowed_origins` non vide refuse l'upgrade WebSocket (`403`) quand l'en-tête `Origin` est présent et absent de la liste (`null` compris). Les requêtes sans `Origin` (clients non navigateur) et les origines listées passent ; le joker `*` n'est pas accepté (comme pour CORS).
 
 ### Ajouté
 

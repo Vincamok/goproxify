@@ -121,3 +121,47 @@ func TestForwardedForOmittedWhenDisabled(t *testing.T) {
 		t.Fatal("X-Forwarded-For ne doit pas être envoyé quand forwarded_headers est vide")
 	}
 }
+
+func TestWebSocketUpgradeOriginCheck(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer backend.Close()
+
+	h := newTestHandler(&router.Route{
+		Host:     "app.test",
+		Backends: []router.Backend{{URL: backend.URL}},
+		CORS:     &router.CORSConfig{AllowedOrigins: []string{"https://app.lab.test"}},
+	})
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	cases := []struct {
+		name   string
+		origin *string
+		deny   bool
+	}{
+		{"origine listée", ptr("https://app.lab.test"), false},
+		{"origine étrangère", ptr("https://evil.test"), true},
+		{"origine null", ptr("null"), true},
+		{"sans Origin", nil, false},
+	}
+	for _, c := range cases {
+		req, _ := http.NewRequest(http.MethodGet, srv.URL, nil)
+		req.Header.Set("Connection", "Upgrade")
+		req.Header.Set("Upgrade", "websocket")
+		if c.origin != nil {
+			req.Header.Set("Origin", *c.origin)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		resp.Body.Close()
+		if got := resp.StatusCode == http.StatusForbidden; got != c.deny {
+			t.Errorf("%s: statut %d, refus attendu=%v", c.name, resp.StatusCode, c.deny)
+		}
+	}
+}
+
+func ptr(s string) *string { return &s }

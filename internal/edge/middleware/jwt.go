@@ -6,6 +6,9 @@ package middleware
 import (
 	"context"
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/sha512"
@@ -67,14 +70,17 @@ func JWTValidation(cfg *router.JWTConfig) func(http.Handler) http.Handler {
 }
 
 func extractBearerToken(r *http.Request, headerName string) string {
-	if headerName != "" {
-		return r.Header.Get(headerName)
+	if headerName == "" {
+		headerName = "Authorization"
 	}
-	auth := r.Header.Get("Authorization")
-	if strings.HasPrefix(auth, "Bearer ") {
-		return auth[7:]
+	v := strings.TrimSpace(r.Header.Get(headerName))
+	if len(v) > 7 && strings.EqualFold(v[:7], "Bearer ") {
+		return strings.TrimSpace(v[7:])
 	}
-	return ""
+	if strings.EqualFold(headerName, "Authorization") {
+		return ""
+	}
+	return v
 }
 
 // --- JWKS cache -------------------------------------------------------------
@@ -83,11 +89,11 @@ type jwksCache struct {
 	url    string
 	client *http.Client
 	mu     sync.RWMutex
-	keys   map[string]*rsa.PublicKey
+	keys   map[string]crypto.PublicKey
 	expiry time.Time
 }
 
-func (c *jwksCache) get(kid string) (*rsa.PublicKey, error) {
+func (c *jwksCache) get(kid string) (crypto.PublicKey, error) {
 	c.mu.RLock()
 	fresh := time.Now().Before(c.expiry)
 	cached := c.keys[kid]
@@ -123,6 +129,9 @@ type jwkKey struct {
 	N   string   `json:"n"`
 	E   string   `json:"e"`
 	X5c []string `json:"x5c"`
+	Crv string   `json:"crv"`
+	X   string   `json:"x"`
+	Y   string   `json:"y"`
 }
 
 func (c *jwksCache) refresh() error {
@@ -135,12 +144,20 @@ func (c *jwksCache) refresh() error {
 	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
 		return fmt.Errorf("jwks: decode: %w", err)
 	}
-	keys := make(map[string]*rsa.PublicKey, len(doc.Keys))
+	keys := make(map[string]crypto.PublicKey, len(doc.Keys))
 	for _, k := range doc.Keys {
-		if k.Kty != "RSA" {
+		var pub crypto.PublicKey
+		var err error
+		switch k.Kty {
+		case "RSA":
+			pub, err = jwkKeyToRSA(k)
+		case "EC":
+			pub, err = jwkKeyToEC(k)
+		case "OKP":
+			pub, err = jwkKeyToEd25519(k)
+		default:
 			continue
 		}
-		pub, err := jwkKeyToRSA(k)
 		if err != nil {
 			continue
 		}
@@ -182,6 +199,44 @@ func jwkKeyToRSA(k jwkKey) (*rsa.PublicKey, error) {
 	return &rsa.PublicKey{N: n, E: e}, nil
 }
 
+func jwkKeyToEC(k jwkKey) (*ecdsa.PublicKey, error) {
+	var curve elliptic.Curve
+	switch k.Crv {
+	case "P-256":
+		curve = elliptic.P256()
+	case "P-384":
+		curve = elliptic.P384()
+	case "P-521":
+		curve = elliptic.P521()
+	default:
+		return nil, fmt.Errorf("jwks: courbe EC non supportée: %q", k.Crv)
+	}
+	xb, err := base64.RawURLEncoding.DecodeString(k.X)
+	if err != nil {
+		return nil, fmt.Errorf("jwks: x: %w", err)
+	}
+	yb, err := base64.RawURLEncoding.DecodeString(k.Y)
+	if err != nil {
+		return nil, fmt.Errorf("jwks: y: %w", err)
+	}
+	x, y := new(big.Int).SetBytes(xb), new(big.Int).SetBytes(yb)
+	if !curve.IsOnCurve(x, y) {
+		return nil, fmt.Errorf("jwks: point EC hors courbe")
+	}
+	return &ecdsa.PublicKey{Curve: curve, X: x, Y: y}, nil
+}
+
+func jwkKeyToEd25519(k jwkKey) (ed25519.PublicKey, error) {
+	if k.Crv != "Ed25519" {
+		return nil, fmt.Errorf("jwks: courbe OKP non supportée: %q", k.Crv)
+	}
+	xb, err := base64.RawURLEncoding.DecodeString(k.X)
+	if err != nil || len(xb) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("jwks: x Ed25519 invalide")
+	}
+	return ed25519.PublicKey(xb), nil
+}
+
 // --- Validation JWT ---------------------------------------------------------
 
 func validateJWT(raw string, cache *jwksCache, issuer, audience string) (map[string]any, error) {
@@ -217,7 +272,7 @@ func validateJWT(raw string, cache *jwksCache, issuer, audience string) (map[str
 
 	// Vérifier la signature avant de faire confiance aux claims (revue P0 #1).
 	switch {
-	case strings.HasPrefix(alg, "RS"):
+	case strings.HasPrefix(alg, "RS"), strings.HasPrefix(alg, "ES"), alg == "EdDSA":
 		if cache == nil || strings.TrimSpace(cache.url) == "" {
 			return nil, fmt.Errorf("jwt: jwks_url requis pour %s", alg)
 		}
@@ -225,7 +280,7 @@ func validateJWT(raw string, cache *jwksCache, issuer, audience string) (map[str
 		if err != nil {
 			return nil, err
 		}
-		if err := verifyRSA(alg, pub, msg, sigData); err != nil {
+		if err := verifySignature(alg, pub, msg, sigData); err != nil {
 			return nil, fmt.Errorf("jwt: signature invalide: %w", err)
 		}
 	case strings.HasPrefix(alg, "HS"):
@@ -255,6 +310,63 @@ func validateJWT(raw string, cache *jwksCache, issuer, audience string) (map[str
 		}
 	}
 	return claims, nil
+}
+
+// verifySignature exige que le type de clé du JWKS corresponde à l'algorithme annoncé.
+func verifySignature(alg string, pub crypto.PublicKey, msg, sig []byte) error {
+	switch alg {
+	case "ES256", "ES384", "ES512":
+		k, ok := pub.(*ecdsa.PublicKey)
+		if !ok {
+			return fmt.Errorf("jwt: clé non EC pour %s", alg)
+		}
+		return verifyECDSA(alg, k, msg, sig)
+	case "EdDSA":
+		k, ok := pub.(ed25519.PublicKey)
+		if !ok {
+			return fmt.Errorf("jwt: clé non Ed25519 pour EdDSA")
+		}
+		if !ed25519.Verify(k, msg, sig) {
+			return fmt.Errorf("jwt: signature EdDSA invalide")
+		}
+		return nil
+	}
+	k, ok := pub.(*rsa.PublicKey)
+	if !ok {
+		return fmt.Errorf("jwt: clé non RSA pour %s", alg)
+	}
+	return verifyRSA(alg, k, msg, sig)
+}
+
+func verifyECDSA(alg string, pub *ecdsa.PublicKey, msg, sig []byte) error {
+	var bits, size int
+	var digest []byte
+	switch alg {
+	case "ES256":
+		bits, size = 256, 32
+		h := sha256.Sum256(msg)
+		digest = h[:]
+	case "ES384":
+		bits, size = 384, 48
+		h := sha512.Sum384(msg)
+		digest = h[:]
+	default:
+		bits, size = 521, 66
+		h := sha512.Sum512(msg)
+		digest = h[:]
+	}
+	if pub.Curve.Params().BitSize != bits {
+		return fmt.Errorf("jwt: courbe incompatible avec %s", alg)
+	}
+	if len(sig) != 2*size {
+		return fmt.Errorf("jwt: signature %s de longueur invalide", alg)
+	}
+	r := new(big.Int).SetBytes(sig[:size])
+	s := new(big.Int).SetBytes(sig[size:])
+	if !ecdsa.Verify(pub, digest, r, s) {
+		return fmt.Errorf("jwt: signature %s invalide", alg)
+	}
+	return nil
 }
 
 func verifyRSA(alg string, pub *rsa.PublicKey, msg, sig []byte) error {

@@ -51,7 +51,7 @@ func TestReviewP2_JWKSServesStaleOnRefreshFail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("refresh échoué doit servir stale: %v", err)
 	}
-	if pub2.N.Cmp(pub.N) != 0 {
+	if pub2.(*rsa.PublicKey).N.Cmp(pub.(*rsa.PublicKey).N) != 0 {
 		t.Fatal("clé stale inattendue")
 	}
 }

@@ -255,6 +255,11 @@ t_jwt() { section jwt "JWT : jetons valides, forgés, expirés, confusion d'algo
   local t c b
   t=$(jwt ""); check "jeton valide (RS256)" "$(code -H "Authorization: Bearer $t" "$(u jwt)/whoami")" 200
   check "header_name=Authorization (jeton valide) : le préfixe « Bearer » doit être retiré" "$(code -H "Authorization: Bearer $t" "$(u jwt-authz)/whoami")" 200
+  check "jeton valide (ES256, clé EC du JWKS)" "$(code -H "Authorization: Bearer $(jwt 'alg=ES256')" "$(u jwt)/whoami")" 200
+  check "jeton valide (EdDSA, clé Ed25519 du JWKS)" "$(code -H "Authorization: Bearer $(jwt 'alg=EdDSA')" "$(u jwt)/whoami")" 200
+  check "ES256 : charge utile modifiée (signature invalide)" "$(code -H "Authorization: Bearer $(jwt 'alg=ES256&tamper=1')" "$(u jwt)/whoami")" 401
+  check "EdDSA : charge utile modifiée (signature invalide)" "$(code -H "Authorization: Bearer $(jwt 'alg=EdDSA&tamper=1')" "$(u jwt)/whoami")" 401
+  check "header_name=Authorization : schéma « bearer » en minuscules" "$(code -H "Authorization: bearer $t" "$(u jwt-authz)/whoami")" 200
   check "aucun jeton" "$(code "$(u jwt)/whoami")" 401
   check "jeton alg=none" "$(code -H "Authorization: Bearer $(jwt 'alg=none')" "$(u jwt)/whoami")" 401
   check "confusion RS/HS (HS256 signé avec la clé publique)" "$(code -H "Authorization: Bearer $(jwt 'alg=HS256')" "$(u jwt)/whoami")" 401

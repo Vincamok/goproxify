@@ -46,6 +46,20 @@ func ApplyPathRewrite(path, pattern, template string) string {
 	return result
 }
 
+// MatchesFolded indique si Path (prefix/exact) est comparé sans tenir compte de la casse.
+// Par défaut (CaseInsensitive nil), une location portant auth, ip_filter ou rate_limit
+// l'est : face à un backend insensible (IIS/ASP.NET), /API/Admin contournerait sinon
+// la protection de /api/admin. Les locations regex ne sont jamais repliées.
+func (l *Location) MatchesFolded() bool {
+	if l.PathType == "regex" {
+		return false
+	}
+	if l.CaseInsensitive != nil {
+		return *l.CaseInsensitive
+	}
+	return l.Auth != nil || l.IPFilter != nil || l.RateLimit != nil
+}
+
 // MatchLocation retourne la Location la plus spécifique pour le chemin donné,
 // selon la priorité nginx : exact > préfixe le plus long > première regex.
 // Retourne nil si aucune location ne correspond.
@@ -63,13 +77,21 @@ func MatchLocation(route *Route, path string) *Location {
 		}
 		switch loc.PathType {
 		case "exact":
-			if path == loc.Path {
+			if loc.MatchesFolded() {
+				if strings.ToLower(path) == strings.ToLower(loc.Path) {
+					return loc
+				}
+			} else if path == loc.Path {
 				return loc // exact gagne toujours
 			}
 		case "regex":
 			// collecté séparément, testé si aucun préfixe ne gagne
 		default: // prefix
-			if strings.HasPrefix(path, loc.Path) && len(loc.Path) > bestPrefixLen {
+			p, lp := path, loc.Path
+			if loc.MatchesFolded() {
+				p, lp = strings.ToLower(p), strings.ToLower(lp)
+			}
+			if strings.HasPrefix(p, lp) && len(loc.Path) > bestPrefixLen {
 				bestPrefix = loc
 				bestPrefixLen = len(loc.Path)
 			}
@@ -131,8 +153,10 @@ func MergeLocation(route *Route, loc *Location) *Route {
 		merged.ErrorPages = loc.ErrorPages
 	}
 	merged.StripPrefix = ""
+	merged.StripPrefixFold = false
 	if loc.StripPrefix && loc.Path != "" && loc.PathType != "regex" {
 		merged.StripPrefix = loc.Path
+		merged.StripPrefixFold = loc.MatchesFolded()
 	}
 	merged.PathRewrite = ""
 	merged.PathRewritePattern = ""
@@ -141,6 +165,23 @@ func MergeLocation(route *Route, loc *Location) *Route {
 		merged.PathRewritePattern = loc.Path
 	}
 	return &merged
+}
+
+// StripPathPrefixFold est StripPathPrefix sans tenir compte de la casse.
+// Si le repli de casse change la longueur du chemin, il est laissé intact.
+func StripPathPrefixFold(path, prefix string) string {
+	lp := strings.ToLower(path)
+	pre := strings.TrimSuffix(strings.ToLower(prefix), "/")
+	if len(lp) != len(path) || pre == "" || len(pre) > len(path) {
+		return path
+	}
+	if lp == pre || strings.HasPrefix(lp, pre+"/") {
+		if out := path[len(pre):]; out != "" {
+			return out
+		}
+		return "/"
+	}
+	return path
 }
 
 // StripPathPrefix removes a location prefix from an HTTP path.

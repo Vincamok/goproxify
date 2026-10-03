@@ -105,6 +105,9 @@ func CORS(cfg *router.CORSConfig) func(http.Handler) http.Handler {
 	}
 }
 
+// OriginAllowed indique si l'en-tête Origin figure dans la liste (le joker * n'est jamais accepté).
+func OriginAllowed(origin string, allowed []string) bool { return originAllowed(origin, allowed) }
+
 func originAllowed(origin string, allowed []string) bool {
 	for _, a := range allowed {
 		if a == "*" {

@@ -23,7 +23,7 @@ The product comes in **three complementary personalities**:
 | HTTP/1.1 | Full reverse proxy with header management |
 | HTTP/2 | Stream multiplexing, ALPN negotiation |
 | HTTP/3 QUIC | UDP transport, `Alt-Svc` negotiation |
-| WebSocket | HTTP → WS upgrade handled natively |
+| WebSocket | HTTP → WS upgrade handled natively; when the route defines `cors.allowed_origins`, an upgrade whose `Origin` is not listed (or is `null`) gets `403` (anti cross-site WebSocket hijacking); requests without `Origin` pass |
 | gRPC | Transparent proxy over HTTP/2 |
 | TCP L4 | Pure stream: local port → remote host:port, native SSL passthrough, L4 load balancing |
 | UDP L4 | Pure tunnel, bytes in/out metrics |
@@ -35,6 +35,10 @@ The product comes in **three complementary personalities**:
 - **ALPN negotiation**: `h2` and `http/1.1`
 - **mTLS client**: client certificate validation (Milestone 5)
 - **Inter-Edge delegation**: an entry Edge can forward a domain to another Edge — **Passthrough** (raw TLS tunnel) or **Terminate** (TLS at entry + HTTP(S) proxy + `X-Forwarded-For`) modes. See [docs/delegation.md](delegation.md).
+
+### Path locations — case sensitivity
+
+`locations` (`path_type` `prefix` | `exact` | `regex`) are matched on the decoded, normalised path (`//`, `/./`, `..`, `;a=b`, `%2f`, `%00`, `%5c` are rejected upstream). Matching is **case-insensitive by default for any prefix/exact location carrying `auth`, `ip_filter` or `rate_limit`**, and case-sensitive otherwise. Per-location option `case_insensitive` (`true`/`false`) overrides the default. `regex` locations are never folded (use `(?i)` explicitly). `strip_prefix` follows the same rule. Why: a case-insensitive backend (IIS, ASP.NET) serves `/API/ADMIN` as `/api/admin`, so a case-sensitive protected location would be bypassed. Forcing `case_insensitive: false` on a protected location re-opens that bypass against such backends.
 
 ### Autonomous operation without Admin
 
@@ -73,7 +77,7 @@ The Edge can operate **autonomously** if the Admin is temporarily unreachable:
 | Bans page | One page for the Admin (all Edges) and for each Edge menu (that Edge's bans plus global bans): KPIs, 48 h timeline, origin by country, breakdown by source / Edge (domain on an Edge) / reason, then an Active / History / CrowdSec list filterable by search, source, duration (expiring within 1 h, temporary, permanent, repeat offenders) and Edge. Row actions as icons (Prism, IP history, extend 24 h, make permanent, lift), bulk actions on a selection, CSV export, mobile card layout. Each ban records the Edge that reported it (`edge_name`, empty = global); `goproxify security bans list -edge …` and the MCP tool `list_security_bans` take the same `edge` filter |
 | Automatic rules engine | Event-driven conditions (critical CVE, ban spike, silent engine, error rate, repeat offender IP, node offline, cert expiring) → actions (disable proxy, ban IP, alert, strict mode, webhook call, trigger backup); cooldown, dry-run, history — see [docs/security.md](security.md#automatic-rules-engine) |
 | SSO | GitHub OAuth2, LDAP/Active Directory, SAML 2.0, OIDC (Google, Microsoft/Entra, Auth0, Okta, Keycloak, Zitadel, Casdoor, Dex, Authentik, Authelia) |
-| JWT validation | JWKS (planned) |
+| JWT validation | JWKS : RSA (RS256/384/512), EC (ES256/384/512) and Ed25519 (EdDSA); `none` and HS* refused; `header_name: Authorization` accepts `Bearer <token>` |
 
 ### Request transformation pipeline
 

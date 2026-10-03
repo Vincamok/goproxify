@@ -79,22 +79,22 @@ func DefaultRules() []Rule {
 		{
 			ID: 942100, Category: "sqli", Severity: SevCritical,
 			AnomalyScore: 5,
-			Pattern: mustCompile(`(?i)(union[\s\+]+(?:all\s+)?select|select[\s\+]+.*from|insert[\s\+]+into|update[\s\+]+\w+[\s\+]+set|delete[\s\+]+from|drop[\s\+]+(?:table|database)|truncate[\s\+]+table|exec(?:ute)?[\s\(]+|xp_\w+|sp_\w+)`),
-			Targets: []Target{TargetArgs, TargetBody, TargetURI},
+			Pattern: mustCompile(`(?i)(union[\s\+]+(?:all\s+)?select|(?:['"\x60;)]|--|\*/)[\s\+]*\(?[\s\+]*select[\s\+]+[^;]*?\bfrom\b|\bselect[\s\+]+(?:\*|[\w.]+[\s\+]*,[\s\+]*[\w.*]+|distinct\b|top[\s\+]+\d+|count[\s\+]*\(|@@\w+)[^;]*?\bfrom\b|insert[\s\+]+into|update[\s\+]+\w+[\s\+]+set|delete[\s\+]+from|drop[\s\+]+(?:table|database)|truncate[\s\+]+table|exec(?:ute)?[\s\(]+|xp_\w+|sp_\w+)`),
+			Targets: []Target{TargetArgs, TargetBody, TargetURI, TargetCookies},
 			Message: "SQL Injection détectée",
 		},
 		{
 			ID: 942110, Category: "sqli", Severity: SevHigh,
 			AnomalyScore: 4,
-			Pattern: mustCompile(`(?i)('[\s]*(?:or|and)[\s]*'?[\w\s]*'?[\s]*=[\s]*'?[\w\s]*'?|'[\s]*--[\s]|;[\s]*--[\s]|\/\*[\s\S]*?\*\/)`),
-			Targets: []Target{TargetArgs, TargetBody},
+			Pattern: mustCompile(`(?i)('[\s]*(?:or|and)[\s]*'?[\w\s]*'?[\s]*=[\s]*'?[\w\s]*'?|'[\s]*--(?:[\s]|$)|;[\s]*--[\s]|\/\*[\s\S]*?\*\/)`),
+			Targets: []Target{TargetArgs, TargetBody, TargetCookies},
 			Message: "SQL Injection (opérateurs logiques) détectée",
 		},
 		{
 			ID: 942120, Category: "sqli", Severity: SevHigh,
 			AnomalyScore: 4,
 			Pattern: mustCompile(`(?i)\b(?:benchmark|sleep|waitfor[\s]+delay|pg_sleep|dbms_pipe\.receive_message)\b`),
-			Targets: []Target{TargetArgs, TargetBody},
+			Targets: []Target{TargetArgs, TargetBody, TargetCookies},
 			Message: "Blind SQL Injection (time-based) détectée",
 		},
 
@@ -151,6 +151,30 @@ func DefaultRules() []Rule {
 			Pattern: mustCompile(`(?i)(?:\$\{IFS\}|\$\{@\}|\$\([[:space:]]*\)|(?:bash|sh)[\s]+-[ci][\s]+)`),
 			Targets: []Target{TargetArgs, TargetBody},
 			Message: "RCE (shell bypass) détecté",
+		},
+
+		{
+			ID: 932120, Category: "rce", Severity: SevCritical,
+			AnomalyScore: 5,
+			Pattern: mustCompile("(?i)(?:\\$\\([\\s]*|`[\\s]*)(?:id|whoami|uname|cat|ls|pwd|env|printenv|hostname|ifconfig|ping|sleep|echo|curl|wget|nc|bash|sh|ps|netstat)\\b[^)`]*[)`]"),
+			Targets: []Target{TargetArgs, TargetBody, TargetCookies},
+			Message: "Substitution de commande shell détectée",
+		},
+		{
+			ID: 932130, Category: "rce", Severity: SevHigh,
+			AnomalyScore: 4,
+			Pattern: mustCompile(`(?i)\|\|[\s]*(?:id|whoami|uname|cat|ls|pwd|env|printenv|hostname|ifconfig|ping|sleep|curl|wget|nc|bash|sh)(?:[\s;|&]|$)`),
+			Targets: []Target{TargetArgs, TargetBody, TargetCookies},
+			Message: "Command Injection (||) détectée",
+		},
+		// Exclure 934300 pour une application qui accepte des gabarits saisis par l'utilisateur
+		// (jinja, twig, handlebars, mustache, EJS).
+		{
+			ID: 934300, Category: "ssti", Severity: SevHigh,
+			AnomalyScore: 4,
+			Pattern: mustCompile(`(?i)(?:\{\{[\s]*[\w.()'"]+[\s]*(?:\*\*?|/|%|\+)[\s]*[\w.()'"]+|\{\{[^}]*(?:__\w+__|\bconfig\b[.\[]|\blipsum\b|\bcycler\b|\bnamespace\b[.(])|[$#]\{[\s]*\d+[\s]*[*/%+-][\s]*\d+[\s]*\}|<%[=-])`),
+			Targets: []Target{TargetArgs, TargetBody, TargetCookies},
+			Message: "Server-Side Template Injection détectée",
 		},
 
 		// --- PHP/Server-Side Injection ---

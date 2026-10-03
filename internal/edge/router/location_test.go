@@ -139,3 +139,61 @@ func TestMergeLocation_StripPrefix(t *testing.T) {
 		t.Fatalf("expected clear strip, got %q", merged2.StripPrefix)
 	}
 }
+
+func TestMatchLocation_CaseFold(t *testing.T) {
+	yes, no := true, false
+	route := &Route{Locations: []Location{
+		{Path: "/api/v1/admin", Auth: &SSOConfig{}, Backends: []Backend{{URL: "http://prot"}}},
+		{Path: "/open", Backends: []Backend{{URL: "http://open"}}},
+		{Path: "/ex", PathType: "exact", RateLimit: &RateLimitConfig{}, Backends: []Backend{{URL: "http://ex"}}},
+		{Path: "/opt", CaseInsensitive: &yes, Backends: []Backend{{URL: "http://opt"}}},
+		{Path: "/strict", CaseInsensitive: &no, Auth: &SSOConfig{}, Backends: []Backend{{URL: "http://strict"}}},
+		{Path: `^/Re/\d+$`, PathType: "regex", Auth: &SSOConfig{}, Backends: []Backend{{URL: "http://re"}}},
+	}}
+	cases := map[string]string{
+		"/api/v1/admin/x": "http://prot",
+		"/API/V1/ADMIN/x": "http://prot",
+		"/Api/v1/Admin":   "http://prot",
+		"/open/x":         "http://open",
+		"/OPEN/x":         "",
+		"/EX":             "http://ex",
+		"/ex/more":        "",
+		"/OPT/a":          "http://opt",
+		"/strict/a":       "http://strict",
+		"/STRICT/a":       "",
+		"/Re/1":           "http://re",
+		"/re/1":           "",
+	}
+	for p, want := range cases {
+		got := ""
+		if loc := MatchLocation(route, p); loc != nil {
+			got = loc.Backends[0].URL
+		}
+		if got != want {
+			t.Errorf("path %q: got %q want %q", p, got, want)
+		}
+	}
+}
+
+func TestStripPathPrefixFold(t *testing.T) {
+	cases := [][3]string{
+		{"/API/x", "/api", "/x"},
+		{"/Api", "/api", "/"},
+		{"/APIX/x", "/api", "/APIX/x"},
+		{"/other", "/api", "/other"},
+	}
+	for _, c := range cases {
+		if got := StripPathPrefixFold(c[0], c[1]); got != c[2] {
+			t.Errorf("%q/%q: got %q want %q", c[0], c[1], got, c[2])
+		}
+	}
+	route := &Route{}
+	m := MergeLocation(route, &Location{Path: "/admin", StripPrefix: true, Auth: &SSOConfig{}})
+	if !m.StripPrefixFold {
+		t.Error("StripPrefixFold attendu pour une location protégée")
+	}
+	m = MergeLocation(route, &Location{Path: "/admin", StripPrefix: true})
+	if m.StripPrefixFold {
+		t.Error("StripPrefixFold inattendu pour une location non protégée")
+	}
+}

@@ -62,7 +62,7 @@ func VerifyOIDCIDToken(raw, jwksURL, issuer, audience, expectedNonce, clientSecr
 		if err != nil {
 			return nil, err
 		}
-		if err := verifyRSA(header.Alg, pub, msg, sig); err != nil {
+		if err := verifySignature(header.Alg, pub, msg, sig); err != nil {
 			return nil, fmt.Errorf("oidc: signature invalide: %w", err)
 		}
 	case strings.HasPrefix(header.Alg, "HS"):

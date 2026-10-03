@@ -801,8 +801,19 @@ func extractHeaders(r *http.Request) []string {
 
 func extractCookies(r *http.Request) []string {
 	var vals []string
-	for _, c := range r.Cookies() {
-		vals = append(vals, c.Value)
+	// Lecture manuelle : r.Cookies() écarte les valeurs contenant espace ou guillemet, justement les charges d'injection.
+	for _, line := range r.Header.Values("Cookie") {
+		for _, part := range strings.Split(line, ";") {
+			_, v, ok := strings.Cut(part, "=")
+			if !ok {
+				continue
+			}
+			v = strings.TrimSpace(v)
+			vals = append(vals, v)
+			if dec, err := url.QueryUnescape(v); err == nil && dec != v {
+				vals = append(vals, dec)
+			}
+		}
 	}
 	return vals
 }

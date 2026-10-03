@@ -6,6 +6,9 @@ package main
 
 import (
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
@@ -303,6 +306,11 @@ func control() http.Handler {
 		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{{
 			"kty": "RSA", "kid": "lab1", "use": "sig", "alg": "RS256",
 			"n": b64(jwtKey.N.Bytes()), "e": b64(big.NewInt(int64(jwtKey.E)).Bytes()),
+		}, {
+			"kty": "EC", "kid": "lab-ec", "use": "sig", "alg": "ES256", "crv": "P-256",
+			"x": b64(jwtECKey.X.FillBytes(make([]byte, 32))), "y": b64(jwtECKey.Y.FillBytes(make([]byte, 32))),
+		}, {
+			"kty": "OKP", "kid": "lab-ed", "use": "sig", "alg": "EdDSA", "crv": "Ed25519", "x": b64(jwtEdPub),
 		}}})
 	})
 	mux.HandleFunc("/ctl/", func(w http.ResponseWriter, r *http.Request) {
@@ -410,9 +418,11 @@ func main() {
 }
 
 // ---- JWT de test : clé RSA éphémère, JWKS sur le port de contrôle, jetons forgés à la demande ----
-// (la passerelle n'accepte que des clés RSA dans le JWKS)
+// (JWKS : RSA « lab1 », EC P-256 « lab-ec », Ed25519 « lab-ed »)
 
 var jwtKey, _ = rsa.GenerateKey(rand.Reader, 2048)
+var jwtECKey, _ = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+var jwtEdPub, jwtEdKey, _ = ed25519.GenerateKey(rand.Reader)
 
 func b64(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
 
@@ -422,7 +432,7 @@ func pubPEM() []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
 }
 
-// mintJWT : /ctl/jwt?alg=RS256|none|HS256&iss=&aud=&exp=<secondes, négatif = expiré>&sub=&tamper=1
+// mintJWT : /ctl/jwt?alg=RS256|ES256|EdDSA|none|HS256&iss=&aud=&exp=<secondes, négatif = expiré>&sub=&tamper=1
 func mintJWT(r *http.Request) string {
 	q := r.URL.Query()
 	get := func(k, def string) string {
@@ -433,7 +443,11 @@ func mintJWT(r *http.Request) string {
 	}
 	alg := get("alg", "RS256")
 	exp, _ := strconv.Atoi(get("exp", "300"))
-	hdr, _ := json.Marshal(map[string]string{"alg": alg, "typ": "JWT", "kid": "lab1"})
+	kid := map[string]string{"ES256": "lab-ec", "EdDSA": "lab-ed"}[alg]
+	if kid == "" {
+		kid = "lab1"
+	}
+	hdr, _ := json.Marshal(map[string]string{"alg": alg, "typ": "JWT", "kid": kid})
 	claims := map[string]any{"iss": get("iss", "https://issuer.lab.test"), "aud": get("aud", "lab-api"), "sub": get("sub", "alice"), "exp": time.Now().Add(time.Duration(exp) * time.Second).Unix(), "iat": time.Now().Unix()}
 	pl, _ := json.Marshal(claims)
 	signing := b64(hdr) + "." + b64(pl)
@@ -444,6 +458,12 @@ func mintJWT(r *http.Request) string {
 		m := hmac.New(sha256.New, pubPEM())
 		m.Write([]byte(signing))
 		sig = m.Sum(nil)
+	case "ES256":
+		h := sha256.Sum256([]byte(signing))
+		r, s, _ := ecdsa.Sign(rand.Reader, jwtECKey, h[:])
+		sig = append(r.FillBytes(make([]byte, 32)), s.FillBytes(make([]byte, 32))...)
+	case "EdDSA":
+		sig = ed25519.Sign(jwtEdKey, []byte(signing))
 	default:
 		h := sha256.Sum256([]byte(signing))
 		sig, _ = rsa.SignPKCS1v15(rand.Reader, jwtKey, crypto.SHA256, h[:])
