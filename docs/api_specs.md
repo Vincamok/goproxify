@@ -954,7 +954,22 @@ Le paramètre `edge=<id ou nom>` désigne une passerelle. Dans un **groupe HA** 
 
 Config du portail (`enabled`, `ssh_port`, `http_port`, `public_host`, `auth_provider_id`, `allow_personal_targets`, `require_2fa`, `session_ttl_sec`, `session_mode`, `theme`, catalogue, utilisateurs). Pour une passerelle membre d'un groupe HA, la réponse ajoute :
 
-`theme` : apparence de l'interface du portail Access, choisie côté Admin et appliquée par la passerelle (`auto` — défaut, suit le système —, `clair`, `sombre`, `ocean`, `foret`, `amethyste`, `contraste`). Toute autre valeur est ramenée à `auto`. Conservé dans la copie locale de la passerelle (fonctionne Admin coupé).
+`theme` : apparence de l'interface du portail Access, choisie côté Admin et appliquée par la passerelle (`auto` — défaut, suit le système —, `clair`, `sombre`, `ocean`, `foret`, `amethyste`, `contraste`). Toute autre valeur est ramenée à `auto`. Appliqué à la page servie par la passerelle (copie locale chiffrée : fonctionne Admin coupé, y compris après redémarrage).
+
+`views` : liste d'**entrées dédiées** du portail — même passerelle, même annuaire et mêmes destinations, mais une URL, un thème, un titre et un périmètre propres. Absent à l'enregistrement = liste inchangée ; `[]` la vide. Chaque vue :
+
+| Champ | Description |
+|-------|-------------|
+| `slug` | Segment d'URL : `prestataire` → `https://<hôte public>/prestataire` (minuscules, chiffres, tirets ; `api`, `assets`, `static` réservés) |
+| `host` | Hôte dédié optionnel (ex. `presta.example.fr`) : la passerelle publie une route HTTPS supplémentaire vers le portail. Sans `slug`, l'hôte entier est la vue |
+| `name`, `title`, `tagline` | Libellé d'administration, titre et sous-titre affichés (défauts : ceux du portail) |
+| `theme` | Thème de la vue (même liste que `theme`) ; vide = thème du portail |
+| `auth_provider_id` | Fournisseur d'authentification (annuaire) de la vue ; vide = celui du portail |
+| `allowed_tags` | Tags utilisateurs autorisés à se connecter sur la vue ; vide = tous. Un jeton émis sur une vue n'est valable que sur cette vue |
+| `target_tags` | Seules les destinations du catalogue portant un de ces tags sont visibles et ouvrables depuis la vue ; vide = toutes (en plus des droits habituels de l'utilisateur) |
+| `require_2fa` | `true`/`false` pour surcharger le réglage du portail ; absent = hérité |
+
+Un couple hôte/`slug` ne peut apparaître qu'une fois (`400` sinon). La page du portail envoie la vue courante dans l'en-tête `X-Portal-View` ; l'accès SSH direct (port 2222) n'est pas concerné par les vues.
 
 | Champ | Description |
 |-------|-------------|

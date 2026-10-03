@@ -17,6 +17,7 @@ type MFAChallenge struct {
 	UserID          string
 	Username        string
 	VaultKeyHex     string
+	View            string
 	Expires         time.Time
 	EmailOTPHash    string
 	EmailOTPExpires time.Time

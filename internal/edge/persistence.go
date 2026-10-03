@@ -120,6 +120,30 @@ func (s *Server) loadThreatConfigFromDisk() {
 	s.log.Info(threat.Name+": config chargée depuis le disque", "enabled", cfg.Enabled)
 }
 
+// portalConfigPath est la copie locale chiffrée de la config du portail Access poussée par l'Admin
+// (réglages, vues, politique, accès temporaires, clé de groupe HA).
+func portalConfigPath() string {
+	if p := os.Getenv("GPX_PORTAL_CONFIG_PATH"); p != "" {
+		return p
+	}
+	return "/etc/goproxify/portal-config.gpx"
+}
+
+// loadPortalConfigFromDisk relance le portail sur sa dernière config connue, sans l'Admin.
+func (s *Server) loadPortalConfigFromDisk() {
+	var payload portalPushPayload
+	ok, err := s.cache.LoadFile(portalConfigPath(), &payload)
+	if err != nil {
+		s.log.Warn("portal: config locale illisible — en attente de l'Admin", "err", err)
+		return
+	}
+	if !ok {
+		return
+	}
+	s.applyPortalPayload(payload)
+	s.log.Info("portal: config chargée depuis le disque", "enabled", payload.Enabled, "vues", len(payload.Views))
+}
+
 // settingsPath est la copie locale chiffrée des réglages runtime poussés par l'Admin
 // (protection des IP des access logs, journalisation, tracing, URL publique).
 func settingsPath() string {

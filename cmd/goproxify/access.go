@@ -202,6 +202,14 @@ func runAccessConfig() {
 			}
 			cur["session_ttl_sec"] = n
 		}
+		if v := flagValue(args, "-views", ""); v != "" {
+			var views []map[string]any
+			if err := json.Unmarshal([]byte(v), &views); err != nil {
+				fmt.Fprintf(os.Stderr, "-views : JSON invalide (%v)\n", err)
+				os.Exit(1)
+			}
+			cur["views"] = views
+		}
 		if v := flagValue(args, "-theme", ""); v != "" {
 			cur["theme"] = v
 		}

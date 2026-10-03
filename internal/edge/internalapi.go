@@ -265,7 +265,7 @@ func (s *Server) handlePushRoutes(w http.ResponseWriter, r *http.Request) {
 }
 
 func isAgentRoute(id string) bool {
-	return id == portalPublicRouteID ||
+	return strings.HasPrefix(id, portalPublicRouteID) ||
 		strings.HasPrefix(id, "docker:") ||
 		strings.HasPrefix(id, "docker-host:") ||
 		strings.HasPrefix(id, "k8s:") ||
@@ -973,6 +973,7 @@ type portalPushPayload struct {
 	SessionTTLSec        int                    `json:"session_ttl_sec"`
 	SessionMode          string                 `json:"session_mode"`
 	Theme                string                 `json:"theme"`
+	Views                []portal.View          `json:"views"`
 	Catalog              []portal.CatalogTarget `json:"catalog"`
 	Users                []portal.SyncedUser    `json:"users"`
 	Grants               []portal.AccessGrant   `json:"grants"`
@@ -996,10 +997,21 @@ func (s *Server) handlePushPortal(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// applyPortalPush garde une copie locale chiffrée de la config poussée par l'Admin (le portail
+// redémarre ainsi sans l'Admin) puis l'applique.
 func (s *Server) applyPortalPush(payload portalPushPayload) {
 	if s.portal == nil {
 		return
 	}
+	if s.cache != nil {
+		if err := s.cache.SaveFile(portalConfigPath(), payload); err != nil {
+			s.log.Warn("portal: persistance config échouée", "err", err)
+		}
+	}
+	s.applyPortalPayload(payload)
+}
+
+func (s *Server) applyPortalPayload(payload portalPushPayload) {
 	cfg := portal.Config{
 		Enabled:              payload.Enabled,
 		SSHPort:              payload.SSHPort,
@@ -1012,6 +1024,7 @@ func (s *Server) applyPortalPush(payload portalPushPayload) {
 		SessionTTLSec:        payload.SessionTTLSec,
 		SessionMode:          payload.SessionMode,
 		Theme:                payload.Theme,
+		Views:                payload.Views,
 		Policy:               payload.Policy,
 		HAGroup:              payload.HAGroup,
 		HAMembers:            payload.HAMembers,
@@ -1047,30 +1060,44 @@ const portalPublicRouteID = "gpx-portal-public"
 // Client HTTP pour les relais passerelle→Agent (évite DefaultClient sans timeout — revue P1 #7).
 var agentRelayHTTP = &http.Client{Timeout: 30 * time.Second}
 
-// ensurePortalPublicRoute publie PublicHost → http://127.0.0.1:HTTPPort (TLS sur l'entrée).
-// Rejoué après chaque Replace de routes pour survivre aux full-sync Admin.
+// ensurePortalPublicRoute publie PublicHost → http://127.0.0.1:HTTPPort (TLS sur l'entrée), ainsi que
+// les hôtes dédiés des vues du portail. Rejoué après chaque Replace de routes pour survivre aux
+// full-sync Admin.
 func (s *Server) ensurePortalPublicRoute() {
 	if s.portal == nil || s.table == nil {
 		return
 	}
 	cfg := s.portal.Config()
-	if !cfg.Enabled || strings.TrimSpace(cfg.PublicHost) == "" {
-		if s.table.Delete(portalPublicRouteID) {
-			s.log.Info("portal: route publique retirée")
+	wanted := map[string]string{}
+	if cfg.Enabled {
+		if h := strings.TrimSpace(strings.ToLower(cfg.PublicHost)); h != "" {
+			wanted[portalPublicRouteID] = h
 		}
-		return
+		if len(wanted) > 0 {
+			for _, h := range cfg.ViewHosts() {
+				wanted[portalPublicRouteID+":"+h] = h
+			}
+		}
+	}
+	for _, r := range s.table.All() {
+		if strings.HasPrefix(r.ID, portalPublicRouteID) {
+			if _, keep := wanted[r.ID]; !keep && s.table.Delete(r.ID) {
+				s.log.Info("portal: route publique retirée", "host", r.Host)
+			}
+		}
 	}
 	cfg.Defaults()
-	host := strings.TrimSpace(strings.ToLower(cfg.PublicHost))
 	backend := fmt.Sprintf("http://127.0.0.1:%d", cfg.HTTPPort)
-	s.table.Upsert(&router.Route{
-		ID:         portalPublicRouteID,
-		Host:       host,
-		Type:       router.RouteHTTP,
-		TLSEnabled: true,
-		Backends:   []router.Backend{{URL: backend, Weight: 1}},
-	})
-	s.log.Info("portal: route HTTPS publique", "host", host, "backend", backend)
+	for id, host := range wanted {
+		s.table.Upsert(&router.Route{
+			ID:         id,
+			Host:       host,
+			Type:       router.RouteHTTP,
+			TLSEnabled: true,
+			Backends:   []router.Backend{{URL: backend, Weight: 1}},
+		})
+		s.log.Info("portal: route HTTPS publique", "host", host, "backend", backend)
+	}
 }
 
 // handleMetricsSummary retourne un résumé JSON des métriques Prometheus clés.

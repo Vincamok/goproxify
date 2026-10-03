@@ -518,6 +518,8 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 	}
 
+	s.loadPortalConfigFromDisk()
+
 	s.log.Info("edge démarré",
 		"http", fmt.Sprintf(":%d", s.cfg.Network.HTTPPort),
 		"https", fmt.Sprintf(":%d", s.cfg.Network.HTTPSPort),

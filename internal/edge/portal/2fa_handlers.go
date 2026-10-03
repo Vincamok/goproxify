@@ -205,7 +205,7 @@ func (h *HTTPServer) handle2FAVerify(w http.ResponseWriter, r *http.Request) {
 	var key [32]byte
 	copy(key[:], vk)
 	h.challenges.Delete(ch.ID)
-	tok, err := h.issueToken(u.ID, u.Username, key)
+	tok, err := h.issueToken(u.ID, u.Username, key, ch.View)
 	if err != nil {
 		http.Error(w, "persistance session: "+err.Error(), http.StatusInternalServerError)
 		return

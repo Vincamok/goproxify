@@ -154,6 +154,7 @@ func portalTools() []map[string]any {
 				opt("session_ttl_sec", "number", "TTL session en secondes"),
 				opt("session_mode", "string", "Mode session: one_shot ou renew"),
 				opt("theme", "string", "Thème de l'interface du portail : auto, clair, sombre, ocean, foret, amethyste ou contraste"),
+				opt("views", "array", "Entrées dédiées du portail (remplace la liste) : objets {slug, host, name, title, tagline, theme, auth_provider_id, allowed_tags[], target_tags[], require_2fa}. Même annuaire et mêmes destinations, URL/thème/auth/périmètre propres"),
 				opt("ha_session_mode", "string", "Groupe HA : sessions web sticky (défaut, restent sur la passerelle) ou shared (répliquées entre les membres)"),
 			),
 		},
@@ -389,6 +390,9 @@ func (h *Handler) toolUpdatePortalConfig(r *http.Request, args map[string]any) (
 	}
 	if _, ok := args["session_ttl_sec"]; ok {
 		cfgMap["session_ttl_sec"] = argInt(args, "session_ttl_sec", 60)
+	}
+	if v, ok := args["views"]; ok {
+		cfgMap["views"] = v
 	}
 	if _, ok := args["theme"]; ok {
 		cfgMap["theme"] = argStr(args, "theme")

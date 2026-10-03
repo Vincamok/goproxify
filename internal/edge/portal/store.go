@@ -27,6 +27,7 @@ type AuthSession struct {
 	UserID   string    `json:"user_id"`
 	Username string    `json:"username"`
 	VaultKey string    `json:"vault_key"` // hex 32 octets
+	View     string    `json:"view,omitempty"` // vue du portail où la session a été ouverte
 	Expires  time.Time `json:"expires"`
 }
 

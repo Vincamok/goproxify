@@ -9,7 +9,7 @@ const portalIndexHTML = `<!DOCTYPE html>
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>GoProxify Access</title>
+<title>__PORTAL_TITLE__ · GoProxify Access</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
@@ -528,8 +528,8 @@ pre.chain {
     </div>
   </div>
   <header class="hero">
-    <h1>Accès sécurisé à votre infrastructure</h1>
-    <p class="tagline">Sessions SSH et shell à jeton UUID — VM, bare-metal et conteneurs Docker.</p>
+    <h1>__PORTAL_TITLE__</h1>
+    <p class="tagline">__PORTAL_TAGLINE__</p>
   </header>
 
   <section id="auth" class="auth-hero">
@@ -763,8 +763,9 @@ pre.chain {
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
 <script>
-const TOK_KEY = 'gpx_portal_tok';
-const USER_KEY = 'gpx_portal_user';
+const VIEW = __PORTAL_VIEW__;
+const TOK_KEY = 'gpx_portal_tok:' + VIEW.key;
+const USER_KEY = 'gpx_portal_user:' + VIEW.key;
 const state = {
   token: sessionStorage.getItem(TOK_KEY) || '',
   user: sessionStorage.getItem(USER_KEY) || '',
@@ -901,7 +902,7 @@ function persistSession() {
   sessionStorage.setItem(USER_KEY, state.user);
 }
 async function api(path, opts = {}) {
-  const headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
+  const headers = Object.assign({ 'Content-Type': 'application/json', 'X-Portal-View': VIEW.slug }, opts.headers || {});
   if (state.token) headers.Authorization = 'Bearer ' + state.token;
   const res = await fetch(path, Object.assign({}, opts, { headers }));
   if (res.status === 401 && path !== '/api/login') {
@@ -915,7 +916,7 @@ async function api(path, opts = {}) {
 }
 async function loadAuthInfo() {
   try {
-    const info = await fetch('/api/auth-info').then(r => r.json());
+    const info = await fetch('/api/auth-info', { headers: { 'X-Portal-View': VIEW.slug } }).then(r => r.json());
     state.allowPersonal = !!info.allow_personal_targets;
     const hint = $('authHint');
     const btnSSO = $('btnSSO');

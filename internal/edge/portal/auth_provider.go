@@ -26,8 +26,8 @@ func DeriveSSOVaultKey(masterSecret, userID string) [32]byte {
 }
 
 // resolveSSO charge la SSOConfig du fournisseur configuré (nil si absent).
-func (h *HTTPServer) resolveSSO() (*router.SSOConfig, *router.AuthProvider, error) {
-	id := strings.TrimSpace(h.cfg.AuthProviderID)
+func (h *HTTPServer) resolveSSO(providerID string) (*router.SSOConfig, *router.AuthProvider, error) {
+	id := strings.TrimSpace(providerID)
 	if id == "" || h.providers == nil {
 		return nil, nil, nil
 	}

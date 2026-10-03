@@ -22,6 +22,7 @@ type Config struct {
 	SessionMode          string `json:"session_mode"`           // one_shot | multi
 	Policy               Policy `json:"policy"`                 // restrictions d'accès (poussées par l'Admin)
 	Theme                string `json:"theme,omitempty"`        // apparence du portail : auto (défaut) | clair | sombre | ocean | foret | amethyste | contraste
+	Views                []View `json:"views,omitempty"`        // entrées dédiées (/prestataire, /interne…) : thème, auth et périmètre propres
 
 	// Haute disponibilité (poussés par l'Admin) : réplication du magasin entre les passerelles du groupe.
 	HAGroup      string   `json:"ha_group,omitempty"`

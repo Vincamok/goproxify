@@ -53,7 +53,7 @@ Chaque composant fonctionne seul avec ce qu'il a déjà reçu. Une coupure n'enl
 
 ### Écarts (suivis dans `suivi/roadmap-public.md`)
 
-- **Portail Access** : configuration, politiques, accès temporaires et clé de groupe HA en mémoire seulement → portail arrêté après un redémarrage sans Admin.
+- **Portail Access** : la configuration poussée (réglages, thème, entrées dédiées, politique, accès temporaires, clé de groupe HA) est conservée dans `portal-config.gpx` (chiffré) et rechargée au démarrage : le portail redémarre sans l'Admin (Edge 0.23.0).
 - **Groupe HA** : liste des pairs de synchronisation (`push_gateway_peers`) et topologie Raft poussée par l'Admin (en l'absence de `cluster.peers` local) en mémoire seulement → plus de synchronisation entre pairs après un redémarrage sans Admin.
 - **Agent** : un changement de conteneur survenu pendant une coupure de sa passerelle est perdu (envoi HTTP unique, pas de réannonce à la reconnexion) jusqu'au prochain rescan.
 - **Agent rattaché à un groupe HA** : ne connaît qu'une adresse de passerelle (`control_plane.edge_endpoint`) ; le rattachement au groupe n'existe que côté Admin. Pas de bascule vers un autre membre, sauf si l'adresse est une IP virtuelle.

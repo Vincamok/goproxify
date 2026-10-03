@@ -31,6 +31,7 @@ type PortalConfig struct {
 	SessionTTLSec        int                    `json:"session_ttl_sec"`
 	SessionMode          string                 `json:"session_mode"`
 	Theme                string                 `json:"theme"`
+	Views                []portal.View          `json:"views"` // entrées dédiées (/prestataire…) ; absent à l'enregistrement = inchangées
 	Catalog              []portal.CatalogTarget `json:"catalog"`
 	Users                []portal.SyncedUser    `json:"users,omitempty"`
 	Grants               []portal.AccessGrant   `json:"grants,omitempty"`
@@ -147,7 +148,18 @@ func (h *PortalHandler) put(w http.ResponseWriter, r *http.Request) {
 	// Champs calculés ou secrets : jamais acceptés du client.
 	cfg.HAGroup, cfg.HAMembers, cfg.HAStandby, cfg.HAKey = "", nil, false, ""
 	cfg.Grants = nil
-	cfg.Policy = loadPortalConfig(h.DB, scope).Policy // ne se modifie que par /portal/policy
+	prev := loadPortalConfig(h.DB, scope)
+	cfg.Policy = prev.Policy // ne se modifie que par /portal/policy
+	if cfg.Views == nil {
+		cfg.Views = prev.Views
+	}
+	for i := range cfg.Views {
+		cfg.Views[i] = portal.NormalizeView(cfg.Views[i])
+	}
+	if err := portal.ValidateViews(cfg.Views); err != nil {
+		jsonErrF(w, err, http.StatusBadRequest)
+		return
+	}
 	if cfg.HASessionMode != HASessionShared {
 		cfg.HASessionMode = HASessionSticky
 	}

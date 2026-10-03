@@ -30,7 +30,7 @@ func TestElevatedH4_FinishLoginBlocksDisabled(t *testing.T) {
 	rr := httptest.NewRecorder()
 	u, _ := store.FindUserByID("u1")
 	key := DeriveSSOVaultKey("master", u.ID)
-	h.finishLogin(rr, u, key, "oidc")
+	h.finishLogin(rr, u, key, "oidc", (&Config{}).DefaultView())
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("disabled via finishLogin: status=%d want 403", rr.Code)
 	}
@@ -79,7 +79,7 @@ func TestElevatedH4_OIDCRedirectBlocksDisabled(t *testing.T) {
 	u, _ := store.FindUserByID("u2")
 	key := DeriveSSOVaultKey("master", u.ID)
 	req := httptest.NewRequest(http.MethodGet, "/api/oidc/callback", nil)
-	h.finishOIDCRedirect(rr, req, u, key)
+	h.finishOIDCRedirect(rr, req, u, key, (&Config{}).DefaultView())
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("disabled OIDC redirect: status=%d want 403", rr.Code)
 	}

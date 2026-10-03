@@ -9,7 +9,8 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ### Ajouté
 
-- **Admin 0.85.0 / Edge 0.22.1 — Portail Access : thème choisi côté Administration** : refonte visuelle du portail (barre supérieure, typographie Inter, onglets soulignés, cartes épurées) et 7 thèmes — Automatique (suit le système), Clair, Sombre, Océan, Forêt, Améthyste, Contraste élevé. Le thème se règle par passerelle dans Admin › Portail Access › Réglages (`theme`, également via l'API, le CLI `access config set -theme` et l'outil MCP `update_portal_config`) ; il est poussé à la passerelle, qui l'applique sans flash et le conserve dans sa copie locale. Les utilisateurs du portail n'ont pas de sélecteur. Le terminal xterm reprend les couleurs du thème.
+- **Admin 0.86.0 / Edge 0.23.0 — Portail Access : entrées dédiées par URL (`/prestataire`, `/interne`…) et thèmes** : une même passerelle peut servir plusieurs portails (chemin ou hôte dédié) qui partagent l'annuaire et les destinations mais ont chacun leur thème, titre, sous-titre, fournisseur d'authentification, exigence 2FA, groupes autorisés (tags utilisateurs) et destinations visibles (tags). Réglage dans Admin › Portail Access › Réglages › « Entrées dédiées du portail » (API `views`, CLI `access config set -views`, MCP `update_portal_config`) ; les jetons sont liés à l'entrée où la session a été ouverte. Refonte visuelle du portail (barre supérieure, typographie Inter, cartes épurées) avec 7 thèmes — Automatique, Clair, Sombre, Océan, Forêt, Améthyste, Contraste élevé — choisis côté Admin (`theme`), sans sélecteur côté utilisateur ; le terminal xterm suit le thème.
+- **Edge 0.23.0 — le portail Access redémarre sans l'Admin** : la configuration poussée par l'Admin est conservée dans une copie locale chiffrée (`portal-config.gpx`) et rechargée au démarrage, y compris les routes publiques des hôtes dédiés (écart de l'ADR 0006 levé).
 
 ### Corrigé
 

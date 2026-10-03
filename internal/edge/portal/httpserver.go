@@ -47,6 +47,7 @@ type portalToken struct {
 	UserID   string
 	Username string
 	VaultKey [32]byte
+	View     string
 	Expires  time.Time
 	Raw      string
 }
@@ -134,9 +135,18 @@ func (h *HTTPServer) Stop() {
 
 func (h *HTTPServer) serveIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	vars := PageVars{
-		Brand:    "GoProxify Access",
-		EdgeName: "",
+	w.Header().Set("Cache-Control", "no-store")
+	seg := strings.Trim(r.URL.Path, "/")
+	if i := strings.Index(seg, "/"); i >= 0 {
+		seg = ""
+	}
+	v := (&Config{}).DefaultView()
+	if h.cfg != nil {
+		v = h.cfg.ResolveView(r.Host, seg)
+	}
+	vars := PageVars{Brand: "GoProxify Access", EdgeName: ""}
+	if v.Title != DefaultViewTitle {
+		vars.Brand = v.Title
 	}
 	if h.cfg != nil {
 		vars.EdgeName = h.cfg.PublicHost
@@ -145,21 +155,18 @@ func (h *HTTPServer) serveIndex(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(htmlOut))
 		return
 	}
-	theme := ThemeAuto
-	if h.cfg != nil {
-		theme = NormalizeTheme(h.cfg.Theme)
-	}
-	_, _ = w.Write([]byte(strings.Replace(portalIndexHTML, "__PORTAL_THEME__", theme, 1)))
+	_, _ = w.Write([]byte(pageHTML(v)))
 }
 
 func (h *HTTPServer) handleAuthInfo(w http.ResponseWriter, r *http.Request) {
+	v := h.viewFor(r)
 	out := map[string]any{
 		"local":                  true,
 		"register":               false,
 		"allow_personal_targets": h.cfg != nil && h.cfg.AllowPersonalTargets,
-		"require_2fa":            h.cfg != nil && h.cfg.Require2FA,
+		"require_2fa":            v.Require2FA,
 	}
-	sso, p, err := h.resolveSSO()
+	sso, p, err := h.resolveSSO(v.AuthProviderID)
 	if err != nil {
 		out["provider_error"] = err.Error()
 		writeJSON(w, http.StatusOK, out)
@@ -172,7 +179,7 @@ func (h *HTTPServer) handleAuthInfo(w http.ResponseWriter, r *http.Request) {
 			"type":           sso.Provider,
 			"form_login":     providerSupportsForm(sso),
 			"oidc":           providerSupportsOIDC(sso),
-			"oidc_start":     "/api/oidc/start",
+			"oidc_start":     oidcStartPath(v),
 			"local_fallback": true,
 		}
 	}
@@ -223,7 +230,12 @@ func (h *HTTPServer) handleCompleteInvite(w http.ResponseWriter, r *http.Request
 	if h.onInviteCompleted != nil {
 		h.onInviteCompleted(u.ID)
 	}
-	tok, err := h.issueToken(u.ID, u.Username, key)
+	v := h.viewFor(r)
+	if !v.AllowsUser(u.Tags) {
+		http.Error(w, "accès non autorisé sur ce portail", http.StatusForbidden)
+		return
+	}
+	tok, err := h.issueToken(u.ID, u.Username, key, v.Key)
 	if err != nil {
 		http.Error(w, "persistance session: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -248,8 +260,9 @@ func (h *HTTPServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	v := h.viewFor(r)
 	// 1) Auth provider (basic / LDAP) si configuré
-	sso, _, err := h.resolveSSO()
+	sso, _, err := h.resolveSSO(v.AuthProviderID)
 	if err != nil {
 		h.log.Warn("portal: auth_provider", "err", err)
 	}
@@ -270,7 +283,7 @@ func (h *HTTPServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 				sealed, _ := SealVault(key, VaultPayload{})
 				_ = h.store.SetVaultBlob(u.ID, sealed)
 			}
-			h.finishLogin(w, u, key, "provider")
+			h.finishLogin(w, u, key, "provider", v)
 			return
 		}
 	}
@@ -296,23 +309,27 @@ func (h *HTTPServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	h.finishLogin(w, u, key, "local")
+	h.finishLogin(w, u, key, "local", v)
 }
 
 // finishLogin émet le token ou un challenge 2FA.
-func (h *HTTPServer) finishLogin(w http.ResponseWriter, u UserRecord, key [32]byte, via string) {
+func (h *HTTPServer) finishLogin(w http.ResponseWriter, u UserRecord, key [32]byte, via string, v ResolvedView) {
 	if u.Status == UserStatusDisabled {
 		http.Error(w, "compte désactivé", http.StatusForbidden)
 		return
 	}
-	require := h.cfg != nil && h.cfg.Require2FA
+	if !v.AllowsUser(u.Tags) {
+		http.Error(w, "accès non autorisé sur ce portail", http.StatusForbidden)
+		return
+	}
 	has := UserHas2FA(u)
-	if require && !has {
+	if v.Require2FA && !has {
 		http.Error(w, "2FA requise — activez TOTP ou OTP email avant de vous connecter", http.StatusForbidden)
 		return
 	}
 	if has {
 		ch := newMFAChallenge(u.ID, u.Username, key)
+		ch.View = v.Key
 		h.challenges.Put(ch)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"need_2fa":     true,
@@ -323,7 +340,7 @@ func (h *HTTPServer) finishLogin(w http.ResponseWriter, u UserRecord, key [32]by
 		})
 		return
 	}
-	tok, err := h.issueToken(u.ID, u.Username, key)
+	tok, err := h.issueToken(u.ID, u.Username, key, v.Key)
 	if err != nil {
 		http.Error(w, "persistance session: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -333,11 +350,12 @@ func (h *HTTPServer) finishLogin(w http.ResponseWriter, u UserRecord, key [32]by
 
 func (h *HTTPServer) handleMe(w http.ResponseWriter, r *http.Request, pt portalToken) {
 	u, _ := h.store.FindUserByID(pt.UserID)
+	v := h.viewFor(r)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"username":               pt.Username,
 		"user_id":                pt.UserID,
 		"allow_personal_targets": h.cfg != nil && h.cfg.AllowPersonalTargets,
-		"require_2fa":            h.cfg != nil && h.cfg.Require2FA,
+		"require_2fa":            v.Require2FA,
 		"totp_enabled":           u.TOTPEnabled,
 		"email_otp_enabled":      u.EmailOTPEnabled,
 		"favorites":              h.store.Favorites(pt.UserID),
@@ -351,7 +369,7 @@ func (h *HTTPServer) handleLogout(w http.ResponseWriter, r *http.Request, pt por
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *HTTPServer) issueToken(userID, username string, vaultKey [32]byte) (string, error) {
+func (h *HTTPServer) issueToken(userID, username string, vaultKey [32]byte, view string) (string, error) {
 	b := make([]byte, 24)
 	_, _ = rand.Read(b)
 	tok := hex.EncodeToString(b)
@@ -359,6 +377,7 @@ func (h *HTTPServer) issueToken(userID, username string, vaultKey [32]byte) (str
 		UserID:   userID,
 		Username: username,
 		VaultKey: hex.EncodeToString(vaultKey[:]),
+		View:     view,
 		Expires:  time.Now().Add(12 * time.Hour),
 	}
 	if err := h.store.PutAuthSession(tok, sess); err != nil {
@@ -385,11 +404,15 @@ func (h *HTTPServer) auth(next func(http.ResponseWriter, *http.Request, portalTo
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		if sess.View != h.viewFor(r).Key {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		var key [32]byte
 		copy(key[:], vk)
 		next(w, r, portalToken{
 			UserID: sess.UserID, Username: sess.Username, VaultKey: key,
-			Expires: sess.Expires, Raw: tok,
+			Expires: sess.Expires, Raw: tok, View: sess.View,
 		})
 	}
 }
@@ -408,8 +431,12 @@ func (h *HTTPServer) handleListTargets(w http.ResponseWriter, r *http.Request, p
 		ExpiresAt string     `json:"expires_at,omitempty"` // accès temporaire approuvé
 	}
 	userTags := h.userTags(pt.UserID)
+	view := h.viewFor(r)
 	var out []item
 	for _, c := range h.store.Catalog() {
+		if !view.AllowsTarget(c.Tags) {
+			continue
+		}
 		it := item{
 			ID: c.ID, Name: c.Name, Kind: c.Kind, Source: "catalog",
 			Host: c.Host, Port: c.Port, AgentName: c.AgentName, Container: c.Container,
@@ -602,6 +629,10 @@ func (h *HTTPServer) handleCreateSession(w http.ResponseWriter, r *http.Request,
 	case "catalog":
 		c, ok := h.store.FindCatalogTarget(body.TargetID)
 		if !ok {
+			http.Error(w, "cible catalogue introuvable", http.StatusNotFound)
+			return
+		}
+		if !h.viewFor(r).AllowsTarget(c.Tags) {
 			http.Error(w, "cible catalogue introuvable", http.StatusNotFound)
 			return
 		}

@@ -70,7 +70,8 @@ func (h *HTTPServer) oidcSessionSecret(sso *router.SSOConfig) (string, error) {
 }
 
 func (h *HTTPServer) handleOIDCStart(w http.ResponseWriter, r *http.Request) {
-	sso, _, err := h.resolveSSO()
+	v := h.viewFor(r)
+	sso, _, err := h.resolveSSO(v.AuthProviderID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -94,7 +95,7 @@ func (h *HTTPServer) handleOIDCStart(w http.ResponseWriter, r *http.Request) {
 	state := randomB64(16)
 	nonce := randomB64(16)
 	statePayload, _ := json.Marshal(map[string]string{
-		"state": state, "nonce": nonce,
+		"state": state, "nonce": nonce, "view": v.Slug,
 	})
 	secret, err := h.oidcSessionSecret(sso)
 	if err != nil {
@@ -126,7 +127,13 @@ func (h *HTTPServer) handleOIDCStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPServer) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
-	sso, _, err := h.resolveSSO()
+	ck, err := r.Cookie(portalOIDCStateCookie)
+	if err != nil {
+		http.Error(w, "OIDC: state cookie manquant", http.StatusBadRequest)
+		return
+	}
+	v := h.cfg.ResolveView(r.Host, h.oidcViewSlug(ck.Value))
+	sso, _, err := h.resolveSSO(v.AuthProviderID)
 	if err != nil || !providerSupportsOIDC(sso) {
 		http.Error(w, "OIDC non configuré", http.StatusBadRequest)
 		return
@@ -138,11 +145,6 @@ func (h *HTTPServer) handleOIDCCallback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ck, err := r.Cookie(portalOIDCStateCookie)
-	if err != nil {
-		http.Error(w, "OIDC: state cookie manquant", http.StatusBadRequest)
-		return
-	}
 	raw, err := base64.URLEncoding.DecodeString(ck.Value)
 	if err != nil {
 		http.Error(w, "OIDC: state invalide", http.StatusBadRequest)
@@ -223,37 +225,41 @@ func (h *HTTPServer) handleOIDCCallback(w http.ResponseWriter, r *http.Request) 
 	}
 
 	http.SetCookie(w, &http.Cookie{Name: portalOIDCStateCookie, Value: "", MaxAge: -1, Path: "/"})
-	h.finishOIDCRedirect(w, r, u, key)
+	h.finishOIDCRedirect(w, r, u, key, v)
 }
 
 // finishOIDCRedirect applique les mêmes garde-fous que finishLogin, puis redirige
 // vers le fragment #sso=… ou #sso_2fa=… (compatible navigateur après callback IdP).
-func (h *HTTPServer) finishOIDCRedirect(w http.ResponseWriter, r *http.Request, u UserRecord, key [32]byte) {
+func (h *HTTPServer) finishOIDCRedirect(w http.ResponseWriter, r *http.Request, u UserRecord, key [32]byte, v ResolvedView) {
 	if u.Status == UserStatusDisabled {
 		http.Error(w, "compte désactivé", http.StatusForbidden)
 		return
 	}
-	require := h.cfg != nil && h.cfg.Require2FA
+	if !v.AllowsUser(u.Tags) {
+		http.Error(w, "accès non autorisé sur ce portail", http.StatusForbidden)
+		return
+	}
 	has := UserHas2FA(u)
-	if require && !has {
+	if v.Require2FA && !has {
 		http.Error(w, "2FA requise — activez TOTP ou OTP email avant de vous connecter", http.StatusForbidden)
 		return
 	}
 	if has {
 		ch := newMFAChallenge(u.ID, u.Username, key)
+		ch.View = v.Key
 		h.challenges.Put(ch)
 		methods := strings.Join(User2FAMethods(u), ",")
-		http.Redirect(w, r, "/#sso_2fa="+url.QueryEscape(ch.ID)+
+		http.Redirect(w, r, v.Path()+"#sso_2fa="+url.QueryEscape(ch.ID)+
 			"&user="+url.QueryEscape(u.Username)+
 			"&methods="+url.QueryEscape(methods), http.StatusFound)
 		return
 	}
-	tok, err := h.issueToken(u.ID, u.Username, key)
+	tok, err := h.issueToken(u.ID, u.Username, key, v.Key)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/#sso="+url.QueryEscape(tok), http.StatusFound)
+	http.Redirect(w, r, v.Path()+"#sso="+url.QueryEscape(tok), http.StatusFound)
 }
 
 type portalOIDCProvider struct {
