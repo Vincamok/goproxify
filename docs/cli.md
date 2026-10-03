@@ -927,7 +927,7 @@ GoProxify Access — portail opérateur (terminal web, SSH UUID, coffre secrets)
 
 ```
 goproxify access config get        -edge <nom>
-goproxify access config set        -edge <nom> -enabled true|false [-public-host <host>] [-ha-session-mode sticky|shared]
+goproxify access config set        -edge <nom> -enabled true|false [-public-host <host>] [-theme auto|clair|sombre|ocean|foret|amethyste|contraste] [-ha-session-mode sticky|shared]
 goproxify access config push       -edge <nom>
 
 goproxify access destinations list   -edge <nom>

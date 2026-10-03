@@ -1487,21 +1487,21 @@ func (h *Handler) toolListUsers(r *http.Request) (any, error) {
 
 func (h *Handler) toolListSnippets(r *http.Request) (any, error) {
 	rows, err := h.DB.QueryContext(r.Context(),
-		`SELECT id, name, type, config, created_at FROM snippets ORDER BY name`)
+		`SELECT id, name, type, description, config, created_at FROM snippets ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []map[string]any
 	for rows.Next() {
-		var id, name, typ, cfg string
+		var id, name, typ, desc, cfg string
 		var createdAt time.Time
-		if err := rows.Scan(&id, &name, &typ, &cfg, &createdAt); err != nil {
+		if err := rows.Scan(&id, &name, &typ, &desc, &cfg, &createdAt); err != nil {
 			continue
 		}
 		var cfgObj any
 		json.Unmarshal([]byte(cfg), &cfgObj) //nolint:errcheck
-		out = append(out, map[string]any{"id": id, "name": name, "type": typ, "config": cfgObj, "created_at": createdAt})
+		out = append(out, map[string]any{"id": id, "name": name, "type": typ, "description": desc, "config": cfgObj, "created_at": createdAt})
 	}
 	if out == nil {
 		out = []map[string]any{}

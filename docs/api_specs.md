@@ -378,7 +378,7 @@ Contenu détaillé : [sauvegardes.md](sauvegardes.md).
 
 ### `GET /api/v1/backups/snapshots/:id/summary`
 
-Résumé du contenu d'un snapshot, sans rien écrire — même format que `import/backup/preview` (`proxies[]`, `user_count`, `token_count`, `pat_count`, `snippet_count`, `channel_count`, `rule_count`, `declared_node_count`, `config_row_count`, `config_tables{table: n}`). Utilisé par la fenêtre « Restaurer » de l'Admin. 404 si le snapshot n'existe pas.
+Résumé du contenu d'un snapshot, sans rien écrire — même format que `import/backup/preview` (`proxies[]`, `user_count`, `token_count`, `pat_count`, `snippet_count`, `channel_count`, `rule_count`, `declared_node_count`, `declared_nodes[]` (`id`, `role`, `name`, `region`, `environment`), `config_row_count`, `config_tables{table: n}`). Utilisé par la fenêtre « Restaurer » de l'Admin. 404 si le snapshot n'existe pas.
 
 ### `POST /api/v1/backups/snapshots/:id/restore`
 
@@ -952,7 +952,9 @@ Le paramètre `edge=<id ou nom>` désigne une passerelle. Dans un **groupe HA** 
 
 ### `GET /api/v1/portal?edge=` · `PUT /api/v1/portal?edge=`
 
-Config du portail (`enabled`, `ssh_port`, `http_port`, `public_host`, `auth_provider_id`, `allow_personal_targets`, `require_2fa`, `session_ttl_sec`, `session_mode`, catalogue, utilisateurs). Pour une passerelle membre d'un groupe HA, la réponse ajoute :
+Config du portail (`enabled`, `ssh_port`, `http_port`, `public_host`, `auth_provider_id`, `allow_personal_targets`, `require_2fa`, `session_ttl_sec`, `session_mode`, `theme`, catalogue, utilisateurs). Pour une passerelle membre d'un groupe HA, la réponse ajoute :
+
+`theme` : apparence de l'interface du portail Access, choisie côté Admin et appliquée par la passerelle (`auto` — défaut, suit le système —, `clair`, `sombre`, `ocean`, `foret`, `amethyste`, `contraste`). Toute autre valeur est ramenée à `auto`. Conservé dans la copie locale de la passerelle (fonctionne Admin coupé).
 
 | Champ | Description |
 |-------|-------------|

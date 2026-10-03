@@ -441,11 +441,73 @@ window.createSnapshot = async function() {
 };
 
 let _bkRestoreId = null;
+let _bkRestoreCtx = null;
+
+const BK_ROLE_ORDER = ['admin', 'edge', 'agent'];
+
+function bkNodeKey(n) { return n.id || (n.role + ':' + n.name); }
+
+// Restauration additive : rien n'est supprimé. Un élément du snapshot absent de l'état courant est
+// recréé ; présent des deux côtés il est écrasé (ou conservé en mode « skip ») ; absent du snapshot il reste intact.
+function bkDiff(current, snap, mode, active) {
+  const cur = new Map(current.map(x => [x.key, x]));
+  const snp = new Map(snap.map(x => [x.key, x]));
+  const before = current.map(x => ({ ...x, st: active && snp.has(x.key) && mode === 'overwrite' ? 'over' : 'keep' }));
+  const after = current.map(x => ({ ...x, st: active && snp.has(x.key) && mode === 'overwrite' ? 'over' : 'keep' }));
+  if (active) snap.forEach(x => { if (!cur.has(x.key)) after.push({ ...x, st: 'add' }); });
+  return { before, after };
+}
+
+function bkTopoCol(items, proxies, side) {
+  const roles = [...new Set(items.map(n => n.role))].sort((a, b) => {
+    const ia = BK_ROLE_ORDER.indexOf(a), ib = BK_ROLE_ORDER.indexOf(b);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
+  const pill = n => `<span class="bk-tp" data-st="${n.st}" title="${esc(n.sub || '')}"><i></i>${esc(n.name || n.key)}</span>`;
+  const lane = (label, list) => `
+    <div class="bk-lane">
+      <div class="bk-lane-h"><span>${esc(label)}</span><b>${list.length}</b></div>
+      <div class="bk-lane-b">${list.map(pill).join('') || `<em class="bk-none">—</em>`}</div>
+    </div>`;
+  const lanes = roles.map(r => lane(r, items.filter(n => n.role === r))).join('');
+  return `<div class="bk-col" data-side="${side}">${lanes}${lane(t('trafic.proxies'), proxies)}</div>`;
+}
+
+function bkRenderTopology() {
+  const c = _bkRestoreCtx;
+  const el = document.getElementById('bk-topo');
+  if (!c || !el) return;
+  const checked = id => document.getElementById('bk-rs-' + id)?.checked ?? false;
+  const mode = document.getElementById('bk-rs-conflict')?.value || 'overwrite';
+  const nodes = bkDiff(c.curNodes, c.snapNodes, mode, true);
+  const prox = bkDiff(c.curProxies, c.snapProxies, mode, checked('proxies'));
+  const count = st => [...nodes.after, ...prox.after].filter(x => x.st === st).length;
+  const add = count('add'), over = count('over');
+  const keep = [...nodes.after, ...prox.after].filter(x => x.st === 'keep').length;
+  el.innerHTML = `
+    <div class="bk-legend">
+      <span data-st="add"><i></i>${t('backups.restore_modal.lg_add')} <b>${add}</b></span>
+      <span data-st="over"><i></i>${t('backups.restore_modal.lg_over')} <b>${over}</b></span>
+      <span data-st="keep"><i></i>${t('backups.restore_modal.lg_keep')} <b>${keep}</b></span>
+    </div>
+    <div class="bk-ba">
+      <div class="bk-side"><div class="bk-side-h">${t('backups.restore_modal.now')}</div>${bkTopoCol(nodes.before, prox.before, 'before')}</div>
+      <div class="bk-arrow" aria-hidden="true"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="bk-side"><div class="bk-side-h">${t('backups.restore_modal.after')}</div>${bkTopoCol(nodes.after, prox.after, 'after')}</div>
+    </div>`;
+}
+
+window.bkRestoreRefresh = bkRenderTopology;
 
 window.restoreSnapshot = async function(id, name) {
-  let s;
-  try { s = await api('GET', `/backups/snapshots/${id}/summary`); }
-  catch(e) { toast(e.message, 'error'); return; }
+  let s, curNodes, curProxies;
+  try {
+    [s, curNodes, curProxies] = await Promise.all([
+      api('GET', `/backups/snapshots/${id}/summary`),
+      api('GET', '/declared-nodes').catch(() => []),
+      api('GET', '/proxies').catch(() => []),
+    ]);
+  } catch(e) { toast(e.message, 'error'); return; }
 
   const entities = [
     ['proxies',  t('trafic.proxies'),          (s.proxies?.length) || 0],
@@ -458,33 +520,50 @@ window.restoreSnapshot = async function(id, name) {
     ['config',   t('import.entity.config'),   s.config_row_count || 0],
   ].filter(([,, n]) => n > 0);
 
+  const nodeOf = n => ({ key: bkNodeKey(n), role: n.role || '?', name: n.name, sub: [n.region, n.environment].filter(Boolean).join(' · ') });
+  const proxyOf = p => ({ key: p.id, role: 'proxy', name: p.name || p.host || p.id, sub: p.host || '' });
   _bkRestoreId = id;
+  _bkRestoreCtx = {
+    curNodes: (curNodes || []).filter(n => !String(n.id || '').startsWith('cfg:')).map(nodeOf),
+    snapNodes: (s.declared_nodes || []).map(nodeOf),
+    curProxies: (curProxies || []).map(proxyOf),
+    snapProxies: (s.proxies || []).map(proxyOf),
+  };
+  const when = s.created_at ? new Date(s.created_at).toLocaleString() : '';
+
   const body = entities.length ? `
-    <p style="color:var(--text2);font-size:13px;margin:0 0 14px;line-height:1.5">${t('backups.restore_modal.hint')}</p>
-    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">
+    <div class="bk-rs-banner">
+      <div class="bk-rs-ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 8v4l3 2"/></svg></div>
+      <div><b>${esc(name)}</b><span>${esc(when)}</span></div>
+    </div>
+    <div class="bk-sec-t">${t('backups.restore_modal.topo_title')}</div>
+    <div id="bk-topo"></div>
+    <div class="bk-sec-t">${t('backups.restore_modal.what')}</div>
+    <div class="bk-chips">
       ${entities.map(([eid, label, n]) => `
-        <label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg2)">
-          <input type="checkbox" id="bk-rs-${eid}" checked style="accent-color:var(--accent);width:14px;height:14px;">
-          <span style="flex:1">${esc(label)}</span>
-          <span style="font-size:12px;color:var(--text2);font-weight:600">${n}</span>
+        <label class="bk-chip">
+          <input type="checkbox" id="bk-rs-${eid}" checked onchange="bkRestoreRefresh()">
+          <span>${esc(label)}</span><b>${n}</b>
         </label>`).join('')}
     </div>
-    <div class="field" style="margin-bottom:8px">
+    <div class="field" style="margin:14px 0 8px">
       <label class="field-label">${t('import.conflict')}</label>
-      <select id="bk-rs-conflict" class="input" style="max-width:260px">
+      <select id="bk-rs-conflict" class="input" style="max-width:260px" onchange="bkRestoreRefresh()">
         <option value="overwrite">${t('trafic.overwrite')}</option>
         <option value="skip">${t('trafic.skip_keep')}</option>
       </select>
     </div>
-    <p style="color:var(--text2);font-size:12px;margin:0">${t('backups.restore_modal.safety')}</p>`
+    <p class="bk-note">${t('backups.restore_modal.additive')} ${t('backups.restore_modal.safety')}</p>`
     : `<p style="color:var(--text2);font-size:13px;margin:0">${t('backups.restore_modal.empty')}</p>`;
 
   modal(
     t('backups.restore_modal.title', { name: esc(name) }),
     body,
     `<button class="btn btn-secondary btn-sm" onclick="closeModal()">${t('common.cancel')}</button>` +
-      (entities.length ? `<button class="btn btn-primary btn-sm" id="bk-rs-apply" onclick="applySnapshotRestore()">${t('common.restore')}</button>` : '')
+      (entities.length ? `<button class="btn btn-primary btn-sm" id="bk-rs-apply" onclick="applySnapshotRestore()">${t('common.restore')}</button>` : ''),
+    true
   );
+  bkRenderTopology();
 };
 
 window.applySnapshotRestore = async function() {

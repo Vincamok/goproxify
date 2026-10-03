@@ -972,6 +972,7 @@ type portalPushPayload struct {
 	Require2FA           bool                   `json:"require_2fa"`
 	SessionTTLSec        int                    `json:"session_ttl_sec"`
 	SessionMode          string                 `json:"session_mode"`
+	Theme                string                 `json:"theme"`
 	Catalog              []portal.CatalogTarget `json:"catalog"`
 	Users                []portal.SyncedUser    `json:"users"`
 	Grants               []portal.AccessGrant   `json:"grants"`
@@ -1010,6 +1011,7 @@ func (s *Server) applyPortalPush(payload portalPushPayload) {
 		Require2FA:           payload.Require2FA,
 		SessionTTLSec:        payload.SessionTTLSec,
 		SessionMode:          payload.SessionMode,
+		Theme:                payload.Theme,
 		Policy:               payload.Policy,
 		HAGroup:              payload.HAGroup,
 		HAMembers:            payload.HAMembers,

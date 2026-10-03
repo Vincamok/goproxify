@@ -181,6 +181,18 @@ function renderPortalPage(cfg, edgeName, edgeLabel, metricsData) {
             <option value="multi" ${cfg.session_mode === 'multi' ? 'selected' : ''}>${esc(t('portal.mode_multi') || 'Multi-essai')}</option>
           </select>
         </div>
+        <div class="field">
+          <label class="field-label">${esc(t('portal.theme') || 'Thème du portail')}</label>
+          <select class="input" id="portal-theme">
+            ${[['auto', 'portal.theme_auto', 'Automatique (suit le système)'], ['clair', 'portal.theme_clair', 'Clair'], ['sombre', 'portal.theme_sombre', 'Sombre'], ['ocean', 'portal.theme_ocean', 'Océan'], ['foret', 'portal.theme_foret', 'Forêt'], ['amethyste', 'portal.theme_amethyste', 'Améthyste'], ['contraste', 'portal.theme_contraste', 'Contraste élevé']].map(([v, k, d]) => `<option value="${v}" ${(cfg.theme || 'auto') === v ? 'selected' : ''}>${esc(t(k) || d)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field">
+          <label class="field-label">${esc(t('portal.theme') || 'Thème du portail')}</label>
+          <select class="input" id="portal-theme">
+            ${[['auto', 'portal.theme_auto', 'Automatique (suit le système)'], ['clair', 'portal.theme_clair', 'Clair'], ['sombre', 'portal.theme_sombre', 'Sombre'], ['ocean', 'portal.theme_ocean', 'Océan'], ['foret', 'portal.theme_foret', 'Forêt'], ['amethyste', 'portal.theme_amethyste', 'Améthyste'], ['contraste', 'portal.theme_contraste', 'Contraste élevé']].map(([v, k, d]) => `<option value="${v}" ${(cfg.theme || 'auto') === v ? 'selected' : ''}>${esc(t(k) || d)}</option>`).join('')}
+          </select>
+        </div>
         ${haSessionField(cfg)}
       </div>
       <div id="portal-msg" style="margin-top:12px;font-size:13px;min-height:1.2em"></div>
@@ -199,6 +211,7 @@ function renderPortalPage(cfg, edgeName, edgeLabel, metricsData) {
         http_port: +document.getElementById('portal-http').value || 8444,
         session_ttl_sec: +document.getElementById('portal-ttl').value || 60,
         session_mode: document.getElementById('portal-mode').value || 'one_shot',
+        theme: document.getElementById('portal-theme').value || 'auto',
         ha_session_mode: document.getElementById('portal-ha-sessions')?.value || undefined,
         edge_name: edgeName,
       };

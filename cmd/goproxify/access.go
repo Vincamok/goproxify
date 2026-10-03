@@ -202,6 +202,9 @@ func runAccessConfig() {
 			}
 			cur["session_ttl_sec"] = n
 		}
+		if v := flagValue(args, "-theme", ""); v != "" {
+			cur["theme"] = v
+		}
 		if v := flagValue(args, "-session-mode", ""); v != "" {
 			cur["session_mode"] = v
 		}

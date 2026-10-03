@@ -30,6 +30,7 @@ type PortalConfig struct {
 	Require2FA           bool                   `json:"require_2fa"`
 	SessionTTLSec        int                    `json:"session_ttl_sec"`
 	SessionMode          string                 `json:"session_mode"`
+	Theme                string                 `json:"theme"`
 	Catalog              []portal.CatalogTarget `json:"catalog"`
 	Users                []portal.SyncedUser    `json:"users,omitempty"`
 	Grants               []portal.AccessGrant   `json:"grants,omitempty"`
@@ -196,6 +197,7 @@ func normalizePortalConfig(cfg *PortalConfig) {
 	if cfg.SessionTTLSec <= 0 {
 		cfg.SessionTTLSec = 60
 	}
+	cfg.Theme = portal.NormalizeTheme(cfg.Theme)
 	if cfg.SessionMode != portal.SessionModeMulti {
 		cfg.SessionMode = portal.SessionModeOneShot
 	}

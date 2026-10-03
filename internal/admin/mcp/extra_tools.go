@@ -124,6 +124,7 @@ func extraTools() []map[string]any {
 				req("name", "string", "Nom unique du snippet"),
 				req("type", "string", "Type : waf, rate_limit, headers, auth, redirect, rewrite…"),
 				req("config", "object", "Configuration spécifique au type"),
+				opt("description", "string", "Description libre (affichée dans la liste des profils)"),
 			),
 		},
 		{
@@ -486,6 +487,7 @@ func (h *Handler) toolDeleteIPProfile(ctx context.Context, id string) (any, erro
 func (h *Handler) toolCreateSnippet(r *http.Request, args map[string]any) (any, error) {
 	name, _ := args["name"].(string)
 	typ, _ := args["type"].(string)
+	desc, _ := args["description"].(string)
 	cfg := args["config"]
 	if name == "" || typ == "" || cfg == nil {
 		return nil, fmt.Errorf("name, type et config sont requis")
@@ -496,8 +498,8 @@ func (h *Handler) toolCreateSnippet(r *http.Request, args map[string]any) (any, 
 	}
 	id := uuid.New().String()
 	if _, err := h.DB.ExecContext(r.Context(),
-		`INSERT INTO snippets (id, name, type, config) VALUES (?,?,?,?)`,
-		id, name, typ, string(cfgJSON)); err != nil {
+		`INSERT INTO snippets (id, name, type, description, config) VALUES (?,?,?,?,?)`,
+		id, name, typ, desc, string(cfgJSON)); err != nil {
 		return nil, err
 	}
 	return map[string]any{"id": id, "name": name, "type": typ}, nil

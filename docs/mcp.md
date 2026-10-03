@@ -375,6 +375,7 @@ Liste les snippets middleware réutilisables (rate-limit, en-têtes de sécurit�
     "id": "sn_01",
     "name": "rate-limit-api",
     "type": "rate_limit",
+    "description": "Limite l'API publique",
     "config": { "requests_per_second": 100, "burst": 200 },
     "created_at": "2026-03-01T10:00:00Z"
   }
@@ -1491,7 +1492,7 @@ Scopes PAT : `portal:read` (lecture) / `portal:write` (écriture + push). Réser
 | Paramètre | Type | Requis | Description |
 |-----------|------|--------|-------------|
 | `edge` | string | ✓ | Nom du nœud passerelle |
-| `enabled`, `ssh_port`, `http_port`, `public_host`, `allow_personal_targets`, `require_2fa`, `session_ttl_sec`, `session_mode`, `ha_session_mode` | — | — | Champs optionnels pour `update_portal_config` (`ha_session_mode` : `sticky` ou `shared`, groupe HA) |
+| `enabled`, `ssh_port`, `http_port`, `public_host`, `allow_personal_targets`, `require_2fa`, `session_ttl_sec`, `session_mode`, `theme`, `ha_session_mode` | — | — | Champs optionnels pour `update_portal_config` (`theme` : `auto`, `clair`, `sombre`, `ocean`, `foret`, `amethyste` ou `contraste`) (`ha_session_mode` : `sticky` ou `shared`, groupe HA) |
 
 ### Catalogue — `list_portal_destinations`, `create_portal_destination`, `update_portal_destination`, `delete_portal_destination`, `preview_portal_destinations`
 

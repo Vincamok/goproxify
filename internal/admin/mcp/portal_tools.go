@@ -153,6 +153,7 @@ func portalTools() []map[string]any {
 				opt("require_2fa", "boolean", "Exiger la 2FA Access"),
 				opt("session_ttl_sec", "number", "TTL session en secondes"),
 				opt("session_mode", "string", "Mode session: one_shot ou renew"),
+				opt("theme", "string", "Thème de l'interface du portail : auto, clair, sombre, ocean, foret, amethyste ou contraste"),
 				opt("ha_session_mode", "string", "Groupe HA : sessions web sticky (défaut, restent sur la passerelle) ou shared (répliquées entre les membres)"),
 			),
 		},
@@ -388,6 +389,9 @@ func (h *Handler) toolUpdatePortalConfig(r *http.Request, args map[string]any) (
 	}
 	if _, ok := args["session_ttl_sec"]; ok {
 		cfgMap["session_ttl_sec"] = argInt(args, "session_ttl_sec", 60)
+	}
+	if _, ok := args["theme"]; ok {
+		cfgMap["theme"] = argStr(args, "theme")
 	}
 	if _, ok := args["session_mode"]; ok {
 		cfgMap["session_mode"] = argStr(args, "session_mode")

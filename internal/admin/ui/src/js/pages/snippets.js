@@ -50,6 +50,14 @@ window.filterSnippetType = function(type) {
   });
 };
 
+function snippetConfigText(cfg) {
+  if (cfg == null || cfg === '') return '';
+  if (typeof cfg === 'string') {
+    try { return JSON.stringify(JSON.parse(cfg), null, 2); } catch { return cfg; }
+  }
+  return JSON.stringify(cfg, null, 2);
+}
+
 window.openSnippetModal = async function(id) {
   let existing = null;
   if (id) { try { existing = await api('GET',`/snippets/${id}`); } catch {} }
@@ -76,18 +84,24 @@ window.openSnippetModal = async function(id) {
     </div>
     <div class="field">
       <label class="field-label">${t('snippets.config')}</label>
-      <textarea id="s-config" class="input" rows="8" placeholder='{"cidrs":["10.0.0.0/8"],"mode":"allow"}'>${esc(existing?.config ? JSON.stringify(JSON.parse(existing.config),null,2) : '')}</textarea>
+      <textarea id="s-config" class="input" rows="8" placeholder='{"cidrs":["10.0.0.0/8"],"mode":"allow"}'>${esc(snippetConfigText(existing?.config))}</textarea>
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">${t('common.cancel')}</button>
      <button class="btn btn-primary" onclick="saveSnippet('${esc(id||'')}')">${t('common.save')}</button>`);
 };
 
 window.saveSnippet = async function(id) {
+  const rawConfig = document.getElementById('s-config').value.trim();
+  let config = {};
+  if (rawConfig) {
+    try { config = JSON.parse(rawConfig); }
+    catch (e) { toast('Config JSON invalide : ' + e.message, 'error'); return; }
+  }
   const payload = {
     name: document.getElementById('s-name').value.trim(),
     type: document.getElementById('s-type').value,
     description: document.getElementById('s-desc').value.trim(),
-    config: document.getElementById('s-config').value.trim(),
+    config,
   };
   try {
     if (id) await api('PUT', `/snippets/${id}`, payload);

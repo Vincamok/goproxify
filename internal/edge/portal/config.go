@@ -3,7 +3,10 @@
 
 package portal
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // Config runtime du portail (local + push Admin).
 type Config struct {
@@ -18,6 +21,7 @@ type Config struct {
 	SessionTTLSec        int    `json:"session_ttl_sec"`        // défaut 60 (KTD1)
 	SessionMode          string `json:"session_mode"`           // one_shot | multi
 	Policy               Policy `json:"policy"`                 // restrictions d'accès (poussées par l'Admin)
+	Theme                string `json:"theme,omitempty"`        // apparence du portail : auto (défaut) | clair | sombre | ocean | foret | amethyste | contraste
 
 	// Haute disponibilité (poussés par l'Admin) : réplication du magasin entre les passerelles du groupe.
 	HAGroup      string   `json:"ha_group,omitempty"`
@@ -135,3 +139,22 @@ const (
 	FacadeWeb SessionFacade = "web"
 	FacadeSSH SessionFacade = "ssh"
 )
+
+// Thèmes proposés pour l'interface du portail (choisis côté Admin).
+const ThemeAuto = "auto"
+
+var themes = []string{ThemeAuto, "clair", "sombre", "ocean", "foret", "amethyste", "contraste"}
+
+// Themes liste les thèmes valides.
+func Themes() []string { return append([]string(nil), themes...) }
+
+// NormalizeTheme renvoie un thème valide (auto par défaut).
+func NormalizeTheme(t string) string {
+	t = strings.ToLower(strings.TrimSpace(t))
+	for _, k := range themes {
+		if k == t {
+			return t
+		}
+	}
+	return ThemeAuto
+}

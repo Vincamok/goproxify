@@ -18,10 +18,11 @@ import (
 const configFilename = "config.yaml"
 
 type SnippetEntry struct {
-	ID     string `yaml:"id"`
-	Name   string `yaml:"name"`
-	Type   string `yaml:"type"`
-	Config string `yaml:"config"` // JSON brut
+	ID          string `yaml:"id"`
+	Name        string `yaml:"name"`
+	Type        string `yaml:"type"`
+	Description string `yaml:"description,omitempty"`
+	Config      string `yaml:"config"` // JSON brut
 }
 
 type AlertChannelEntry struct {
@@ -48,7 +49,7 @@ type IPProfileEntry struct {
 	Name             string `yaml:"name"`
 	ProfileType      string `yaml:"profile_type"`
 	Mode             string `yaml:"mode"`
-	FeedURLs         string `yaml:"feed_urls"`          // JSON
+	FeedURLs         string `yaml:"feed_urls"` // JSON
 	FeedFormat       string `yaml:"feed_format"`
 	RefreshIntervalH int    `yaml:"refresh_interval_h"`
 	CIDRs            string `yaml:"cidrs"` // JSON
@@ -128,8 +129,8 @@ func (s *ConfigStore) LoadIntoDB(ctx context.Context, db *sql.DB) error {
 	if n == 0 {
 		for _, e := range arc.Snippets {
 			db.ExecContext(ctx, //nolint:errcheck
-				`INSERT OR IGNORE INTO snippets(id,name,type,config) VALUES(?,?,?,?)`,
-				e.ID, e.Name, e.Type, e.Config)
+				`INSERT OR IGNORE INTO snippets(id,name,type,description,config) VALUES(?,?,?,?,?)`,
+				e.ID, e.Name, e.Type, e.Description, e.Config)
 		}
 	}
 
@@ -214,11 +215,11 @@ func (s *ConfigStore) LoadIntoDB(ctx context.Context, db *sql.DB) error {
 func (s *ConfigStore) buildFromDB(ctx context.Context, db *sql.DB) (*ConfigArchive, error) {
 	arc := &ConfigArchive{SchemaVersion: 1}
 
-	rows, err := db.QueryContext(ctx, `SELECT id,name,type,config FROM snippets ORDER BY name`)
+	rows, err := db.QueryContext(ctx, `SELECT id,name,type,description,config FROM snippets ORDER BY name`)
 	if err == nil {
 		for rows.Next() {
 			var e SnippetEntry
-			if rows.Scan(&e.ID, &e.Name, &e.Type, &e.Config) == nil {
+			if rows.Scan(&e.ID, &e.Name, &e.Type, &e.Description, &e.Config) == nil {
 				arc.Snippets = append(arc.Snippets, e)
 			}
 		}

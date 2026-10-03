@@ -19,12 +19,13 @@ import (
 // Snippet est un profil réutilisable (IP, TLS, rate-limit, CORS, headers...).
 // Il est référencé par son nom dans la config d'un proxy.
 type Snippet struct {
-	ID        string          `json:"id"`
-	Name      string          `json:"name"`
-	Type      string          `json:"type"`   // ip_filter | rate_limit | cors | headers | tls | geo_ip | bot | waf
-	Config    json.RawMessage `json:"config"` // JSON libre selon le type
-	CreatedAt time.Time       `json:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at"`
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	Type        string          `json:"type"` // ip_filter | rate_limit | cors | headers | tls | geo_ip | bot | waf
+	Description string          `json:"description"`
+	Config      json.RawMessage `json:"config"` // JSON libre selon le type
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
 }
 
 // SnippetsHandler gère le CRUD HTTP des snippets.
@@ -69,14 +70,16 @@ func (h *SnippetsHandler) list(w http.ResponseWriter, r *http.Request) {
 	)
 	if typeFilter != "" {
 		rows, err = h.DB.QueryContext(r.Context(),
-			`SELECT id, name, type, config, created_at, updated_at FROM snippets WHERE type=? ORDER BY name`,
+			`SELECT id, name, type, description, config, created_at, updated_at FROM snippets WHERE type=? ORDER BY name`,
 			typeFilter)
 	} else {
 		rows, err = h.DB.QueryContext(r.Context(),
-			`SELECT id, name, type, config, created_at, updated_at FROM snippets ORDER BY name`)
+			`SELECT id, name, type, description, config, created_at, updated_at FROM snippets ORDER BY name`)
 	}
 	if err != nil {
-		if !isCtxErr(err) { h.Log.Error("snippets: list", "err", err) }
+		if !isCtxErr(err) {
+			h.Log.Error("snippets: list", "err", err)
+		}
 		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
 		return
 	}
@@ -86,7 +89,7 @@ func (h *SnippetsHandler) list(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var s Snippet
 		var cfg string
-		if err := rows.Scan(&s.ID, &s.Name, &s.Type, &cfg, &s.CreatedAt, &s.UpdatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.Name, &s.Type, &s.Description, &cfg, &s.CreatedAt, &s.UpdatedAt); err != nil {
 			continue
 		}
 		s.Config = json.RawMessage(cfg)
@@ -99,8 +102,8 @@ func (h *SnippetsHandler) get(w http.ResponseWriter, r *http.Request, id string)
 	var s Snippet
 	var cfg string
 	err := h.DB.QueryRowContext(r.Context(),
-		`SELECT id, name, type, config, created_at, updated_at FROM snippets WHERE id=?`, id,
-	).Scan(&s.ID, &s.Name, &s.Type, &cfg, &s.CreatedAt, &s.UpdatedAt)
+		`SELECT id, name, type, description, config, created_at, updated_at FROM snippets WHERE id=?`, id,
+	).Scan(&s.ID, &s.Name, &s.Type, &s.Description, &cfg, &s.CreatedAt, &s.UpdatedAt)
 	if err == sql.ErrNoRows {
 		writeErr(w, r, http.StatusNotFound, "api.err.snippet_not_found")
 		return
@@ -114,9 +117,10 @@ func (h *SnippetsHandler) get(w http.ResponseWriter, r *http.Request, id string)
 }
 
 type snippetRequest struct {
-	Name   string          `json:"name"`
-	Type   string          `json:"type"`
-	Config json.RawMessage `json:"config"`
+	Name        string          `json:"name"`
+	Type        string          `json:"type"`
+	Description *string         `json:"description"` // nil = inchangé à la mise à jour
+	Config      json.RawMessage `json:"config"`
 }
 
 var validSnippetTypes = map[string]bool{
@@ -140,12 +144,18 @@ func (h *SnippetsHandler) create(w http.ResponseWriter, r *http.Request) {
 	if cfg == "" {
 		cfg = "{}"
 	}
+	desc := ""
+	if req.Description != nil {
+		desc = strings.TrimSpace(*req.Description)
+	}
 	_, err := h.DB.ExecContext(r.Context(),
-		`INSERT INTO snippets (id, name, type, config) VALUES (?, ?, ?, ?)`,
-		id, req.Name, req.Type, cfg,
+		`INSERT INTO snippets (id, name, type, description, config) VALUES (?, ?, ?, ?, ?)`,
+		id, req.Name, req.Type, desc, cfg,
 	)
 	if err != nil {
-		if !isCtxErr(err) { h.Log.Error("snippets: create", "err", err) }
+		if !isCtxErr(err) {
+			h.Log.Error("snippets: create", "err", err)
+		}
 		writeErr(w, r, http.StatusConflict, "api.err.name_taken")
 		return
 	}
@@ -156,7 +166,7 @@ func (h *SnippetsHandler) create(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(Snippet{ID: id, Name: req.Name, Type: req.Type, Config: req.Config}) //nolint:errcheck
+	json.NewEncoder(w).Encode(Snippet{ID: id, Name: req.Name, Type: req.Type, Description: desc, Config: req.Config}) //nolint:errcheck
 }
 
 func (h *SnippetsHandler) update(w http.ResponseWriter, r *http.Request, id string) {
@@ -170,12 +180,18 @@ func (h *SnippetsHandler) update(w http.ResponseWriter, r *http.Request, id stri
 	if cfg == "" {
 		cfg = "{}"
 	}
+	var desc any
+	if req.Description != nil {
+		desc = strings.TrimSpace(*req.Description)
+	}
 	res, err := h.DB.ExecContext(r.Context(),
-		`UPDATE snippets SET name=?, type=?, config=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-		req.Name, req.Type, cfg, id,
+		`UPDATE snippets SET name=?, type=?, description=COALESCE(?, description), config=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+		req.Name, req.Type, desc, cfg, id,
 	)
 	if err != nil {
-		if !isCtxErr(err) { h.Log.Error("snippets: update", "err", err) }
+		if !isCtxErr(err) {
+			h.Log.Error("snippets: update", "err", err)
+		}
 		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
 		return
 	}
@@ -195,7 +211,9 @@ func (h *SnippetsHandler) update(w http.ResponseWriter, r *http.Request, id stri
 func (h *SnippetsHandler) delete(w http.ResponseWriter, r *http.Request, id string) {
 	res, err := h.DB.ExecContext(r.Context(), `DELETE FROM snippets WHERE id=?`, id)
 	if err != nil {
-		if !isCtxErr(err) { h.Log.Error("snippets: delete", "err", err) }
+		if !isCtxErr(err) {
+			h.Log.Error("snippets: delete", "err", err)
+		}
 		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
 		return
 	}

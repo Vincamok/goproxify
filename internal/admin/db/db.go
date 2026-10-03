@@ -372,6 +372,7 @@ func migrate(db *sql.DB) error {
 		`ALTER TABLE security_bans ADD COLUMN edge_name TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE security_ban_history ADD COLUMN edge_name TEXT NOT NULL DEFAULT ''`,
 		// Carte Prism : position approximative (ville) des IPs, renseignée par GeoResolver.
+		`ALTER TABLE snippets ADD COLUMN description TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE geoip_cache ADD COLUMN lat REAL`,
 		`ALTER TABLE geoip_cache ADD COLUMN lon REAL`,
 		`ALTER TABLE geoip_cache ADD COLUMN city TEXT NOT NULL DEFAULT ''`,

@@ -145,7 +145,11 @@ func (h *HTTPServer) serveIndex(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(htmlOut))
 		return
 	}
-	_, _ = w.Write([]byte(portalIndexHTML))
+	theme := ThemeAuto
+	if h.cfg != nil {
+		theme = NormalizeTheme(h.cfg.Theme)
+	}
+	_, _ = w.Write([]byte(strings.Replace(portalIndexHTML, "__PORTAL_THEME__", theme, 1)))
 }
 
 func (h *HTTPServer) handleAuthInfo(w http.ResponseWriter, r *http.Request) {

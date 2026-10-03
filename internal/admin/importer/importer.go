@@ -24,19 +24,19 @@ import (
 
 // Backup est le format natif de sauvegarde Goproxify (.gpx-admin-backup / .gpx-full-backup).
 type Backup struct {
-	Version        string                     `json:"version"`
-	CreatedAt      time.Time                  `json:"created_at"`
-	Proxies        []BackupProxy              `json:"proxies"`
-	Users          []BackupUser               `json:"users"`
-	Tokens         []BackupToken              `json:"tokens"`
-	TokenScopes    []BackupTokenScope         `json:"token_scopes,omitempty"`
-	PATs           []BackupPAT                `json:"pats,omitempty"`
-	Snippets       []BackupSnippet            `json:"snippets"`
-	AlertChannels  []map[string]any           `json:"alert_channels"`
-	AlertRules     []map[string]any           `json:"alert_rules"`
-	DeclaredNodes  []map[string]any           `json:"declared_nodes,omitempty"`
-	Configs        map[string]json.RawMessage `json:"configs,omitempty"` // "admin" | "edge" | "agent:<name>"
-	Tables         map[string][]map[string]any `json:"tables,omitempty"` // tables de configuration (settings, règles auto, équipes, domaines…)
+	Version       string                      `json:"version"`
+	CreatedAt     time.Time                   `json:"created_at"`
+	Proxies       []BackupProxy               `json:"proxies"`
+	Users         []BackupUser                `json:"users"`
+	Tokens        []BackupToken               `json:"tokens"`
+	TokenScopes   []BackupTokenScope          `json:"token_scopes,omitempty"`
+	PATs          []BackupPAT                 `json:"pats,omitempty"`
+	Snippets      []BackupSnippet             `json:"snippets"`
+	AlertChannels []map[string]any            `json:"alert_channels"`
+	AlertRules    []map[string]any            `json:"alert_rules"`
+	DeclaredNodes []map[string]any            `json:"declared_nodes,omitempty"`
+	Configs       map[string]json.RawMessage  `json:"configs,omitempty"` // "admin" | "edge" | "agent:<name>"
+	Tables        map[string][]map[string]any `json:"tables,omitempty"`  // tables de configuration (settings, règles auto, équipes, domaines…)
 }
 
 type BackupProxy struct {
@@ -80,28 +80,38 @@ type BackupPAT struct {
 }
 
 type BackupSnippet struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Type   string `json:"type"`
-	Config string `json:"config"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Description string `json:"description,omitempty"`
+	Config      string `json:"config"`
 }
 
 // BackupSummary est le résumé renvoyé lors du preview d'une sauvegarde.
 type BackupSummary struct {
-	Version            string         `json:"version"`
-	CreatedAt          time.Time      `json:"created_at"`
-	Proxies            []ProxySummary `json:"proxies"`
-	UserCount          int            `json:"user_count"`
-	TokenCount         int            `json:"token_count"`
-	TokenScopeCount    int            `json:"token_scope_count"`
-	PATCount           int            `json:"pat_count"`
-	SnippetCount       int            `json:"snippet_count"`
-	ChannelCount       int            `json:"channel_count"`
-	RuleCount          int            `json:"rule_count"`
-	DeclaredNodeCount  int            `json:"declared_node_count"`
-	ConfigRowCount     int            `json:"config_row_count"`
-	ConfigTables       map[string]int `json:"config_tables,omitempty"`
-	HasConfigs         bool           `json:"has_configs"`
+	Version           string         `json:"version"`
+	CreatedAt         time.Time      `json:"created_at"`
+	Proxies           []ProxySummary `json:"proxies"`
+	UserCount         int            `json:"user_count"`
+	TokenCount        int            `json:"token_count"`
+	TokenScopeCount   int            `json:"token_scope_count"`
+	PATCount          int            `json:"pat_count"`
+	SnippetCount      int            `json:"snippet_count"`
+	ChannelCount      int            `json:"channel_count"`
+	RuleCount         int            `json:"rule_count"`
+	DeclaredNodeCount int            `json:"declared_node_count"`
+	DeclaredNodes     []NodeSummary  `json:"declared_nodes"`
+	ConfigRowCount    int            `json:"config_row_count"`
+	ConfigTables      map[string]int `json:"config_tables,omitempty"`
+	HasConfigs        bool           `json:"has_configs"`
+}
+
+type NodeSummary struct {
+	ID          string `json:"id"`
+	Role        string `json:"role"`
+	Name        string `json:"name"`
+	Region      string `json:"region,omitempty"`
+	Environment string `json:"environment,omitempty"`
 }
 
 type ProxySummary struct {
@@ -114,7 +124,7 @@ type ProxySummary struct {
 
 // ImportSelection précise ce qu'on importe depuis la sauvegarde.
 type ImportSelection struct {
-	ProxyIDs       []string `json:"proxy_ids"`      // vide = tous
+	ProxyIDs       []string `json:"proxy_ids"` // vide = tous
 	ImportUsers    bool     `json:"import_users"`
 	ImportTokens   bool     `json:"import_tokens"`
 	ImportPATs     bool     `json:"import_pats"`
@@ -132,17 +142,17 @@ type ImportSelection struct {
 
 // ImportResult décrit ce qui a été importé.
 type ImportResult struct {
-	Proxies  int `json:"proxies"`
-	Users    int `json:"users"`
-	Tokens   int `json:"tokens"`
-	PATs     int `json:"pats"`
-	Snippets int `json:"snippets"`
-	Channels int `json:"channels"`
-	Rules    int `json:"rules"`
+	Proxies       int `json:"proxies"`
+	Users         int `json:"users"`
+	Tokens        int `json:"tokens"`
+	PATs          int `json:"pats"`
+	Snippets      int `json:"snippets"`
+	Channels      int `json:"channels"`
+	Rules         int `json:"rules"`
 	Config        int `json:"config"`
 	DeclaredNodes int `json:"declared_nodes"`
-	Skipped  int `json:"skipped"`
-	Errors   int `json:"errors"`
+	Skipped       int `json:"skipped"`
+	Errors        int `json:"errors"`
 }
 
 // SummarizeBackup parse le JSON et retourne un résumé sans tout charger.
@@ -168,6 +178,18 @@ func SummarizeBackup(data []byte) (*Backup, *BackupSummary, error) {
 		ConfigRowCount:    TableRowCount(b.Tables),
 		ConfigTables:      TableCounts(b.Tables),
 		HasConfigs:        len(b.Configs) > 0,
+	}
+	sum.DeclaredNodes = []NodeSummary{}
+	for _, n := range b.DeclaredNodes {
+		id, _ := n["id"].(string)
+		if strings.HasPrefix(id, "cfg:") {
+			continue
+		}
+		role, _ := n["role"].(string)
+		name, _ := n["name"].(string)
+		region, _ := n["region"].(string)
+		env, _ := n["environment"].(string)
+		sum.DeclaredNodes = append(sum.DeclaredNodes, NodeSummary{ID: id, Role: role, Name: name, Region: region, Environment: env})
 	}
 	for _, p := range b.Proxies {
 		sum.Proxies = append(sum.Proxies, ProxySummary{
@@ -342,8 +364,8 @@ func Apply(db *sql.DB, b *Backup, sel ImportSelection) ImportResult {
 			if overwrite {
 				verb = `INSERT OR REPLACE`
 			}
-			_, err := db.Exec(verb+` INTO snippets (id, name, type, config) VALUES (?,?,?,?)`,
-				id, s.Name, s.Type, s.Config)
+			_, err := db.Exec(verb+` INTO snippets (id, name, type, description, config) VALUES (?,?,?,?,?)`,
+				id, s.Name, s.Type, s.Description, s.Config)
 			if err == nil {
 				res.Snippets++
 			} else {
@@ -546,12 +568,12 @@ func ExportBackup(db *sql.DB) (*Backup, error) {
 	}
 
 	// Snippets
-	srows, _ := db.Query(`SELECT id, name, type, config FROM snippets ORDER BY created_at`)
+	srows, _ := db.Query(`SELECT id, name, type, description, config FROM snippets ORDER BY created_at`)
 	if srows != nil {
 		defer srows.Close()
 		for srows.Next() {
 			var s BackupSnippet
-			srows.Scan(&s.ID, &s.Name, &s.Type, &s.Config) //nolint:errcheck
+			srows.Scan(&s.ID, &s.Name, &s.Type, &s.Description, &s.Config) //nolint:errcheck
 			b.Snippets = append(b.Snippets, s)
 		}
 	}
@@ -581,9 +603,9 @@ func ExportBackup(db *sql.DB) (*Backup, error) {
 			var cooldown, priority, enabled int
 			rrows.Scan(&id, &name, &scope, &triggers, &chans, &cooldown, &priority, &enabled) //nolint:errcheck
 			var scopeMap, triggersArr, chansArr any
-			json.Unmarshal([]byte(scope), &scopeMap)     //nolint:errcheck
+			json.Unmarshal([]byte(scope), &scopeMap)       //nolint:errcheck
 			json.Unmarshal([]byte(triggers), &triggersArr) //nolint:errcheck
-			json.Unmarshal([]byte(chans), &chansArr)     //nolint:errcheck
+			json.Unmarshal([]byte(chans), &chansArr)       //nolint:errcheck
 			b.AlertRules = append(b.AlertRules, map[string]any{
 				"id": id, "name": name, "scope": scopeMap, "triggers": triggersArr,
 				"channels": chansArr, "cooldown_sec": cooldown, "priority": priority, "enabled": enabled == 1,

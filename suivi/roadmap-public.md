@@ -72,6 +72,7 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - [x] Hygiène CI publique (lint/tests documentés)
 - [x] Polish UX Access et docs opérateur
 - [x] **Portail Access en onglets** (Synthèse, Destinations, Utilisateurs, Modèles, Audit, Réglages) — livré
+- [x] **Portail Access : refonte visuelle et thèmes** (réglage Admin par passerelle : Automatique, Clair, Sombre, Océan, Forêt, Améthyste, Contraste) — livré
 - [x] **Portail Access : sessions en direct** (lister, terminer ; API, CLI, MCP) — livré
 - [x] **Portail Access : accès temporaires avec approbation** (demande depuis le portail, onglet Approbations, expiration automatique ; API, CLI, MCP) — livré
 - [x] **Portail Access : politiques d'accès** (plages horaires, IP autorisées, déconnexion sur inactivité ; onglet Politiques, API, CLI, MCP) — livré

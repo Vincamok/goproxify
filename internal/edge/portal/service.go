@@ -121,6 +121,7 @@ func (s *Service) ApplyConfig(cfg Config) error {
 		s.cfg.AuthProviderID = cfg.AuthProviderID
 		s.cfg.AllowPersonalTargets = cfg.AllowPersonalTargets
 		s.cfg.Require2FA = cfg.Require2FA
+		s.cfg.Theme = cfg.Theme
 		s.cfg.SessionTTLSec = cfg.SessionTTLSec
 		s.cfg.SessionMode = cfg.SessionMode
 		s.cfg.HAGroup, s.cfg.HAMembers, s.cfg.HAKey = cfg.HAGroup, cfg.HAMembers, cfg.HAKey
