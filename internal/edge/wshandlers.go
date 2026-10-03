@@ -6,7 +6,6 @@ package edge
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"time"
 
 	edgeagent "github.com/vincamok/goproxify/internal/edge/agent"
@@ -19,7 +18,6 @@ import (
 	"github.com/vincamok/goproxify/internal/edge/router"
 	"github.com/vincamok/goproxify/internal/edge/threat"
 	edgetokens "github.com/vincamok/goproxify/internal/edge/tokens"
-	"github.com/vincamok/goproxify/internal/edge/tunnel"
 	edgetls "github.com/vincamok/goproxify/internal/edge/tls"
 	edgews "github.com/vincamok/goproxify/internal/edge/ws"
 )
@@ -200,32 +198,11 @@ func (s *Server) handleWSAdminMessage(connID string, msg edgews.Message) error {
 		s.log.Info(threat.Name+": config mise à jour", "enabled", cfg.Enabled)
 
 	case edgews.TypePushServerConfig:
-		var body struct {
-			ReadHeaderSeconds int `json:"read_header_seconds"`
-			ReadSeconds       int `json:"read_seconds"`
-			WriteSeconds      int `json:"write_seconds"`
-			IdleSeconds       int `json:"idle_seconds"`
-		}
+		var body pushedServerConfig
 		if err := json.Unmarshal(msg.Payload, &body); err != nil {
 			return err
 		}
-		if body.ReadHeaderSeconds > 0 {
-			s.cfg.Timeouts.ReadHeaderSeconds = body.ReadHeaderSeconds
-		}
-		if body.ReadSeconds > 0 {
-			s.cfg.Timeouts.ReadSeconds = body.ReadSeconds
-		}
-		if body.WriteSeconds > 0 {
-			s.cfg.Timeouts.WriteSeconds = body.WriteSeconds
-		}
-		if body.IdleSeconds > 0 {
-			s.cfg.Timeouts.IdleSeconds = body.IdleSeconds
-		}
-		if s.cfgPath != "" {
-			if data, err := json.MarshalIndent(s.cfg, "", "  "); err == nil {
-				_ = os.WriteFile(s.cfgPath, data, 0o640)
-			}
-		}
+		s.applyServerConfig(body)
 		s.log.Info("ws/admin: server-config mis à jour (redémarrage requis)")
 
 	case edgews.TypePushSettings:
@@ -269,7 +246,7 @@ func (s *Server) handleWSAdminMessage(connID string, msg edgews.Message) error {
 		if err := json.Unmarshal(msg.Payload, &tpls); err != nil {
 			return err
 		}
-		s.portal.ReplacePageTemplates(tpls)
+		s.applyPortalTemplates(tpls)
 		s.log.Info("ws/admin: templates Access mis à jour", "count", len(tpls))
 
 	case edgews.TypeFullSync:
@@ -357,9 +334,7 @@ func (s *Server) handleWSAdminMessage(connID string, msg edgews.Message) error {
 		if err := json.Unmarshal(msg.Payload, &rules); err != nil {
 			return err
 		}
-		if s.rulesEngine != nil {
-			s.rulesEngine.ReplaceRules(rules)
-		}
+		s.applyAutoRules(rules)
 		s.log.Info("ws/admin: règles automatiques mises à jour", "count", len(rules))
 
 	case edgews.TypePushTunnelConfig:
@@ -367,13 +342,7 @@ func (s *Server) handleWSAdminMessage(connID string, msg edgews.Message) error {
 		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
 			return err
 		}
-		if s.tunnelManager != nil {
-			peers := make([]tunnel.PeerConfig, 0, len(payload.Peers))
-			for _, p := range payload.Peers {
-				peers = append(peers, tunnel.PeerConfig{Name: p.Name, Addr: p.Addr})
-			}
-			s.tunnelManager.SetPeers(peers)
-		}
+		s.applyTunnelConfig(payload)
 		s.log.Info("ws/admin: tunnel peers mis à jour", "count", len(payload.Peers))
 
 	default:

@@ -85,6 +85,14 @@ func (m *Manager) SetPeers(peers []PeerConfig) {
 	}
 }
 
+// HasPeer indique si un pair de ce nom est enregistré.
+func (m *Manager) HasPeer(name string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	_, ok := m.peers[name]
+	return ok
+}
+
 // AddPeer enregistre ou met à jour un pair distant.
 func (m *Manager) AddPeer(cfg PeerConfig) {
 	m.mu.Lock()

@@ -350,33 +350,12 @@ func (s *Server) handlePushThreatConfig(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handlePushServerConfig(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		ReadHeaderSeconds int `json:"read_header_seconds"`
-		ReadSeconds       int `json:"read_seconds"`
-		WriteSeconds      int `json:"write_seconds"`
-		IdleSeconds       int `json:"idle_seconds"`
-	}
+	var body pushedServerConfig
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if body.ReadHeaderSeconds > 0 {
-		s.cfg.Timeouts.ReadHeaderSeconds = body.ReadHeaderSeconds
-	}
-	if body.ReadSeconds > 0 {
-		s.cfg.Timeouts.ReadSeconds = body.ReadSeconds
-	}
-	if body.WriteSeconds > 0 {
-		s.cfg.Timeouts.WriteSeconds = body.WriteSeconds
-	}
-	if body.IdleSeconds > 0 {
-		s.cfg.Timeouts.IdleSeconds = body.IdleSeconds
-	}
-	if s.cfgPath != "" {
-		if data, err := json.MarshalIndent(s.cfg, "", "  "); err == nil {
-			_ = os.WriteFile(s.cfgPath, data, 0o640)
-		}
-	}
+	s.applyServerConfig(body)
 	s.log.Info("server-config mis à jour (redémarrage requis pour appliquer les timeouts)")
 	w.WriteHeader(http.StatusNoContent)
 }

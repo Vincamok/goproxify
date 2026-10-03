@@ -312,6 +312,16 @@ func (s *Service) ReplacePageTemplates(tpls []PageTemplate) {
 	s.log.Info("portal: templates pages mis à jour", "count", len(s.pageTemplates.Snapshot()))
 }
 
+// PageTemplatesSnapshot retourne les modèles de pages actifs, par clé de page.
+func (s *Service) PageTemplatesSnapshot() map[string]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pageTemplates == nil {
+		return map[string]string{}
+	}
+	return s.pageTemplates.Snapshot()
+}
+
 func resolveMasterKey() string {
 	if k := os.Getenv("GPX_PORTAL_MASTER_KEY"); k != "" {
 		return k

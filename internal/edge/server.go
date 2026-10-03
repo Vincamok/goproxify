@@ -51,7 +51,6 @@ import (
 // Server est le Data Plane — reverse proxy HTTP/TLS/TCP/UDP.
 type Server struct {
 	cfg       *config.EdgeConfig
-	cfgPath   string // chemin de edge.json — utilisé pour persister les timeouts
 	log       *edgelog.DynamicLogger
 	accessLog *edgelog.AccessLogger
 
@@ -101,6 +100,9 @@ type Server struct {
 	pushedMu sync.Mutex
 	pushed   pushedSettings // cumul des réglages poussés par l'Admin, persisté (settingsPath)
 
+	serverCfgMu sync.Mutex
+	serverCfg   pushedServerConfig // cumul des timeouts poussés par l'Admin, persisté (serverConfigPath)
+
 	// saveCache debounce (revue P1 #8)
 	saveCacheMu    sync.Mutex
 	saveCacheTimer *time.Timer
@@ -117,7 +119,7 @@ type Server struct {
 }
 
 // New initialise la passerelle à partir de la configuration.
-func New(cfg *config.EdgeConfig, cfgPath ...string) (*Server, error) {
+func New(cfg *config.EdgeConfig) (*Server, error) {
 	cfg.Identity.NodeName = nodeident.Resolve("edge")
 
 	log := edgelog.New(cfg.Engine.LogLevel, cfg.Engine.LogFormat, cfg.Engine.SystemLogPath)
@@ -144,17 +146,12 @@ func New(cfg *config.EdgeConfig, cfgPath ...string) (*Server, error) {
 		tracingShutdown = func(context.Context) error { return nil }
 	}
 
-	var path string
-	if len(cfgPath) > 0 {
-		path = cfgPath[0]
-	}
 	bdb, err := bansdb.Open("")
 	if err != nil {
 		log.Logger().Warn("edge: ouverture bansdb échouée, fallback mémoire", "err", err)
 	}
 	s := &Server{
 		cfg:             cfg,
-		cfgPath:         path,
 		log:             log,
 		accessLog:       accessLog,
 		table:           &router.Table{},
@@ -400,6 +397,9 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Réglages poussés (protection des IP, journalisation…) avant le premier access log.
 	s.loadPushedSettingsFromDisk()
+	s.loadTunnelConfigFromDisk()
+	s.loadServerConfigFromDisk()
+	s.loadPortalTemplatesFromDisk()
 
 	// API interne (push de routes depuis l'Admin)
 	if err := s.startInternalAPI(); err != nil {
@@ -498,6 +498,7 @@ func (s *Server) Start(ctx context.Context) error {
 		EmitNotify: s.onRuleNotify,
 	})
 	s.rulesEngine.OnRuleFired = s.onRuleFired
+	s.loadAutoRulesFromDisk()
 	s.accessLog.SetProxyTap(s.recordProxyEvent)
 	s.rulesEngine.Start()
 	go s.bansDBPurgeLoop(ctx)

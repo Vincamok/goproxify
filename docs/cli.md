@@ -941,8 +941,8 @@ goproxify access users resend        -id <uuid>
 goproxify access users delete        -id <uuid>
 
 goproxify access groups list         -edge <nom>
-goproxify access groups create       -edge <nom> -name <n> [-description <d>] [-members a@x.fr,b@x.fr]
-goproxify access groups update       -id <uuid> -name <n> [-description <d>] [-members a@x.fr,b@x.fr]
+goproxify access groups create       -edge <nom> -name <n> [-description <d>] [-members a@example.com,b@example.com]
+goproxify access groups update       -id <uuid> -name <n> [-description <d>] [-members a@example.com,b@example.com]
 goproxify access groups delete       -id <uuid>
 
 goproxify access policy get           -edge <nom>

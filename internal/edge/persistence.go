@@ -18,7 +18,10 @@ import (
 	edgetls "github.com/vincamok/goproxify/internal/edge/tls"
 	"github.com/vincamok/goproxify/internal/edge/raft"
 	"github.com/vincamok/goproxify/internal/edge/router"
+	"github.com/vincamok/goproxify/internal/edge/portal"
+	edgere "github.com/vincamok/goproxify/internal/edge/rulesengine"
 	"github.com/vincamok/goproxify/internal/edge/threat"
+	"github.com/vincamok/goproxify/internal/edge/tunnel"
 	edgews "github.com/vincamok/goproxify/internal/edge/ws"
 )
 
@@ -142,6 +145,194 @@ func (s *Server) loadPortalConfigFromDisk() {
 	}
 	s.applyPortalPayload(payload)
 	s.log.Info("portal: config chargée depuis le disque", "enabled", payload.Enabled, "vues", len(payload.Views))
+}
+
+// autoRulesPath est la copie locale chiffrée des règles automatiques poussées par l'Admin.
+func autoRulesPath() string {
+	if p := os.Getenv("GPX_AUTO_RULES_PATH"); p != "" {
+		return p
+	}
+	return "/etc/goproxify/auto-rules.gpx"
+}
+
+// applyAutoRules persiste les règles reçues de l'Admin puis les applique. La copie est écrite même
+// si le moteur n'existe pas encore : il la relira à sa création.
+func (s *Server) applyAutoRules(rules []edgere.Rule) {
+	if err := s.cache.SaveFile(autoRulesPath(), rules); err != nil {
+		s.log.Warn("rulesengine: persistance des règles échouée", "err", err)
+	}
+	if s.rulesEngine != nil {
+		s.rulesEngine.ReplaceRules(rules)
+	}
+}
+
+// loadAutoRulesFromDisk remet en service les dernières règles connues sans l'Admin.
+func (s *Server) loadAutoRulesFromDisk() {
+	var rules []edgere.Rule
+	ok, err := s.cache.LoadFile(autoRulesPath(), &rules)
+	if err != nil {
+		s.log.Warn("rulesengine: copie locale illisible — en attente de l'Admin", "err", err)
+		return
+	}
+	if !ok {
+		return
+	}
+	s.rulesEngine.ReplaceRules(rules)
+	s.log.Info("rulesengine: règles chargées depuis le disque", "count", len(rules))
+}
+
+// tunnelConfigPath est la copie locale chiffrée de la liste des pairs du tunnel L4 poussée par l'Admin.
+func tunnelConfigPath() string {
+	if p := os.Getenv("GPX_TUNNEL_CONFIG_PATH"); p != "" {
+		return p
+	}
+	return "/etc/goproxify/tunnel-config.gpx"
+}
+
+// applyTunnelConfig persiste la liste des pairs du tunnel reçue de l'Admin puis l'applique.
+func (s *Server) applyTunnelConfig(payload edgews.TunnelConfigPayload) {
+	if err := s.cache.SaveFile(tunnelConfigPath(), payload); err != nil {
+		s.log.Warn("tunnel: persistance des pairs échouée", "err", err)
+	}
+	s.setTunnelPeers(payload)
+}
+
+func (s *Server) setTunnelPeers(payload edgews.TunnelConfigPayload) {
+	if s.tunnelManager == nil {
+		return
+	}
+	peers := make([]tunnel.PeerConfig, 0, len(payload.Peers))
+	for _, p := range payload.Peers {
+		peers = append(peers, tunnel.PeerConfig{Name: p.Name, Addr: p.Addr})
+	}
+	s.tunnelManager.SetPeers(peers)
+}
+
+// loadTunnelConfigFromDisk rétablit les pairs du tunnel L4 sans l'Admin.
+func (s *Server) loadTunnelConfigFromDisk() {
+	var payload edgews.TunnelConfigPayload
+	ok, err := s.cache.LoadFile(tunnelConfigPath(), &payload)
+	if err != nil {
+		s.log.Warn("tunnel: copie locale illisible — en attente de l'Admin", "err", err)
+		return
+	}
+	if !ok {
+		return
+	}
+	s.setTunnelPeers(payload)
+	s.log.Info("tunnel: pairs chargés depuis le disque", "count", len(payload.Peers))
+}
+
+// pushedServerConfig est la configuration serveur HTTP poussée par l'Admin (0 = non défini).
+type pushedServerConfig struct {
+	ReadHeaderSeconds int `json:"read_header_seconds"`
+	ReadSeconds       int `json:"read_seconds"`
+	WriteSeconds      int `json:"write_seconds"`
+	IdleSeconds       int `json:"idle_seconds"`
+}
+
+// merge reporte sur p les valeurs définies de o.
+func (p pushedServerConfig) merge(o pushedServerConfig) pushedServerConfig {
+	if o.ReadHeaderSeconds > 0 {
+		p.ReadHeaderSeconds = o.ReadHeaderSeconds
+	}
+	if o.ReadSeconds > 0 {
+		p.ReadSeconds = o.ReadSeconds
+	}
+	if o.WriteSeconds > 0 {
+		p.WriteSeconds = o.WriteSeconds
+	}
+	if o.IdleSeconds > 0 {
+		p.IdleSeconds = o.IdleSeconds
+	}
+	return p
+}
+
+// serverConfigPath est la copie locale chiffrée de la configuration serveur poussée par l'Admin.
+// edge.json n'est pas réécrit : sa sérialisation ne relit pas ses propres clés.
+func serverConfigPath() string {
+	if p := os.Getenv("GPX_SERVER_CONFIG_PATH"); p != "" {
+		return p
+	}
+	return "/etc/goproxify/server-config.gpx"
+}
+
+// applyServerConfig persiste puis applique les timeouts reçus de l'Admin ; ils prennent effet au
+// prochain démarrage du serveur HTTP.
+func (s *Server) applyServerConfig(p pushedServerConfig) {
+	s.serverCfgMu.Lock()
+	s.serverCfg = s.serverCfg.merge(p)
+	err := s.cache.SaveFile(serverConfigPath(), s.serverCfg)
+	s.serverCfgMu.Unlock()
+	if err != nil {
+		s.log.Warn("server-config: persistance échouée", "err", err)
+	}
+	s.setServerTimeouts(p)
+}
+
+func (s *Server) setServerTimeouts(p pushedServerConfig) {
+	t := &s.cfg.Timeouts
+	t.ReadHeaderSeconds = pickPositive(p.ReadHeaderSeconds, t.ReadHeaderSeconds)
+	t.ReadSeconds = pickPositive(p.ReadSeconds, t.ReadSeconds)
+	t.WriteSeconds = pickPositive(p.WriteSeconds, t.WriteSeconds)
+	t.IdleSeconds = pickPositive(p.IdleSeconds, t.IdleSeconds)
+}
+
+func pickPositive(v, fallback int) int {
+	if v > 0 {
+		return v
+	}
+	return fallback
+}
+
+// loadServerConfigFromDisk réapplique les derniers timeouts reçus de l'Admin ; à appeler avant la
+// création des serveurs HTTP.
+func (s *Server) loadServerConfigFromDisk() {
+	var p pushedServerConfig
+	ok, err := s.cache.LoadFile(serverConfigPath(), &p)
+	if err != nil {
+		s.log.Warn("server-config: copie locale illisible — en attente de l'Admin", "err", err)
+		return
+	}
+	if !ok {
+		return
+	}
+	s.serverCfgMu.Lock()
+	s.serverCfg = p
+	s.serverCfgMu.Unlock()
+	s.setServerTimeouts(p)
+	s.log.Info("server-config: timeouts chargés depuis le disque")
+}
+
+// portalTemplatesPath est la copie locale chiffrée des modèles de pages du portail Access.
+func portalTemplatesPath() string {
+	if p := os.Getenv("GPX_PORTAL_TEMPLATES_PATH"); p != "" {
+		return p
+	}
+	return "/etc/goproxify/portal-templates.gpx"
+}
+
+// applyPortalTemplates persiste les modèles de pages reçus de l'Admin puis les applique.
+func (s *Server) applyPortalTemplates(tpls []portal.PageTemplate) {
+	if err := s.cache.SaveFile(portalTemplatesPath(), tpls); err != nil {
+		s.log.Warn("portal: persistance des modèles échouée", "err", err)
+	}
+	s.portal.ReplacePageTemplates(tpls)
+}
+
+// loadPortalTemplatesFromDisk rend au portail ses pages personnalisées sans l'Admin.
+func (s *Server) loadPortalTemplatesFromDisk() {
+	var tpls []portal.PageTemplate
+	ok, err := s.cache.LoadFile(portalTemplatesPath(), &tpls)
+	if err != nil {
+		s.log.Warn("portal: modèles locaux illisibles — en attente de l'Admin", "err", err)
+		return
+	}
+	if !ok {
+		return
+	}
+	s.portal.ReplacePageTemplates(tpls)
+	s.log.Info("portal: modèles chargés depuis le disque", "count", len(tpls))
 }
 
 // settingsPath est la copie locale chiffrée des réglages runtime poussés par l'Admin

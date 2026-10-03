@@ -285,7 +285,7 @@ func runEdge() {
 	}
 
 	errorpages.EdgeVersion = VersionEdge
-	srv, err := edge.New(cfg, cfgPath)
+	srv, err := edge.New(cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "initialisation edge : %v\n", err)
 		os.Exit(1)
