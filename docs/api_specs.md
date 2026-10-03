@@ -1274,6 +1274,10 @@ Soumission d'un proxy découvert par labels (depuis un Agent).
 
 Réplication du magasin du portail entre passerelles d'un même groupe HA (comptes, mot de passe et 2FA, coffres, cibles perso, favoris, et sessions web en mode `shared`). L'état échangé est **chiffré (AES-256-GCM) par la clé du groupe** poussée par l'Admin : il ne circule jamais en clair et une clé différente ne déchiffre rien. Fusion « dernier écrit gagne » par clé avec suppressions propagées ; envoi immédiat à chaque modification locale et tirage toutes les 15 s. Répond `204` hors groupe. Sans `GPX_PORTAL_MASTER_KEY` identique sur les membres, les coffres des comptes SSO répliqués ne sont pas déchiffrables ailleurs (un avertissement est journalisé).
 
+### `GET|POST /internal/v1/agents/replica`
+
+Réplication des secrets HMAC des Agents approuvés entre passerelles d'un même groupe HA : un Agent approuvé sur un membre est accepté par tous, il peut donc se reconnecter à un autre membre si sa passerelle tombe, sans l'Admin. L'état est **chiffré (AES-256-GCM) par une clé dérivée de la clé du groupe** (préfixe propre, distinct de celle du portail) ; une autre clé ne déchiffre rien (`400` à l'import). Chaque HMAC porte une estampille et une révocation laisse une pierre tombale : la modification la plus récente l'emporte, une révocation se propage et ferme la connexion de l'Agent sur les autres membres, une rotation horaire se propage. Envoi immédiat à chaque modification locale et tirage toutes les 15 s, entre membres du groupe seulement. Répond `204` hors groupe.
+
 ### `POST /internal/v1/bans/gossip`
 
 Un ban décidé localement (Sentinel, Fail2Ban) est transmis aux passerelles pairs sans passer par l'Admin ; chaque passerelle récupère aussi périodiquement les bans actifs de ses pairs (`GET /internal/v1/bans`). Les bans expirés, sans IP ou déjà connus (même identifiant ou même IP) sont ignorés ; un ban reçu d'un pair n'est jamais réémis. Ce circuit prend le relais quand l'Admin est indisponible.
@@ -1359,6 +1363,7 @@ Tous les messages WS utilisent l'enveloppe suivante :
 |---|---|
 | `approve` | Approbation de l'Agent + premier `agent_hmac` |
 | `rotate_hmac` | Nouveau `agent_hmac` (rotation toutes les heures) |
+| `edge_endpoints` | Adresses des **autres** membres du groupe HA de la passerelle (`{"endpoints": [...]}`), envoyées à l'approbation, à chaque connexion et quand la composition du groupe change. L'Agent les conserve (`/etc/goproxify/agent-edges.json`) et bascule vers l'un d'eux si sa passerelle reste injoignable (3 échecs consécutifs) : il s'y reconnecte avec son HMAC, répliqué dans le groupe, et republie tous ses conteneurs. Absent hors groupe. |
 | `command` | Commande à exécuter sur l'Agent (restart conteneur, pull image, etc.) |
 | `rescan` | Demande un rescan Docker immédiat |
 | `ping` | Ping keepalive (répondu par `pong`) |

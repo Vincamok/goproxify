@@ -67,6 +67,7 @@ type Hub struct {
 	// Callbacks pour notifier le reste de la passerelle
 	onAgentPending  func(agentID, agentName, version string) // Agent en attente d'approbation
 	onJoinTokenUsed func(joinToken string)                   // optionnel : révoquer dans tokenStore passerelle
+	edgeEndpoints   func() []string                          // adresses des autres membres du groupe HA (bascule des Agents)
 }
 
 // adminConn représente une connexion WS Admin active.
@@ -328,6 +329,7 @@ func (h *Hub) ServeAgent(w http.ResponseWriter, r *http.Request) {
 			_ = h.sendToAgent(ac, reapproveMsg)
 		}
 		go h.hmacRotateLoop(r.Context(), ac)
+		h.sendEdgeEndpoints(ac)
 	}
 
 	h.readAgentLoop(r.Context(), ac)
@@ -434,6 +436,7 @@ func (h *Hub) ApproveAgent(agentID string) error {
 	}
 
 	go h.hmacRotateLoop(context.Background(), ac)
+	h.sendEdgeEndpoints(ac)
 	h.log.Info("ws/agent: Agent approuvé", "agent", agentID)
 	return nil
 }

@@ -121,6 +121,7 @@ function sentViewOverview() {
       ${sentChip('Durée du ban', esc(cfg.ban_duration || '24h'), 'general')}
       ${sentChip('Débit par IP', cfg.rate_limit > 0 ? `${cfg.rate_limit} req/s` : '—', 'detection')}
       ${sentChip('Erreurs 4xx', `${cfg.error_threshold || 0} / ${esc(cfg.error_window || '10s')}`, 'detection')}
+      ${sentChip('Score par IP', cfg.ip_score?.enabled ? `ban à ${cfg.ip_score.ban_threshold || 10}, demi-vie ${esc(cfg.ip_score.half_life || '10m')}` : 'Off', 'detection')}
       ${sentChip('Limite globale', cfg.global_rps > 0 ? `${cfg.global_rps} req/s` : '—', 'ddos')}
       ${sentChip('Tarpit', tarpitOn ? `${(cfg.tarpit.delay_ms || 5000) / 1000} s` : 'Off', 'riposte')}
     </div>
@@ -244,7 +245,11 @@ function sentDrawerForm(cfg) {
       ${fld('Ban auto rate — seuil', '(déclenchements avant ban, 1 = immédiat)', `<input id="threat-rate-ban-threshold" type="number" class="input" value="${cfg.rate_ban_threshold || 1}" min="1" placeholder="1">`)}
       ${fld('Ban auto rate — fenêtre', '(ex : 10s)', `<input id="threat-rate-ban-window" class="input" value="${esc(cfg.rate_ban_window || '')}" placeholder="= fenêtre rate">`)}
       ${fld(t('security.threat.error_threshold'), '', `<input id="threat-errs" type="number" class="input" value="${cfg.error_threshold || 20}" min="1">`)}
-      ${fld(t('security.threat.error_window'), '', `<input id="threat-ewin" class="input" value="${esc(cfg.error_window || '10s')}" placeholder="10s">`)}`)}
+      ${fld(t('security.threat.error_window'), '', `<input id="threat-ewin" class="input" value="${esc(cfg.error_window || '10s')}" placeholder="10s">`)}
+      <p style="font-size:12px;color:var(--text2);margin:10px 0">Score cumulé par IP : chaque signal ajoute des points (chemin sensible 2, User-Agent suspect 3, débit 4) qui s'estompent avec le temps. L'IP n'est bannie qu'au seuil ; les IP des listes de menaces le sont tout de suite. Remplace le ban auto rate ci-dessus.</p>
+      ${chk('threat-score-on', cfg.ip_score?.enabled, 'Activer le score cumulé par IP')}
+      ${fld('Score — seuil de ban', '(défaut 10)', `<input id="threat-score-ban" type="number" class="input" value="${cfg.ip_score?.ban_threshold || ''}" min="1" step="1" placeholder="10">`)}
+      ${fld('Score — demi-vie', '(le score est divisé par deux à chaque demi-vie, défaut 10m)', `<input id="threat-score-halflife" class="input" value="${esc(cfg.ip_score?.half_life || '')}" placeholder="10m">`)}`)}
     ${sec('ddos', 'Anti-DDoS', `
       ${fld('Global req/s max', '(toutes IPs, 0 = désactivé)', `<input id="threat-global-rps" type="number" class="input" value="${cfg.global_rps || 0}" min="0" step="10" placeholder="0 = désactivé">`)}
       ${fld('Global burst', '(0 = 2× global req/s)', `<input id="threat-global-burst" type="number" class="input" value="${cfg.global_burst || 0}" min="0" step="10" placeholder="0 = 2×RPS">`)}`)}
@@ -371,6 +376,11 @@ function sentCollectConfig(enabled) {
     rate_ban_window: $('threat-rate-ban-window')?.value || '',
     global_rps: num('threat-global-rps', '0', true),
     global_burst: num('threat-global-burst', '0'),
+    ip_score: {
+      enabled: $('threat-score-on')?.checked ?? false,
+      ban_threshold: num('threat-score-ban', '0', true),
+      half_life: $('threat-score-halflife')?.value || '',
+    },
     error_threshold: parseInt($('threat-errs')?.value || '20', 10),
     error_window: $('threat-ewin')?.value || '10s',
     ban_duration: $('threat-dur')?.value || '24h',

@@ -5,6 +5,11 @@ package threat
 
 import "time"
 
+const (
+	defaultScoreBanThreshold = 10.0
+	defaultScoreHalfLife     = 10 * time.Minute
+)
+
 // Config pilote le moteur de détection. Poussée par Admin via /internal/v1/threat-config.
 type Config struct {
 	Enabled bool `json:"enabled"`
@@ -34,6 +39,9 @@ type Config struct {
 	ErrorThreshold int      `json:"error_threshold,omitempty"`
 	ErrorWindow    Duration `json:"error_window,omitempty"`
 
+	// IPScore : score cumulé par IP avec décroissance. Désactivé par défaut (ban au premier signal).
+	IPScore IPScoreConfig `json:"ip_score,omitempty"`
+
 	// Durée du ban automatique (0 = permanent).
 	BanDuration Duration `json:"ban_duration,omitempty"`
 
@@ -48,6 +56,20 @@ type Config struct {
 
 	// Tarpit : ralentit la réponse aux IP bloquées ou bannies par Sentinel (désactivé par défaut).
 	Tarpit TarpitConfig `json:"tarpit,omitempty"`
+}
+
+// IPScoreConfig active un score par IP qui s'additionne d'une requête à l'autre et décroît avec le
+// temps. Une IP n'est bannie que lorsque son score dépasse BanThreshold : quelques signaux isolés
+// (un 404 sur un chemin sensible, un User-Agent suspect) s'estompent, une série rapprochée mène au ban.
+// Les IP des listes de menaces (signal « ip ») restent bannies immédiatement. Quand le score est
+// actif, le ban sur le signal « rate » passe lui aussi par le score (rate_ban_threshold est ignoré).
+type IPScoreConfig struct {
+	Enabled bool `json:"enabled,omitempty"`
+	// BanThreshold : score cumulé qui déclenche le ban (défaut 10 ; un chemin sensible pèse 2, un
+	// User-Agent suspect 3, un dépassement de débit 4).
+	BanThreshold float64 `json:"ban_threshold,omitempty"`
+	// HalfLife : durée au bout de laquelle le score est divisé par deux (défaut 10 min).
+	HalfLife Duration `json:"half_life,omitempty"`
 }
 
 // CustomListsConfig contient des entrées inline pour chaque liste.
@@ -117,6 +139,12 @@ func (c *Config) defaults() {
 	}
 	if c.BanDuration.Duration == 0 {
 		c.BanDuration.Duration = 24 * time.Hour
+	}
+	if c.IPScore.BanThreshold <= 0 {
+		c.IPScore.BanThreshold = defaultScoreBanThreshold
+	}
+	if c.IPScore.HalfLife.Duration <= 0 {
+		c.IPScore.HalfLife.Duration = defaultScoreHalfLife
 	}
 	if c.Lists.RefreshInterval.Duration == 0 {
 		c.Lists.RefreshInterval.Duration = 6 * time.Hour

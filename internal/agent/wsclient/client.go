@@ -10,6 +10,8 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -17,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/vincamok/goproxify/internal/agent/edgeset"
 	edgeWS "github.com/vincamok/goproxify/internal/edge/ws"
 	"nhooyr.io/websocket"
 	"nhooyr.io/websocket/wsjson"
@@ -44,7 +47,14 @@ const (
 	wsAgentPath   = "/ws/agent"
 	heartbeatInterval = 30 * time.Second
 	metricsInterval   = 10 * time.Second
+
+	// switchAfter : échecs de connexion consécutifs avant de basculer vers un autre membre du groupe HA.
+	switchAfter = 3
+	// stableAfter : une connexion plus courte est comptée comme un échec (refusée aussitôt).
+	stableAfter = 10 * time.Second
 )
+
+var errNoCredentials = errors.New("wsclient: ni HMAC ni JOIN_TOKEN à présenter")
 
 // CommandHandler est appelé quand la passerelle envoie une commande à l'Agent.
 type CommandHandler func(action string, payload json.RawMessage)
@@ -64,6 +74,11 @@ type Client struct {
 	seq    atomic.Int64
 
 	onCommand CommandHandler // appelé pour les messages passerelle→Agent
+
+	onConnect func() // appelé à chaque connexion établie (réannonce de l'état)
+
+	edges    *edgeset.Set       // passerelles utilisables (membres du groupe HA) ; nil = endpoint fixe
+	onSwitch func(edge string) // appelé après une bascule vers une autre passerelle
 
 	log *slog.Logger
 
@@ -93,6 +108,36 @@ func NewClient(agentID, agentName, version, edgeEndpoint, joinToken, hmacSecret 
 	}
 	go c.connectLoop()
 	return c
+}
+
+// SetEdgeSet permet au client de basculer vers un autre membre du groupe HA quand la passerelle
+// courante reste injoignable ; onSwitch est appelé avec la nouvelle adresse. À appeler avant la
+// première connexion utile (le client se reconnecte en boucle de toute façon).
+func (c *Client) SetEdgeSet(set *edgeset.Set, onSwitch func(edge string)) {
+	c.connMu.Lock()
+	c.edges = set
+	c.onSwitch = onSwitch
+	c.connMu.Unlock()
+}
+
+func (c *Client) currentEndpoint() string {
+	c.connMu.Lock()
+	set := c.edges
+	c.connMu.Unlock()
+	if set != nil {
+		if ep := set.Current(); ep != "" {
+			return ep
+		}
+	}
+	return c.endpoint
+}
+
+// SetOnConnect enregistre un callback exécuté à chaque connexion à la passerelle, y compris les
+// reconnexions : l'Agent y réannonce tout son état.
+func (c *Client) SetOnConnect(fn func()) {
+	c.connMu.Lock()
+	c.onConnect = fn
+	c.connMu.Unlock()
 }
 
 // Close arrête le client WS.
@@ -191,6 +236,7 @@ func (c *Client) sendJSON(msgType string, payload any) {
 // connectLoop maintient la connexion WS avec backoff exponentiel + jitter.
 func (c *Client) connectLoop() {
 	backoff := reconnectBase
+	failures := 0
 	for {
 		select {
 		case <-c.ctx.Done():
@@ -198,10 +244,29 @@ func (c *Client) connectLoop() {
 		default:
 		}
 
+		start := time.Now()
 		err := c.connect()
+		lived := time.Since(start)
 		c.Active.Store(false)
 		if err != nil {
 			c.log.Warn("wsclient: connexion échouée", "err", err, "retry", backoff)
+		}
+
+		switch {
+		case errors.Is(err, errNoCredentials):
+			// Rien à présenter : changer de passerelle n'y changerait rien.
+		case err != nil || lived < stableAfter:
+			// Connexion impossible, ou refusée aussitôt (HMAC inconnu de cette passerelle).
+			failures++
+			if failures >= switchAfter {
+				failures = 0
+				if c.switchEdge() {
+					backoff = reconnectBase
+				}
+			}
+		default:
+			failures = 0
+			backoff = reconnectBase
 		}
 
 		select {
@@ -216,11 +281,34 @@ func (c *Client) connectLoop() {
 	}
 }
 
+// switchEdge passe à un autre membre du groupe HA ; faux s'il n'y en a pas.
+func (c *Client) switchEdge() bool {
+	c.connMu.Lock()
+	set, onSwitch := c.edges, c.onSwitch
+	c.connMu.Unlock()
+	if set == nil {
+		return false
+	}
+	ep, changed := set.Rotate()
+	if !changed {
+		return false
+	}
+	c.log.Warn("wsclient: passerelle injoignable — bascule vers un autre membre du groupe", "edge", ep)
+	if onSwitch != nil {
+		go onSwitch(ep)
+	}
+	return true
+}
+
 // connect établit la connexion WS, envoie le message register, puis lit en boucle.
 func (c *Client) connect() error {
-	wsURL := "ws" + c.endpoint[4:] + wsAgentPath
-	if len(c.endpoint) >= 5 && c.endpoint[:5] == "https" {
-		wsURL = "wss" + c.endpoint[5:] + wsAgentPath
+	endpoint := c.currentEndpoint()
+	if len(endpoint) < 5 {
+		return fmt.Errorf("adresse de passerelle invalide : %q", endpoint)
+	}
+	wsURL := "ws" + endpoint[4:] + wsAgentPath
+	if endpoint[:5] == "https" {
+		wsURL = "wss" + endpoint[5:] + wsAgentPath
 	}
 
 	header := http.Header{}
@@ -229,7 +317,7 @@ func (c *Client) connect() error {
 	} else if c.joinToken != "" {
 		header.Set("X-Join-Token", c.joinToken)
 	} else {
-		return nil // rien à présenter — ne pas tenter la connexion
+		return errNoCredentials // rien à présenter — ne pas tenter la connexion
 	}
 
 	dialCtx, cancel := context.WithTimeout(c.ctx, 15*time.Second)
@@ -261,6 +349,12 @@ func (c *Client) connect() error {
 	c.Active.Store(true)
 
 	c.log.Info("wsclient: connexion WS établie", "url", wsURL)
+	c.connMu.Lock()
+	onConnect := c.onConnect
+	c.connMu.Unlock()
+	if onConnect != nil {
+		go onConnect()
+	}
 
 	// Lecture des messages entrants (Passerelle → Agent)
 	for {
@@ -296,6 +390,15 @@ func (c *Client) handleIncoming(msg edgeWS.Message) {
 			c.hmacSecret = p.AgentHMAC
 			saveHMAC(p.AgentHMAC)
 			c.log.Debug("wsclient: HMAC rotatif adopté et persisté")
+		}
+	case edgeWS.TypeEdgeEndpoints:
+		var p edgeWS.EdgeEndpointsPayload
+		c.connMu.Lock()
+		set := c.edges
+		c.connMu.Unlock()
+		if set != nil && json.Unmarshal(msg.Payload, &p) == nil {
+			set.Update(p.Endpoints)
+			c.log.Debug("wsclient: membres du groupe HA reçus", "count", len(p.Endpoints))
 		}
 	case edgeWS.TypePing:
 		c.sendJSON(edgeWS.TypePong, nil)

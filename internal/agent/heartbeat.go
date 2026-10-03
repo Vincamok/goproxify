@@ -19,7 +19,7 @@ import (
 // Si ws est non-nil et actif, le heartbeat est envoyé via WS ; sinon, fallback HTTP
 // (POST /internal/v1/agent/heartbeat) pour que la passerelle enregistre toujours l'Agent
 // dans son nodeStore — sinon l'Admin le laisse en « Non connecté » / declared.
-func heartbeatLoop(ctx context.Context, edgeEndpoint, authToken, nodeName, version, internalEndpoint string, containerRuntimes []string, agentConfig any, ws *wsclient.Client, tokenUpdate <-chan string, repairFn func() string, log *slog.Logger) {
+func heartbeatLoop(ctx context.Context, edgeEndpoint func() string, authToken, nodeName, version, internalEndpoint string, containerRuntimes []string, agentConfig any, ws *wsclient.Client, tokenUpdate <-chan string, repairFn func() string, log *slog.Logger) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
@@ -44,7 +44,8 @@ func heartbeatLoop(ctx context.Context, edgeEndpoint, authToken, nodeName, versi
 
 		// Fallback HTTP — discovery / proxy peuvent fonctionner sans WS ;
 		// sans ce heartbeat la passerelle ne listait plus l'Agent comme online.
-		if edgeEndpoint == "" || authToken == "" || nodeName == "" {
+		endpoint := edgeEndpoint()
+		if endpoint == "" || authToken == "" || nodeName == "" {
 			return
 		}
 		payload := map[string]any{
@@ -59,7 +60,7 @@ func heartbeatLoop(ctx context.Context, edgeEndpoint, authToken, nodeName, versi
 		}
 		body, _ := json.Marshal(payload)
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-			edgeEndpoint+"/internal/v1/agent/heartbeat", bytes.NewReader(body))
+			endpoint+"/internal/v1/agent/heartbeat", bytes.NewReader(body))
 		if err != nil {
 			return
 		}

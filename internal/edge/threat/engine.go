@@ -280,7 +280,9 @@ func (e *Engine) Check(r *http.Request, ip string) (blocked bool, reason string)
 	)
 
 	if triggered && !isDetect {
-		if topReason != "rate" {
+		if cfg.IPScore.Enabled {
+			e.scoreBan(ip, topReason, total, cfg)
+		} else if topReason != "rate" {
 			// Signal non-rate (path, ip, ua, custom_*) : bannir immédiatement.
 			if e.banFn != nil {
 				expires := time.Now().Add(cfg.BanDuration.Duration)
@@ -296,6 +298,34 @@ func (e *Engine) Check(r *http.Request, ip string) (blocked bool, reason string)
 	// detect ou score insuffisant : signale sans bloquer
 	return false, "threat: " + topReason
 }
+
+// scoreBan ajoute les points de la requête au score de l'IP et la bannit quand le score cumulé
+// atteint le seuil. Une IP des listes de menaces est bannie tout de suite, sans attendre.
+func (e *Engine) scoreBan(ip, topReason string, points int, cfg Config) {
+	if e.banFn == nil {
+		return
+	}
+	acc := e.counters.addScore(ip, float64(points), cfg.IPScore.HalfLife.Duration)
+	immediate := topReason == "ip" || topReason == "custom_ip"
+	if !immediate && acc < cfg.IPScore.BanThreshold {
+		e.log.Info("sentinel: score cumulé", "ip", ip, "score", acc, "ban_threshold", cfg.IPScore.BanThreshold)
+		return
+	}
+	e.counters.resetScore(ip)
+	expires := time.Now().Add(cfg.BanDuration.Duration)
+	reason := "threat: score cumulé"
+	label := "score"
+	if immediate {
+		reason, label = "threat: "+topReason, topReason
+	} else {
+		e.log.Warn("sentinel: ban sur score cumulé", "ip", ip, "score", acc, "ban_threshold", cfg.IPScore.BanThreshold)
+	}
+	e.inc(threatBansTotal, label)
+	e.banFn(ip, reason, expires)
+}
+
+// IPScore retourne le score cumulé actuel d'une IP (décroissance appliquée) ; 0 si inconnue.
+func (e *Engine) IPScore(ip string) float64 { return e.counters.currentScore(ip) }
 
 // maybeRateBan déclenche un ban automatique si le signal "rate" a été déclenché
 // assez de fois (RateBanThreshold) dans la fenêtre RateBanWindow.

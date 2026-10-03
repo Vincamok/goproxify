@@ -20,6 +20,7 @@ import (
 	"time"
 
 	agentdocker "github.com/vincamok/goproxify/internal/agent/docker"
+	"github.com/vincamok/goproxify/internal/agent/edgeset"
 	agentk8s "github.com/vincamok/goproxify/internal/agent/k8s"
 	agentportainer "github.com/vincamok/goproxify/internal/agent/portainer"
 	"github.com/vincamok/goproxify/internal/agent/telemetry"
@@ -49,11 +50,16 @@ type Agent struct {
 	dockerClient      *agentdocker.Client
 	shellHub          *shellHub
 	tokenUpdate       chan string // notifie heartbeatLoop d'un nouveau token (retryPairing)
+	edges             *edgeset.Set // passerelle courante et autres membres du groupe HA (bascule)
 }
+
+// agentEdgesPath conserve les autres membres du groupe HA annoncés par la passerelle.
+const agentEdgesPath = "/etc/goproxify/agent-edges.json"
 
 // New crée un Agent à partir de la config.
 func New(cfg *config.AgentConfig, cfgPath string) (*Agent, error) {
 	cfg.Identity.NodeName = nodeident.Resolve("agent")
+	edges := edgeset.New(cfg.ControlPlane.EdgeEndpoint, agentEdgesPath)
 
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
@@ -80,6 +86,7 @@ func New(cfg *config.AgentConfig, cfgPath string) (*Agent, error) {
 			netMgr,
 			log,
 		)
+		disc.SetEndpointFunc(edges.Current)
 	}
 
 	// Lifecycle
@@ -129,7 +136,7 @@ func New(cfg *config.AgentConfig, cfgPath string) (*Agent, error) {
 			log,
 			func(ev agentdocker.ScaleEvent) {
 				go reportEvent(context.Background(),
-					cfg.ControlPlane.EdgeEndpoint,
+					edges.Current(),
 					cfg.ControlPlane.AuthToken,
 					cfg.Identity.NodeName, "",
 					"scale_"+ev.Direction,
@@ -146,7 +153,7 @@ func New(cfg *config.AgentConfig, cfgPath string) (*Agent, error) {
 	if cfg.DigestWatch.Enabled {
 		dw = agentdocker.NewDigestWatcher(client, lc, log, func(containerID, image string) {
 			go reportEvent(context.Background(),
-				cfg.ControlPlane.EdgeEndpoint,
+				edges.Current(),
 				cfg.ControlPlane.AuthToken,
 				cfg.Identity.NodeName, containerID,
 				"new_digest",
@@ -205,6 +212,7 @@ func New(cfg *config.AgentConfig, cfgPath string) (*Agent, error) {
 	intAPI.cfgPath = cfgPath
 
 	return &Agent{
+		edges:         edges,
 		cfg:           cfg,
 		cfgPath:       cfgPath,
 		log:           log,
@@ -262,7 +270,7 @@ func (a *Agent) pairWithEdge(ctx context.Context) (string, error) {
 	})
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		a.cfg.ControlPlane.EdgeEndpoint+"/internal/v1/pair", bytes.NewReader(payload))
+		a.edges.Current()+"/internal/v1/pair", bytes.NewReader(payload))
 	if err != nil {
 		return "", err
 	}
@@ -432,11 +440,54 @@ func (a *Agent) retryPairing(ctx context.Context) {
 					a.handleWSCommand,
 					a.log,
 				)
+				a.reannounceOnConnect()
 			}
 			a.log.Info("agent: appairage réussi — scan initial relancé")
 			return
 		}
 	}
+}
+
+// onEdgeSwitch suit la bascule vers un autre membre du groupe HA : le jeton HTTP de l'Agent a été
+// émis par l'ancienne passerelle, on en demande un à la nouvelle (le secret d'appairage est commun),
+// puis on republie tous les conteneurs. Le WebSocket, lui, s'authentifie avec le HMAC répliqué.
+func (a *Agent) onEdgeSwitch(edge string) {
+	ctx := context.Background()
+	a.log.Warn("agent: bascule vers une autre passerelle du groupe", "edge", edge)
+	token, err := a.pairWithEdge(ctx)
+	if err != nil {
+		a.log.Warn("agent: appairage sur la nouvelle passerelle échoué — il sera retenté par le heartbeat", "edge", edge, "err", err)
+	} else {
+		if a.discovery != nil {
+			a.discovery.SetToken(token)
+		}
+		if a.portainerDisc != nil {
+			a.portainerDisc.SetToken(token)
+		}
+		select {
+		case a.tokenUpdate <- token:
+		default:
+		}
+	}
+	if a.discovery != nil {
+		a.discovery.ScanAll(ctx)
+	}
+}
+
+// reannounceOnConnect republie tous les conteneurs à chaque (re)connexion à la passerelle : un
+// changement survenu pendant une coupure, ou une passerelle redémarrée, n'est pas perdu.
+func (a *Agent) reannounceOnConnect() {
+	if a.wsClient == nil {
+		return
+	}
+	a.wsClient.SetEdgeSet(a.edges, a.onEdgeSwitch)
+	if a.discovery == nil {
+		return
+	}
+	a.wsClient.SetOnConnect(func() {
+		a.log.Info("agent: connexion à la passerelle — réannonce de tous les conteneurs")
+		a.discovery.ScanAll(context.Background())
+	})
 }
 
 // handleWSCommand traite les commandes passerelle → Agent reçues via WebSocket.
@@ -579,6 +630,7 @@ func (a *Agent) Start(ctx context.Context) error {
 			a.handleWSCommand,
 			a.log,
 		)
+		a.reannounceOnConnect()
 		if a.dockerClient != nil {
 			allow := func(id string) bool { return true }
 			if a.discovery != nil {
@@ -606,7 +658,7 @@ func (a *Agent) Start(ctx context.Context) error {
 
 	// Heartbeat vers passerelle (WS si connecté, HTTP sinon)
 	go heartbeatLoop(ctx,
-		a.cfg.ControlPlane.EdgeEndpoint,
+		a.edges.Current,
 		token,
 		a.cfg.Identity.NodeName,
 		buildinfo.Agent,
@@ -683,7 +735,7 @@ func (a *Agent) emitEvent(containerID, eventType, detail string) {
 		token = a.cfg.ControlPlane.AuthToken
 	}
 	reportEvent(context.Background(),
-		a.cfg.ControlPlane.EdgeEndpoint,
+		a.edges.Current(),
 		token,
 		a.cfg.Identity.NodeName,
 		containerID,

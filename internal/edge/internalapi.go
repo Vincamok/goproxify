@@ -78,6 +78,8 @@ func (s *Server) startInternalAPI() error {
 	mux.HandleFunc("DELETE /internal/v1/portal/recordings/{id}", s.handlePortalRecordingDelete)
 	mux.HandleFunc("GET /internal/v1/portal/replica", s.handlePortalReplicaExport)
 	mux.HandleFunc("POST /internal/v1/portal/replica", s.handlePortalReplicaImport)
+	mux.HandleFunc("GET /internal/v1/agents/replica", s.handleAgentReplicaExport)
+	mux.HandleFunc("POST /internal/v1/agents/replica", s.handleAgentReplicaImport)
 	mux.HandleFunc("POST /internal/v1/cluster/peers", s.handlePushClusterPeers)
 	mux.HandleFunc("POST /internal/v1/gateway/peers", s.handlePushGatewayPeers)
 	mux.HandleFunc("POST /internal/v1/gateway/tunnel", s.handleGatewayTunnel)
@@ -991,6 +993,8 @@ func (s *Server) applyPortalPush(payload portalPushPayload) {
 }
 
 func (s *Server) applyPortalPayload(payload portalPushPayload) {
+	// La composition du groupe HA arrive avec cette config : les Agents en sont informés.
+	defer func() { go s.wsHub.BroadcastEdgeEndpoints() }()
 	cfg := portal.Config{
 		Enabled:              payload.Enabled,
 		SSHPort:              payload.SSHPort,

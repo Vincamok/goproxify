@@ -5,6 +5,8 @@ package edge
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,6 +15,8 @@ import (
 	edgecache "github.com/vincamok/goproxify/internal/edge/cache"
 	edgelog "github.com/vincamok/goproxify/internal/edge/logger"
 	"github.com/vincamok/goproxify/internal/edge/portal"
+	"github.com/vincamok/goproxify/internal/edge/proxy"
+	edgews "github.com/vincamok/goproxify/internal/edge/ws"
 )
 
 func newConfigGateway(t *testing.T, dir string) *Server {
@@ -147,5 +151,138 @@ func TestLoadClusterPeersWithoutFile(t *testing.T) {
 	t.Setenv("GPX_CLUSTER_PEERS_PATH", filepath.Join(dir, "cluster-peers.gpx"))
 	if got := newConfigGateway(t, dir).loadClusterPeersFromDisk(); len(got) != 0 {
 		t.Fatalf("sans copie locale : %v", got)
+	}
+}
+
+func newPeersGateway(t *testing.T, dir string) *Server {
+	t.Helper()
+	t.Setenv("GPX_GATEWAY_PEERS_PATH", filepath.Join(dir, "gateway-peers.gpx"))
+	s := newConfigGateway(t, dir)
+	s.cfg.Identity.NodeName = "edge-1"
+	s.peers = proxy.NewPeerRegistry()
+	return s
+}
+
+func TestGatewayPeersSurviveRestartWithoutAdmin(t *testing.T) {
+	dir := t.TempDir()
+	s := newPeersGateway(t, dir)
+	s.applyGatewayPeers([]proxy.PeerInfo{
+		{Name: "edge-1", Endpoint: "http://10.0.0.1:8000", Token: "moi"},
+		{Name: "edge-2", Endpoint: "http://10.0.0.2:8000", Token: "jeton-secret"},
+	})
+	if len(s.peers.All()) != 1 {
+		t.Fatalf("la passerelle s'est inscrite elle-même : %+v", s.peers.All())
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, "gateway-peers.gpx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte("jeton-secret")) {
+		t.Fatal("jeton d'un pair écrit en clair")
+	}
+
+	restarted := newPeersGateway(t, dir)
+	restarted.loadGatewayPeersFromDisk()
+	got := restarted.peers.All()
+	if len(got) != 1 || got[0].Name != "edge-2" || got[0].Token != "jeton-secret" {
+		t.Fatalf("pairs après redémarrage sans Admin : %+v", got)
+	}
+}
+
+func TestLoadGatewayPeersWithoutFile(t *testing.T) {
+	s := newPeersGateway(t, t.TempDir())
+	s.loadGatewayPeersFromDisk()
+	if got := s.peers.All(); len(got) != 0 {
+		t.Fatalf("sans copie locale : %+v", got)
+	}
+}
+
+func newHAGateway(t *testing.T, name, haKey string) *Server {
+	t.Helper()
+	dir := t.TempDir()
+	s := newConfigGateway(t, dir)
+	s.cfg.Identity.NodeName = name
+	s.wsHub = edgews.NewHub("", s.log.Logger())
+	s.wsHub.SetHMACStore(edgews.NewAgentHMACStore(filepath.Join(dir, "hmac.json")))
+	if err := s.portal.ApplyConfig(portal.Config{HAGroup: "g", HAKey: haKey, HAMembers: []string{"edge-a", "edge-b"}}); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// Un Agent approuvé sur edge-a est accepté par edge-b après un échange via les routes internes.
+func TestAgentReplicaBetweenGroupMembers(t *testing.T) {
+	a := newHAGateway(t, "edge-a", "cle")
+	b := newHAGateway(t, "edge-b", "cle")
+	_ = a.wsHub.HMACStore().Set("agent-1", "hmac-secret")
+
+	rec := httptest.NewRecorder()
+	a.handleAgentReplicaExport(rec, httptest.NewRequest(http.MethodGet, agentReplicaPath, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export : %d", rec.Code)
+	}
+	if bytes.Contains(rec.Body.Bytes(), []byte("hmac-secret")) {
+		t.Fatal("HMAC en clair dans l'échange")
+	}
+
+	in := httptest.NewRecorder()
+	b.handleAgentReplicaImport(in, httptest.NewRequest(http.MethodPost, agentReplicaPath, bytes.NewReader(rec.Body.Bytes())))
+	if in.Code != http.StatusNoContent {
+		t.Fatalf("import : %d", in.Code)
+	}
+	if v, _ := b.wsHub.HMACStore().Get("agent-1"); v != "hmac-secret" {
+		t.Fatalf("edge-b n'a pas reçu le HMAC : %q", v)
+	}
+}
+
+// Une passerelle d'un autre groupe (autre clé) ne peut ni lire ni écrire les HMAC.
+func TestAgentReplicaRejectsOtherGroup(t *testing.T) {
+	a := newHAGateway(t, "edge-a", "cle")
+	stranger := newHAGateway(t, "edge-x", "autre-cle")
+	_ = a.wsHub.HMACStore().Set("agent-1", "hmac-secret")
+
+	rec := httptest.NewRecorder()
+	a.handleAgentReplicaExport(rec, httptest.NewRequest(http.MethodGet, agentReplicaPath, nil))
+	in := httptest.NewRecorder()
+	stranger.handleAgentReplicaImport(in, httptest.NewRequest(http.MethodPost, agentReplicaPath, bytes.NewReader(rec.Body.Bytes())))
+	if in.Code != http.StatusBadRequest {
+		t.Fatalf("un autre groupe doit être refusé : %d", in.Code)
+	}
+	if _, ok := stranger.wsHub.HMACStore().Get("agent-1"); ok {
+		t.Fatal("HMAC reçu d'un autre groupe")
+	}
+}
+
+// Sans groupe HA, la route n'expose rien.
+func TestAgentReplicaWithoutGroup(t *testing.T) {
+	s := newConfigGateway(t, t.TempDir())
+	s.wsHub = edgews.NewHub("", s.log.Logger())
+	rec := httptest.NewRecorder()
+	s.handleAgentReplicaExport(rec, httptest.NewRequest(http.MethodGet, agentReplicaPath, nil))
+	if rec.Code != http.StatusNoContent || rec.Body.Len() != 0 {
+		t.Fatalf("sans groupe : %d %q", rec.Code, rec.Body.String())
+	}
+}
+
+// L'Agent est informé des seuls autres membres du groupe HA : ni lui-même, ni une passerelle étrangère.
+func TestGroupEdgeEndpoints(t *testing.T) {
+	a := newHAGateway(t, "edge-a", "cle")
+	a.peers = proxy.NewPeerRegistry()
+	a.peers.Replace([]proxy.PeerInfo{
+		{Name: "edge-a", Endpoint: "http://10.0.0.1:8000", Token: "t"},
+		{Name: "edge-b", Endpoint: "http://10.0.0.2:8000", Token: "t"},
+		{Name: "edge-ext", Endpoint: "http://10.0.0.9:8000", Token: "t"},
+	})
+	got := a.groupEdgeEndpoints()
+	if len(got) != 1 || got[0] != "http://10.0.0.2:8000" {
+		t.Fatalf("membres annoncés : %v", got)
+	}
+
+	alone := newConfigGateway(t, t.TempDir())
+	alone.peers = proxy.NewPeerRegistry()
+	alone.peers.Replace([]proxy.PeerInfo{{Name: "edge-b", Endpoint: "http://10.0.0.2:8000", Token: "t"}})
+	if got := alone.groupEdgeEndpoints(); len(got) != 0 {
+		t.Fatalf("hors groupe, rien à annoncer : %v", got)
 	}
 }

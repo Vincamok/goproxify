@@ -371,6 +371,17 @@ func (s *Service) ReplicaInfo() (store *Store, key string, members []string, sha
 	return s.store, s.cfg.HAKey, append([]string(nil), s.cfg.HAMembers...), s.cfg.HASharedSess, true
 }
 
+// HAGroupInfo retourne le groupe HA de la passerelle (nom, clé de réplication, membres), tel que
+// poussé par l'Admin. Il ne dépend pas de l'activation du portail : tout membre d'un groupe le reçoit.
+func (s *Service) HAGroupInfo() (group, key string, members []string, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cfg.HAGroup == "" || s.cfg.HAKey == "" {
+		return "", "", nil, false
+	}
+	return s.cfg.HAGroup, s.cfg.HAKey, append([]string(nil), s.cfg.HAMembers...), true
+}
+
 // SetLiveHook notifie l'extérieur à chaque changement de la liste des connexions en cours.
 func (s *Service) SetLiveHook(fn func()) { s.live.SetOnChange(fn) }
 

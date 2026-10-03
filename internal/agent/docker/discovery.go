@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -31,7 +32,15 @@ type Discovery struct {
 	netManager   *NetworkManager
 	onLifecycle  LifecycleEventFn
 	known        map[string]string // containerID → name (proxies goproxify)
+
+	endpointFn func() string // passerelle courante (bascule HA) ; nil = edgeEndpoint
+
+	// dirty : un envoi vers la passerelle a échoué, l'état publié est peut-être en retard.
+	dirty atomic.Bool
 }
+
+// resyncInterval est le délai entre deux vérifications du drapeau dirty.
+const resyncInterval = 20 * time.Second
 
 // NewDiscovery crée un Discovery.
 func NewDiscovery(client *Client, edgeEndpoint, authToken, labelPrefix, agentName string,
@@ -46,6 +55,26 @@ func NewDiscovery(client *Client, edgeEndpoint, authToken, labelPrefix, agentNam
 		netManager:   netMgr,
 		known:        make(map[string]string),
 	}
+}
+
+// SetEndpointFunc fait suivre à la découverte la passerelle courante de l'Agent (bascule HA) au lieu
+// de l'adresse fixée à la création.
+func (d *Discovery) SetEndpointFunc(fn func() string) {
+	d.mu.Lock()
+	d.endpointFn = fn
+	d.mu.Unlock()
+}
+
+func (d *Discovery) endpoint() string {
+	d.mu.RLock()
+	fn, fixed := d.endpointFn, d.edgeEndpoint
+	d.mu.RUnlock()
+	if fn != nil {
+		if ep := fn(); ep != "" {
+			return ep
+		}
+	}
+	return fixed
 }
 
 // SetToken met à jour le token d'authentification (après un appairage différé).
@@ -100,6 +129,7 @@ func (d *Discovery) emitLifecycle(containerID, containerName, action string) {
 func (d *Discovery) Start(ctx context.Context) {
 	// Scan initial des conteneurs existants
 	d.ScanAll(ctx)
+	go d.resyncLoop(ctx)
 
 	// Stream des événements Docker
 	go func() {
@@ -119,13 +149,57 @@ func (d *Discovery) Start(ctx context.Context) {
 	}()
 }
 
-// ScanAll liste les conteneurs actifs et rapporte ceux avec les labels Goproxify.
-// Peut être appelé manuellement pour forcer un re-scan (commande rescan depuis Admin).
+// resyncLoop réannonce tout l'état dès qu'un envoi a échoué : un changement survenu pendant une
+// coupure de la passerelle n'est pas perdu.
+func (d *Discovery) resyncLoop(ctx context.Context) {
+	t := time.NewTicker(resyncInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if d.dirty.Swap(false) {
+				d.log.Info("docker: réannonce après envoi en échec")
+				d.ScanAll(ctx)
+			}
+		}
+	}
+}
+
+// ScanAll liste les conteneurs actifs et rapporte ceux avec les labels Goproxify. Les conteneurs
+// connus qui ont disparu depuis (arrêt manqué pendant une coupure) sont signalés comme arrêtés.
+// Appelé aussi à chaque reconnexion à la passerelle et par la commande rescan de l'Admin.
 func (d *Discovery) ScanAll(ctx context.Context) {
+	// Instantané avant la liste : un conteneur démarré pendant le scan n'est pas pris pour un disparu.
+	d.mu.RLock()
+	knownBefore := make(map[string]string, len(d.known))
+	for id, name := range d.known {
+		knownBefore[id] = name
+	}
+	d.mu.RUnlock()
+
 	var containers []ContainerSummary
 	if err := d.client.Get(ctx, "/containers/json?all=false", &containers); err != nil {
 		d.log.Error("docker: liste containers", "err", err)
 		return
+	}
+	running := make(map[string]struct{}, len(containers))
+	for _, c := range containers {
+		running[c.ID] = struct{}{}
+	}
+	for id, name := range knownBefore {
+		if _, ok := running[id]; ok {
+			continue
+		}
+		d.mu.Lock()
+		_, tracked := d.known[id]
+		delete(d.known, id)
+		d.mu.Unlock()
+		if tracked {
+			d.log.Info("docker: conteneur disparu pendant une coupure", "name", name)
+			d.reportStop(ctx, id, name)
+		}
 	}
 	for _, c := range containers {
 		netName, ip := firstNetworkWithIP(c)
@@ -269,17 +343,21 @@ func (d *Discovery) report(ctx context.Context, spec *ProxySpec) {
 	d.mu.RUnlock()
 
 	body, _ := json.Marshal(payload)
-	url := d.edgeEndpoint + "/internal/v1/agent/containers"
+	url := d.endpoint() + "/internal/v1/agent/containers"
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
+		d.dirty.Store(true)
 		d.log.Warn("docker: report vers passerelle", "host", spec.Host, "err", err)
 		return
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 500 {
+		d.dirty.Store(true)
+	}
 	d.log.Info("docker: proxy rapporté à la passerelle", "host", spec.Host, "status", resp.StatusCode)
 }
 
@@ -296,16 +374,20 @@ func (d *Discovery) reportStop(ctx context.Context, id, name string) {
 	d.mu.RUnlock()
 
 	body, _ := json.Marshal(payload)
-	url := d.edgeEndpoint + "/internal/v1/agent/containers"
+	url := d.endpoint() + "/internal/v1/agent/containers"
 	req, _ := http.NewRequestWithContext(ctx, http.MethodDelete, url, bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
+		d.dirty.Store(true)
 		d.log.Warn("docker: report stop vers passerelle", "err", err)
 		return
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 500 {
+		d.dirty.Store(true)
+	}
 }
 
 // --- Helpers ---------------------------------------------------------------

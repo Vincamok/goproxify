@@ -87,6 +87,7 @@ type Server struct {
 	wsHub      *edgews.Hub
 	portal     *portal.Service
 	portalRepl *portalReplicator // réplication du portail vers les pairs du groupe HA
+	agentRepl  agentReplicator   // réplication des HMAC d'Agents vers les pairs du groupe HA
 
 	tracingShutdown func(context.Context) error
 	clusterGroup    *cluster.Group
@@ -243,6 +244,8 @@ func New(cfg *config.EdgeConfig) (*Server, error) {
 
 	// Hub WebSocket plan de contrôle — HMAC partagé via GPX_PAIRING_SECRET
 	s.wsHub = edgews.NewHub(os.Getenv("GPX_PAIRING_SECRET"), log.Logger())
+	s.wsHub.HMACStore().SetOnChange(s.scheduleAgentReplicaPush)
+	s.wsHub.SetEdgeEndpointsProvider(s.groupEdgeEndpoints)
 	s.wsHub.SetAdminMessageHandler(s.handleWSAdminMessage)
 	s.wsHub.SetAgentMessageHandler(s.handleWSAgentMessage)
 	s.portal.SetShellBroker(portal.NewShellBroker(s.wsHub))
@@ -403,6 +406,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.loadPushedSettingsFromDisk()
 	s.loadTunnelConfigFromDisk()
 	s.loadServerConfigFromDisk()
+	s.loadGatewayPeersFromDisk()
 	s.loadPortalTemplatesFromDisk()
 
 	// API interne (push de routes depuis l'Admin)

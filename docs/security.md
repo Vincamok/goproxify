@@ -149,7 +149,17 @@ Le Sentinel s'applique **avant le routage**, indépendamment des proxies. Il ana
 
 Dès qu'un signal (hors `rate`) dépasse le seuil, l'IP est bannie immédiatement. Le signal `rate` utilise `rate_ban_threshold` (nombre de dépassements avant ban). La page Sentinel de l'Edge liste ces détections avec leur état et le nombre de bans actifs par motif.
 
-Les compteurs (rate, erreurs 4xx) sont **bornés en mémoire** (~262 k IPs suivies, éviction au-delà, métrique `gpx_threat_counter_evictions_total`) et les **IPv6 sont comptées par /64** ; le ban, lui, vise l'IP exacte. Le score n'est pas conservé entre deux requêtes : `score_threshold` ne cumule que les signaux d'une même requête.
+Les compteurs (rate, erreurs 4xx) sont **bornés en mémoire** (~262 k IPs suivies, éviction au-delà, métrique `gpx_threat_counter_evictions_total`) et les **IPv6 sont comptées par /64** ; le ban, lui, vise l'IP exacte. Par défaut le score n'est pas conservé entre deux requêtes : `score_threshold` ne cumule que les signaux d'une même requête.
+
+#### Score cumulé par IP avec décroissance (`ip_score`, optionnel)
+
+Avec `ip_score.enabled`, les points de chaque requête qui déclenche Sentinel s'additionnent **d'une requête à l'autre** pour une même IP, et le score **est divisé par deux à chaque `half_life`** (décroissance exponentielle). L'IP n'est bannie que lorsque son score dépasse `ban_threshold` : quelques signaux isolés (un 404 sur un chemin sensible, un User-Agent suspect) s'estompent, une série rapprochée mène au ban. Les requêtes qui déclenchent restent bloquées avant le ban, le score est remis à zéro au ban et au débannissement.
+
+- Les IP présentes dans les listes de menaces (`ip`, `custom_ip`) restent **bannies immédiatement**.
+- Le signal `rate` passe par le score : `rate_ban_threshold` est alors ignoré.
+- Les erreurs 4xx (`error_threshold`) et le WAF gardent leur propre décision.
+- Le score est en mémoire (borné comme les autres compteurs, oublié quand il est quasi nul) : il n'est ni conservé après un redémarrage ni partagé entre passerelles, contrairement aux bans.
+- Le rejeu `security threat simulate` applique la décroissance sur l'horloge des logs rejoués.
 
 ### Paramètres configurables (UI Admin > Sécurité > Sentinel)
 
@@ -161,6 +171,9 @@ Les compteurs (rate, erreurs 4xx) sont **bornés en mémoire** (~262 k IPs suivi
 | `rate_window` | `1s` | Tolérance de pic : burst max = `rate_limit × rate_window` requêtes |
 | `rate_ban_threshold` | 1 | Déclenchements avant ban (1 = immédiat) |
 | `rate_ban_window` | = `rate_window` | Fenêtre de comptage pour le ban rate |
+| `ip_score.enabled` | `false` | Score cumulé par IP avec décroissance (voir ci-dessus) |
+| `ip_score.ban_threshold` | 10 | Score cumulé qui déclenche le ban (chemin sensible 2, User-Agent suspect 3, débit 4) |
+| `ip_score.half_life` | `10m` | Durée au bout de laquelle le score est divisé par deux |
 | `error_threshold` | 20 | Nb d'erreurs 4xx/5xx avant signal |
 | `error_window` | `10s` | Fenêtre de comptage des erreurs |
 | `global_rps` | 0 | Limite globale toutes IPs confondues (anti-DDoS), 0 = désactivé |

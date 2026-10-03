@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -27,17 +28,7 @@ func (s *Server) handlePushGatewayPeers(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	// Don't register ourselves as peer (self-registration)
-	self := strings.TrimSpace(s.cfg.Identity.NodeName)
-	filtered := peers[:0]
-	for _, p := range peers {
-		if p.Name != "" && p.Name == self {
-			continue
-		}
-		filtered = append(filtered, p)
-	}
-	s.peers.Replace(filtered)
-	s.log.Info("gateway: peers mis à jour", "count", len(filtered))
+	s.applyGatewayPeers(peers)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -193,6 +184,7 @@ func (s *Server) syncPeer(ctx context.Context, p proxy.PeerInfo) {
 	s.syncWAFBehaviorFromPeer(ctx, client, p)
 	s.syncThreatListsFromPeer(ctx, client, p)
 	s.syncPortalReplicaFromPeer(ctx, client, p)
+	s.syncAgentReplicaFromPeer(ctx, client, p)
 	s.syncBansFromPeer(ctx, client, p)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.Endpoint+"/internal/v1/agent/containers", nil)
@@ -310,15 +302,50 @@ func (s *Server) applyGatewayPeersWS(payload json.RawMessage) error {
 	if err := json.Unmarshal(payload, &peers); err != nil {
 		return err
 	}
+	s.applyGatewayPeers(peers)
+	return nil
+}
+
+// applyGatewayPeers persiste la liste des passerelles pairs reçue de l'Admin puis l'applique, sans
+// s'y inscrire soi-même. Les membres d'un groupe HA se retrouvent ainsi après un redémarrage sans
+// Admin.
+func (s *Server) applyGatewayPeers(peers []proxy.PeerInfo) {
 	self := strings.TrimSpace(s.cfg.Identity.NodeName)
-	filtered := peers[:0]
+	filtered := make([]proxy.PeerInfo, 0, len(peers))
 	for _, p := range peers {
 		if p.Name != "" && p.Name == self {
 			continue
 		}
 		filtered = append(filtered, p)
 	}
+	if err := s.cache.SaveFile(gatewayPeersPath(), filtered); err != nil {
+		s.log.Warn("gateway: persistance des pairs échouée", "err", err)
+	}
 	s.peers.Replace(filtered)
-	s.log.Info("ws: gateway peers mis à jour", "count", len(filtered))
-	return nil
+	s.log.Info("gateway: peers mis à jour", "count", len(filtered))
+	go s.wsHub.BroadcastEdgeEndpoints()
+}
+
+// gatewayPeersPath est la copie locale chiffrée des passerelles pairs (endpoint et jeton compris).
+func gatewayPeersPath() string {
+	if p := os.Getenv("GPX_GATEWAY_PEERS_PATH"); p != "" {
+		return p
+	}
+	return "/etc/goproxify/gateway-peers.gpx"
+}
+
+// loadGatewayPeersFromDisk rend à la passerelle ses pairs HA sans l'Admin : synchronisation des
+// bans, du portail, des listes Sentinel et des pools de conteneurs.
+func (s *Server) loadGatewayPeersFromDisk() {
+	var peers []proxy.PeerInfo
+	ok, err := s.cache.LoadFile(gatewayPeersPath(), &peers)
+	if err != nil {
+		s.log.Warn("gateway: pairs locaux illisibles — en attente de l'Admin", "err", err)
+		return
+	}
+	if !ok {
+		return
+	}
+	s.peers.Replace(peers)
+	s.log.Info("gateway: pairs chargés depuis le disque", "count", len(peers))
 }

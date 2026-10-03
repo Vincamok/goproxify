@@ -5,6 +5,7 @@ package threat
 
 import (
 	"hash/fnv"
+	"math"
 	"net/netip"
 	"sync"
 	"time"
@@ -45,6 +46,7 @@ type counterShard struct {
 	rate        map[string]*rateCounter
 	errors      map[string]*eventWindow
 	rateTrigger map[string]*eventWindow // déclenchements signal "rate" par IP
+	score       map[string]*scoreEntry  // score cumulé avec décroissance
 	lastGC      time.Time
 }
 
@@ -54,6 +56,7 @@ func newCounterStore() *counterStore {
 		s.shards[i].rate = make(map[string]*rateCounter)
 		s.shards[i].errors = make(map[string]*eventWindow)
 		s.shards[i].rateTrigger = make(map[string]*eventWindow)
+		s.shards[i].score = make(map[string]*scoreEntry)
 	}
 	return s
 }
@@ -125,7 +128,48 @@ func (s *counterStore) reset(ip string) {
 	delete(sh.rate, key)
 	delete(sh.errors, key)
 	delete(sh.rateTrigger, key)
+	delete(sh.score, key)
 	sh.mu.Unlock()
+}
+
+// addScore ajoute des points au score de l'IP après avoir fait décroître l'ancien (demi-vie
+// halfLife) et retourne le nouveau score.
+func (s *counterStore) addScore(ip string, points float64, halfLife time.Duration) float64 {
+	now := s.now()
+	key := counterKey(ip)
+	sh := s.shard(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	sh.gcLocked(now)
+
+	se, ok := sh.score[key]
+	if !ok {
+		makeRoom(sh, sh.score, now)
+		se = &scoreEntry{}
+		sh.score[key] = se
+	}
+	return se.add(points, halfLife, now)
+}
+
+func (s *counterStore) resetScore(ip string) {
+	key := counterKey(ip)
+	sh := s.shard(key)
+	sh.mu.Lock()
+	delete(sh.score, key)
+	sh.mu.Unlock()
+}
+
+// currentScore retourne le score actuel (décroissance appliquée) sans le modifier.
+func (s *counterStore) currentScore(ip string) float64 {
+	now := s.now()
+	key := counterKey(ip)
+	sh := s.shard(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	if se, ok := sh.score[key]; ok {
+		return se.value(now)
+	}
+	return 0
 }
 
 func (s *counterStore) resetErrors(ip string) {
@@ -169,7 +213,7 @@ func (s *counterStore) size() int {
 	for i := range s.shards {
 		sh := &s.shards[i]
 		sh.mu.Lock()
-		n += len(sh.rate) + len(sh.errors) + len(sh.rateTrigger)
+		n += len(sh.rate) + len(sh.errors) + len(sh.rateTrigger) + len(sh.score)
 		sh.mu.Unlock()
 	}
 	return n
@@ -196,6 +240,43 @@ func (sh *counterShard) gcLocked(now time.Time) {
 			delete(sh.rateTrigger, k)
 		}
 	}
+	// Un score se garde tant qu'il n'a pas décru (la demi-vie dépasse souvent le TTL d'inactivité).
+	for k, se := range sh.score {
+		if se.value(now) < scoreForgetBelow {
+			delete(sh.score, k)
+		}
+	}
+}
+
+// ── Score cumulé avec décroissance ───────────────────────────────────────────
+
+// scoreForgetBelow : en dessous, le score est oublié (l'IP repart de zéro).
+const scoreForgetBelow = 0.1
+
+// scoreEntry : score à l'instant at, qui décroît de moitié toutes les halfLife.
+type scoreEntry struct {
+	score    float64
+	at       time.Time
+	halfLife time.Duration
+}
+
+// value retourne le score à l'instant now (décroissance exponentielle).
+func (e *scoreEntry) value(now time.Time) float64 {
+	if e.halfLife <= 0 || e.at.IsZero() {
+		return e.score
+	}
+	dt := now.Sub(e.at)
+	if dt <= 0 {
+		return e.score
+	}
+	return e.score * math.Exp2(-float64(dt)/float64(e.halfLife))
+}
+
+func (e *scoreEntry) add(points float64, halfLife time.Duration, now time.Time) float64 {
+	e.score = e.value(now) + points
+	e.at = now
+	e.halfLife = halfLife
+	return e.score
 }
 
 // ── Token bucket pour le rate ─────────────────────────────────────────────────
