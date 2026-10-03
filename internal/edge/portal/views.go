@@ -16,16 +16,25 @@ import (
 // View est une entrée dédiée du portail (ex. /prestataire, /interne) : même passerelle,
 // même annuaire et mêmes destinations, mais apparence, authentification et périmètre propres.
 type View struct {
-	Slug           string   `json:"slug,omitempty"` // segment d'URL (/prestataire) ; vide si la vue est portée par son hôte
-	Host           string   `json:"host,omitempty"` // hôte dédié (optionnel) : portail-presta.example.fr
-	Name           string   `json:"name,omitempty"` // libellé d'administration
-	Title          string   `json:"title,omitempty"`
-	Tagline        string   `json:"tagline,omitempty"`
-	Theme          string   `json:"theme,omitempty"`            // vide = thème du portail
-	AuthProviderID string   `json:"auth_provider_id,omitempty"` // vide = fournisseur du portail
-	AllowedTags    []string `json:"allowed_tags,omitempty"`     // groupes autorisés à se connecter ; vide = tous
-	TargetTags     []string `json:"target_tags,omitempty"`      // seules les destinations portant un de ces tags sont visibles ; vide = toutes
-	Require2FA     *bool    `json:"require_2fa,omitempty"`      // nil = réglage du portail
+	Slug           string `json:"slug,omitempty"` // segment d'URL (/prestataire) ; vide si la vue est portée par son hôte
+	Host           string `json:"host,omitempty"` // hôte dédié (optionnel) : portail-presta.example.fr
+	Name           string `json:"name,omitempty"` // libellé d'administration
+	Title          string `json:"title,omitempty"`
+	Tagline        string `json:"tagline,omitempty"`
+	Theme          string `json:"theme,omitempty"`            // vide = thème du portail
+	AuthProviderID string `json:"auth_provider_id,omitempty"` // vide = fournisseur du portail
+	Require2FA     *bool  `json:"require_2fa,omitempty"`      // nil = réglage du portail
+
+	// Droits (saisis dans l'Admin) : utilisateurs et groupes autorisés sur l'entrée ; aucun = tout le monde.
+	Users  []string `json:"users,omitempty"`  // identités (email ou identifiant d'annuaire)
+	Groups []string `json:"groups,omitempty"` // identifiants de groupes de l'Admin
+	// Calculés par l'Admin à l'envoi : Users + membres des Groups. Restricted distingue « personne »
+	// (entrée restreinte dont les groupes sont vides) de « tout le monde ».
+	Members    []string `json:"members,omitempty"`
+	Restricted bool     `json:"restricted,omitempty"`
+	// Destinations de l'entrée (identifiants du catalogue) ; vide = celles que l'utilisateur voit déjà.
+	// Une entrée qui en liste les offre à tous ses utilisateurs autorisés, sans condition de tags.
+	TargetIDs []string `json:"target_ids,omitempty"`
 }
 
 // ResolvedView est une vue avec ses valeurs héritées du portail.
@@ -38,8 +47,9 @@ type ResolvedView struct {
 	Tagline        string
 	Theme          string
 	AuthProviderID string
-	AllowedTags    []string
-	TargetTags     []string
+	Members        []string
+	Restricted     bool
+	TargetIDs      []string
 	Require2FA     bool
 	Default        bool
 }
@@ -67,9 +77,20 @@ func NormalizeView(v View) View {
 	} else {
 		v.Theme = ""
 	}
-	v.AllowedTags = cleanTags(v.AllowedTags)
-	v.TargetTags = cleanTags(v.TargetTags)
+	v.Users = cleanIdentities(v.Users)
+	v.Groups = cleanTags(v.Groups)
+	v.Members = cleanIdentities(v.Members)
+	v.TargetIDs = cleanTags(v.TargetIDs)
 	return v
+}
+
+// cleanIdentities met en minuscules (les identifiants se comparent sans casse) et retire les doublons.
+func cleanIdentities(in []string) []string {
+	low := make([]string, len(in))
+	for i, x := range in {
+		low[i] = strings.ToLower(x)
+	}
+	return cleanTags(low)
 }
 
 func cleanTags(in []string) []string {
@@ -125,7 +146,7 @@ func (c *Config) resolved(v View) ResolvedView {
 	r := ResolvedView{
 		Key: viewKey(v), Slug: v.Slug, Host: v.Host, Name: v.Name,
 		Title: v.Title, Tagline: v.Tagline, Theme: NormalizeTheme(c.Theme),
-		AuthProviderID: c.AuthProviderID, AllowedTags: v.AllowedTags, TargetTags: v.TargetTags,
+		AuthProviderID: c.AuthProviderID, Members: v.Members, Restricted: v.Restricted, TargetIDs: v.TargetIDs,
 		Require2FA: c.Require2FA,
 	}
 	if v.Theme != "" {
@@ -196,28 +217,32 @@ func (c *Config) ViewHosts() []string {
 	return out
 }
 
-// AllowsUser indique si un utilisateur (par ses tags) peut se connecter à la vue.
-func (r ResolvedView) AllowsUser(userTags []string) bool {
-	if len(r.AllowedTags) == 0 {
+// AllowsUser indique si un utilisateur (identifiant de connexion) peut se connecter à l'entrée.
+func (r ResolvedView) AllowsUser(username string) bool {
+	if !r.Restricted {
 		return true
 	}
-	return tagsIntersect(userTags, r.AllowedTags)
+	username = strings.ToLower(strings.TrimSpace(username))
+	for _, m := range r.Members {
+		if strings.EqualFold(m, username) {
+			return true
+		}
+	}
+	return false
 }
 
-// AllowsTarget indique si une destination (par ses tags) est visible dans la vue.
-func (r ResolvedView) AllowsTarget(targetTags []string) bool {
-	if len(r.TargetTags) == 0 {
+// HasTargets indique que l'entrée définit sa propre liste de destinations.
+func (r ResolvedView) HasTargets() bool { return len(r.TargetIDs) > 0 }
+
+// AllowsTarget indique si une destination du catalogue fait partie de la liste de l'entrée
+// (toujours vrai quand l'entrée n'en définit pas).
+func (r ResolvedView) AllowsTarget(id string) bool {
+	if len(r.TargetIDs) == 0 {
 		return true
 	}
-	return tagsIntersect(targetTags, r.TargetTags)
-}
-
-func tagsIntersect(a, b []string) bool {
-	for _, x := range a {
-		for _, y := range b {
-			if strings.EqualFold(strings.TrimSpace(x), strings.TrimSpace(y)) {
-				return true
-			}
+	for _, t := range r.TargetIDs {
+		if t == id {
+			return true
 		}
 	}
 	return false

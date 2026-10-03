@@ -89,15 +89,23 @@ pages['portal-settings'] = async function() {
   const content = document.getElementById('content');
   content.innerHTML = `<div class="muted">${esc(t('common.loading') || '…')}</div>`;
   try {
-    const [cfg, metricsPt] = await Promise.all([
-      api('GET', '/portal?edge=' + encodeURIComponent(edgeName)).catch(() => ({})),
+    const eq = '?edge=' + encodeURIComponent(edgeName);
+    const [cfg, metricsPt, usersRes, groupsRes, destsRes] = await Promise.all([
+      api('GET', '/portal' + eq).catch(() => ({})),
       api('GET', '/metrics/summary').catch(() => null),
+      api('GET', '/portal/users' + eq).catch(() => ({})),
+      api('GET', '/portal/groups' + eq).catch(() => ({})),
+      api('GET', '/portal/destinations' + eq).catch(() => ({})),
     ]);
+    _portalRefs = { users: usersRes.users || [], groups: groupsRes.groups || [], dests: destsRes.destinations || [] };
     renderPortalPage(cfg || {}, edgeName, edgeLabel, metricsPt);
   } catch (e) {
     content.innerHTML = `<div class="err">${esc(e.message || e)}</div>`;
   }
 };
+
+// Utilisateurs, groupes et destinations de la passerelle : alimentent les droits des entrées.
+let _portalRefs = { users: [], groups: [], dests: [] };
 
 function renderPortalPage(cfg, edgeName, edgeLabel, metricsData) {
   const content = document.getElementById('content');
@@ -187,78 +195,88 @@ function renderPortalPage(cfg, edgeName, edgeLabel, metricsData) {
             ${[['auto', 'portal.theme_auto', 'Automatique (suit le système)'], ['clair', 'portal.theme_clair', 'Clair'], ['sombre', 'portal.theme_sombre', 'Sombre'], ['ocean', 'portal.theme_ocean', 'Océan'], ['foret', 'portal.theme_foret', 'Forêt'], ['amethyste', 'portal.theme_amethyste', 'Améthyste'], ['contraste', 'portal.theme_contraste', 'Contraste élevé']].map(([v, k, d]) => `<option value="${v}" ${(cfg.theme || 'auto') === v ? 'selected' : ''}>${esc(t(k) || d)}</option>`).join('')}
           </select>
         </div>
-        <div class="field">
-          <label class="field-label">${esc(t('portal.theme') || 'Thème du portail')}</label>
-          <select class="input" id="portal-theme">
-            ${[['auto', 'portal.theme_auto', 'Automatique (suit le système)'], ['clair', 'portal.theme_clair', 'Clair'], ['sombre', 'portal.theme_sombre', 'Sombre'], ['ocean', 'portal.theme_ocean', 'Océan'], ['foret', 'portal.theme_foret', 'Forêt'], ['amethyste', 'portal.theme_amethyste', 'Améthyste'], ['contraste', 'portal.theme_contraste', 'Contraste élevé']].map(([v, k, d]) => `<option value="${v}" ${(cfg.theme || 'auto') === v ? 'selected' : ''}>${esc(t(k) || d)}</option>`).join('')}
-          </select>
-        </div>
         ${haSessionField(cfg)}
       </div>
       <div id="portal-msg" style="margin-top:12px;font-size:13px;min-height:1.2em"></div>
     </div>
-    <div class="card blueprint" style="padding:16px 18px;max-width:640px;margin-bottom:14px">
+    <div class="card blueprint" style="padding:16px 18px;max-width:760px;margin-bottom:14px">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:6px">
         <div style="font-size:13px;font-weight:600">${esc(t('portal.views') || 'Entrées dédiées du portail')}</div>
         <button type="button" class="btn btn-secondary btn-sm" id="portal-view-add">${esc(t('portal.view_add') || '+ Ajouter une entrée')}</button>
       </div>
-      <div style="font-size:12px;color:var(--text2);line-height:1.45;margin-bottom:12px">${esc(t('portal.views_desc') || 'Même annuaire et mêmes destinations, mais une URL dédiée (ex. /prestataire, /interne) avec son thème, son titre, son fournisseur d\'authentification et son périmètre. Laisser vide = hérite des réglages du portail.')}</div>
+      <div style="font-size:12px;color:var(--text2);line-height:1.45;margin-bottom:12px">${esc(t('portal.views_desc') || 'Une entrée est une adresse dédiée du portail (domaine.fr/prestataire, presta.domaine.fr…) avec son thème, les utilisateurs et groupes autorisés et ses destinations. Même passerelle, même annuaire.')}</div>
       <div id="portal-views"></div>
     </div>`;
 
+  const refs = _portalRefs;
+  const userItems = refs.users.map((u) => ({ value: String(u.email).toLowerCase(), label: u.email, sub: u.status === 'active' ? '' : u.status }));
+  const knownUsers = new Set(userItems.map((i) => i.value));
+  const groupItems = refs.groups.map((g) => ({ value: g.id, label: g.name, sub: (g.members || []).length + ' ' + (t('portal.members') || 'membre(s)') }));
+  const destItems = refs.dests.map((d) => ({ value: d.id, label: d.name, sub: [d.kind, d.host].filter(Boolean).join(' · ') }));
   const viewsHost = document.getElementById('portal-views');
   const themeOpts = (cur) => [['', 'portal.theme_inherit', '(thème du portail)'], ['auto', 'portal.theme_auto', 'Automatique (suit le système)'], ['clair', 'portal.theme_clair', 'Clair'], ['sombre', 'portal.theme_sombre', 'Sombre'], ['ocean', 'portal.theme_ocean', 'Océan'], ['foret', 'portal.theme_foret', 'Forêt'], ['amethyste', 'portal.theme_amethyste', 'Améthyste'], ['contraste', 'portal.theme_contraste', 'Contraste élevé']]
     .map(([v, k, d]) => `<option value="${v}" ${(cur || '') === v ? 'selected' : ''}>${esc(t(k) || d)}</option>`).join('');
-  const tagsStr = (a) => (a || []).join(', ');
-  const viewBlock = (v) => {
-    const f = (key, label, val, ph) => `<div class="field"><label class="field-label">${esc(label)}</label><input class="input" data-f="${key}" value="${esc(val || '')}" placeholder="${esc(ph || '')}"/></div>`;
-    const url = (v.host || host || '…') + '/' + (v.slug || '');
-    return `<div class="portal-view" style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:10px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <code style="font-size:12px;color:var(--text2)">https://${esc(url)}</code>
-        <button type="button" class="btn btn-secondary btn-sm" data-act="rm">${esc(t('common.delete') || 'Supprimer')}</button>
+  const f = (key, label, val, ph) => `<div class="field"><label class="field-label">${esc(label)}</label><input class="input" data-f="${key}" value="${esc(val || '')}" placeholder="${esc(ph || '')}"/></div>`;
+  const section = (label, hint, inner) => `<div class="field" style="margin-top:12px"><label class="field-label">${esc(label)}</label>${hint ? `<div style="font-size:11px;color:var(--text2);margin:-2px 0 6px;line-height:1.4">${esc(hint)}</div>` : ''}${inner}</div>`;
+  const viewBlock = (v, open) => {
+    const urlTxt = PortalUI.formatURL(v);
+    const full = (v.host || host || '…') + (v.slug ? '/' + v.slug : '');
+    const extra = (v.users || []).filter((x) => !knownUsers.has(x));
+    const nAcc = (v.users || []).length + (v.groups || []).length;
+    return `<details class="portal-view" ${open ? 'open' : ''} style="border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:10px">
+      <summary style="cursor:pointer;display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap">
+        <span><b>${esc(v.name || urlTxt || (t('portal.view_new') || 'Nouvelle entrée'))}</b> <code style="font-size:12px;color:var(--text2)">https://${esc(full)}</code></span>
+        <span style="font-size:11px;color:var(--text2)">${esc(t('portal.theme_' + (v.theme || 'inherit')) || v.theme || '')} · ${nAcc ? nAcc + ' ' + (t('portal.view_rights') || 'droit(s)') : esc(t('portal.view_open') || 'ouvert à tous')} · ${(v.target_ids || []).length || esc(t('portal.view_dest_default') || 'destinations par défaut')}${(v.target_ids || []).length ? ' ' + esc(t('portal.view_dest') || 'destination(s)') : ''}</span>
+      </summary>
+      <div style="margin-top:12px">
+        ${f('url', t('portal.view_url') || 'Adresse (URL)', urlTxt, 'presta.domaine.fr  ·  domaine.fr/prestataire  ·  /prestataire')}
+        <div style="font-size:11px;color:var(--text2);margin:4px 0 0;line-height:1.4">${esc(t('portal.view_url_hint') || 'Un sous-domaine ou un domaine dédié ajoute une route HTTPS sur la passerelle (le DNS doit pointer vers elle). Un simple chemin (/prestataire) utilise l’hôte public.')}</div>
+        <div class="gp-cols-2" style="margin-top:10px">
+          ${f('name', t('portal.view_name') || 'Nom (administration)', v.name, 'Prestataires')}
+          <div class="field"><label class="field-label">${esc(t('portal.theme') || 'Thème du portail')}</label><select class="input" data-f="theme">${themeOpts(v.theme)}</select></div>
+          ${f('title', t('portal.view_title') || 'Titre affiché', v.title, '')}
+          ${f('tagline', t('portal.view_tagline') || 'Sous-titre', v.tagline, '')}
+          ${f('auth_provider_id', t('portal.auth_provider') || 'Auth provider ID', v.auth_provider_id, '(hérité)')}
+          <div class="field"><label class="field-label">${esc(t('portal.view_2fa') || '2FA')}</label>
+            <select class="input" data-f="require_2fa">
+              <option value="" ${v.require_2fa == null ? 'selected' : ''}>${esc(t('portal.view_inherit') || '(hérité)')}</option>
+              <option value="true" ${v.require_2fa === true ? 'selected' : ''}>${esc(t('portal.view_2fa_on') || 'Exigée')}</option>
+              <option value="false" ${v.require_2fa === false ? 'selected' : ''}>${esc(t('portal.view_2fa_off') || 'Facultative')}</option>
+            </select></div>
+        </div>
+        ${section(t('portal.view_groups') || 'Groupes autorisés', t('portal.view_rights_hint') || 'Sans utilisateur ni groupe, l’entrée est ouverte à tous les comptes du portail.', PortalUI.picker('groups', groupItems, v.groups, t('portal.no_groups') || 'Aucun groupe — créez-en dans Users Access › Groupes.'))}
+        ${section(t('portal.view_users') || 'Utilisateurs autorisés', '', PortalUI.picker('users', userItems, v.users, t('portal.no_users') || 'Aucun utilisateur invité.') +
+          `<textarea class="input" data-f="users_extra" rows="2" style="margin-top:6px" placeholder="${esc(t('portal.view_users_extra') || 'Autres identifiants (annuaire LDAP/OIDC), un par ligne')}">${esc(extra.join('\n'))}</textarea>`)}
+        ${section(t('portal.view_targets') || 'Destinations', t('portal.view_targets_hint') || 'Cochées : offertes à tous les utilisateurs autorisés de l’entrée. Aucune : l’utilisateur voit ses destinations habituelles (tags).', PortalUI.picker('dests', destItems, v.target_ids, t('portal.no_dests') || 'Aucune destination dans le catalogue.'))}
+        <div style="text-align:right;margin-top:12px"><button type="button" class="btn btn-secondary btn-sm" data-act="rm">${esc(t('common.delete') || 'Supprimer')}</button></div>
       </div>
-      <div class="gp-cols-2">
-        ${f('slug', t('portal.view_slug') || 'URL (chemin)', v.slug, 'prestataire')}
-        ${f('host', t('portal.view_host') || 'Hôte dédié (optionnel)', v.host, 'presta.example.fr')}
-        ${f('name', t('portal.view_name') || 'Nom (administration)', v.name, 'Prestataires')}
-        ${f('title', t('portal.view_title') || 'Titre affiché', v.title, '')}
-        ${f('tagline', t('portal.view_tagline') || 'Sous-titre', v.tagline, '')}
-        <div class="field"><label class="field-label">${esc(t('portal.theme') || 'Thème du portail')}</label><select class="input" data-f="theme">${themeOpts(v.theme)}</select></div>
-        ${f('auth_provider_id', t('portal.auth_provider') || 'Auth provider ID', v.auth_provider_id, '(hérité)')}
-        <div class="field"><label class="field-label">${esc(t('portal.view_2fa') || '2FA')}</label>
-          <select class="input" data-f="require_2fa">
-            <option value="" ${v.require_2fa == null ? 'selected' : ''}>${esc(t('portal.view_inherit') || '(hérité)')}</option>
-            <option value="true" ${v.require_2fa === true ? 'selected' : ''}>${esc(t('portal.view_2fa_on') || 'Exigée')}</option>
-            <option value="false" ${v.require_2fa === false ? 'selected' : ''}>${esc(t('portal.view_2fa_off') || 'Facultative')}</option>
-          </select></div>
-        ${f('allowed_tags', t('portal.view_allowed_tags') || 'Groupes autorisés (tags utilisateurs)', tagsStr(v.allowed_tags), 'prestataires, externes')}
-        ${f('target_tags', t('portal.view_target_tags') || 'Destinations visibles (tags)', tagsStr(v.target_tags), 'prod, bastion')}
-      </div>
-    </div>`;
+    </details>`;
   };
-  const addViewBlock = (v) => {
+  const addViewBlock = (v, open) => {
     const wrap = document.createElement('div');
-    wrap.innerHTML = viewBlock(v);
+    wrap.innerHTML = viewBlock(v, open);
     const el = wrap.firstElementChild;
     el.querySelector('[data-act="rm"]').onclick = () => el.remove();
     viewsHost.appendChild(el);
+    PortalUI.bindPickers(el);
   };
-  (cfg.views || []).forEach(addViewBlock);
-  document.getElementById('portal-view-add').onclick = () => addViewBlock({});
-  const splitTags = (s) => (s || '').split(',').map((x) => x.trim()).filter(Boolean);
-  const collectViews = () => [...viewsHost.querySelectorAll('.portal-view')].map((el) => {
+  (cfg.views || []).forEach((v) => addViewBlock(v, false));
+  document.getElementById('portal-view-add').onclick = () => addViewBlock({}, true);
+  const collectViews = () => [...viewsHost.querySelectorAll('.portal-view')].map((el, i) => {
     const g = (k) => el.querySelector(`[data-f="${k}"]`).value.trim();
+    const u = PortalUI.parseURL(g('url'));
+    if (u.error) throw new Error((t('portal.view_n') || 'Entrée') + ' ' + (i + 1) + ' : ' + u.error);
     const v = {
-      slug: g('slug'), host: g('host'), name: g('name'), title: g('title'), tagline: g('tagline'),
+      slug: u.slug, host: u.host, name: g('name'), title: g('title'), tagline: g('tagline'),
       theme: g('theme'), auth_provider_id: g('auth_provider_id'),
-      allowed_tags: splitTags(g('allowed_tags')), target_tags: splitTags(g('target_tags')),
+      groups: PortalUI.picked(el, 'groups'),
+      users: [...new Set([...PortalUI.picked(el, 'users'), ...PortalUI.split(g('users_extra')).map((x) => x.toLowerCase())])],
+      target_ids: PortalUI.picked(el, 'dests'),
     };
     const tf = g('require_2fa');
     if (tf !== '') v.require_2fa = tf === 'true';
     return v;
   });
-
   const save = async () => {
     const msg = document.getElementById('portal-msg');
     try {

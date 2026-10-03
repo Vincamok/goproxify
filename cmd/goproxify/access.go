@@ -23,6 +23,8 @@ func runAccess() {
 		runAccessDestinations()
 	case "users":
 		runAccessUsers()
+	case "groups":
+		runAccessGroups()
 	case "recordings":
 		runAccessRecordings()
 	case "policy":
@@ -50,7 +52,8 @@ func accessUsage() {
 Ressources :
   config         Options portail Access par passerelle
   destinations   Catalogue de destinations
-  users          Utilisateurs Access (invite SMTP)
+  users          Utilisateurs Access (invite SMTP, groupes)
+  groups         Groupes Access (droits sur les entrées du portail)
   sessions       Connexions Access en cours (lister, observer, terminer)
   requests       Demandes d'accès temporaire (lister, approuver, refuser, révoquer)
   policy         Politique d'accès (plages horaires, IP autorisées, inactivité)
@@ -131,7 +134,11 @@ func parseBoolFlag(args map[string]string, key string) (bool, bool) {
 }
 
 func parseTagsFlag(args map[string]string) []string {
-	raw := flagValue(args, "-tags", "")
+	return parseCSVFlag(args, "-tags")
+}
+
+func parseCSVFlag(args map[string]string, name string) []string {
+	raw := flagValue(args, name, "")
 	if raw == "" {
 		return nil
 	}
@@ -318,6 +325,51 @@ func runAccessDestinations() {
 	}
 }
 
+func runAccessGroups() {
+	action := subcommand(os.Args, 3)
+	args := parseFlags(os.Args[4:])
+	client := mustAdminClient(args)
+	switch action {
+	case "list":
+		edge := requireFlag(args, "-edge", "edge")
+		var out any
+		if _, err := client.DoJSON("GET", "/api/v1/portal/groups?edge="+edge, nil, &out); err != nil {
+			fmt.Fprintf(os.Stderr, "access groups list : %v\n", err)
+			os.Exit(1)
+		}
+		printJSON(out)
+	case "create", "update":
+		body := map[string]any{
+			"name":        requireFlag(args, "-name", "name"),
+			"description": flagValue(args, "-description", ""),
+		}
+		if _, ok := args["-members"]; ok || action == "create" {
+			body["members"] = parseCSVFlag(args, "-members")
+		}
+		method, path := "POST", "/api/v1/portal/groups?edge="+requireFlag(args, "-edge", "edge")
+		if action == "update" {
+			method, path = "PUT", "/api/v1/portal/groups/"+requireFlag(args, "-id", "ID")
+		}
+		var out any
+		if _, err := client.DoJSON(method, path, body, &out, 200, 201); err != nil {
+			fmt.Fprintf(os.Stderr, "access groups %s : %v\n", action, err)
+			os.Exit(1)
+		}
+		printJSON(out)
+	case "delete":
+		id := requireFlag(args, "-id", "ID")
+		var out any
+		if _, err := client.DoJSON("DELETE", "/api/v1/portal/groups/"+id, nil, &out, 200, 204); err != nil {
+			fmt.Fprintf(os.Stderr, "access groups delete : %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("ok")
+	default:
+		fmt.Fprintln(os.Stderr, "usage: goproxify access groups list|create|update|delete ...")
+		os.Exit(1)
+	}
+}
+
 func runAccessUsers() {
 	action := subcommand(os.Args, 3)
 	args := parseFlags(os.Args[4:])
@@ -341,6 +393,7 @@ func runAccessUsers() {
 			"email":     email,
 			"home_edge": home,
 			"tags":      parseTagsFlag(args),
+			"groups":    parseCSVFlag(args, "-groups"),
 		}
 		var out any
 		if _, err := client.DoJSON("POST", "/api/v1/portal/users/invite", body, &out, 200, 201); err != nil {
@@ -354,6 +407,9 @@ func runAccessUsers() {
 		if _, ok := args["-tags"]; ok {
 			body["tags"] = parseTagsFlag(args)
 		}
+		if _, ok := args["-groups"]; ok {
+			body["groups"] = parseCSVFlag(args, "-groups")
+		}
 		if v := flagValue(args, "-status", ""); v != "" {
 			body["status"] = v
 		}
@@ -361,7 +417,7 @@ func runAccessUsers() {
 			body["home_edge"] = v
 		}
 		if len(body) == 0 {
-			fmt.Fprintln(os.Stderr, "aucun champ (-tags / -status / -home-edge)")
+			fmt.Fprintln(os.Stderr, "aucun champ (-tags / -groups / -status / -home-edge)")
 			os.Exit(1)
 		}
 		var out any

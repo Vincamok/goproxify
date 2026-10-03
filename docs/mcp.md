@@ -1500,7 +1500,11 @@ Création / mise à jour : `edge_name`, `name`, `kind` (`ssh`\|`docker`), `host`
 
 ### Users — `list_portal_users`, `invite_portal_user`, `update_portal_user`, `delete_portal_user`, `resend_portal_invite`
 
-Invitation : `email`, `home_edge`, `tags` (SMTP Admin requis).
+Invitation : `email`, `home_edge`, `tags`, `groups` (IDs de groupes ; SMTP Admin requis). `update_portal_user` accepte aussi `groups` (remplace l'appartenance).
+
+### Groupes — `list_portal_groups`, `create_portal_group`, `update_portal_group`, `delete_portal_group`
+
+Groupes d'utilisateurs Access par passerelle, utilisés pour donner des droits sur les entrées du portail (`views` de `update_portal_config` : `users`, `groups`, `target_ids`, `theme`, `slug`/`host`…). `list_portal_groups` (`edge`, scope `portal:read`) ; `create_portal_group` (`edge`, `name`, `description`, `members`), `update_portal_group` (`id`, `name`, `description`, `members` — la liste remplace l'existante), `delete_portal_group` (`id`) (scope `portal:write`).
 
 ### Sessions en direct — `list_portal_sessions`, `terminate_portal_session`
 

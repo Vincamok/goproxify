@@ -23,6 +23,7 @@ type PortalUser struct {
 	Email     string   `json:"email"`
 	Status    string   `json:"status"`
 	Tags      []string `json:"tags"`
+	Groups    []string `json:"groups"` // identifiants des groupes dont l'utilisateur est membre
 	HomeEdge  string   `json:"home_edge"`
 	ExpiresAt string   `json:"invite_expires,omitempty"`
 	CreatedAt string   `json:"created_at,omitempty"`
@@ -76,6 +77,7 @@ func (h *PortalHandler) listPortalUsers(w http.ResponseWriter, r *http.Request) 
 		}
 		out = append(out, u)
 	}
+	fillUserGroups(h.DB, out)
 	jsonOK(w, map[string]any{"users": out})
 }
 
@@ -91,13 +93,16 @@ func (h *PortalHandler) getPortalUser(w http.ResponseWriter, r *http.Request, id
 		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
 		return
 	}
-	jsonOK(w, u)
+	us := []PortalUser{u}
+	fillUserGroups(h.DB, us)
+	jsonOK(w, us[0])
 }
 
 func (h *PortalHandler) invitePortalUser(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Email    string   `json:"email"`
 		Tags     []string `json:"tags"`
+		Groups   []string `json:"groups"`
 		HomeEdge string   `json:"home_edge"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -152,6 +157,9 @@ func (h *PortalHandler) invitePortalUser(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	_ = admindb.WriteAudit(h.DB, adminauth.ActorFromContext(r.Context()), "invite", "portal_user", email)
+	if len(body.Groups) > 0 {
+		setUserGroups(h.DB, home, email, body.Groups)
+	}
 	h.pushUsersForEdge(r, home)
 	u, _ := h.loadPortalUser(id)
 	jsonOK(w, u)
@@ -214,6 +222,7 @@ func (h *PortalHandler) updatePortalUser(w http.ResponseWriter, r *http.Request,
 	}
 	var body struct {
 		Tags     *[]string `json:"tags"`
+		Groups   *[]string `json:"groups"`
 		Status   *string   `json:"status"`
 		HomeEdge *string   `json:"home_edge"`
 	}
@@ -249,6 +258,12 @@ func (h *PortalHandler) updatePortalUser(w http.ResponseWriter, r *http.Request,
 	}
 	_ = admindb.WriteAudit(h.DB, adminauth.ActorFromContext(r.Context()), "update", "portal_user", u.Email)
 	if u.HomeEdge != home {
+		setUserGroups(h.DB, u.HomeEdge, u.Email, nil) // les groupes sont propres à la passerelle
+	}
+	if body.Groups != nil {
+		setUserGroups(h.DB, home, u.Email, *body.Groups)
+	}
+	if u.HomeEdge != home {
 		h.pushUsersForEdge(r, u.HomeEdge)
 	}
 	h.pushUsersForEdge(r, home)
@@ -272,6 +287,7 @@ func (h *PortalHandler) deletePortalUser(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	_ = admindb.WriteAudit(h.DB, adminauth.ActorFromContext(r.Context()), "delete", "portal_user", u.Email)
+	setUserGroups(h.DB, u.HomeEdge, u.Email, nil)
 	h.pushUsersForEdge(r, u.HomeEdge)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -292,7 +308,61 @@ func (h *PortalHandler) pushUsersForEdge(r *http.Request, edge string) {
 func (h *PortalHandler) loadPortalUser(id string) (PortalUser, error) {
 	row := h.DB.QueryRow(`SELECT id, email, status, tags_json, home_edge, invite_expires, created_at, updated_at
 		FROM portal_users WHERE id=?`, id)
-	return scanPortalUser(row)
+	u, err := scanPortalUser(row)
+	if err == nil {
+		us := []PortalUser{u}
+		fillUserGroups(h.DB, us)
+		u = us[0]
+	}
+	return u, err
+}
+
+// fillUserGroups renseigne les groupes de chaque utilisateur (appartenance par identifiant de connexion).
+func fillUserGroups(db *sql.DB, users []PortalUser) {
+	byEdge := map[string][]PortalGroup{}
+	for i := range users {
+		edge := users[i].HomeEdge
+		if _, ok := byEdge[edge]; !ok {
+			byEdge[edge] = listPortalGroups(db, edge)
+		}
+		users[i].Groups = []string{}
+		for _, g := range byEdge[edge] {
+			for _, m := range g.Members {
+				if strings.EqualFold(m, users[i].Email) {
+					users[i].Groups = append(users[i].Groups, g.ID)
+					break
+				}
+			}
+		}
+	}
+}
+
+// setUserGroups aligne l'appartenance d'un utilisateur sur la liste de groupes donnée (ids de la portée).
+func setUserGroups(db *sql.DB, scope, email string, ids []string) {
+	want := map[string]bool{}
+	for _, id := range ids {
+		want[id] = true
+	}
+	email = strings.ToLower(strings.TrimSpace(email))
+	for _, g := range listPortalGroups(db, scope) {
+		var members []string
+		has := false
+		for _, m := range g.Members {
+			if strings.EqualFold(m, email) {
+				has = true
+				continue
+			}
+			members = append(members, m)
+		}
+		if want[g.ID] == has {
+			continue
+		}
+		if want[g.ID] {
+			members = append(g.Members, email)
+		}
+		raw, _ := json.Marshal(normalizeTags(members))
+		_, _ = db.Exec(`UPDATE portal_groups SET members_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, string(raw), g.ID)
+	}
 }
 
 type scannable interface {

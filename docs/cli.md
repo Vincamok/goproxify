@@ -927,7 +927,7 @@ GoProxify Access — portail opérateur (terminal web, SSH UUID, coffre secrets)
 
 ```
 goproxify access config get        -edge <nom>
-goproxify access config set        -edge <nom> -enabled true|false [-public-host <host>] [-theme auto|clair|sombre|ocean|foret|amethyste|contraste] [-views '[{"slug":"prestataire","theme":"ocean","allowed_tags":["presta"]}]'] [-ha-session-mode sticky|shared]
+goproxify access config set        -edge <nom> -enabled true|false [-public-host <host>] [-theme auto|clair|sombre|ocean|foret|amethyste|contraste] [-views '[{"host":"presta.domaine.fr","theme":"ocean","groups":["<id-groupe>"],"target_ids":["<id-destination>"]}]']
 goproxify access config push       -edge <nom>
 
 goproxify access destinations list   -edge <nom>
@@ -935,10 +935,15 @@ goproxify access destinations create -edge <nom> -name <n> -kind ssh|docker -hos
 goproxify access destinations delete -id <uuid>
 
 goproxify access users list          [-edge <nom>]
-goproxify access users invite        -email <email> -home-edge <nom> [-tags a,b]
-goproxify access users update        -id <uuid> -status active|disabled
+goproxify access users invite        -email <email> -home-edge <nom> [-tags a,b] [-groups <id>,<id>]
+goproxify access users update        -id <uuid> [-status active|disabled] [-tags a,b] [-groups <id>,<id>]
 goproxify access users resend        -id <uuid>
 goproxify access users delete        -id <uuid>
+
+goproxify access groups list         -edge <nom>
+goproxify access groups create       -edge <nom> -name <n> [-description <d>] [-members a@x.fr,b@x.fr]
+goproxify access groups update       -id <uuid> -name <n> [-description <d>] [-members a@x.fr,b@x.fr]
+goproxify access groups delete       -id <uuid>
 
 goproxify access policy get           -edge <nom>
 goproxify access policy set           -edge <nom> [-hours true -days 1,2,3,4,5 -start 07:00 -end 20:00 -tz Europe/Paris -ip <cidr,…> -idle <min> -record true -retention <jours>]

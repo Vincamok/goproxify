@@ -960,14 +960,17 @@ Config du portail (`enabled`, `ssh_port`, `http_port`, `public_host`, `auth_prov
 
 | Champ | Description |
 |-------|-------------|
-| `slug` | Segment d'URL : `prestataire` → `https://<hôte public>/prestataire` (minuscules, chiffres, tirets ; `api`, `assets`, `static` réservés) |
+| `slug` | Chemin : `prestataire` → `https://<hôte public>/prestataire` (minuscules, chiffres, tirets ; `api`, `assets`, `static` réservés) |
 | `host` | Hôte dédié optionnel (ex. `presta.example.fr`) : la passerelle publie une route HTTPS supplémentaire vers le portail. Sans `slug`, l'hôte entier est la vue |
 | `name`, `title`, `tagline` | Libellé d'administration, titre et sous-titre affichés (défauts : ceux du portail) |
 | `theme` | Thème de la vue (même liste que `theme`) ; vide = thème du portail |
 | `auth_provider_id` | Fournisseur d'authentification (annuaire) de la vue ; vide = celui du portail |
-| `allowed_tags` | Tags utilisateurs autorisés à se connecter sur la vue ; vide = tous. Un jeton émis sur une vue n'est valable que sur cette vue |
-| `target_tags` | Seules les destinations du catalogue portant un de ces tags sont visibles et ouvrables depuis la vue ; vide = toutes (en plus des droits habituels de l'utilisateur) |
+| `users` | Identifiants (email ou identifiant d'annuaire, comparés sans casse) autorisés sur l'entrée |
+| `groups` | Identifiants de groupes Access (voir ci-dessous) autorisés sur l'entrée. Sans `users` ni `groups`, l'entrée est ouverte à tous les comptes du portail. Un jeton émis sur une entrée n'est valable que sur cette entrée |
+| `target_ids` | Destinations de l'entrée (identifiants du catalogue). Cochées, elles sont offertes à tous les utilisateurs autorisés de l'entrée, sans condition de tags ; vide = destinations habituelles de l'utilisateur (tags) |
 | `require_2fa` | `true`/`false` pour surcharger le réglage du portail ; absent = hérité |
+
+Une entrée s'adresse par un chemin (`domaine.fr/prestataire`), un sous-domaine ou domaine dédié (`presta.domaine.fr`), ou les deux. Un hôte égal à l'hôte public est ramené à un simple chemin. Les groupes et destinations inconnus de la passerelle sont ignorés à l'enregistrement. La passerelle ne reçoit que la liste résolue des membres (utilisateurs + membres des groupes).
 
 Un couple hôte/`slug` ne peut apparaître qu'une fois (`400` sinon). La page du portail envoie la vue courante dans l'en-tête `X-Portal-View` ; l'accès SSH direct (port 2222) n'est pas concerné par les vues.
 
@@ -989,6 +992,19 @@ Connexions SSH et web pontées en cours sur une passerelle. La passerelle envoie
 ### `GET /api/v1/portal/sessions/{id}/watch?edge=`
 
 Observe en direct la sortie d'une connexion en cours (flux `text/event-stream`). Chaque événement `data:` porte un morceau de sortie du terminal en base64, précédé de la fin déjà émise (32 Kio) à l'ouverture ; `event: end` annonce la fin de la session. On voit ce que l'utilisateur voit, jamais ce qu'il tape. L'observation est journalisée dans l'audit Admin (`watch`) et dans l'audit du portail (`observed_by_admin`). Elle exige la portée `portal:write`, comme la lecture d'un enregistrement, car elle donne accès au contenu d'un terminal. `404` si la connexion est déjà terminée. La CLI l'expose avec `goproxify access sessions watch`.
+
+### Groupes Access — `/api/v1/portal/groups`
+
+Groupes d'utilisateurs du portail, propres à une passerelle (ou à son groupe HA) ; ils donnent des droits sur les entrées (`views`). Une modification est poussée à la passerelle.
+
+| Méthode | Chemin | Description |
+|---------|--------|-------------|
+| `GET` | `/api/v1/portal/groups?edge=` | Groupes de la passerelle : `id`, `name`, `description`, `members` |
+| `POST` | `/api/v1/portal/groups?edge=` | Crée un groupe : `name` (unique par passerelle, `409` sinon), `description`, `members` (identifiants de connexion, normalisés en minuscules) |
+| `PUT` | `/api/v1/portal/groups/{id}` | Met à jour `name`, `description`, `members` (la liste remplace l'existante) |
+| `DELETE` | `/api/v1/portal/groups/{id}` | Supprime le groupe et le retire des entrées qui l'utilisaient |
+
+Les utilisateurs (`/api/v1/portal/users`) exposent `groups` (identifiants des groupes dont ils sont membres) ; `invite` et `PUT` acceptent `groups` pour aligner l'appartenance.
 
 ### Accès temporaires — `/api/v1/portal/access-requests`
 

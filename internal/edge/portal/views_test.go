@@ -19,8 +19,8 @@ func viewsFixture(t *testing.T) (*HTTPServer, http.Handler) {
 		Enabled: true, PublicHost: "access.example.fr", Theme: "clair",
 		Views: []View{
 			{Slug: "prestataire", Title: "Espace prestataires", Tagline: "Accès externe", Theme: "ocean",
-				AllowedTags: []string{"presta"}, TargetTags: []string{"presta"}, Require2FA: &yes},
-			{Slug: "interne", Theme: "sombre", TargetTags: []string{"interne", "presta"}},
+				Restricted: true, Members: []string{"bob"}, TargetIDs: []string{"t-pre"}, Require2FA: &yes},
+			{Slug: "interne", Theme: "sombre", Restricted: true, Members: []string{"alice", "Bob"}, TargetIDs: []string{"t-int", "t-pre"}},
 			{Host: "presta.example.fr", Title: "Hôte dédié", Theme: "foret"},
 		},
 	}
@@ -101,7 +101,7 @@ func tokenOf(t *testing.T, rr *httptest.ResponseRecorder) string {
 func TestViewsLoginRestrictedByGroup(t *testing.T) {
 	_, h := viewsFixture(t)
 	if rr := login(t, h, "prestataire", "alice"); rr.Code != http.StatusForbidden {
-		t.Fatalf("alice (interne) sur /prestataire: %d, attendu 403", rr.Code)
+		t.Fatalf("alice (hors liste) sur /prestataire: %d, attendu 403", rr.Code)
 	}
 	if rr := login(t, h, "interne", "alice"); rr.Code != 200 {
 		t.Fatalf("alice sur /interne: %d %s", rr.Code, rr.Body.String())
@@ -141,14 +141,26 @@ func TestViewsCatalogFilter(t *testing.T) {
 		}
 		return strings.Join(ids, ",")
 	}
-	// bob (tag presta) sur le portail par défaut : seulement t-pre ; alice : seulement t-int.
+	// Portail par défaut : visibilité par tags (bob/presta -> t-pre).
 	tokBob := tokenOf(t, login(t, h, "", "bob"))
 	if got := names(doReq(h, http.MethodGet, "/api/targets", "access.example.fr", "", tokBob, "")); got != "t-pre" {
 		t.Fatalf("bob par défaut: %q", got)
 	}
+	// /interne liste ses destinations (t-int + t-pre) à ses utilisateurs, sans condition de tags.
 	tokAlice := tokenOf(t, login(t, h, "interne", "alice"))
-	if got := names(doReq(h, http.MethodGet, "/api/targets", "access.example.fr", "interne", tokAlice, "")); got != "t-int" {
+	if got := names(doReq(h, http.MethodGet, "/api/targets", "access.example.fr", "interne", tokAlice, "")); got != "t-int,t-pre" {
 		t.Fatalf("alice /interne: %q", got)
+	}
+	// Les membres sont comparés sans casse.
+	if rr := login(t, h, "interne", "bob"); rr.Code != 200 {
+		t.Fatalf("bob (Bob) sur /interne: %d %s", rr.Code, rr.Body.String())
+	}
+	// Une destination hors liste n'est pas ouvrable depuis l'entrée.
+	b := `{"target_id":"t-int","source":"catalog","facade":"web"}`
+	tokBob2 := tokenOf(t, login(t, h, "interne", "bob"))
+	rr := doReq(h, http.MethodPost, "/api/sessions", "access.example.fr", "interne", tokBob2, b)
+	if rr.Code == http.StatusNotFound {
+		t.Fatalf("t-int fait partie de la liste de /interne : ne doit pas être 404")
 	}
 }
 

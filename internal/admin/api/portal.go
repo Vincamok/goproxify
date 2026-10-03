@@ -66,6 +66,10 @@ func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleUsers(w, r)
 		return
 	}
+	if strings.HasPrefix(r.URL.Path, "/api/v1/portal/groups") {
+		h.handleGroups(w, r)
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, "/api/v1/portal/destinations") {
 		h.handleDestinations(w, r)
 		return
@@ -155,7 +159,11 @@ func (h *PortalHandler) put(w http.ResponseWriter, r *http.Request) {
 	}
 	for i := range cfg.Views {
 		cfg.Views[i] = portal.NormalizeView(cfg.Views[i])
+		if ph := strings.ToLower(strings.TrimSpace(cfg.PublicHost)); ph != "" && cfg.Views[i].Host == ph {
+			cfg.Views[i].Host = "" // l'hôte public est celui du portail principal : seule l'adresse (chemin) distingue l'entrée
+		}
 	}
+	sanitizeViewRefs(h.DB, scope, cfg.Views)
 	if err := portal.ValidateViews(cfg.Views); err != nil {
 		jsonErrF(w, err, http.StatusBadRequest)
 		return

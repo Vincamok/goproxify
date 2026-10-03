@@ -51,6 +51,7 @@ func BuildPortalPayload(db *sql.DB, g GroupResolver, edgeName string) PortalConf
 		cfg.HASessionMode = ""
 	}
 
+	cfg.Views = resolveViewsForPush(db, scope, cfg.Views)
 	cfg.Grants = listActiveGrants(db, grantEdges)
 	// L'activation est une propriété du nœud (wizard : config.portal). Un nœud qui n'héberge pas le
 	// portail reçoit quand même la config du groupe, en attente, pour être prêt à prendre le relais.

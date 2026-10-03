@@ -223,6 +223,7 @@ func portalTools() []map[string]any {
 				req("email", "string", "Email de l'invité"),
 				req("home_edge", "string", "Passerelle d'accueil"),
 				opt("tags", "array", "Tags utilisateur"),
+				opt("groups", "array", "IDs des groupes Access dont l'utilisateur est membre"),
 			),
 		},
 		{
@@ -231,9 +232,40 @@ func portalTools() []map[string]any {
 			"inputSchema": schema(
 				req("id", "string", "ID utilisateur Access"),
 				opt("tags", "array", "Nouveaux tags"),
+				opt("groups", "array", "IDs des groupes Access (remplace l'appartenance)"),
 				opt("status", "string", "active, invited ou disabled"),
 				opt("home_edge", "string", "Nouveau passerelle d'accueil"),
 			),
+		},
+		{
+			"name":        "list_portal_groups",
+			"description": "Liste les groupes Access d'une passerelle (nom, description, membres). Les groupes donnent des droits sur les entrées du portail (views de update_portal_config).",
+			"inputSchema": schema(req("edge", "string", "Nom de la passerelle")),
+		},
+		{
+			"name":        "create_portal_group",
+			"description": "Crée un groupe Access (propre à la passerelle ou à son groupe HA) et pousse la config.",
+			"inputSchema": schema(
+				req("edge", "string", "Nom de la passerelle"),
+				req("name", "string", "Nom du groupe"),
+				opt("description", "string", "Description"),
+				opt("members", "array", "Identifiants des membres (email ou identifiant d'annuaire)"),
+			),
+		},
+		{
+			"name":        "update_portal_group",
+			"description": "Modifie un groupe Access : nom, description, membres (la liste fournie remplace l'existante).",
+			"inputSchema": schema(
+				req("id", "string", "ID du groupe"),
+				req("name", "string", "Nom du groupe"),
+				opt("description", "string", "Description"),
+				opt("members", "array", "Identifiants des membres (remplace la liste)"),
+			),
+		},
+		{
+			"name":        "delete_portal_group",
+			"description": "Supprime un groupe Access et le retire des entrées du portail qui l'utilisaient.",
+			"inputSchema": schema(req("id", "string", "ID du groupe")),
 		},
 		{
 			"name":        "delete_portal_user",
@@ -503,6 +535,7 @@ func (h *Handler) toolInvitePortalUser(r *http.Request, args map[string]any) (an
 		"email":     email,
 		"home_edge": home,
 		"tags":      argStringSlice(args, "tags"),
+		"groups":    argStringSlice(args, "groups"),
 	}
 	return h.callPortal(r, http.MethodPost, "/api/v1/portal/users/invite", body)
 }
@@ -517,6 +550,9 @@ func (h *Handler) toolUpdatePortalUser(r *http.Request, args map[string]any) (an
 		tags := argStringSlice(args, "tags")
 		body["tags"] = tags
 	}
+	if _, ok := args["groups"]; ok {
+		body["groups"] = argStringSlice(args, "groups")
+	}
 	if s := argStr(args, "status"); s != "" {
 		body["status"] = s
 	}
@@ -527,6 +563,43 @@ func (h *Handler) toolUpdatePortalUser(r *http.Request, args map[string]any) (an
 		return nil, fmt.Errorf("aucun champ à mettre à jour")
 	}
 	return h.callPortal(r, http.MethodPut, "/api/v1/portal/users/"+url.PathEscape(id), body)
+}
+
+func (h *Handler) toolListPortalGroups(r *http.Request, args map[string]any) (any, error) {
+	edge := argStr(args, "edge")
+	if edge == "" {
+		return nil, fmt.Errorf("edge requis")
+	}
+	return h.callPortal(r, http.MethodGet, "/api/v1/portal/groups?edge="+url.QueryEscape(edge), nil)
+}
+
+func (h *Handler) toolCreatePortalGroup(r *http.Request, args map[string]any) (any, error) {
+	edge, name := argStr(args, "edge"), argStr(args, "name")
+	if edge == "" || name == "" {
+		return nil, fmt.Errorf("edge et name requis")
+	}
+	body := map[string]any{"name": name, "description": argStr(args, "description"), "members": argStringSlice(args, "members")}
+	return h.callPortal(r, http.MethodPost, "/api/v1/portal/groups?edge="+url.QueryEscape(edge), body)
+}
+
+func (h *Handler) toolUpdatePortalGroup(r *http.Request, args map[string]any) (any, error) {
+	id, name := argStr(args, "id"), argStr(args, "name")
+	if id == "" || name == "" {
+		return nil, fmt.Errorf("id et name requis")
+	}
+	body := map[string]any{"name": name, "description": argStr(args, "description")}
+	if _, ok := args["members"]; ok {
+		body["members"] = argStringSlice(args, "members")
+	}
+	return h.callPortal(r, http.MethodPut, "/api/v1/portal/groups/"+url.PathEscape(id), body)
+}
+
+func (h *Handler) toolDeletePortalGroup(r *http.Request, args map[string]any) (any, error) {
+	id := argStr(args, "id")
+	if id == "" {
+		return nil, fmt.Errorf("id requis")
+	}
+	return h.callPortal(r, http.MethodDelete, "/api/v1/portal/groups/"+url.PathEscape(id), nil)
 }
 
 func (h *Handler) toolDeletePortalUser(r *http.Request, args map[string]any) (any, error) {

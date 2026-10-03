@@ -9,10 +9,17 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ### Ajouté
 
+- **Admin 0.87.0 / Edge 0.24.0 — Portail Access : droits par entrée (utilisateurs, groupes, destinations) et groupes d'utilisateurs** : une entrée (`domaine.fr/prestataire`, `presta.domaine.fr`, domaine dédié…) se définit désormais par une adresse unique, son thème, les **utilisateurs et groupes autorisés** et ses **destinations** (offertes aux utilisateurs autorisés sans condition de tags). Nouveaux **groupes Access** par passerelle (Users Access › Groupes ; API `/api/v1/portal/groups`, CLI `access groups`, outils MCP `*_portal_group`), dont les membres sont des identifiants de connexion (email ou annuaire). La modale utilisateur est enrichie : statut, passerelle, groupes, tags, invitation (renvoi, expiration) et **accès effectifs** calculés en direct (entrées et destinations atteignables) ; l'invitation propose les groupes. Remplace les filtres par tags (`allowed_tags`/`target_tags`) des entrées.
 - **Admin 0.86.0 / Edge 0.23.0 — Portail Access : entrées dédiées par URL (`/prestataire`, `/interne`…) et thèmes** : une même passerelle peut servir plusieurs portails (chemin ou hôte dédié) qui partagent l'annuaire et les destinations mais ont chacun leur thème, titre, sous-titre, fournisseur d'authentification, exigence 2FA, groupes autorisés (tags utilisateurs) et destinations visibles (tags). Réglage dans Admin › Portail Access › Réglages › « Entrées dédiées du portail » (API `views`, CLI `access config set -views`, MCP `update_portal_config`) ; les jetons sont liés à l'entrée où la session a été ouverte. Refonte visuelle du portail (barre supérieure, typographie Inter, cartes épurées) avec 7 thèmes — Automatique, Clair, Sombre, Océan, Forêt, Améthyste, Contraste élevé — choisis côté Admin (`theme`), sans sélecteur côté utilisateur ; le terminal xterm suit le thème.
 - **Edge 0.23.0 — le portail Access redémarre sans l'Admin** : la configuration poussée par l'Admin est conservée dans une copie locale chiffrée (`portal-config.gpx`) et rechargée au démarrage, y compris les routes publiques des hôtes dédiés (écart de l'ADR 0006 levé).
 
+### Modifié
+
+- **Edge 0.23.1 — Portail Access : onglet « Terminal » dédié** : le terminal web n'est plus au bas de l'onglet Sessions mais dans son propre onglet, qui s'ouvre automatiquement au lancement d'une session Web.
+
 ### Corrigé
+
+- **Admin 0.86.1 — Portail Access › Réglages : « Thème du portail » affiché deux fois** : le champ était dupliqué (même identifiant HTML en double) ; il n'apparaît plus qu'une fois.
 
 - **Admin 0.84.1 — Profils (snippets) : le champ « Description » est enfin enregistré** : il était envoyé par le formulaire mais ignoré par l'API (colonne « Description » toujours à « — »). Nouvelle colonne `snippets.description`, renvoyée par `GET /api/v1/snippets[/{id}]`, acceptée par `POST`/`PUT` (un `PUT` sans `description` la conserve), persistée dans `config.yaml` et les sauvegardes, et exposée par les outils MCP `create_snippet` (paramètre `description`) et `list_snippets`.
 - **Admin 0.83.2 — Profils (snippets) : impossible de modifier** : le bouton ✎ ne faisait rien pour un profil dont la config est stockée en objet JSON (ex. Bot Core, GeoIP Core, WAF Core), la modale faisant un `JSON.parse` sur un objet. La config est désormais lue sous forme d'objet ou de chaîne, et enregistrée en objet JSON (un JSON invalide affiche une erreur au lieu d'être envoyé).

@@ -124,10 +124,10 @@ var mcpTools = []string{
 	"create_scheduled_task", "update_scheduled_task", "delete_scheduled_task", "run_scheduled_task",
 	"create_playbook", "update_playbook", "delete_playbook", "run_playbook_now", "approve_playbook_run", "reject_playbook_run",
 	"get_portal_config", "list_portal_destinations", "preview_portal_destinations",
-	"list_portal_users", "list_portal_audit", "list_portal_sessions", "terminate_portal_session", "list_portal_access_requests", "decide_portal_access_request", "get_portal_policy", "set_portal_policy", "list_portal_recordings", "delete_portal_recording", "list_portal_templates", "get_portal_template",
+	"list_portal_users", "list_portal_groups", "list_portal_audit", "list_portal_sessions", "terminate_portal_session", "list_portal_access_requests", "decide_portal_access_request", "get_portal_policy", "set_portal_policy", "list_portal_recordings", "delete_portal_recording", "list_portal_templates", "get_portal_template",
 	"update_portal_config", "push_portal",
 	"create_portal_destination", "update_portal_destination", "delete_portal_destination",
-	"invite_portal_user", "update_portal_user", "delete_portal_user", "resend_portal_invite",
+	"invite_portal_user", "create_portal_group", "update_portal_group", "delete_portal_group", "update_portal_user", "delete_portal_user", "resend_portal_invite",
 	"upsert_portal_template", "delete_portal_template", "push_portal_templates",
 }
 
@@ -282,11 +282,11 @@ func ToolRequiredScope(tool string) string {
 		"approve_playbook_run", "reject_playbook_run":
 		return ScopeSecurityWrite
 	case "get_portal_config", "list_portal_destinations", "preview_portal_destinations",
-		"list_portal_users", "list_portal_audit", "list_portal_sessions", "list_portal_access_requests", "get_portal_policy", "list_portal_recordings", "list_portal_templates", "get_portal_template":
+		"list_portal_users", "list_portal_groups", "list_portal_audit", "list_portal_sessions", "list_portal_access_requests", "get_portal_policy", "list_portal_recordings", "list_portal_templates", "get_portal_template":
 		return ScopePortalRead
 	case "update_portal_config", "push_portal",
 		"create_portal_destination", "update_portal_destination", "delete_portal_destination",
-		"invite_portal_user", "update_portal_user", "delete_portal_user", "resend_portal_invite",
+		"invite_portal_user", "create_portal_group", "update_portal_group", "delete_portal_group", "update_portal_user", "delete_portal_user", "resend_portal_invite",
 		"terminate_portal_session", "decide_portal_access_request", "set_portal_policy", "delete_portal_recording", "upsert_portal_template", "delete_portal_template", "push_portal_templates":
 		return ScopePortalWrite
 	default:

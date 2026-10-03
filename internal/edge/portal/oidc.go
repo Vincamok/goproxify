@@ -235,7 +235,7 @@ func (h *HTTPServer) finishOIDCRedirect(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, "compte désactivé", http.StatusForbidden)
 		return
 	}
-	if !v.AllowsUser(u.Tags) {
+	if !v.AllowsUser(u.Username) {
 		http.Error(w, "accès non autorisé sur ce portail", http.StatusForbidden)
 		return
 	}

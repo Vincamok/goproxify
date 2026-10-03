@@ -600,6 +600,7 @@ pre.chain {
         <button type="button" class="tab active" data-tab="catalog" role="tab">Catalogue</button>
         <button type="button" class="tab" data-tab="vault" role="tab">Coffre</button>
         <button type="button" class="tab" data-tab="sessions" role="tab">Sessions</button>
+        <button type="button" class="tab" data-tab="terminal" role="tab">Terminal</button>
         <button type="button" class="tab" data-tab="account" role="tab">Compte</button>
       </nav>
 
@@ -684,7 +685,10 @@ pre.chain {
         <h3>Historique</h3>
         <p class="hint" style="margin-top:-.35rem">Audit personnel (sans contenu terminal).</p>
         <ul class="targets" id="auditList"></ul>
-        <h3>Terminal web</h3>
+      </div>
+
+      <div id="tab-terminal" class="tab-panel hidden">
+        <p class="hint" id="termHint">Ouvrez une cible du catalogue en « Web » pour démarrer un terminal.</p>
         <div id="term"></div>
       </div>
 
@@ -792,11 +796,11 @@ function esc(s) {
 
 function setTab(name) {
   document.querySelectorAll('.tabs .tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
-  ['catalog','vault','sessions','account'].forEach(id => {
+  ['catalog','vault','sessions','terminal','account'].forEach(id => {
     const el = $('tab-' + id);
     if (el) el.classList.toggle('hidden', id !== name);
   });
-  if (name === 'sessions' && state.term && state.fit) {
+  if (name === 'terminal' && state.term && state.fit) {
     try { state.fit.fit(); } catch (_) {}
   }
 }
@@ -1306,10 +1310,10 @@ async function refreshVault() {
 async function createSession(t, facade) {
   const d = await api('/api/sessions', { method: 'POST', body: JSON.stringify({ target_id: t.id, source: t.source, facade }) });
   $('chain').textContent = 'SSH:\n' + d.ssh + '\n\nWeb:\n' + d.web_url + '\n\nUUID (TTL ' + d.ttl_sec + 's, ' + (d.mode || '') + '):\n' + d.uuid;
-  setTab('sessions');
+  setTab(facade === 'web' ? 'terminal' : 'sessions');
+  if (facade === 'web') openTerm(d.uuid);
   await refreshSessions();
   await refreshAudit();
-  if (facade === 'web') openTerm(d.uuid);
 }
 function ensureTerm() {
   if (state.term) return;
@@ -1326,6 +1330,8 @@ function ensureTerm() {
   window.addEventListener('resize', () => { try { state.fit.fit(); } catch (_) {} });
 }
 function openTerm(uuid) {
+  setTab('terminal');
+  if (termHint) termHint.classList.add('hidden');
   ensureTerm();
   if (state.ws) { try { state.ws.close(); } catch (_) {} }
   state.term.reset();

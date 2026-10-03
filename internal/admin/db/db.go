@@ -724,6 +724,16 @@ func migrate(db *sql.DB) error {
 			created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at       DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+		`CREATE TABLE IF NOT EXISTS portal_groups (
+			id           TEXT PRIMARY KEY,
+			edge_name    TEXT NOT NULL,
+			name         TEXT NOT NULL,
+			description  TEXT NOT NULL DEFAULT '',
+			members_json TEXT NOT NULL DEFAULT '[]',
+			created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_portal_groups_edge ON portal_groups (edge_name)`,
 		`CREATE INDEX IF NOT EXISTS idx_portal_users_edge ON portal_users (home_edge)`,
 		`CREATE INDEX IF NOT EXISTS idx_portal_users_invite ON portal_users (invite_token_hash)`,
 		`CREATE TABLE IF NOT EXISTS portal_audit (

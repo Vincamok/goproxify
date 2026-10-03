@@ -231,7 +231,7 @@ func (h *HTTPServer) handleCompleteInvite(w http.ResponseWriter, r *http.Request
 		h.onInviteCompleted(u.ID)
 	}
 	v := h.viewFor(r)
-	if !v.AllowsUser(u.Tags) {
+	if !v.AllowsUser(u.Username) {
 		http.Error(w, "accès non autorisé sur ce portail", http.StatusForbidden)
 		return
 	}
@@ -318,7 +318,7 @@ func (h *HTTPServer) finishLogin(w http.ResponseWriter, u UserRecord, key [32]by
 		http.Error(w, "compte désactivé", http.StatusForbidden)
 		return
 	}
-	if !v.AllowsUser(u.Tags) {
+	if !v.AllowsUser(u.Username) {
 		http.Error(w, "accès non autorisé sur ce portail", http.StatusForbidden)
 		return
 	}
@@ -434,7 +434,7 @@ func (h *HTTPServer) handleListTargets(w http.ResponseWriter, r *http.Request, p
 	view := h.viewFor(r)
 	var out []item
 	for _, c := range h.store.Catalog() {
-		if !view.AllowsTarget(c.Tags) {
+		if !view.AllowsTarget(c.ID) {
 			continue
 		}
 		it := item{
@@ -442,10 +442,13 @@ func (h *HTTPServer) handleListTargets(w http.ResponseWriter, r *http.Request, p
 			Host: c.Host, Port: c.Port, AgentName: c.AgentName, Container: c.Container,
 			Tags: c.Tags,
 		}
-		if exp, ok := h.grants.Expiry(pt.UserID, c.ID); ok && !CatalogVisible(userTags, c.Tags) {
-			it.ExpiresAt = exp.Format(time.RFC3339)
-		} else if !CatalogVisible(userTags, c.Tags) {
-			continue
+		// La liste de l'entrée fait foi : elle offre ses destinations aux utilisateurs autorisés.
+		if !view.HasTargets() {
+			if exp, ok := h.grants.Expiry(pt.UserID, c.ID); ok && !CatalogVisible(userTags, c.Tags) {
+				it.ExpiresAt = exp.Format(time.RFC3339)
+			} else if !CatalogVisible(userTags, c.Tags) {
+				continue
+			}
 		}
 		out = append(out, it)
 	}
@@ -632,11 +635,12 @@ func (h *HTTPServer) handleCreateSession(w http.ResponseWriter, r *http.Request,
 			http.Error(w, "cible catalogue introuvable", http.StatusNotFound)
 			return
 		}
-		if !h.viewFor(r).AllowsTarget(c.Tags) {
+		view := h.viewFor(r)
+		if !view.AllowsTarget(c.ID) {
 			http.Error(w, "cible catalogue introuvable", http.StatusNotFound)
 			return
 		}
-		if _, granted := h.grants.Expiry(pt.UserID, c.ID); !granted && !CatalogVisible(h.userTags(pt.UserID), c.Tags) {
+		if _, granted := h.grants.Expiry(pt.UserID, c.ID); !view.HasTargets() && !granted && !CatalogVisible(h.userTags(pt.UserID), c.Tags) {
 			http.Error(w, "cible catalogue introuvable", http.StatusNotFound)
 			return
 		}

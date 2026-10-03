@@ -919,6 +919,14 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 		result, toolErr = h.toolDeletePortalDestination(r, p.Arguments)
 	case "preview_portal_destinations":
 		result, toolErr = h.toolPreviewPortalDestinations(r, p.Arguments)
+	case "list_portal_groups":
+		result, toolErr = h.toolListPortalGroups(r, p.Arguments)
+	case "create_portal_group":
+		result, toolErr = h.toolCreatePortalGroup(r, p.Arguments)
+	case "update_portal_group":
+		result, toolErr = h.toolUpdatePortalGroup(r, p.Arguments)
+	case "delete_portal_group":
+		result, toolErr = h.toolDeletePortalGroup(r, p.Arguments)
 	case "list_portal_users":
 		result, toolErr = h.toolListPortalUsers(r, p.Arguments)
 	case "invite_portal_user":
