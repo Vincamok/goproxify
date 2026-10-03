@@ -1977,7 +1977,7 @@ window.showBanHistory = async function(ip) {
       <th>${t('security.col.source')}</th>
       <th>${t('security.col.reason')}</th>
     </tr></thead><tbody>${timelineRows}</tbody></table></div>${wafHtml}`,
-    '',
+    `<button class="btn btn-primary" onclick="openIPTrace('${esc(ip)}')">${esc(t('trace.open'))} →</button>`,
     true
   );
 };

@@ -83,7 +83,7 @@ Les paramètres de Haute Disponibilité (`NodeID`, `Peers`, `RaftPort`, voir [in
 
 | Point | Comportement |
 |---|---|
-| Restauration d'un snapshot (bouton *Restaurer*) | Applique tout : utilisateurs, tokens, PAT, snippets, canaux, règles d'alerte, nœuds déclarés, tables de configuration ; en mode **overwrite** (les lignes existantes de même identifiant sont remplacées) ; proxies republiés vers les passerelles ; planifications de sauvegarde rechargées |
+| Restauration d'un snapshot (bouton *Restaurer*) | Ouvre une fenêtre listant le contenu du snapshot (compteurs par entité) : on coche les entités à restaurer (proxies, utilisateurs, tokens, PAT, snippets, canaux, règles, configuration) et le mode de conflit (**écraser** par défaut, ou ignorer). Sans sélection (API sans corps, CLI), applique tout : utilisateurs, tokens, PAT, snippets, canaux, règles d'alerte, nœuds déclarés, tables de configuration ; en mode **overwrite** (les lignes existantes de même identifiant sont remplacées) ; proxies republiés vers les passerelles ; planifications de sauvegarde rechargées |
 | Snapshot de sécurité | Avant tout écrasement (restauration de snapshot ou import en `overwrite`), un snapshot `avant-restauration-<date>` / `avant-import-<date>` est pris automatiquement ; s'il échoue, l'opération est annulée. Il permet de revenir en arrière |
 | Version | Une sauvegarde dont la `version` n'est pas `1` est refusée |
 | Résultat | Compteurs par entité : proxies, utilisateurs, tokens, PAT, snippets, canaux, règles, lignes de configuration, nœuds déclarés, ignorés, erreurs |

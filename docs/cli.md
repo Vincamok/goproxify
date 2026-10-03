@@ -133,10 +133,9 @@ goproxify token revoke <id>
 Sauvegardes et restauration.
 
 ```
-goproxify backup create [-target admin|edge|all] [-output <dir>]
-  -target  admin : snapshot SQLite Admin (.gpx-admin-backup)
-           edge  : export table de routage (.gpx-edge-backup)
-           all   : les deux (défaut)
+goproxify backup create [-target admin|full] [-output <dir>]
+  -target  admin : snapshot SQLite Admin (.gpx-admin-backup, défaut)
+           full  : DB + fichiers config (.gpx-full-backup)
   -output  Répertoire de destination (défaut: .)
 
 goproxify backup list
@@ -725,6 +724,9 @@ goproxify security bans list   [-edge <passerelle>] [-source <source>] [-active 
 goproxify security bans add    -ip <ip> [-reason <raison>] [-ttl <durée>] [-admin-url …] [-token …]
 goproxify security bans delete -id <ban-id> [-admin-url …] [-token …]
 
+# Parcours d'une IP ou d'un CIDR
+goproxify security trace -target <ip|cidr> [-from <date>] [-to <date>] [-order asc|desc] [-limit N] [-offset N] [-json] [-admin-url …] [-token …]
+
 # WAF par proxy
 goproxify security waf get -proxy <proxy-id> [-admin-url …] [-token …]
 goproxify security waf set -proxy <proxy-id> -file <waf-config.json> [-admin-url …] [-token …]
@@ -739,6 +741,8 @@ goproxify security cve sla set -file <sla.json> [-admin-url …] [-token …]
 **`security threat simulate`** — rejoue les access logs récents (`-hours`, défaut 1, max 24 ; `-domain` pour un seul domaine) contre la config candidate du fichier, surchargée sur la config actuelle, et affiche le résultat en JSON : requêtes bloquées, faux positifs probables (`legit_blocked`), IP et bans, actuel vs candidat. Ne modifie rien. Voir `POST /api/v1/security/threat-config/simulate`.
 
 **`security bans`** — liste, ajoute ou supprime des IPs bannies manuellement. `-ttl` accepte une durée Go (`30m`, `1h`, `24h`) ou un nombre entier de jours (`7d`), convertie par la CLI en date d'expiration (`expires_at`) au moment de l'appel ; sans `-ttl`, le ban est permanent. Une durée invalide ou nulle est refusée sans rien créer (avant Admin `0.69.5`, `-ttl` était ignoré et le ban toujours permanent). `list` accepte `-edge` (nom du nœud ou id du token : les bans de cette passerelle et les bans globaux), `-source` et `-active true` (non expirés) ou `false` (expirés) ; la passerelle d’origine est affichée entre crochets.
+
+**`security trace`** — reconstitue tout ce qu'une IP ou un CIDR a fait : synthèse (requêtes, bloquées, IP distinctes, épisodes, bans/débans, détections, bans en cours, profils IP) puis les étapes (épisodes d'activité, bans, débans, détections) avec leur date. `-from` / `-to` acceptent une date `AAAA-MM-JJ` ou RFC3339 (défaut : 30 derniers jours) ; `-order desc` met le plus récent en premier ; `-limit` / `-offset` paginent (500 étapes par défaut) ; `-json` renvoie la réponse brute de `GET /api/v1/security/ip-trace`. Exemple : `goproxify security trace -target 198.51.100.0/24 -from 2026-01-01`. Les requêtes remontent aussi loin que la rétention des logs d'accès.
 
 **`security cve sla`** — lit ou écrit le délai de correction attendu des CVE (en jours après détection), par tranche de gravité CVSS ; réglage global (Admin `0.52.3`). Fichier `sla.json` :
 

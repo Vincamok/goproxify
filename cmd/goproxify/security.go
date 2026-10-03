@@ -20,6 +20,8 @@ func runSecurity() {
 		runSecurityThreat()
 	case "bans":
 		runSecurityBans()
+	case "trace":
+		runSecurityTrace()
 	case "waf":
 		runSecurityWAF()
 	case "rules":
@@ -36,6 +38,7 @@ func runSecurity() {
 Sous-commandes :
   threat   Config du moteur Sentinel (threat engine global)
   bans     Gestion des IPs bannies
+  trace    Parcours complet d'une IP ou d'un CIDR (requêtes, détections, bans)
   waf      Config WAF d'un proxy
   rules    Moteur de règles automatiques
   schedule Planifications (cron) : exécute une action à heure fixe
@@ -49,6 +52,8 @@ goproxify security threat simulate -file <config.json> [-hours N] [-domain <d>] 
 goproxify security bans list   [-admin-url …] [-token …]
 goproxify security bans add    -ip <ip> [-reason <raison>] [-ttl <durée>] [-admin-url …] [-token …]
 goproxify security bans delete -id <ban-id> [-admin-url …] [-token …]
+
+goproxify security trace -target <ip|cidr> [-from <date>] [-to <date>] [-order asc|desc] [-limit N] [-offset N] [-json] [-admin-url …] [-token …]
 
 goproxify security waf get  -proxy <id> [-admin-url …] [-token …]
 goproxify security waf set  -proxy <id> -file <config.json> [-admin-url …] [-token …]

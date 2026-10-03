@@ -281,6 +281,16 @@ Fail2Ban tourne à deux endroits : sur chaque passerelle, qui compte les erreurs
 
 Bouncer LAPI en mode stream : les décisions CrowdSec sont poussées en temps réel à la passerelle (ban 403). Compatible déploiement Docker.
 
+### Traçage d'une IP ou d'un CIDR
+
+**Sécurité › Traçage IP** (ou « Parcours complet » dans l'historique d'une IP de la page Bans) répond à « que fait cette IP depuis des semaines ? » : on saisit une IP ou un CIDR et une période (24 h à tout l'historique conservé), et l'Admin assemble en une chronologie les requêtes d'accès, les détections WAF/Sentinel/CrowdSec, les bans et débans, ainsi que l'état actuel (bans en cours, profils IP qui contiennent la cible).
+
+- **Épisodes** : les requêtes de la cible séparées de moins de 10 minutes forment une seule étape (volume, bloquées, domaines, chemins, statuts, catégories WAF), pour qu'une période d'un an reste lisible.
+- **CIDR** : toutes les IP du préfixe sont réunies ; l'en-tête donne leurs requêtes cumulées et les IP les plus actives. Un ban posé sur un CIDR apparaît dans le parcours d'une IP qu'il contient.
+- **Limites** : les requêtes remontent aussi loin que la rétention des logs d'accès (365 jours par défaut, réglable dans les réglages des Logs) ; les bans et détections ont leur propre historique. Les IP pseudonymisées ou tronquées par la passerelle (RGPD) ne peuvent pas être retrouvées.
+
+API : `GET /api/v1/security/ip-trace` ; CLI : `goproxify security trace` ; MCP : `trace_ip`.
+
 ---
 
 ## Moteur de règles automatiques

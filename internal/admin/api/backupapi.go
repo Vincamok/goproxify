@@ -15,7 +15,6 @@ import (
 
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	"github.com/vincamok/goproxify/internal/admin/backup"
-	"github.com/vincamok/goproxify/internal/admin/edgeproxy"
 	"github.com/vincamok/goproxify/internal/admin/importer"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
 )
@@ -57,11 +56,10 @@ func (h *BackupHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.downloadSnapshot(w, r, id)
 	case r.Method == http.MethodDelete && sub == "snapshots" && id != "" && action == "":
 		h.deleteSnapshot(w, r, id)
+	case r.Method == http.MethodGet && sub == "snapshots" && id != "" && action == "summary":
+		h.snapshotSummary(w, r, id)
 	case r.Method == http.MethodPost && sub == "snapshots" && id != "" && action == "restore":
 		h.restoreSnapshot(w, r, id)
-	// Passerelle routing table export
-	case r.Method == http.MethodGet && sub == "edge":
-		h.exportEdgeRoutes(w, r)
 	// Proxy history
 	case r.Method == http.MethodGet && sub == "proxy-history" && id != "" && action == "":
 		h.listProxyHistory(w, r, id)
@@ -154,6 +152,20 @@ func (h *BackupHandler) deleteSnapshot(w http.ResponseWriter, _ *http.Request, i
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h *BackupHandler) snapshotSummary(w http.ResponseWriter, _ *http.Request, id string) {
+	data, _, err := h.Scheduler.GetSnapshotData(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	_, sum, err := importer.SummarizeBackup(data)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	jsonOK(w, sum)
+}
+
 func (h *BackupHandler) restoreSnapshot(w http.ResponseWriter, r *http.Request, id string) {
 	data, _, err := h.Scheduler.GetSnapshotData(id)
 	if err != nil {
@@ -198,38 +210,6 @@ func (h *BackupHandler) restoreSnapshot(w http.ResponseWriter, r *http.Request, 
 		go h.Pusher.PushRoutes(context.Background())
 	}
 	jsonOK(w, result)
-}
-
-// ── passerelle routing table export ─────────────────────────────────────────────────
-
-func (h *BackupHandler) exportEdgeRoutes(w http.ResponseWriter, r *http.Request) {
-	envs, err := edgeproxy.LoadProductionEnvelopes(r.Context(), h.DB)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	type routeEntry struct {
-		ID      string          `json:"id"`
-		Name    string          `json:"name"`
-		Config  json.RawMessage `json:"config"`
-		Enabled bool            `json:"enabled"`
-	}
-	routes := make([]routeEntry, 0, len(envs))
-	for _, e := range envs {
-		routes = append(routes, routeEntry{
-			ID: e.ID, Name: e.Host, Config: e.Config, Enabled: e.Enabled,
-		})
-	}
-	payload := map[string]any{
-		"version":    "1",
-		"created_at": time.Now().UTC().Format(time.RFC3339),
-		"routes":     routes,
-	}
-	data, _ := json.MarshalIndent(payload, "", "  ")
-	ts := time.Now().Format("20060102-150405")
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Content-Disposition", "attachment; filename=goproxify-routing-"+ts+".gpx-edge-backup")
-	w.Write(data) //nolint:errcheck
 }
 
 // ── Proxy history ─────────────────────────────────────────────────────────────

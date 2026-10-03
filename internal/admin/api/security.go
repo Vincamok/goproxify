@@ -103,6 +103,8 @@ func (h *SecurityHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.timeline(w, r)
 	case r.Method == http.MethodGet && sub == "ip-timeline":
 		h.ipTimeline(w, r)
+	case r.Method == http.MethodGet && sub == "ip-trace":
+		h.ipTrace(w, r)
 	// Fail2Ban
 	case r.Method == http.MethodGet && sub == "fail2ban":
 		h.getF2BConfig(w, r)

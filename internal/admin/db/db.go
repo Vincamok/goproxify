@@ -173,6 +173,7 @@ func migrate(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_logs_level     ON logs (level)`,
 		`CREATE INDEX IF NOT EXISTS idx_logs_component ON logs (component)`,
 		`CREATE INDEX IF NOT EXISTS idx_logs_domain    ON logs (domain)`,
+		`CREATE INDEX IF NOT EXISTS idx_logs_ip_ts     ON logs (ip, ts)`,
 		// Prism : accès HTTP (status>0) filtrés par période ± domaine — partial indexes.
 		`CREATE INDEX IF NOT EXISTS idx_logs_access_ts ON logs (ts) WHERE status > 0`,
 		`CREATE INDEX IF NOT EXISTS idx_logs_access_domain_ts ON logs (domain, ts) WHERE status > 0`,

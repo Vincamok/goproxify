@@ -78,3 +78,16 @@ func TestBansAddTTLReachesTheAPI(t *testing.T) {
 		t.Errorf("expires_at=%v (actif=%v), attendu %s et actif", exp, active, want)
 	}
 }
+
+func TestTracePath(t *testing.T) {
+	if _, err := tracePath(map[string]string{}); err == nil {
+		t.Error("-target est requis")
+	}
+	p, err := tracePath(map[string]string{"-target": "203.0.113.0/24", "-from": "2026-01-01", "-order": "desc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p != "/api/v1/security/ip-trace?from=2026-01-01&order=desc&target=203.0.113.0%2F24" {
+		t.Errorf("chemin : %s", p)
+	}
+}

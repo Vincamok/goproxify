@@ -376,6 +376,10 @@ Restaure la config de cette version sur le proxy.
 
 Contenu détaillé : [sauvegardes.md](sauvegardes.md).
 
+### `GET /api/v1/backups/snapshots/:id/summary`
+
+Résumé du contenu d'un snapshot, sans rien écrire — même format que `import/backup/preview` (`proxies[]`, `user_count`, `token_count`, `pat_count`, `snippet_count`, `channel_count`, `rule_count`, `declared_node_count`, `config_row_count`, `config_tables{table: n}`). Utilisé par la fenêtre « Restaurer » de l'Admin. 404 si le snapshot n'existe pas.
+
 ### `POST /api/v1/backups/snapshots/:id/restore`
 
 Restaure un snapshot. Corps optionnel `{"selection": {…}}` (mêmes champs que `import/backup/apply`) ; **sans corps**, restauration complète en mode `overwrite` (utilisateurs, tokens, PAT, snippets, canaux, règles, tables de configuration). En `overwrite`, un snapshot de sécurité `avant-restauration-<date>` est pris d'abord ; s'il échoue, la restauration est annulée (500). Réponse : `ImportResult`.
@@ -607,10 +611,6 @@ Liste / détail des profils IP (`id`, `name`, `profile_type`, `mode`, `feed_urls
 
 Après un échec (réseau, HTTP ≠ 200, parsing, liste rejetée par le garde-fou), les CIDRs déjà stockés restent appliqués et le profil est retenté avec un délai de 15 min doublé à chaque échec, plafonné à 6 h et à `refresh_interval_h`.
 
-### `POST /api/v1/ip-profiles/:id/refresh`
-
-Force un rafraîchissement complet (téléchargement inconditionnel, garde-fou de taille ignoré). `200 {"status":"refreshed"}`, ou `400 {"error":…}` en cas d'échec (profil sans feed, feed injoignable…). Le rafraîchissement automatique rejette une nouvelle liste qui perd plus de la moitié d'une liste d'au moins 10 entrées (feed vide ou tronqué) : la liste actuelle est conservée et l'échec est enregistré ; ce endpoint permet de l'accepter.
-
 ### `POST /api/v1/ip-profiles` · `PUT /api/v1/ip-profiles/:id`
 
 Création / modification. Une liste vient soit d'un feed (`feed_urls`, `feed_format`, `refresh_interval_h`), soit d'une saisie manuelle (`cidrs` : IP ou CIDR, validés, dédupliqués et agrégés). Les deux sont exclusifs, car un rafraîchissement remplacerait la liste manuelle, et un profil manuel n'est jamais rafraîchi. `mode` : `deny` (défaut) ou `allow` ; `profile_type` vaut `custom` par défaut. Un profil s'applique à tout le trafic de chaque passerelle, `allow` prime sur `deny`, les adresses privées ne sont jamais bloquées.
@@ -620,6 +620,10 @@ Création / modification. Une liste vient soit d'un feed (`feed_urls`, `feed_for
 | CIDR invalide, `mode` inconnu, `cidrs` avec `feed_urls`, ni `feed_urls` ni `cidrs` (création) | `400 {"error":…}` |
 | Création réussie | `201 {"id":…}` |
 | Modification réussie | `204` ; sans `cidrs` dans le corps, la liste stockée est conservée |
+
+### `POST /api/v1/ip-profiles/:id/refresh`
+
+Force un rafraîchissement complet (téléchargement inconditionnel, garde-fou de taille ignoré). `200 {"status":"refreshed"}`, ou `400 {"error":…}` en cas d'échec (profil sans feed, feed injoignable…). Le rafraîchissement automatique rejette une nouvelle liste qui perd plus de la moitié d'une liste d'au moins 10 entrées (feed vide ou tronqué) : la liste actuelle est conservée et l'échec est enregistré ; ce endpoint permet de l'accepter.
 
 ---
 
@@ -857,6 +861,24 @@ Supprime un ban par ID.
 ### `GET /api/v1/security/threats`
 
 Liste les menaces CrowdSec (`security_threats`), triées par `last_seen_at` décroissant. Paramètre : `limit`. Une même menace (`ip`+`scenario`) est dédupliquée : chaque nouvelle occurrence rafraîchit `last_seen_at` et incrémente `occurrences` au lieu de créer une ligne ignorée à date figée. Chaque entrée inclut aussi `edge_name` — la passerelle d'origine, résolu côté serveur depuis le token d'appairage à la réception (vide pour les données antérieures à cette colonne).
+
+### `GET /api/v1/security/ip-trace`
+
+Parcours complet d'une IP ou d'un CIDR (rôle admin). Reconstitue, sur la période demandée, les requêtes d'accès (logs), les détections (`security_threats`), les bans et débans (`security_ban_history`), les bans en cours et les profils IP qui contiennent la cible.
+
+| Paramètre | Description |
+|-----------|-------------|
+| `target` (alias `ip`) | **Requis.** IP (`203.0.113.7`, `2001:db8::1`) ou CIDR (`198.51.100.0/24`). `400` si invalide |
+| `from`, `to` | RFC3339 ou `AAAA-MM-JJ` (`to` en date seule inclut la journée). Défaut : 30 derniers jours jusqu'à maintenant. `400` si `from` ≥ `to` |
+| `order` | `asc` (chronologique, défaut) ou `desc` |
+| `limit`, `offset` | Pagination des étapes (défaut 500, max 2000) |
+
+Réponse : `target` (normalisé), `kind` (`ip` ou `cidr`), `from`, `to`, `total_steps`, `offset`, `has_more`, et :
+
+- `summary` : `first_seen`, `last_seen`, `requests`, `blocked` (403, 429 ou protection déclenchée), `ip_count`, `episodes`, `bans`, `unbans`, `threats`, `statuses` (par classe `2xx`…), `days` (`day`, `requests`, `blocked`), `top_ips`, `top_domains`, `top_paths`, `waf_matches`, `threat_signals`, `countries` (depuis `geoip_cache`), `active_bans`, `profiles` (profils IP activés dont une entrée recoupe la cible), `scan_limited` (plus de 2 000 000 requêtes : période à réduire). Les totaux couvrent toute la période, pas seulement la page.
+- `steps` : étapes datées `ts`, de `kind` `activity` (épisode : `end` et `burst` avec `requests`, `blocked`, `ips`, `ip_count`, `domains`, `nodes`, `statuses`, `top_paths`, `waf_matches`, `threat_signals` ; deux requêtes séparées de moins de 10 min appartiennent au même épisode), `ban`, `unban`, `threat` (`occurrences`) ou `system` (événement de log lié à l'IP, 500 max), avec `ip`, `domain`, `source`, `reason`.
+
+Un ban ou déban recoupant la cible compte dans le parcours (un ban sur un `/24` apparaît pour une IP qu'il contient, et inversement). Les requêtes ne remontent pas plus loin que la rétention des logs d'accès ; les IP pseudonymisées ou tronquées ne sont pas retrouvées. Équivalents : `goproxify security trace`, outil MCP `trace_ip`.
 
 ### `GET /api/v1/security/cves`
 

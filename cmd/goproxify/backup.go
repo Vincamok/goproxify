@@ -26,10 +26,10 @@ func runBackup() {
 	switch sub {
 	case "create":
 		args := parseFlags(os.Args[3:])
-		target := flagValue(args, "-target", "all")
+		target := flagValue(args, "-target", "admin")
 		output := flagValue(args, "-output", ".")
-		if target != "admin" && target != "edge" && target != "all" && target != "full" {
-			fmt.Fprintf(os.Stderr, "-target doit être 'admin', 'edge', 'all' ou 'full' (reçu: %q)\n", target)
+		if target != "admin" && target != "full" {
+			fmt.Fprintf(os.Stderr, "-target doit être 'admin' ou 'full' (reçu: %q)\n", target)
 			os.Exit(1)
 		}
 		client, err := newAdminClient(args)
@@ -51,17 +51,9 @@ func runBackup() {
 			}
 			return
 		}
-		if target == "admin" || target == "all" {
-			if err := backupCreateAdmin(client, output); err != nil {
-				fmt.Fprintf(os.Stderr, "backup admin : %v\n", err)
-				os.Exit(1)
-			}
-		}
-		if target == "edge" || target == "all" {
-			if err := backupCreateEdge(client, output); err != nil {
-				fmt.Fprintf(os.Stderr, "backup edge : %v\n", err)
-				os.Exit(1)
-			}
+		if err := backupCreateAdmin(client, output); err != nil {
+			fmt.Fprintf(os.Stderr, "backup admin : %v\n", err)
+			os.Exit(1)
 		}
 
 	case "restore":
@@ -117,15 +109,10 @@ func runBackup() {
 
 	case "list":
 		args := parseFlags(os.Args[3:])
-		target := flagValue(args, "-target", "all")
 		client, err := newAdminClient(args)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
 			os.Exit(1)
-		}
-		if target == "edge" {
-			fmt.Println("Les exports edge (.gpx-edge-backup) ne sont pas listés en base — utilisez « backup create -target edge ».")
-			return
 		}
 		var snaps []cliSnapshot
 		if _, err := client.DoJSON("GET", "/api/v1/backups/snapshots", nil, &snaps); err != nil {
@@ -150,10 +137,8 @@ Sous-commandes :
   restore  Restaure depuis un fichier ou un snapshot stocké
   list     Liste les snapshots Admin
 
-goproxify backup create [-target admin|edge|all|full] [-output <dir>] [-admin-url …] [-token …]
-  -target  admin : snapshot SQLite Admin (.gpx-admin-backup JSON)
-           edge  : export table de routage (.gpx-edge-backup JSON)
-           all   : les deux (défaut)
+goproxify backup create [-target admin|full] [-output <dir>] [-admin-url …] [-token …]
+  -target  admin : snapshot SQLite Admin (.gpx-admin-backup JSON, défaut)
            full  : DB + fichiers config JSON (.gpx-full-backup JSON)
   -output           Répertoire de destination (défaut: .)
   -config-admin     Chemin admin.json (full uniquement, défaut: auto-détecté)
@@ -213,22 +198,6 @@ func backupCreateAdmin(client *adminClient, output string) error {
 		return err
 	}
 	fmt.Printf("Snapshot admin écrit : %s (%s)\n", path, formatBytes(int64(len(data))))
-	return nil
-}
-
-func backupCreateEdge(client *adminClient, output string) error {
-	data, fname, _, err := client.DoRaw("GET", "/api/v1/backups/edge", nil, "")
-	if err != nil {
-		return err
-	}
-	if fname == "" {
-		fname = "goproxify-routing-" + time.Now().Format("20060102-150405") + ".gpx-edge-backup"
-	}
-	path := filepath.Join(output, fname)
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return err
-	}
-	fmt.Printf("Export routage écrit : %s (%s)\n", path, formatBytes(int64(len(data))))
 	return nil
 }
 

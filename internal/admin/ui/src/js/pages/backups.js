@@ -28,18 +28,6 @@ const BK_TABS = [
     descKey: 'backups.tab.schedule.desc',
     icon: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
   },
-  {
-    id: 'routing',
-    titleKey: 'backups.tab.routing.title',
-    descKey: 'backups.tab.routing.desc',
-    icon: '<circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 010 8.49"/><path d="M7.76 16.24a6 6 0 010-8.49"/><path d="M19.07 4.93a10 10 0 010 14.14"/><path d="M4.93 19.07a10 10 0 010-14.14"/>',
-  },
-  {
-    id: 'restore',
-    titleKey: 'backups.tab.restore.title',
-    descKey: 'backups.tab.restore.desc',
-    icon: '<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
-  },
 ];
 
 function bkNewSchedule(partial = {}) {
@@ -92,7 +80,7 @@ pages.backups = async function() {
   const content = document.getElementById('content');
   content.innerHTML = '<p style="color:var(--text2)">' + t('common.loading') + '</p>';
 
-  let activeTab = 'snapshots'; // snapshots | schedule | routing
+  let activeTab = 'snapshots'; // snapshots | schedule
   let draftSchedules = [];
 
   function setTopbar() {
@@ -138,8 +126,6 @@ pages.backups = async function() {
       </div>`;
   }
 
-  let restoreState = { step: 'pick', fileData: null, summary: null };
-
   async function render() {
     setTopbar();
     const needsSched = activeTab === 'snapshots' || activeTab === 'schedule';
@@ -160,12 +146,9 @@ pages.backups = async function() {
 
     let body = '';
     if (activeTab === 'snapshots') body = snapshotsTab(snaps, draftSchedules);
-    else if (activeTab === 'schedule') body = scheduleTab(draftSchedules);
-    else if (activeTab === 'restore') body = restoreTab();
-    else body = routingTab();
+    else body = scheduleTab(draftSchedules);
 
     content.innerHTML = `${navHtml()}<div id="bk-body">${body}</div>`;
-    if (activeTab === 'restore') bindRestoreEvents();
   }
 
   window._bkTab = function(tab) {
@@ -222,6 +205,10 @@ pages.backups = async function() {
           </div>
         </div>
         ${snapshotsTable(snaps, schedules)}
+        <p style="color:var(--text2);font-size:12px;margin:14px 0 0">
+          ${t('backups.restore_modal.from_file')}
+          <a href="#" onclick="navigate('import');return false">${t('backups.restore_modal.from_file_link')}</a>
+        </p>
       </div>`;
   }
 
@@ -415,179 +402,6 @@ pages.backups = async function() {
     render();
   };
 
-  // ── Onglet Restaurer ──────────────────────────────────────────────────────
-  function restoreTab() {
-    if (restoreState.step === 'done') {
-      const res = restoreState.result || {};
-      return `
-        <div class="card blueprint" style="max-width:560px">
-          <div class="card-kicker">${t('backups.kicker.restore')}</div>
-          <div class="card-title">${t('backups.restore.done_title')}</div>
-          <div style="display:flex;gap:16px;flex-wrap:wrap;margin:18px 0;">
-            ${Object.entries(res).filter(([,v]) => typeof v === 'number').map(([k,v]) =>
-              `<div style="background:var(--bg2);border-radius:8px;padding:12px 18px;min-width:90px;text-align:center;">
-                <div style="font-size:22px;font-weight:700;">${v}</div>
-                <div style="font-size:11px;color:var(--text2);margin-top:2px;">${esc(k)}</div>
-              </div>`
-            ).join('')}
-          </div>
-          <button class="btn btn-secondary btn-sm" onclick="window._bkRestoreReset()">${t('backups.restore.import_another')}</button>
-        </div>`;
-    }
-
-    if (restoreState.step === 'select' && restoreState.summary) {
-      const s = restoreState.summary;
-      const entities = [
-        ['proxies',  t('trafic.proxies'),          (s.proxies?.length) || 0],
-        ['users',    t('import.entity.users'),    s.user_count   || 0],
-        ['tokens',   t('import.entity.tokens'),   s.token_count  || 0],
-        ['pats',     t('import.entity.pats'),     s.pat_count    || 0],
-        ['snippets', t('import.entity.snippets'), s.snippet_count|| 0],
-        ['channels', t('import.entity.channels'), s.channel_count|| 0],
-        ['rules',    t('import.entity.rules'),    s.rule_count   || 0],
-        ['config',   t('import.entity.config'),   s.config_row_count || 0],
-      ].filter(([,, n]) => n > 0);
-
-      return `
-        <div class="card blueprint" style="max-width:560px">
-          <div class="card-kicker">${t('backups.kicker.restore')}</div>
-          <div class="card-title">${t('backups.restore.select_title')}</div>
-          <p style="color:var(--text2);font-size:13px;margin:10px 0 16px;line-height:1.5">${t('backups.restore.select_hint')}</p>
-          <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">
-            ${entities.map(([id, label, n]) => `
-              <label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg2)">
-                <input type="checkbox" id="bk-imp-${id}" checked style="accent-color:var(--accent);width:14px;height:14px;">
-                <span style="flex:1">${esc(label)}</span>
-                <span style="font-size:12px;color:var(--text2);font-weight:600">${n}</span>
-              </label>`).join('')}
-          </div>
-          <div class="field" style="margin-bottom:16px">
-            <label class="field-label">${t('import.conflict')}</label>
-            <select id="bk-imp-conflict" class="input" style="max-width:220px">
-              <option value="skip">${t('trafic.skip_keep')}</option>
-              <option value="overwrite">${t('trafic.overwrite')}</option>
-            </select>
-          </div>
-          <div style="display:flex;gap:8px;align-items:center;">
-            <button class="btn btn-secondary btn-sm" onclick="window._bkRestoreReset()">${t('common.cancel')}</button>
-            <button class="btn btn-primary btn-sm" id="bk-imp-apply">${t('import.apply_selection')}</button>
-          </div>
-        </div>`;
-    }
-
-    return `
-      <div class="card blueprint" style="max-width:560px">
-        <div class="card-kicker">${t('backups.kicker.restore')}</div>
-        <div class="card-title">${t('backups.restore.title')}</div>
-        <p style="color:var(--text2);font-size:13px;margin:12px 0 20px;line-height:1.6">${t('backups.restore.hint')}</p>
-        <div class="field" style="margin-bottom:16px">
-          <label class="field-label">${t('onboarding.backup_file')}</label>
-          <input type="file" id="bk-restore-file" class="input" accept=".gpx-admin-backup,.json">
-        </div>
-        <div id="bk-restore-status" style="font-size:12px;color:var(--text2);margin-bottom:12px;min-height:16px"></div>
-        <button class="btn btn-primary btn-sm" id="bk-restore-analyze" disabled>${t('trafic.analyze')}</button>
-      </div>`;
-  }
-
-  function bindRestoreEvents() {
-    const fileEl = document.getElementById('bk-restore-file');
-    const analyzeBtn = document.getElementById('bk-restore-analyze');
-    const applyBtn = document.getElementById('bk-imp-apply');
-
-    if (fileEl) {
-      fileEl.addEventListener('change', () => {
-        if (analyzeBtn) analyzeBtn.disabled = !fileEl.files?.length;
-      });
-    }
-
-    if (analyzeBtn) {
-      analyzeBtn.addEventListener('click', async () => {
-        const file = document.getElementById('bk-restore-file')?.files?.[0];
-        if (!file) return;
-        analyzeBtn.disabled = true;
-        const statusEl = document.getElementById('bk-restore-status');
-        if (statusEl) statusEl.textContent = t('common.loading');
-        try {
-          const data = await file.text();
-          const res = await fetch('/api/v1/import/backup/preview', {
-            method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + state.token, 'Content-Type': 'application/json' },
-            body: data,
-          });
-          if (!res.ok) throw new Error(await res.text());
-          restoreState.summary = await res.json();
-          restoreState.fileData = data;
-          restoreState.step = 'select';
-          render();
-        } catch(e) {
-          if (statusEl) statusEl.textContent = t('common.error_msg', { msg: e.message });
-          if (analyzeBtn) analyzeBtn.disabled = false;
-        }
-      });
-    }
-
-    if (applyBtn) {
-      applyBtn.addEventListener('click', async () => {
-        applyBtn.disabled = true;
-        const getCheck = id => document.getElementById('bk-imp-' + id)?.checked ?? false;
-        const conflict = document.getElementById('bk-imp-conflict')?.value || 'skip';
-        // proxy_ids vide = importer tous ; [''] = ID invalide → importer aucun
-        const proxyIds = getCheck('proxies') ? [] : [''];
-        const selection = {
-          proxy_ids:             proxyIds,
-          import_users:          getCheck('users'),
-          import_tokens:         getCheck('tokens'),
-          import_pats:           getCheck('pats'),
-          import_snippets:       getCheck('snippets'),
-          import_alert_channels: getCheck('channels'),
-          import_alert_rules:    getCheck('rules'),
-          import_config:         getCheck('config'),
-          on_conflict:           conflict,
-        };
-        try {
-          const res = await fetch('/api/v1/import/backup/apply', {
-            method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + state.token, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ data: JSON.parse(restoreState.fileData), selection }),
-          });
-          if (!res.ok) throw new Error(await res.text());
-          restoreState.result = await res.json();
-          restoreState.step = 'done';
-          render();
-        } catch(e) {
-          toast(t('common.error_msg', { msg: e.message }), 'error');
-          applyBtn.disabled = false;
-        }
-      });
-    }
-  }
-
-  window._bkRestoreReset = function() {
-    restoreState = { step: 'pick', fileData: null, summary: null };
-    render();
-  };
-
-  // ── Onglet Routage ────────────────────────────────────────────────────────
-  function routingTab() {
-    return `
-      <div class="card blueprint" style="max-width:560px">
-        <div class="card-kicker">${t('backups.kicker.routing')}</div>
-        <div class="card-title">${t('backups.routing.title')}</div>
-        <p style="color:var(--text2);font-size:13px;margin:12px 0 20px;line-height:1.6">
-          ${t('backups.routing.desc')}
-        </p>
-        <button class="btn btn-primary" onclick="bkDownloadEdge()">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:5px"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          ${t('backups.routing.download')}
-        </button>
-      </div>`;
-  }
-
-  window.bkDownloadEdge = function() {
-    const ts = new Date().toISOString().slice(0,10);
-    authDownload('/api/v1/backups/edge', `goproxify-routing-${ts}.gpx-edge-backup`);
-  };
-
   await render();
 
   window.saveSchedules = async function() {
@@ -626,13 +440,78 @@ window.createSnapshot = async function() {
   } catch(e) { toast(e.message, 'error'); }
 };
 
+let _bkRestoreId = null;
+
 window.restoreSnapshot = async function(id, name) {
-  if (!confirm(t('backups.restore_confirm', { name }))) return;
+  let s;
+  try { s = await api('GET', `/backups/snapshots/${id}/summary`); }
+  catch(e) { toast(e.message, 'error'); return; }
+
+  const entities = [
+    ['proxies',  t('trafic.proxies'),          (s.proxies?.length) || 0],
+    ['users',    t('import.entity.users'),    s.user_count   || 0],
+    ['tokens',   t('import.entity.tokens'),   s.token_count  || 0],
+    ['pats',     t('import.entity.pats'),     s.pat_count    || 0],
+    ['snippets', t('import.entity.snippets'), s.snippet_count|| 0],
+    ['channels', t('import.entity.channels'), s.channel_count|| 0],
+    ['rules',    t('import.entity.rules'),    s.rule_count   || 0],
+    ['config',   t('import.entity.config'),   s.config_row_count || 0],
+  ].filter(([,, n]) => n > 0);
+
+  _bkRestoreId = id;
+  const body = entities.length ? `
+    <p style="color:var(--text2);font-size:13px;margin:0 0 14px;line-height:1.5">${t('backups.restore_modal.hint')}</p>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">
+      ${entities.map(([eid, label, n]) => `
+        <label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg2)">
+          <input type="checkbox" id="bk-rs-${eid}" checked style="accent-color:var(--accent);width:14px;height:14px;">
+          <span style="flex:1">${esc(label)}</span>
+          <span style="font-size:12px;color:var(--text2);font-weight:600">${n}</span>
+        </label>`).join('')}
+    </div>
+    <div class="field" style="margin-bottom:8px">
+      <label class="field-label">${t('import.conflict')}</label>
+      <select id="bk-rs-conflict" class="input" style="max-width:260px">
+        <option value="overwrite">${t('trafic.overwrite')}</option>
+        <option value="skip">${t('trafic.skip_keep')}</option>
+      </select>
+    </div>
+    <p style="color:var(--text2);font-size:12px;margin:0">${t('backups.restore_modal.safety')}</p>`
+    : `<p style="color:var(--text2);font-size:13px;margin:0">${t('backups.restore_modal.empty')}</p>`;
+
+  modal(
+    t('backups.restore_modal.title', { name: esc(name) }),
+    body,
+    `<button class="btn btn-secondary btn-sm" onclick="closeModal()">${t('common.cancel')}</button>` +
+      (entities.length ? `<button class="btn btn-primary btn-sm" id="bk-rs-apply" onclick="applySnapshotRestore()">${t('common.restore')}</button>` : '')
+  );
+};
+
+window.applySnapshotRestore = async function() {
+  const checked = id => document.getElementById('bk-rs-' + id)?.checked ?? false;
+  const btn = document.getElementById('bk-rs-apply');
+  const selection = {
+    // proxy_ids vide = importer tous ; [''] = ID invalide → importer aucun
+    proxy_ids:             checked('proxies') ? [] : [''],
+    import_users:          checked('users'),
+    import_tokens:         checked('tokens'),
+    import_pats:           checked('pats'),
+    import_snippets:       checked('snippets'),
+    import_alert_channels: checked('channels'),
+    import_alert_rules:    checked('rules'),
+    import_config:         checked('config'),
+    on_conflict:           document.getElementById('bk-rs-conflict')?.value || 'overwrite',
+  };
+  if (btn) btn.disabled = true;
   try {
-    const res = await api('POST', `/backups/snapshots/${id}/restore`);
+    const res = await api('POST', `/backups/snapshots/${_bkRestoreId}/restore`, { selection });
+    closeModal();
     toast(t('backups.restore_result', { proxies: res.proxies||0, users: res.users||0, config: res.config||0 }), 'success');
     pages.backups();
-  } catch(e) { toast(e.message, 'error'); }
+  } catch(e) {
+    toast(e.message, 'error');
+    if (btn) btn.disabled = false;
+  }
 };
 
 window.deleteSnapshot = async function(id, name) {

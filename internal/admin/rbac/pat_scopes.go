@@ -112,7 +112,7 @@ var mcpTools = []string{
 	"list_domains", "create_domain", "renew_domain", "rotate_cert",
 	"list_certs", "get_cert_status", "list_cert_deploy_targets", "list_internal_cas", "list_internal_certs", "get_ech_status",
 	"obtain_cert", "import_cert", "trigger_cert_deploy", "create_internal_ca", "issue_internal_cert", "revoke_internal_cert",
-	"list_logs", "simulate_sentinel_config", "get_prism_anomalies", "get_prism_geo", "get_prism_slo", "list_teams",
+	"list_logs", "simulate_sentinel_config", "trace_ip", "get_prism_anomalies", "get_prism_geo", "get_prism_slo", "list_teams",
 	"get_audit_log", "get_security_overview", "list_security_bans", "list_security_threats", "list_security_cves",
 	"list_ip_profiles", "list_auth_providers",
 	"list_rules", "list_rule_history", "list_pending_actions", "list_rule_versions", "list_silences", "export_automation",
@@ -260,7 +260,7 @@ func ToolRequiredScope(tool string) string {
 	case "obtain_cert", "import_cert", "trigger_cert_deploy",
 		"create_internal_ca", "issue_internal_cert", "revoke_internal_cert":
 		return ScopeCertsWrite
-	case "list_logs", "simulate_sentinel_config", "get_prism_anomalies", "get_prism_geo", "get_prism_slo":
+	case "list_logs", "simulate_sentinel_config", "trace_ip", "get_prism_anomalies", "get_prism_geo", "get_prism_slo":
 		return ScopeLogsRead
 	case "list_teams":
 		return ScopeTeamsRead
@@ -307,7 +307,7 @@ func ToolRequiresAdmin(tool string) bool {
 		"get_architecture",
 		"list_backups", "list_users", "list_teams",
 		"get_security_overview", "list_security_bans", "list_security_threats", "list_security_cves",
-		"create_security_ban", "delete_security_ban", "ban_ip", "unban_ip", "simulate_sentinel_config",
+		"create_security_ban", "delete_security_ban", "ban_ip", "unban_ip", "simulate_sentinel_config", "trace_ip",
 		"list_auth_providers", "create_auth_provider", "delete_auth_provider",
 		"list_internal_cas", "list_internal_certs", "get_ech_status", "create_internal_ca", "issue_internal_cert", "revoke_internal_cert",
 		"list_rules", "run_rule", "list_rule_history", "replay_rule_history",
