@@ -110,7 +110,7 @@ var mcpTools = []string{
 	"get_metrics", "get_proxy_metrics", "list_backups", "list_users",
 	"list_snippets", "create_snippet", "delete_snippet",
 	"list_domains", "create_domain", "renew_domain", "rotate_cert",
-	"list_certs", "get_cert_status", "list_cert_deploy_targets", "list_internal_cas", "list_internal_certs",
+	"list_certs", "get_cert_status", "list_cert_deploy_targets", "list_internal_cas", "list_internal_certs", "get_ech_status",
 	"obtain_cert", "import_cert", "trigger_cert_deploy", "create_internal_ca", "issue_internal_cert", "revoke_internal_cert",
 	"list_logs", "simulate_sentinel_config", "get_prism_anomalies", "get_prism_geo", "get_prism_slo", "list_teams",
 	"get_audit_log", "get_security_overview", "list_security_bans", "list_security_threats", "list_security_cves",
@@ -251,7 +251,7 @@ func ToolRequiredScope(tool string) string {
 		return ScopeDomainsRead
 	case "create_domain", "renew_domain", "rotate_cert":
 		return ScopeDomainsWrite
-	case "list_certs", "get_cert_status", "list_cert_deploy_targets", "list_internal_cas", "list_internal_certs":
+	case "list_certs", "get_cert_status", "list_cert_deploy_targets", "list_internal_cas", "list_internal_certs", "get_ech_status":
 		return ScopeCertsRead
 	case "obtain_cert", "import_cert", "trigger_cert_deploy",
 		"create_internal_ca", "issue_internal_cert", "revoke_internal_cert":
@@ -305,7 +305,7 @@ func ToolRequiresAdmin(tool string) bool {
 		"get_security_overview", "list_security_bans", "list_security_threats", "list_security_cves",
 		"create_security_ban", "delete_security_ban", "ban_ip", "unban_ip", "simulate_sentinel_config",
 		"list_auth_providers", "create_auth_provider", "delete_auth_provider",
-		"list_internal_cas", "list_internal_certs", "create_internal_ca", "issue_internal_cert", "revoke_internal_cert",
+		"list_internal_cas", "list_internal_certs", "get_ech_status", "create_internal_ca", "issue_internal_cert", "revoke_internal_cert",
 		"list_rules", "run_rule", "list_rule_history", "replay_rule_history",
 		"list_pending_actions", "approve_pending_action", "reject_pending_action",
 		"list_rule_versions", "restore_rule_version",
@@ -384,7 +384,8 @@ func RequiredScopeForRequest(r *http.Request) string {
 		}
 		return ScopeDomainsWrite
 	case strings.HasPrefix(path, "/api/v1/certs"),
-		strings.HasPrefix(path, "/api/v1/internal-ca"):
+		strings.HasPrefix(path, "/api/v1/internal-ca"),
+		strings.HasPrefix(path, "/api/v1/ech"):
 		if method == http.MethodGet {
 			return ScopeCertsRead
 		}

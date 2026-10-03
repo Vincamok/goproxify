@@ -234,7 +234,8 @@ window.openDomainModal = async function(id) {
   const sel = existing?.dns_provider || 'none';
   const provider = DNS_PROVIDERS.find(p => p.id === sel);
   const hasDelegation = !!existing?.delegated_to_edge_id;
-  const certMethod = existing?.cert_method || (sel !== 'none' ? 'dns' : 'http');
+  const rawMethod = existing?.cert_method;
+  const certMethod = rawMethod === 'http' ? 'acme-http' : (rawMethod || (sel !== 'none' ? 'dns' : 'acme-http'));
   const matchesEdge = (c, ref) => !!ref && (c.id === ref || c.node_name === ref || c.display_name === ref);
   const selectedEdge = edges.find(c => matchesEdge(c, existing?.edge_id));
   const selectedDelegatedEdge = edges.find(c => matchesEdge(c, existing?.delegated_to_edge_id));
@@ -286,9 +287,13 @@ window.openDomainModal = async function(id) {
       <div class="field" id="dm-method-section" style="display:${sel==='none'?'':'none'}">
         <label class="field-label">${t('domains.field_cert_validation')}</label>
         <div style="display:flex;flex-direction:column;gap:6px;margin-top:4px">
-          <label class="radio ${certMethod==='http'?'selected':''}" id="dm-cert-http" onclick="dmSelectCertMethod('http')">
-            <input type="radio" name="dm-cert-method" value="http" ${certMethod==='http'?'checked':''}><div class="dot"></div>
+          <label class="radio ${certMethod==='acme-http'?'selected':''}" id="dm-cert-acme-http" onclick="dmSelectCertMethod('acme-http')">
+            <input type="radio" name="dm-cert-method" value="acme-http" ${certMethod==='acme-http'?'checked':''}><div class="dot"></div>
             <div><div class="radio-label">${t('domains.cert_http')}</div><div class="radio-hint">${t('domains.cert_http_hint')}</div></div>
+          </label>
+          <label class="radio ${certMethod==='acme-tls-alpn'?'selected':''}" id="dm-cert-acme-tls-alpn" onclick="dmSelectCertMethod('acme-tls-alpn')">
+            <input type="radio" name="dm-cert-method" value="acme-tls-alpn" ${certMethod==='acme-tls-alpn'?'checked':''}><div class="dot"></div>
+            <div><div class="radio-label">${t('domains.cert_tls_alpn')}</div><div class="radio-hint">${t('domains.cert_tls_alpn_hint')}</div></div>
           </label>
           <label class="radio ${certMethod==='manual'?'selected':''}" id="dm-cert-manual" onclick="dmSelectCertMethod('manual')">
             <input type="radio" name="dm-cert-method" value="manual" ${certMethod==='manual'?'checked':''}><div class="dot"></div>
@@ -411,7 +416,7 @@ window.dmSelectProvider = function(id) {
 };
 
 window.dmSelectCertMethod = function(method) {
-  ['http','manual'].forEach(m => {
+  ['acme-http','acme-tls-alpn','manual'].forEach(m => {
     const el = document.getElementById('dm-cert-' + m);
     if (!el) return;
     el.classList.toggle('selected', m === method);
@@ -431,7 +436,7 @@ window.saveDomain = async function(id) {
   const edge_id     = document.getElementById('dm-edge')?.value;
   const dns_provider= document.getElementById('dm-provider')?.value || 'none';
   const cert_method = dns_provider !== 'none' ? 'dns'
-    : (document.querySelector('input[name="dm-cert-method"]:checked')?.value || 'http');
+    : (document.querySelector('input[name="dm-cert-method"]:checked')?.value || 'acme-http');
   const delegated   = document.getElementById('dm-delegate-check')?.checked;
 
   if (!domain) { toast(t('domains.err_domain_required'), 'error'); return; }

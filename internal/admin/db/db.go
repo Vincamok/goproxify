@@ -254,6 +254,16 @@ func migrate(db *sql.DB) error {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_proxy_history ON proxy_history (proxy_id, created_at DESC)`,
+		// Clés ECH (Encrypted Client Hello) : la clé retirée (retired=1) n'est plus publiée dans le DNS mais déchiffre encore
+		`CREATE TABLE IF NOT EXISTS ech_keys (
+			id              TEXT PRIMARY KEY,
+			config_id       INTEGER NOT NULL,
+			config_b64      TEXT NOT NULL,
+			private_key_b64 TEXT NOT NULL,
+			public_name     TEXT NOT NULL,
+			retired         INTEGER NOT NULL DEFAULT 0,
+			created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
 		// Paramètres généraux de l'administration (clé/valeur)
 		`CREATE TABLE IF NOT EXISTS settings (
 			key        TEXT PRIMARY KEY,

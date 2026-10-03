@@ -4,6 +4,7 @@
 package tls
 
 import (
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
@@ -27,12 +28,17 @@ type CertStore struct {
 	mu    sync.RWMutex
 	certs map[string]*tls.Certificate
 	pems  map[string]CachedCert // PEM originaux pour export dans le cache chiffré
+	// Challenges : réponses ACME http-01 / tls-alpn-01 en cours (transitoires, RAM seule).
+	Challenges *ChallengeStore
+	ocspKick   chan struct{}
 }
 
 func NewCertStore() *CertStore {
 	return &CertStore{
-		certs: make(map[string]*tls.Certificate),
-		pems:  make(map[string]CachedCert),
+		certs:      make(map[string]*tls.Certificate),
+		pems:       make(map[string]CachedCert),
+		Challenges: NewChallengeStore(),
+		ocspKick:   make(chan struct{}, 1),
 	}
 }
 
@@ -51,9 +57,13 @@ func (s *CertStore) StorePEM(name string, certPEM, keyPEM []byte) error {
 		return fmt.Errorf("parsing certificat %q : %w", name, err)
 	}
 	s.mu.Lock()
+	if old, ok := s.certs[name]; ok && len(old.Certificate) > 0 && len(cert.Certificate) > 0 && bytes.Equal(old.Certificate[0], cert.Certificate[0]) {
+		cert.OCSPStaple = old.OCSPStaple
+	}
 	s.certs[name] = &cert
 	s.pems[name] = CachedCert{Name: name, CertPEM: certPEM, KeyPEM: keyPEM}
 	s.mu.Unlock()
+	s.kickOCSP()
 	return nil
 }
 
@@ -98,6 +108,12 @@ func (s *CertStore) Len() int {
 // GetCertificate implémente tls.Config.GetCertificate.
 // Résolution par ServerName exact, puis par wildcard (*.example.fr).
 func (s *CertStore) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	if wantsACMEALPN(hello) {
+		if c, ok := s.Challenges.ALPNCert(hello.ServerName); ok {
+			return c, nil
+		}
+		return nil, fmt.Errorf("aucun challenge tls-alpn-01 pour %q", hello.ServerName)
+	}
 	name := hello.ServerName
 	s.mu.RLock()
 	defer s.mu.RUnlock()

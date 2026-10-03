@@ -62,51 +62,76 @@ func probeConfigFrom(cfg *router.HealthCheckConfig) probeConfig {
 	return p
 }
 
-// backendState suit l'état de santé d'un backend avec compteurs de seuil.
+// backendState suit l'état passif d'un backend par URL (quarantaine, slow-start).
 type backendState struct {
-	healthy    bool
-	downUntil  time.Time
-	streak     int  // succès consécutifs (>0) ou échecs consécutifs (<0)
-	upSince    time.Time // dernier passage en service (création, reprise après panne) : base du slow-start
-	cfg        probeConfig
+	healthy   bool
+	downUntil time.Time
+	upSince   time.Time // dernier passage en service (création, reprise après panne) : base du slow-start
 }
 
-// watcher est la sonde active d'un backend : sa config et le canal qui l'arrête.
-type watcher struct {
-	cfg  probeConfig
-	stop chan struct{}
+// probeKey identifie une sonde active : chaque route sonde ses backends avec sa propre config.
+type probeKey struct{ route, url string }
+
+// probeState est la sonde active d'une route sur un backend : config, état et canal d'arrêt.
+type probeState struct {
+	cfg     probeConfig
+	stop    chan struct{}
+	healthy bool
+	streak  int // succès consécutifs (>0) ou échecs consécutifs (<0)
 }
 
-// BackendHealth suit l'état de santé d'un backend par URL.
+// BackendHealth suit l'état de santé des backends : état passif par URL (quarantaine sur erreur
+// de proxy) et sondes actives par couple (route, URL).
 type BackendHealth struct {
-	mu      sync.RWMutex
-	states  map[string]*backendState
-	watched map[string]watcher // URLs avec une goroutine de check active
-	log     *slog.Logger
-	OnDown  func(url string) // appelé quand un backend passe healthy→unhealthy
+	mu     sync.RWMutex
+	states map[string]*backendState
+	probes map[probeKey]*probeState
+	log    *slog.Logger
+	OnDown func(url string) // appelé quand un backend passe healthy→unhealthy pour une route
 }
 
 func NewBackendHealth(log *slog.Logger) *BackendHealth {
 	return &BackendHealth{
-		states:  make(map[string]*backendState),
-		watched: make(map[string]watcher),
-		log:     log,
+		states: make(map[string]*backendState),
+		probes: make(map[probeKey]*probeState),
+		log:    log,
 	}
 }
 
-// IsHealthy retourne true si le backend est considéré en bonne santé.
-// Un backend inconnu est considéré sain par défaut.
+// IsHealthy retourne true si le backend est considéré en bonne santé, toutes routes confondues
+// (aucune sonde active ne le juge malsain). Un backend inconnu est considéré sain par défaut.
 func (h *BackendHealth) IsHealthy(u string) bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	st, ok := h.states[u]
-	if !ok {
-		return true
-	}
-	if time.Now().Before(st.downUntil) {
+	return h.passiveUpLocked(u) && !h.anyProbeDownLocked(u)
+}
+
+// IsHealthyFor est IsHealthy du point de vue d'une route : quarantaine passive de l'URL et
+// verdict de la sonde propre à cette route (ses seuils, son chemin).
+func (h *BackendHealth) IsHealthyFor(route, u string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if !h.passiveUpLocked(u) {
 		return false
 	}
-	return st.healthy
+	if p, ok := h.probes[probeKey{route, u}]; ok {
+		return p.healthy
+	}
+	return true
+}
+
+func (h *BackendHealth) passiveUpLocked(u string) bool {
+	st, ok := h.states[u]
+	return !ok || (st.healthy && !time.Now().Before(st.downUntil))
+}
+
+func (h *BackendHealth) anyProbeDownLocked(u string) bool {
+	for k, p := range h.probes {
+		if k.url == u && !p.healthy {
+			return true
+		}
+	}
+	return false
 }
 
 // MarkDown place le backend en quarantaine temporaire (failover immédiat).
@@ -177,20 +202,16 @@ func (h *BackendHealth) Status(u string) string {
 	}
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	st, ok := h.states[u]
-	if !ok {
+	if _, ok := h.states[u]; !ok {
 		return "unknown"
 	}
-	if time.Now().Before(st.downUntil) {
-		return "down"
-	}
-	if st.healthy {
+	if h.passiveUpLocked(u) && !h.anyProbeDownLocked(u) {
 		return "up"
 	}
 	return "down"
 }
 
-// Snapshot retourne le statut connu de chaque backend (url → up|down|unknown).
+// Snapshot retourne le statut connu de chaque backend (url → up|down).
 func (h *BackendHealth) Snapshot() map[string]string {
 	out := make(map[string]string)
 	if h == nil {
@@ -198,16 +219,15 @@ func (h *BackendHealth) Snapshot() map[string]string {
 	}
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	now := time.Now()
-	for u, st := range h.states {
-		if now.Before(st.downUntil) {
+	for u := range h.states {
+		out[u] = "up"
+		if !h.passiveUpLocked(u) {
 			out[u] = "down"
-			continue
 		}
-		if st.healthy {
-			out[u] = "up"
-		} else {
-			out[u] = "down"
+	}
+	for k, p := range h.probes {
+		if !p.healthy {
+			out[k.url] = "down"
 		}
 	}
 	return out
@@ -217,7 +237,7 @@ func (h *BackendHealth) getOrCreateLocked(u string) *backendState {
 	if st, ok := h.states[u]; ok {
 		return st
 	}
-	st := &backendState{healthy: true, cfg: defaultProbeConfig(), upSince: time.Now()}
+	st := &backendState{healthy: true, upSince: time.Now()}
 	h.states[u] = st
 	return st
 }
@@ -249,7 +269,7 @@ func quarantineDuration(err error) time.Duration {
 	return 15 * time.Second
 }
 
-// StartChecks lance les health checks actifs avec la config par défaut.
+// StartChecks lance les health checks actifs avec la config par défaut (sans route associée).
 // Idempotent : les URLs déjà surveillées ne lancent pas de nouvelle goroutine.
 func (h *BackendHealth) StartChecks(urls []string, interval time.Duration) {
 	cfg := defaultProbeConfig()
@@ -259,121 +279,118 @@ func (h *BackendHealth) StartChecks(urls []string, interval time.Duration) {
 	h.mu.Lock()
 	for _, u := range urls {
 		if u != "" {
-			h.startLocked(u, cfg)
+			h.startLocked(probeKey{url: u}, cfg)
 		}
 	}
 	h.mu.Unlock()
 }
 
-// moreSpecific indique si a doit remplacer b comme config de sonde d'un backend partagé :
-// une config explicite l'emporte sur le défaut, puis l'intervalle le plus court
-// (le plus réactif), puis l'ordre alphabétique du chemin pour rester déterministe.
-func moreSpecific(a, b probeConfig, aExplicit, bExplicit bool) bool {
-	if aExplicit != bExplicit {
-		return aExplicit
-	}
-	if a.interval != b.interval {
-		return a.interval < b.interval
-	}
-	return a.path < b.path
-}
-
-// Sync réconcilie les sondes avec l'ensemble de routes donné : démarre celles des nouveaux
-// backends, relance celles dont la config a changé, arrête celles des backends disparus.
-// Lorsque plusieurs routes partagent un backend, la config la plus spécifique est retenue.
-// Idempotent et peu coûteux : à appeler après toute modification de la table.
+// Sync réconcilie les sondes avec l'ensemble de routes donné : une sonde par (route, backend),
+// avec le health_check de la route. Démarre celles des nouvelles routes, relance celles dont la
+// config a changé, arrête celles des routes ou backends disparus. Idempotent et peu coûteux :
+// à appeler après toute modification de la table.
 func (h *BackendHealth) Sync(routes []*router.Route) {
 	if h == nil {
 		return
 	}
-	type want struct {
-		cfg      probeConfig
-		explicit bool
-	}
-	desired := make(map[string]want)
+	desired := make(map[probeKey]probeConfig)
 	for _, r := range routes {
 		if r == nil || r.Type == router.RouteUDP {
 			continue
 		}
 		pc := probeConfigFrom(r.HealthCheck)
-		explicit := r.HealthCheck != nil
 		for _, b := range r.Backends {
-			if b.URL == "" {
-				continue
-			}
-			if cur, ok := desired[b.URL]; !ok || moreSpecific(pc, cur.cfg, explicit, cur.explicit) {
-				desired[b.URL] = want{pc, explicit}
+			if b.URL != "" {
+				desired[probeKey{r.ID, b.URL}] = pc
 			}
 		}
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	for u, w := range desired {
-		h.startLocked(u, w.cfg)
+	for k, cfg := range desired {
+		h.startLocked(k, cfg)
 	}
-	for u, p := range h.watched {
-		if _, ok := desired[u]; !ok {
+	for k, p := range h.probes {
+		if _, ok := desired[k]; !ok {
 			close(p.stop)
-			delete(h.watched, u)
+			delete(h.probes, k)
+		}
+	}
+	for u := range h.states {
+		used := false
+		for k := range h.probes {
+			if k.url == u {
+				used = true
+				break
+			}
+		}
+		if !used {
 			delete(h.states, u)
 		}
 	}
 }
 
-// startLocked démarre (ou relance si la config diffère) la sonde de u. h.mu doit être tenu.
-func (h *BackendHealth) startLocked(u string, cfg probeConfig) {
-	if p, ok := h.watched[u]; ok {
+// startLocked démarre (ou relance si la config diffère) la sonde k. h.mu doit être tenu.
+// Une sonde relancée garde son verdict courant jusqu'à sa première mesure.
+func (h *BackendHealth) startLocked(k probeKey, cfg probeConfig) {
+	p, ok := h.probes[k]
+	if ok {
 		if p.cfg == cfg {
 			return
 		}
 		close(p.stop)
+	} else {
+		p = &probeState{healthy: true}
+		h.probes[k] = p
 	}
-	stop := make(chan struct{})
-	h.watched[u] = watcher{cfg: cfg, stop: stop}
-	h.getOrCreateLocked(u).cfg = cfg
-	go h.loop(u, cfg, stop)
+	p.cfg = cfg
+	p.stop = make(chan struct{})
+	h.getOrCreateLocked(k.url)
+	go h.loop(k, p, cfg, p.stop)
 }
 
-func (h *BackendHealth) loop(target string, cfg probeConfig, stop <-chan struct{}) {
+func (h *BackendHealth) loop(k probeKey, p *probeState, cfg probeConfig, stop <-chan struct{}) {
 	for {
-		ok := probeWithConfig(target, cfg)
+		ok := probeWithConfig(k.url, cfg)
 		select {
 		case <-stop:
 			return
 		default:
 		}
 		h.mu.Lock()
-		st := h.getOrCreateLocked(target)
-		prevHealthy := st.healthy
+		prevHealthy := p.healthy
 		if ok {
-			if st.streak < 0 {
-				st.streak = 0
+			if p.streak < 0 {
+				p.streak = 0
 			}
-			st.streak++
-			if st.streak >= cfg.healthyThreshold {
-				if !st.healthy || !st.downUntil.IsZero() {
-					st.upSince = time.Now()
+			p.streak++
+			if p.streak >= cfg.healthyThreshold {
+				p.healthy = true
+				if st := h.states[k.url]; st != nil {
+					if !prevHealthy || !st.healthy || !st.downUntil.IsZero() {
+						st.upSince = time.Now()
+					}
+					st.healthy = true
+					st.downUntil = time.Time{}
 				}
-				st.healthy = true
-				st.downUntil = time.Time{}
 			}
 		} else {
-			if st.streak > 0 {
-				st.streak = 0
+			if p.streak > 0 {
+				p.streak = 0
 			}
-			st.streak--
-			if -st.streak >= cfg.unhealthyThreshold {
-				st.healthy = false
+			p.streak--
+			if -p.streak >= cfg.unhealthyThreshold {
+				p.healthy = false
 			}
 		}
-		wentDown := prevHealthy && !st.healthy
-		changed := prevHealthy != st.healthy
+		wentDown := prevHealthy && !p.healthy
+		changed := prevHealthy != p.healthy
 		h.mu.Unlock()
 		if changed && h.log != nil {
-			h.log.Info("backend health change", "url", target, "healthy", ok)
+			h.log.Info("backend health change", "route", k.route, "url", k.url, "healthy", ok)
 		}
 		if wentDown && h.OnDown != nil {
-			h.OnDown(target)
+			h.OnDown(k.url)
 		}
 		select {
 		case <-stop:

@@ -21,6 +21,8 @@ import (
 // DomainCertObtainer déclenche l'obtention ACME avec un provider DNS dynamique.
 type DomainCertObtainer interface {
 	ObtainCertWithProvider(ctx context.Context, domain, dnsProviderType string, credentials map[string]any) error
+	// ObtainCertForMethod choisit DNS-01, HTTP-01 ou TLS-ALPN-01 selon domains.cert_method.
+	ObtainCertForMethod(ctx context.Context, domain, method, dnsProviderType string, credentials map[string]any) error
 }
 
 // DomainRoutePusher déclenche la synchronisation des délégations, routes et certificats
@@ -264,6 +266,10 @@ func (h *DomainsHandler) create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "domain requis", http.StatusBadRequest)
 		return
 	}
+	if msg := certMethodError(req.Domain, req.CertMethod); msg != "" {
+		http.Error(w, msg, http.StatusBadRequest)
+		return
+	}
 	credJSON := "{}"
 	if req.DNSCredentials != nil {
 		if b, err := json.Marshal(req.DNSCredentials); err == nil {
@@ -307,7 +313,7 @@ func (h *DomainsHandler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Déclencher ACME si un provider DNS est configuré
-	if h.Manager != nil && req.DNSProvider != "" && req.DNSProvider != "none" && req.CertMethod == "dns" {
+	if h.Manager != nil && (req.CertMethod == "acme-http" || req.CertMethod == "acme-tls-alpn" || (req.DNSProvider != "" && req.DNSProvider != "none" && req.CertMethod == "dns")) {
 		var creds map[string]any
 		if req.DNSCredentials != nil {
 			if b, err2 := json.Marshal(req.DNSCredentials); err2 == nil {
@@ -315,7 +321,7 @@ func (h *DomainsHandler) create(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		go func() {
-			if err := h.Manager.ObtainCertWithProvider(context.Background(), req.Domain, req.DNSProvider, creds); err != nil {
+			if err := h.Manager.ObtainCertForMethod(context.Background(), req.Domain, req.CertMethod, req.DNSProvider, creds); err != nil {
 				h.Log.Error("domains: obtention cert ACME", "domain", req.Domain, "err", err)
 			}
 		}()
@@ -337,6 +343,10 @@ func (h *DomainsHandler) update(w http.ResponseWriter, r *http.Request, id strin
 	var req domainRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, r, http.StatusBadRequest, "api.err.json")
+		return
+	}
+	if msg := certMethodError(req.Domain, req.CertMethod); msg != "" {
+		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}
 	credJSON := "{}"
@@ -404,10 +414,10 @@ func (h *DomainsHandler) delete(w http.ResponseWriter, r *http.Request, id strin
 }
 
 func (h *DomainsHandler) renew(w http.ResponseWriter, r *http.Request, id string) {
-	var domain, dnsProvider, credJSON string
+	var domain, dnsProvider, credJSON, certMethod string
 	err := h.DB.QueryRowContext(r.Context(),
-		`SELECT domain, dns_provider, dns_credentials FROM domains WHERE id=?`, id).
-		Scan(&domain, &dnsProvider, &credJSON)
+		`SELECT domain, dns_provider, dns_credentials, cert_method FROM domains WHERE id=?`, id).
+		Scan(&domain, &dnsProvider, &credJSON, &certMethod)
 	if err == sql.ErrNoRows {
 		writeErr(w, r, http.StatusNotFound, "api.err.domain_not_found")
 		return
@@ -427,11 +437,19 @@ func (h *DomainsHandler) renew(w http.ResponseWriter, r *http.Request, id string
 	_ = json.Unmarshal([]byte(credJSON), &creds)
 
 	go func() {
-		if err := h.Manager.ObtainCertWithProvider(context.Background(), domain, dnsProvider, creds); err != nil {
+		if err := h.Manager.ObtainCertForMethod(context.Background(), domain, certMethod, dnsProvider, creds); err != nil {
 			h.Log.Error("domains: renouvellement cert", "domain", domain, "err", err)
 		}
 	}()
 
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "pending", "domain": domain})
+}
+
+// certMethodError refuse un wildcard avec HTTP-01 / TLS-ALPN-01 (seul DNS-01 le valide).
+func certMethodError(domain, method string) string {
+	if (method == "acme-http" || method == "acme-tls-alpn") && strings.HasPrefix(strings.TrimSpace(domain), "*.") {
+		return "un domaine wildcard exige la méthode DNS-01"
+	}
+	return ""
 }

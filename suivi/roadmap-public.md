@@ -87,6 +87,9 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - [x] **Certificate Deploy Hub** : deploy targets (webhook HMAC signé, ssh_exec), pull tokens multi-format (PEM/DER/PKCS#12/JSON), déclenchement automatique à chaque renouvellement ACME, historique d'audit
 - [x] **Import de certificats externes** : upload PEM+clé via l'UI ou `POST /api/v1/certs/import` — domaine extrait automatiquement, push immédiat aux passerelles connectées
 - [x] **Monitoring ACME** : dashboard statut par cert (days_left, ok/warning/critical/expired), alertes automatiques `cert_expiring_soon` (≤30j warning, ≤7j critical) et `cert_deploy_failed` vers le moteur d'alertes existant
+- [x] **ACME HTTP-01 et TLS-ALPN-01** : méthodes de validation par domaine en plus de DNS-01 (`cert_method` `acme-http` / `acme-tls-alpn`), réponses posées par l'Admin sur les passerelles, renouvellement automatique inclus — livré
+- [x] **OCSP stapling** : agrafage côté passerelle, autonome (Edge `0.20.0`) — livré
+- [x] **ECH** (Encrypted Client Hello) : clés générées par l'Admin, poussées et conservées par les passerelles, rotation, page Admin, CLI, MCP (Admin `0.75.0`, Edge `0.21.0`) — livré
 - [x] **Conversion de formats** : package `certformat` — PEM, DER, PKCS#8, PKCS#12/PFX, fullchain, JSON
 - [x] **CA interne** : génération d'une autorité racine auto-signée et émission de certificats serveur/client internes (hors ACME) pour les services internes — API `/api/v1/internal-ca`, CLI `goproxify internal-ca`, outils MCP dédiés
 - [x] **Page « Domaines & certificats » en vue unique** : certificats publics et locaux dans une même liste (filtre, recherche, compteurs), actions en bout de ligne, assistant d'ajout Public / Local / Importer, réglages ACME, fournisseurs DNS et CA internes dans un tiroir (Admin `0.34.0`)

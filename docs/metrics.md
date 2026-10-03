@@ -37,6 +37,8 @@ Buckets : 100 B, 1 KB, 10 KB, 100 KB, 1 MB, 10 MB, 100 MB.
 | `gpx_tls_handshake_seconds` | Histogram | `host` | Durée du handshake TLS côté serveur |
 | `gpx_tls_active_connections` | Gauge | `host` | Connexions TLS actives (handshake en cours ou établies) |
 | `gpx_tls_cert_expiry_seconds` | Gauge | `domain` | Secondes avant expiration du certificat (0 = expiré) |
+| `gpx_tls_ocsp_staple_seconds` | Gauge | `domain` | Secondes avant NextUpdate de la réponse OCSP agrafée (0 = périmée) ; absent sans agrafe |
+| `gpx_tls_ocsp_revoked` | Gauge | `domain` | 1 si la réponse OCSP agrafée indique une révocation |
 
 Le label `host` correspond au SNI extrait du ClientHello.  
 Buckets handshake : 1 ms → 1 s.

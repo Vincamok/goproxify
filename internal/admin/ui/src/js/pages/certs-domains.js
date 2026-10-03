@@ -57,9 +57,10 @@ pages['acme-monitor'] = async function () {
         <div id="acme-config-section"></div>
         <div id="acme-providers-section"></div>
         <div id="acme-internal-ca-section"></div>
+        <div id="ech-section"></div>
       </div>
     </div>`;
-  await Promise.all([acmeConfigLoad(), acmeProvidersLoad(), acmeInternalCALoad(), acmeMonitorLoad()]);
+  await Promise.all([acmeConfigLoad(), acmeProvidersLoad(), acmeInternalCALoad(), echLoad(), acmeMonitorLoad()]);
   _dcTimer = setInterval(acmeMonitorLoad, 60_000);
   const obs = new MutationObserver(() => {
     if (!document.getElementById('dc-root')) {

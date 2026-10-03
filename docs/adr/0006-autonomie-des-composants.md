@@ -57,6 +57,8 @@ Chaque composant fonctionne seul avec ce qu'il a déjà reçu. Une coupure n'enl
 - **Groupe HA** : liste des pairs de synchronisation (`push_gateway_peers`) et topologie Raft poussée par l'Admin (en l'absence de `cluster.peers` local) en mémoire seulement → plus de synchronisation entre pairs après un redémarrage sans Admin.
 - **Agent** : un changement de conteneur survenu pendant une coupure de sa passerelle est perdu (envoi HTTP unique, pas de réannonce à la reconnexion) jusqu'au prochain rescan.
 - **Agent rattaché à un groupe HA** : ne connaît qu'une adresse de passerelle (`control_plane.edge_endpoint`) ; le rattachement au groupe n'existe que côté Admin. Pas de bascule vers un autre membre, sauf si l'adresse est une IP virtuelle.
+- **Challenges ACME HTTP-01 / TLS-ALPN-01** : posés par l'Admin en RAM sur la passerelle (15 min), jamais persistés ; l'émission et le renouvellement exigent l'Admin et une passerelle connectée, comme DNS-01. Un certificat déjà poussé reste servi sans l'Admin.
+- **Clés ECH** : poussées par l'Admin et conservées dans le cache chiffré de chaque passerelle (fonctionnent sans l'Admin, après redémarrage) ; en revanche pas de réplication entre membres d'un groupe HA sans l'Admin.
 - **Autres envois de l'Admin** (règles automatiques, tunnel L4, modèles du portail, configuration serveur) : persistance à vérifier un par un.
 
 ---

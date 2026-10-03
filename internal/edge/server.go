@@ -57,6 +57,7 @@ type Server struct {
 
 	table           *router.Table
 	certStore       *edgetls.CertStore
+	ech             *edgetls.ECHManager
 	snippetStore    *router.SnippetStore
 	providerStore   *router.AuthProviderStore
 	profileStore    *router.IPProfileStore
@@ -158,6 +159,7 @@ func New(cfg *config.EdgeConfig, cfgPath ...string) (*Server, error) {
 		accessLog:       accessLog,
 		table:           &router.Table{},
 		certStore:       edgetls.NewCertStore(),
+		ech:             edgetls.NewECHManager(),
 		snippetStore:    router.NewSnippetStore(),
 		providerStore:   router.NewAuthProviderStore(),
 		profileStore:    router.NewIPProfileStore(),
@@ -435,6 +437,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Mise à jour périodique du cache
 	go s.autosaveLoop(ctx)
+	go s.ocspLoop(ctx)
 
 	// Sondes de santé : suivent la table (proxies fichiers, révisions, agents) sans l'Admin.
 	go s.healthSyncLoop(ctx)
@@ -654,6 +657,11 @@ func (s *Server) applySnapshot(snap *edgecache.Snapshot) {
 	if snap.AuthProviders != nil {
 		s.providerStore.Replace(snap.AuthProviders)
 	}
+	if len(snap.ECHKeys) > 0 {
+		if err := s.ech.Set(snap.ECHKeys); err != nil {
+			s.log.Warn("edge: clés ECH du cache invalides", "err", err)
+		}
+	}
 }
 
 // --- Serveurs HTTP -------------------------------------------------------
@@ -705,7 +713,7 @@ func (s *Server) startHTTPS() error {
 	addr := fmt.Sprintf("%s:%d", s.cfg.Network.BindAddress, s.cfg.Network.HTTPSPort)
 	tlsCfg := &tls.Config{
 		GetCertificate: s.certStore.GetCertificate,
-		NextProtos:     []string{"h2", "http/1.1"},
+		NextProtos:     []string{"h2", "http/1.1", edgetls.ACMETLSALPNProto},
 		MinVersion:     tls.VersionTLS12,
 	}
 	// Raw TCP listener : le peek SNI doit voir le ClientHello brut AVANT que Go TLS
@@ -715,7 +723,8 @@ func (s *Server) startHTTPS() error {
 		return fmt.Errorf("écoute TCP %s : %w", addr, err)
 	}
 
-	sniLn := &sniListener{inner: ln, table: s.table, log: s.log.Logger(), tlsCfg: tlsCfg}
+	s.ech.Bind(tlsCfg)
+	sniLn := &sniListener{inner: ln, table: s.table, log: s.log.Logger(), tlsCfg: tlsCfg, ech: s.ech}
 
 	rh, r, w, idle := s.serverTimeouts()
 	s.httpsSrv = &http.Server{
@@ -750,6 +759,7 @@ type sniListener struct {
 	table  *router.Table
 	log    *slog.Logger
 	tlsCfg *tls.Config
+	ech    *edgetls.ECHManager // clés ECH courantes ; la config TLS est choisie par connexion
 }
 
 func (l *sniListener) Accept() (net.Conn, error) {
@@ -777,7 +787,11 @@ func (l *sniListener) Accept() (net.Conn, error) {
 		// *tls.Conn pour router les connexions h2 via TLSNextProto. Un wrapper custom
 		// ferait échouer cette assertion et forcerait toutes les connexions en HTTP/1.1,
 		// provoquant ERR_HTTP2_PROTOCOL_ERROR quand le client a négocié h2 via ALPN.
-		tlsConn := tls.Server(peeked, l.tlsCfg)
+		cfg := l.tlsCfg
+		if c := l.ech.Config(); c != nil {
+			cfg = c
+		}
+		tlsConn := tls.Server(peeked, cfg)
 		go l.measureHandshake(tlsConn, sni)
 		return tlsConn, nil
 	}

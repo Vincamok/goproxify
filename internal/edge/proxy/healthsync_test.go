@@ -68,7 +68,7 @@ func TestSyncStopsRemovedBackend(t *testing.T) {
 	if hits.Load() != n {
 		t.Fatal("la sonde doit s'arrêter quand la route disparaît")
 	}
-	if len(h.watched) != 0 || h.Status(srv.URL) != "unknown" {
+	if len(h.probes) != 0 || h.Status(srv.URL) != "unknown" {
 		t.Fatal("l'état d'un backend retiré doit être purgé")
 	}
 }
@@ -86,20 +86,46 @@ func TestSyncAppliesConfigChange(t *testing.T) {
 	eventually(t, "sonde /b après modification", func() bool { return paths.Load() == "/b" })
 }
 
-func TestSyncSharedBackendPicksMostSpecific(t *testing.T) {
-	var paths atomic.Value
-	paths.Store("")
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { paths.Store(r.URL.Path) }))
+// Deux routes sur le même backend, health_check différents : chacune sonde avec sa config
+// et a son propre verdict.
+func TestSyncPerRouteProbeOnSharedBackend(t *testing.T) {
+	var strictHits, laxHits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/strict":
+			strictHits.Add(1)
+			w.WriteHeader(http.StatusServiceUnavailable)
+		case "/lax":
+			laxHits.Add(1)
+		}
+	}))
 	defer srv.Close()
 
-	implicit := &router.Route{ID: "a", Backends: []router.Backend{{URL: srv.URL}}}
-	slow := hcRoute("b", srv.URL, "/slow", time.Hour)
-	fast := hcRoute("c", srv.URL, "/fast", 10*time.Millisecond)
-
 	h := NewBackendHealth(nil)
-	h.Sync([]*router.Route{implicit, slow, fast})
-	eventually(t, "config la plus réactive retenue", func() bool { return paths.Load() == "/fast" })
-	if got := h.watched[srv.URL].cfg.path; got != "/fast" {
-		t.Fatalf("path=%s", got)
+	h.Sync([]*router.Route{
+		hcRoute("strict", srv.URL, "/strict", 10*time.Millisecond),
+		hcRoute("lax", srv.URL, "/lax", 10*time.Millisecond),
+	})
+	eventually(t, "les deux sondes tournent", func() bool { return strictHits.Load() >= 2 && laxHits.Load() >= 2 })
+	eventually(t, "verdict strict", func() bool { return !h.IsHealthyFor("strict", srv.URL) })
+	if !h.IsHealthyFor("lax", srv.URL) {
+		t.Fatal("la route lax ne doit pas être pénalisée par la sonde de l'autre route")
 	}
+	if h.Status(srv.URL) != "down" {
+		t.Fatal("le statut agrégé de l'URL doit refléter la sonde malsaine")
+	}
+
+	// Suppression de la route stricte : sa sonde s'arrête, l'autre continue.
+	h.Sync([]*router.Route{hcRoute("lax", srv.URL, "/lax", 10*time.Millisecond)})
+	time.Sleep(50 * time.Millisecond)
+	n := strictHits.Load()
+	l := laxHits.Load()
+	time.Sleep(100 * time.Millisecond)
+	if strictHits.Load() != n {
+		t.Fatal("la sonde de la route supprimée doit s'arrêter")
+	}
+	if laxHits.Load() == l {
+		t.Fatal("la sonde de la route restante doit continuer")
+	}
+	eventually(t, "statut agrégé rétabli", func() bool { return h.Status(srv.URL) == "up" })
 }

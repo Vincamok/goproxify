@@ -329,7 +329,7 @@ t_headers() { section headers "Host conservé / X-Request-ID / X-Forwarded-*" ||
   check "preserve_host:false : le backend voit son propre Host" "$(echo "$b" | jq -r .host)" lab-sim:9001
   grep -qi '^x-request-id' "$hdr" && ko "request_id:false : X-Request-ID présent" || ok "request_id:false : pas de X-Request-ID"
   [ "$(echo "$b" | jq -r '[.headers["X-Forwarded-Host"], .headers["X-Forwarded-Proto"], .headers["X-Real-Ip"]] | map(select(. != null)) | length')" = 0 ] && ok "forwarded_headers vide : ni X-Forwarded-Host, -Proto ni X-Real-IP" || ko "forwarded_headers vide mais des en-têtes X-Forwarded-* / X-Real-IP sont transmis"
-  info "X-Forwarded-For avec forwarded_headers vide : $(echo "$b" | jq -r '.headers["X-Forwarded-For"][0] // "<absent>"') (ajouté par le reverse proxy Go lui-même)"
+  [ "$(echo "$b" | jq -r '.headers["X-Forwarded-For"] // empty')" = "" ] && ok "forwarded_headers vide : pas de X-Forwarded-For (même pas celui du reverse proxy Go)" || ko "forwarded_headers vide mais X-Forwarded-For transmis : $(echo "$b" | jq -c '.headers["X-Forwarded-For"]')"
   rm -f "$hdr"
 }
 

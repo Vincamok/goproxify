@@ -22,6 +22,8 @@ const (
 	TypePushRoutes          = "push_routes"
 	TypeDeleteRoute         = "delete_route"
 	TypePushCert            = "push_cert"
+	TypeACMEChallenge       = "acme_challenge" // pose/retire une réponse http-01 / tls-alpn-01
+	TypePushECHKeys         = "push_ech_keys" // clés ECH (Encrypted Client Hello) à accepter ; liste vide = ECH désactivé
 	TypePushSnippets        = "push_snippets"
 	TypePushAuthProviders   = "push_auth_providers"
 	TypePushIPProfiles      = "push_ip_profiles"

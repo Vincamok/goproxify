@@ -24,6 +24,7 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/delegation"
 	"github.com/vincamok/goproxify/internal/admin/edgeproxy"
 	"github.com/vincamok/goproxify/internal/admin/mailer"
+	"github.com/vincamok/goproxify/internal/admin/ech"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
 	"github.com/vincamok/goproxify/internal/edge/errorpages"
 	"github.com/vincamok/goproxify/internal/edge/portal"
@@ -1436,6 +1437,7 @@ func (m *Manager) pushAllToEntry(ctx context.Context, e *edgeEntry, s Settings) 
 
 	// Certs en parallèle (binaires, séparés du full_sync JSON)
 	go m.PushCerts(ctx)
+	go m.PushECHKeys(ctx)
 
 	// Settings runtime
 	if s != (Settings{}) {
@@ -2116,5 +2118,42 @@ func (m *Manager) notifyAccessRequest(edge, username, targetID, reason string, d
 			}
 			return
 		}
+	}
+}
+
+// PushACMEChallenge pose ou retire une réponse de challenge ACME (http-01 / tls-alpn-01) sur
+// les passerelles dont le périmètre couvre le domaine. Retourne le nombre de passerelles
+// atteintes (un envoi réussi sur la WS, sans accusé de réception).
+func (m *Manager) PushACMEChallenge(ctx context.Context, ch edgetls.ACMEChallenge) int {
+	reached := 0
+	for _, e := range m.allEntries() {
+		acc := rbac.LoadEdgeAccess(ctx, m.db, e.id, e.nodeName)
+		if !rbac.ShouldReceiveCert(acc.Role, acc.Scopes, ch.Domain) {
+			continue
+		}
+		if err := e.client.PushJSON(edgeWS.TypeACMEChallenge, ch); err != nil {
+			m.log.Warn("edgews/manager: push challenge ACME", "edge", e.nodeName, "domain", ch.Domain, "err", err)
+			continue
+		}
+		reached++
+	}
+	return reached
+}
+
+// PushECHKeys envoie à toutes les passerelles le jeu de clés ECH courant (vide si ECH est
+// désactivé). La passerelle le garde dans son cache chiffré : ECH survit à une coupure de l'Admin.
+func (m *Manager) PushECHKeys(ctx context.Context) {
+	set, err := ech.NewStore(m.db).PushSet()
+	if err != nil {
+		m.log.Error("edgews/manager: lecture clés ECH", "err", err)
+		return
+	}
+	for _, e := range m.allEntries() {
+		e := e
+		go func() {
+			if err := e.client.PushJSON(edgeWS.TypePushECHKeys, set); err != nil {
+				m.log.Warn("edgews/manager: push clés ECH", "edge", e.nodeName, "err", err)
+			}
+		}()
 	}
 }

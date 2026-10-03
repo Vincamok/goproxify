@@ -73,7 +73,7 @@ Une requête authentifiée par PAT doit porter le scope de la route (`403 scope 
 | `/api/v1/nodes`, `/declared-nodes`, `/bootstrap-tickets`, `/node-events`, `/discovered-containers`, `/backends/health`, `/agents` | `nodes:read` | `nodes:write` |
 | `/api/v1/alert-channels`, `/alert-rules`, `/alert-events` | `alerts:read` | `alerts:write` |
 | `/api/v1/domains` | `domains:read` | `domains:write` |
-| `/api/v1/certs` (dont `deploy-targets`, `pull-tokens`), `/api/v1/internal-ca` | `certs:read` | `certs:write` |
+| `/api/v1/certs` (dont `deploy-targets`, `pull-tokens`), `/api/v1/internal-ca`, `/api/v1/ech` | `certs:read` | `certs:write` |
 | `/api/v1/snippets` | `snippets:read` | `snippets:write` |
 | `/api/v1/security`, `/ip-profiles`, `/auth-providers`, `/rules-engine`, `/scheduled-tasks`, `/playbooks` | `audit:read` | `security:write` |
 | `/api/v1/import` | `audit:read` | `import:write` |
@@ -477,7 +477,7 @@ Supprime un fournisseur DNS nommé.
 
 ### `POST /api/v1/certs/request`
 
-Demande un certificat ACME DNS-01.
+Demande un certificat ACME. La méthode suit `domains.cert_method` du domaine : DNS-01 (`dns` + `dns_provider`), HTTP-01 (`acme-http`) ou TLS-ALPN-01 (`acme-tls-alpn`). Avec HTTP-01 / TLS-ALPN-01, l'Admin pose la réponse du challenge sur les passerelles connectées (port 80 / 443 publics du domaine) ; un wildcard est refusé (`400` sur `POST`/`PUT /api/v1/domains`, `cert_method` `acme-http` ou `acme-tls-alpn`).
 
 **Corps :**
 ```json
@@ -549,6 +549,41 @@ Liste les certificats émis par la CA `{id}`.
 ### `DELETE /api/v1/internal-ca/{id}/certs/{certID}`
 
 Révoque un certificat émis (marqué `revoked`, ne supprime pas la ligne).
+
+---
+
+## Encrypted Client Hello — `/api/v1/ech`
+
+ECH chiffre le nom du site (SNI) dans le handshake TLS : un observateur réseau ne voit que le **nom public** configuré. Les clés sont générées par l'Admin, poussées aux passerelles (message WS `push_ech_keys`) qui les gardent dans leur cache chiffré. Les clés privées ne sont jamais renvoyées. Admin uniquement.
+
+### `GET /api/v1/ech`
+
+```json
+{
+  "enabled": true, "public_name": "ech.example.fr",
+  "active_config_id": 142,
+  "config_list_b64": "AEn+DQBF…",
+  "https_record": "ech=\"AEn+DQBF…\"",
+  "keys": [{ "id": "…", "config_id": 142, "public_name": "ech.example.fr", "created_at": "…", "retired": false }],
+  "warnings": []
+}
+```
+
+`https_record` est le paramètre à ajouter à l'enregistrement DNS HTTPS (type 65) de chaque domaine protégé (ex. `1 . alpn=h2 ech="…"`). `warnings` contient `no_certificate_for_public_name` quand aucun certificat stocké ne couvre le nom public (une passerelle ne pourrait pas présenter de certificat valide à un client qui rafraîchit sa config).
+
+### `PUT /api/v1/ech`
+
+Corps : `{ "enabled": true, "public_name": "ech.example.fr" }`. Activer sans clé active, ou changer le nom public (gravé dans la config publiée), génère une nouvelle clé et retire l'ancienne. `400` si le nom public est invalide (wildcard, IP, un seul label). Désactiver pousse un jeu vide : les passerelles n'acceptent plus ECH. Répond comme `GET`.
+
+### `POST /api/v1/ech/rotate`
+
+Nouvelle clé active ; l'ancienne devient **retirée** : plus publiée, mais toujours acceptée par les passerelles le temps que les caches DNS expirent. `409` si ECH n'est pas activé. Répond comme `GET`.
+
+### `DELETE /api/v1/ech/keys/{id}`
+
+Supprime une clé **retirée** (`204`) ; `404` pour une clé inconnue ou active.
+
+Limites : ECH n'est servi qu'en TCP (HTTP/1.1, h2), pas en QUIC/HTTP3 ; il est incompatible avec les hôtes en SNI passthrough (le nom interne chiffré n'est pas lisible pour choisir la route).
 
 ---
 

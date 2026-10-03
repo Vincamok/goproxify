@@ -15,6 +15,7 @@ import (
 	"github.com/vincamok/goproxify/internal/edge/cluster"
 	"github.com/vincamok/goproxify/internal/edge/ipprofiles"
 	"github.com/vincamok/goproxify/internal/edge/metrics"
+	edgetls "github.com/vincamok/goproxify/internal/edge/tls"
 	"github.com/vincamok/goproxify/internal/edge/raft"
 	"github.com/vincamok/goproxify/internal/edge/router"
 	"github.com/vincamok/goproxify/internal/edge/threat"
@@ -178,6 +179,7 @@ func (s *Server) saveCacheNow() {
 		Certs:         s.certStore.AllPEMs(),
 		Snippets:      s.snippetStore.All(),
 		AuthProviders: s.providerStore.All(),
+		ECHKeys:       s.ech.Keys(),
 	}
 	if err := s.cache.Save(snap); err != nil {
 		s.log.Warn("edge: sauvegarde cache échouée", "err", err)
@@ -335,4 +337,24 @@ func (s *Server) portalLiveLoop(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// ocspLoop agrafe aux certificats une réponse OCSP obtenue auprès de l'AC (sans l'Admin).
+func (s *Server) ocspLoop(ctx context.Context) {
+	st := edgetls.NewOCSPStapler(s.certStore, s.log.Logger())
+	st.OnUpdate = func(status map[string]edgetls.OCSPStatus) {
+		for name, ss := range status {
+			secs := time.Until(ss.NextUpdate).Seconds()
+			if secs < 0 {
+				secs = 0
+			}
+			metrics.OCSPStapleSeconds.WithLabelValues(name).Set(secs)
+			revoked := 0.0
+			if ss.Revoked {
+				revoked = 1
+			}
+			metrics.OCSPRevoked.WithLabelValues(name).Set(revoked)
+		}
+	}
+	st.Run(ctx)
 }

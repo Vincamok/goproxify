@@ -374,3 +374,20 @@ var Backend = struct {
 		Help:      "Requêtes détournées d'un backend en montée en charge (slow-start) vers un backend plus avancé.",
 	}, []string{"host", "backend"}),
 }
+
+// OCSPStapleSeconds expose la durée avant le prochain rafraîchissement requis de l'agrafe OCSP
+// (NextUpdate de la réponse) ; absent si le certificat n'a pas d'agrafe.
+var OCSPStapleSeconds = promauto.NewGaugeVec(prometheus.GaugeOpts{
+	Namespace: "gpx",
+	Subsystem: "tls",
+	Name:      "ocsp_staple_seconds",
+	Help:      "Secondes avant NextUpdate de la réponse OCSP agrafée (0 = périmée).",
+}, []string{"domain"})
+
+// OCSPRevoked vaut 1 quand la réponse OCSP agrafée déclare le certificat révoqué.
+var OCSPRevoked = promauto.NewGaugeVec(prometheus.GaugeOpts{
+	Namespace: "gpx",
+	Subsystem: "tls",
+	Name:      "ocsp_revoked",
+	Help:      "1 si la réponse OCSP agrafée indique que le certificat est révoqué.",
+}, []string{"domain"})

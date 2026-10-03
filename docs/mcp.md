@@ -34,7 +34,7 @@ Chaque outil exige un scope, le même que sa route REST équivalente. Les outils
 | `snippets:write` | `create_snippet`, `delete_snippet` |
 | `domains:read` | `list_domains` |
 | `domains:write` | `create_domain`, `renew_domain`, `rotate_cert` |
-| `certs:read` | `list_certs`, `get_cert_status`, `list_cert_deploy_targets`, `list_internal_cas` †, `list_internal_certs` † |
+| `certs:read` | `list_certs`, `get_cert_status`, `list_cert_deploy_targets`, `list_internal_cas` †, `list_internal_certs` †, `get_ech_status` † |
 | `certs:write` | `obtain_cert`, `import_cert`, `trigger_cert_deploy`, `create_internal_ca` †, `issue_internal_cert` †, `revoke_internal_cert` † |
 | `logs:read` | `list_logs`, `get_prism_anomalies`, `get_prism_geo`, `get_prism_slo`, `simulate_sentinel_config` † |
 | `audit:read` | `get_audit_log`, `list_ip_profiles`, `get_security_overview` †, `list_security_bans` †, `list_security_threats` †, `list_security_cves` †, `list_auth_providers` †, `list_rules` †, `list_rule_history` †, `list_rule_versions` †, `list_pending_actions` †, `list_silences` †, `export_automation` †, `list_scheduled_tasks` †, `list_scheduled_task_runs` †, `list_playbooks` †, `list_playbook_runs` †, `get_playbook_run` † |
@@ -1011,6 +1011,16 @@ Tous les outils de CA interne sont réservés au rôle admin, comme `/api/v1/int
 ### `list_internal_cas`
 
 Liste les autorités de certification internes.
+
+_Aucun paramètre._
+
+**Scope :** `certs:read` + rôle admin
+
+---
+
+### `get_ech_status`
+
+État d'Encrypted Client Hello : activation, nom public, clés (jamais les clés privées) et valeur `ech=` à publier dans l'enregistrement DNS HTTPS.
 
 _Aucun paramètre._
 

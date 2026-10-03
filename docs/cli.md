@@ -188,6 +188,7 @@ goproxify proxy disable <id> [-admin-url …] [-token …]
 goproxify proxy metrics [-admin-url …] [-token …]
 goproxify proxy delete  <id> [-y] [-admin-url …] [-token …]
   -y  Confirmation automatique
+  -method  Validation ACME par la passerelle (sans fournisseur DNS) : `http-01` (port 80) ou `tls-alpn-01` (port 443), sans wildcard ; `renew` réutilise la méthode du domaine
 ```
 
 Exemples :
@@ -463,6 +464,22 @@ goproxify snippet delete <id>
 
 ---
 
+### `goproxify ech`
+
+Encrypted Client Hello : chiffre le nom du site (SNI) dans le handshake TLS. Admin uniquement (`certs:write` pour un PAT).
+
+```
+goproxify ech status      [-admin-url …] [-token …]
+goproxify ech enable      <nom-public> [-admin-url …] [-token …]
+goproxify ech disable     [-admin-url …] [-token …]
+goproxify ech rotate      [-admin-url …] [-token …]
+goproxify ech delete-key  <id> [-admin-url …] [-token …]
+```
+
+`status` affiche la valeur `ech="…"` à publier dans l'enregistrement HTTPS de chaque domaine, et les clés (active / retirée). `enable` exige un nom public couvert par un certificat (ni wildcard, ni IP) ; changer de nom public génère une nouvelle clé. `rotate` retire l'ancienne clé de la publication DNS mais les passerelles l'acceptent encore ; `delete-key` ne supprime qu'une clé retirée.
+
+---
+
 ### `goproxify domain`
 
 Domaines gérés par ACME (certificats Let's Encrypt dédiés).
@@ -470,10 +487,11 @@ Domaines gérés par ACME (certificats Let's Encrypt dédiés).
 ```
 goproxify domain list   [-admin-url …] [-token …]
 goproxify domain get    <id> [-admin-url …] [-token …]
-goproxify domain create <domaine> [-edge <edge-id>] [-admin-url …] [-token …]
+goproxify domain create <domaine> [-edge <edge-id>] [-method http-01|tls-alpn-01] [-admin-url …] [-token …]
 goproxify domain renew  <id> [-admin-url …] [-token …]
 goproxify domain delete <id> [-y] [-admin-url …] [-token …]
   -y  Confirmation automatique
+  -method  Validation ACME par la passerelle (sans fournisseur DNS) : `http-01` (port 80) ou `tls-alpn-01` (port 443), sans wildcard ; `renew` réutilise la méthode du domaine
 ```
 
 `list` affiche l'expiration en jours (⚠ si < 14 j) et la passerelle associé.

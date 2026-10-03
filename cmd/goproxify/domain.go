@@ -81,12 +81,22 @@ func runDomain() {
 			domain = flagValue(args, "-domain", "")
 		}
 		if domain == "" {
-			fmt.Fprintln(os.Stderr, "usage: goproxify domain create <domaine> [-edge <edge-id>]")
+			fmt.Fprintln(os.Stderr, "usage: goproxify domain create <domaine> [-edge <edge-id>] [-method http-01|tls-alpn-01]")
 			os.Exit(1)
 		}
 		payload := map[string]any{"domain": domain}
 		if edge := flagValue(args, "-edge", ""); edge != "" {
 			payload["edge_id"] = edge
+		}
+		switch m := flagValue(args, "-method", ""); m {
+		case "":
+		case "http-01":
+			payload["cert_method"] = "acme-http"
+		case "tls-alpn-01":
+			payload["cert_method"] = "acme-tls-alpn"
+		default:
+			fmt.Fprintf(os.Stderr, "domain create : méthode %q inconnue (http-01 ou tls-alpn-01)\n", m)
+			os.Exit(1)
 		}
 		client, err := newAdminClient(args)
 		if err != nil {
@@ -161,7 +171,7 @@ Sous-commandes :
 
 goproxify domain list   [-admin-url …] [-token …]
 goproxify domain get    <id> [-admin-url …] [-token …]
-goproxify domain create <domaine> [-edge <edge-id>] [-admin-url …] [-token …]
+goproxify domain create <domaine> [-edge <edge-id>] [-method http-01|tls-alpn-01] [-admin-url …] [-token …]
 goproxify domain renew  <id> [-admin-url …] [-token …]
 goproxify domain delete <id> [-y] [-admin-url …] [-token …]
 `)

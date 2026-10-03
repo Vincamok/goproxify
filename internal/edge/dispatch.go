@@ -22,6 +22,7 @@ import (
 	"github.com/vincamok/goproxify/internal/edge/middleware"
 	"github.com/vincamok/goproxify/internal/edge/proxy"
 	"github.com/vincamok/goproxify/internal/edge/router"
+	edgetls "github.com/vincamok/goproxify/internal/edge/tls"
 	"github.com/vincamok/goproxify/internal/edge/threat"
 	"github.com/vincamok/goproxify/internal/edge/tracing"
 	"go.opentelemetry.io/otel/attribute"
@@ -403,4 +404,19 @@ func banSource(reason string) string {
 		}
 	}
 	return "other"
+}
+
+// serveACMEChallenge répond au challenge http-01 posé par l'Admin. Un token inconnu est
+// laissé au backend (qui peut gérer ses propres challenges).
+func (s *Server) serveACMEChallenge(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, edgetls.ACMEHTTPPathPrefix) {
+		return false
+	}
+	resp, ok := s.certStore.Challenges.HTTPResponse(strings.TrimPrefix(r.URL.Path, edgetls.ACMEHTTPPathPrefix))
+	if !ok {
+		return false
+	}
+	w.Header().Set("Content-Type", "text/plain")
+	w.Write([]byte(resp)) //nolint:errcheck
+	return true
 }

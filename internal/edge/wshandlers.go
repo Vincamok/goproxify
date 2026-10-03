@@ -20,6 +20,7 @@ import (
 	"github.com/vincamok/goproxify/internal/edge/threat"
 	edgetokens "github.com/vincamok/goproxify/internal/edge/tokens"
 	"github.com/vincamok/goproxify/internal/edge/tunnel"
+	edgetls "github.com/vincamok/goproxify/internal/edge/tls"
 	edgews "github.com/vincamok/goproxify/internal/edge/ws"
 )
 
@@ -83,6 +84,27 @@ func (s *Server) handleWSAdminMessage(connID string, msg edgews.Message) error {
 		metrics.Config.ReloadDuration.Observe(time.Since(reloadCertStart).Seconds())
 		s.saveCache()
 		s.log.Info("ws/admin: certificat poussé", "name", cert.Name)
+
+	case edgews.TypeACMEChallenge:
+		var ch edgetls.ACMEChallenge
+		if err := json.Unmarshal(msg.Payload, &ch); err != nil {
+			return err
+		}
+		if err := s.certStore.Challenges.Apply(ch); err != nil {
+			return err
+		}
+		s.log.Info("ws/admin: challenge ACME", "type", ch.Type, "domain", ch.Domain, "clear", ch.Clear)
+
+	case edgews.TypePushECHKeys:
+		var set edgetls.ECHKeySet
+		if err := json.Unmarshal(msg.Payload, &set); err != nil {
+			return err
+		}
+		if err := s.ech.Set(set.Keys); err != nil {
+			return err
+		}
+		s.saveCache()
+		s.log.Info("ws/admin: clés ECH mises à jour", "count", len(set.Keys))
 
 	case edgews.TypePushDelegations:
 		var routes []*router.Route

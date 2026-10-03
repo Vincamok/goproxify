@@ -808,6 +808,9 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/api/v1/settings/smtp", adminOnly(&api.SMTPSettingsHandler{DB: s.db, Log: s.log}))
 	mux.Handle("/api/v1/settings/smtp/", adminOnly(&api.SMTPSettingsHandler{DB: s.db, Log: s.log}))
 	mux.Handle("/api/v1/settings/acme", adminOnly(acmeSettingsH))
+	echH := &api.ECHHandler{DB: s.db, Log: s.log, Pusher: manager}
+	mux.Handle("/api/v1/ech", adminOnly(echH))
+	mux.Handle("/api/v1/ech/", adminOnly(echH))
 	acmeProvidersPath := filepath.Join(s.cfg.Storage.BasePath, "acme-providers.yaml")
 	acmeProvidersH := &api.ACMEProvidersHandler{Store: acme.NewProviderStore(acmeProvidersPath), Log: s.log}
 	mux.Handle("/api/v1/acme/providers", adminOnly(acmeProvidersH))

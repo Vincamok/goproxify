@@ -111,7 +111,7 @@ Edge A (client)          Edge B (server)
 ### Resilience
 
 - **Load balancing**: Round Robin, Weighted, **Adaptive** (CPU×0.5 + mem×0.3 + disk IO×0.2 via Agent WS metrics)
-- **Configurable active health checks**: `HealthCheckConfig` per route — `path`, `interval`, `timeout`, `healthy_threshold`, `unhealthy_threshold`; probes follow the live route table (manual proxies, revisions, agent routes) and are restarted or stopped on change, including after a gateway restart without the Admin. A backend shared by several routes uses the most specific config: an explicit `health_check` beats the default, then the shortest `interval`
+- **Configurable active health checks**: `HealthCheckConfig` per route — `path`, `interval`, `timeout`, `healthy_threshold`, `unhealthy_threshold`; probes follow the live route table (manual proxies, revisions, agent routes) and are restarted or stopped on change, including after a gateway restart without the Admin. Probes are **per route**: each route probes its backends with its own `health_check` and has its own verdict, even when a backend is shared with another route; a config edit applies live and the probes stop when the route is removed or disabled. Passive quarantine after a proxy error stays shared per backend URL
 - **Failover**: short quarantine + try next backend on dial/proxy failure
 - **Circuit Breaker**: per backend (a failing backend does not open the circuit of the others); counts transport failures (not 5xx responses). Open circuit = the backend is skipped (failover to the others); if every backend is open, immediate `503` with `Retry-After`. After `timeout`: half-open with a single probe request, success closes the circuit, failure reopens it
 - **Retry policy** with configurable exponential backoff
@@ -263,12 +263,15 @@ Admin maintains a **persistent WS connection** to each registered Edge (Admin→
 
 Agents connecting for the first time via `JOIN_TOKEN` appear in `pending` status. The operator approves via UI or API (`POST /api/v1/agents/:id/approve`). The Edge immediately sends the first `agent_hmac` via WS.
 
-### TLS / ACME DNS-01 management
+### TLS / ACME management (DNS-01, HTTP-01, TLS-ALPN-01)
 
 - **Wildcard Let's Encrypt certificates** via DNS-01 challenge
+- **Validation per domain** (`cert_method`): **DNS-01** (wildcard, needs a DNS provider), **HTTP-01** (`acme-http`, port 80) or **TLS-ALPN-01** (`acme-tls-alpn`, port 443) — no DNS provider required, no wildcard. The Admin opens the ACME order and pushes the challenge answer to the Edges covering the domain (`acme_challenge` WS message); the Edge serves `/.well-known/acme-challenge/<token>` or presents the challenge certificate on ALPN `acme-tls/1` (RAM only, 15 min max, removed after validation). Used by automatic renewal too. Issuance still goes through the Admin and needs at least one connected Edge
 - Supported DNS providers: **OVH, Cloudflare, Gandi, Route53, Hetzner**
 - Automatic renewal 30 days before expiry
 - Push decoded certificates to Edge in RAM only (never on disk on Edge side)
+- **OCSP stapling** (Edge `0.20.0`): the Edge fetches the CA's OCSP response itself (certificate AIA URL) and staples it in the TLS handshake — refreshed hourly and at half the response validity, never stale, works without the Admin. Skipped for certificates without an OCSP URL (Let's Encrypt, internal CA). Metrics `gpx_tls_ocsp_staple_seconds`, `gpx_tls_ocsp_revoked`
+- **Encrypted Client Hello (ECH)** (Admin `0.75.0` / Edge `0.21.0`): hides the site name (SNI) in the TLS handshake — an on-path observer only sees a configurable public name. The Admin generates X25519/HPKE keys, shows the `ech="…"` value to publish in each domain's HTTPS DNS record, and pushes the key set to the Edges, which keep it in their encrypted local cache (works without the Admin, across restarts). Key rotation keeps the previous key accepting until DNS caches expire. Page Certificates → Settings, `goproxify ech`, MCP `get_ech_status`. TCP only (HTTP/1.1, h2), not for SNI-passthrough hosts
 
 ### Certificate Hub (v0.8)
 

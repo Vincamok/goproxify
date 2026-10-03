@@ -113,6 +113,13 @@ func (m *Manager) ObtainCert(ctx context.Context, domain string) error {
 }
 
 func (m *Manager) obtainCertWithProv(ctx context.Context, domain string, prov DNSProvider) error {
+	return m.obtainCert(ctx, domain, func(ctx context.Context, client *xacme.Client, authURLs []string) error {
+		return m.fulfillAllDNS01(ctx, client, authURLs, prov)
+	})
+}
+
+// obtainCert exécute la commande ACME ; fulfill résout les autorisations (DNS-01, HTTP-01 ou TLS-ALPN-01).
+func (m *Manager) obtainCert(ctx context.Context, domain string, fulfill func(context.Context, *xacme.Client, []string) error) error {
 	// Conserve l'intention : "*.x" → wildcard seul ; "x" / "a.x" → ce nom exact.
 	// Ne plus ajouter l'apex implicitement (deux TXT sur _acme-challenge → Incorrect TXT).
 	names := acmeNames(domain)
@@ -142,7 +149,7 @@ func (m *Manager) obtainCertWithProv(ctx context.Context, domain string, prov DN
 		return fmt.Errorf("acme: autorisation commande : %w", err)
 	}
 
-	if err := m.fulfillAllDNS01(ctx, client, order.AuthzURLs, prov); err != nil {
+	if err := fulfill(ctx, client, order.AuthzURLs); err != nil {
 		return err
 	}
 

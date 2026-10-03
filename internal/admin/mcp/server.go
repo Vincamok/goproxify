@@ -27,6 +27,7 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/edgeproxy"
 	"github.com/vincamok/goproxify/internal/admin/internalca"
 	"github.com/vincamok/goproxify/internal/admin/mcpaccess"
+	"github.com/vincamok/goproxify/internal/admin/ech"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
 	"github.com/vincamok/goproxify/internal/admin/security"
 	"github.com/vincamok/goproxify/internal/edge/proxystore"
@@ -462,6 +463,11 @@ var tools = []map[string]any{
 	{
 		"name":        "list_internal_cas",
 		"description": "Liste les autorités de certification internes avec leur subject et date d'expiration.",
+		"inputSchema": schema(),
+	},
+	{
+		"name":        "get_ech_status",
+		"description": "État d'Encrypted Client Hello (ECH) : activation, nom public, clés (jamais les clés privées) et valeur ech= à publier dans l'enregistrement DNS HTTPS.",
 		"inputSchema": schema(),
 	},
 	{
@@ -1028,6 +1034,8 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 		result, toolErr = h.toolCreateInternalCA(r, p.Arguments)
 	case "list_internal_cas":
 		result, toolErr = h.toolListInternalCAs(r)
+	case "get_ech_status":
+		result, toolErr = ech.NewStore(h.DB).Status()
 	case "issue_internal_cert":
 		result, toolErr = h.toolIssueInternalCert(r, p.Arguments)
 	case "list_internal_certs":

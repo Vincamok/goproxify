@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vincamok/goproxify/internal/admin/acme"
 	"github.com/vincamok/goproxify/internal/sqltime"
 )
 
@@ -106,14 +107,14 @@ func (h *CertsHandler) obtain(w http.ResponseWriter, r *http.Request) {
 	}
 	obtain := func() error { return h.Manager.ObtainCert(context.Background(), req.Domain) }
 	if pm, ok := h.Manager.(DomainCertObtainer); ok {
-		var dnsProvider, credJSON string
+		var dnsProvider, credJSON, certMethod string
 		err := h.DB.QueryRowContext(r.Context(),
-			`SELECT dns_provider, dns_credentials FROM domains WHERE domain=?`, req.Domain).Scan(&dnsProvider, &credJSON)
-		if err == nil && dnsProvider != "" && dnsProvider != "none" {
+			`SELECT dns_provider, dns_credentials, cert_method FROM domains WHERE domain=?`, req.Domain).Scan(&dnsProvider, &credJSON, &certMethod)
+		if err == nil && (acme.IsEdgeChallengeMethod(certMethod) || (dnsProvider != "" && dnsProvider != "none")) {
 			var creds map[string]any
 			_ = json.Unmarshal([]byte(credJSON), &creds)
 			obtain = func() error {
-				return pm.ObtainCertWithProvider(context.Background(), req.Domain, dnsProvider, creds)
+				return pm.ObtainCertForMethod(context.Background(), req.Domain, certMethod, dnsProvider, creds)
 			}
 		}
 	}

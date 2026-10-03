@@ -103,3 +103,7 @@ docker compose -f tests/lab/docker-compose.local.yml down -v
 ```
 
 Le résultat attendu à ce jour est celui du §3 ; chaque défaut corrigé fait passer sa section au vert. Le scénario k6 se lance avec la commande indiquée en tête de `tests/lab/docker-compose.local.yml`.
+
+## 7. Après correction (2026-10-03, `main` `c4d9ea33`)
+
+Les 8 défauts D1 à D8 sont corrigés sur `main`. Même suite, même stack locale, passerelle recompilée depuis les sources : **87 PASS, 0 FAIL**. Décisions prises : la sonde de santé est propre à chaque route (config et verdict par route et backend) ; avec `forwarded_headers: []`, `X-Forwarded-For` n'est plus envoyé du tout. Résultats par fonctionnalité : [resultats-fonctionnalites-proxy.md](resultats-fonctionnalites-proxy.md). Les §1, §3 et §4 ci-dessus décrivent l'état avant correctifs.

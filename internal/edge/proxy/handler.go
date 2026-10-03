@@ -388,7 +388,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	attempts := make([]*router.Backend, 0, len(candidates))
 	for _, b := range candidates {
-		if h.health.IsHealthy(b.URL) {
+		if h.health.IsHealthyFor(h.route.ID, b.URL) {
 			attempts = append(attempts, b)
 		}
 	}
@@ -476,7 +476,7 @@ func (h *Handler) failoverCandidates(r *http.Request) []*router.Backend {
 	seen := make(map[string]bool, n)
 
 	// Preferé par le balancer (adaptive / RR / weighted / sticky)
-	if pref := h.balancer.Next(r); pref != nil && h.health.IsHealthy(pref.URL) {
+	if pref := h.balancer.Next(r); pref != nil && h.health.IsHealthyFor(h.route.ID, pref.URL) {
 		out = append(out, pref)
 		seen[pref.URL] = true
 	}
@@ -521,7 +521,7 @@ func (h *Handler) applySlowStart(r *http.Request, out []*router.Backend) []*rout
 	}
 	for k := 1; k < n; k++ {
 		alt := &h.route.Backends[(start+k)%n]
-		if alt.URL == pref.URL || !h.health.IsHealthy(alt.URL) || h.health.RampFactor(alt.URL, window) <= f {
+		if alt.URL == pref.URL || !h.health.IsHealthyFor(h.route.ID, alt.URL) || h.health.RampFactor(alt.URL, window) <= f {
 			continue
 		}
 		metrics.Backend.SlowStartShifted.WithLabelValues(h.route.Host, pref.URL).Inc()

@@ -88,6 +88,8 @@ func main() {
 		runPrism()
 	case "snippet":
 		runSnippet()
+	case "ech":
+		runECH()
 	case "domain":
 		runDomain()
 	case "agent-mgmt":
@@ -153,6 +155,7 @@ Commandes d'administration (API Admin — -admin-url / -token) :
   alert     Canaux et règles d'alerte (channels/rules/test)
   snippet   Snippets de sécurité réutilisables (list/get/create/update/delete)
   domain    Domaines gérés ACME (list/get/create/renew/delete)
+  ech       Encrypted Client Hello (status/enable/disable/rotate/delete-key)
   agent-mgmt     Agents Docker enregistrés (list/get/approve/revoke/delete)
   settings       Configuration Admin (smtp get/set/test)
   auth-provider  Fournisseurs SSO/OIDC/SAML/LDAP (list/get/create/update/enable/disable/delete)
