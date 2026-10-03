@@ -492,6 +492,7 @@
     .icon-red    { background: rgba(239,68,68,0.10); }
     .icon-blue   { background: rgba(59,130,246,0.12); }
     .icon-indigo { background: rgba(99,102,241,0.12); }
+    .icon-teal   { background: rgba(20,184,166,0.12); }
 
     .feature-card h3 {
       font-size: 1rem;
@@ -1033,6 +1034,7 @@
       <span class="tech-badge">Portainer</span>
       <span class="tech-badge">Admin UI</span>
       <span class="tech-badge">EN · FR · ES · DE</span>
+      <span class="tech-badge" data-i18n="hero.gdpr">GDPR-ready</span>
     </div>
   </div>
 </section>
@@ -1218,6 +1220,27 @@
           <li data-i18n="f7.p1">Secure web terminal to VMs and containers</li>
           <li data-i18n="f7.p2">Invite operators with the access they need — no more</li>
           <li data-i18n="f7.p3">Optional second factor instead of shared passwords</li>
+        </ul>
+      </div>
+
+      <!-- Privacy / GDPR -->
+      <div class="feature-card fade-in">
+        <div class="feature-icon icon-teal">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#14b8a6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+            <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+            <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/>
+            <line x1="1" y1="1" x2="23" y2="23"/>
+          </svg>
+        </div>
+        <div class="feature-subtitle" data-i18n="f9.sub">Privacy</div>
+        <h3 data-i18n="f9.title">Built for GDPR</h3>
+        <p data-i18n="f9.body">Visitor IP addresses are personal data. Decide how they are kept and for how long, who may see them, and handle erasure requests — from the Admin, the CLI or the API.</p>
+        <ul class="feature-points">
+          <li data-i18n="f9.p1">IPs kept in full, anonymised, or pseudonymised (AES-256 encrypted, revealable)</li>
+          <li data-i18n="f9.p2">Real IP revealed only by the accounts you authorise — superadmin, DPO, delegation — with a reason in the audit log</li>
+          <li data-i18n="f9.p3">Configurable retention and right to erasure (Art. 17) by IP or by user</li>
+          <li data-i18n="f9.p4">Self-hosted: you remain the data controller, logs stay on your servers</li>
         </ul>
       </div>
 
@@ -2470,6 +2493,11 @@ volumes:
         <h3 data-i18n="doc.security.title">Security engines</h3>
         <p data-i18n="doc.security.body">WAF (13 CRS-4 rule sets, response inspection), Sentinel, bans, GeoIP, timeouts and CVE scanner.</p>
       </a>
+      <a href="#" id="docs-rgpd" class="feature-card" style="text-decoration:none;color:inherit">
+        <div class="feature-subtitle" data-i18n="doc.rgpd.sub">GDPR</div>
+        <h3 data-i18n="doc.rgpd.title">GDPR guide</h3>
+        <p data-i18n="doc.rgpd.body">Data collected and retention, IP anonymisation and pseudonymisation, erasure, delegating IP reveal, operator checklist.</p>
+      </a>
     </div>
 
     <!-- Reference -->
@@ -2639,6 +2667,8 @@ volumes:
       'doc.contrib.title': 'Contributing', 'doc.contrib.body': 'PR workflow, tests, DCO sign-off, coding conventions.',
       'doc.volumes.title': 'Docker volumes', 'doc.volumes.body': 'What each volume persists: Admin database, Edge proxy configs, Agent tokens, GeoIP database.',
       'doc.security.title': 'Security engines', 'doc.security.body': 'WAF (13 CRS-4 rule sets, response inspection), Sentinel, bans, GeoIP, timeouts and CVE scanner.',
+      'doc.rgpd.sub': 'GDPR', 'doc.rgpd.title': 'GDPR guide', 'doc.rgpd.body': 'Data collected and retention, IP anonymisation and pseudonymisation, erasure, delegating IP reveal, operator checklist.',
+      'hero.gdpr': 'GDPR-ready',
       'doc.github': 'View on GitHub →',
       'f1.sub': 'Gateway', 'f1.title': 'The traffic gateways',
       'f1.body': 'Gateways are the public front door. They welcome visitors on your https://… addresses and send each one to the right site in your fleet — quietly, and at scale.',
@@ -2721,6 +2751,12 @@ volumes:
       'f7.p1': 'Secure web terminal to VMs and containers',
       'f7.p2': 'Invite operators with the access they need — no more',
       'f7.p3': 'Optional second factor instead of shared passwords',
+      'f9.sub': 'Privacy', 'f9.title': 'Built for GDPR',
+      'f9.body': 'Visitor IP addresses are personal data. Decide how they are kept and for how long, who may see them, and handle erasure requests — from the Admin, the CLI or the API.',
+      'f9.p1': 'IPs kept in full, anonymised, or pseudonymised (AES-256 encrypted, revealable)',
+      'f9.p2': 'Real IP revealed only by the accounts you authorise — superadmin, DPO, delegation — with a reason in the audit log',
+      'f9.p3': 'Configurable retention and right to erasure (Art. 17) by IP or by user',
+      'f9.p4': 'Self-hosted: you remain the data controller, logs stay on your servers',
       'f8.sub': 'Architecture assistant',
       'f8.title': 'Draw your setup, install or reconfigure it',
       'f8.body': 'Inside the Admin, place your machines on a canvas and drop what each one needs — control panel, gateways, Agent, Portainer. GoProxify turns that picture into ready-to-run install steps, and lets you reconfigure an existing deployment without editing compose files yourself.',
@@ -2811,6 +2847,8 @@ volumes:
       'doc.contrib.title': 'Contribuer', 'doc.contrib.body': 'Workflow PR, tests, DCO, conventions de code.',
       'doc.volumes.title': 'Volumes Docker', 'doc.volumes.body': 'Ce que chaque volume persiste : base Admin, configs proxies passerelle, tokens Agent, base GeoIP.',
       'doc.security.title': 'Moteurs de sécurité', 'doc.security.body': 'WAF (13 jeux de règles CRS-4, inspection réponse), Sentinel, bans, GeoIP, timeouts et scanner CVE.',
+      'doc.rgpd.sub': 'RGPD', 'doc.rgpd.title': 'Guide RGPD', 'doc.rgpd.body': "Données collectées et rétention, anonymisation et pseudonymisation des IP, effacement, délégation de la révélation, checklist de l'opérateur.",
+      'hero.gdpr': 'Pensé pour le RGPD',
       'doc.github': 'Voir sur GitHub →',
       'f1.sub': 'Passerelle', 'f1.title': 'Les passerelles de trafic',
       'f1.body': "Les passerelles sont la porte d'entrée publique. Elles accueillent les visiteurs sur vos adresses https://… et envoient chacun vers le bon site de la flotte — discrètement, et à grande échelle.",
@@ -2893,6 +2931,12 @@ volumes:
       'f7.p1': 'Terminal web sécurisé vers VMs et conteneurs',
       'f7.p2': "Inviter des opérateurs avec juste l'accès nécessaire",
       'f7.p3': 'Second facteur optionnel plutôt que des mots de passe partagés',
+      'f9.sub': 'Vie privée', 'f9.title': 'Pensé pour le RGPD',
+      'f9.body': "Les adresses IP des visiteurs sont des données personnelles. Choisissez comment et combien de temps elles sont conservées, qui peut les voir, et traitez les demandes d'effacement — depuis l'Admin, la CLI ou l'API.",
+      'f9.p1': 'IP conservées entières, anonymisées ou pseudonymisées (chiffrement AES-256, révélables)',
+      'f9.p2': "IP réelle révélée uniquement par les comptes que vous autorisez — super-admin, DPO, délégation — avec un motif au journal d'audit",
+      'f9.p3': "Rétention réglable et droit à l'effacement (art. 17) par IP ou par utilisateur",
+      'f9.p4': 'Auto-hébergé : vous restez responsable du traitement, les logs restent sur vos serveurs',
       'f8.sub': "Assistant d'architecture",
       'f8.title': 'Dessinez votre config, installez ou reconfigurez',
       'f8.body': "Dans l'Admin, placez vos machines sur une toile et déposez ce dont chacune a besoin — tableau de bord, passerelles, Agent, Portainer. GoProxify transforme ce dessin en étapes d'install prêtes à coller, et vous permet de reconfigurer un déploiement existant sans toucher au compose file vous-même.",
@@ -2983,6 +3027,8 @@ volumes:
       'doc.contrib.title': 'Contribuir', 'doc.contrib.body': 'Flujo de PR, tests, DCO, convenciones de código.',
       'doc.volumes.title': 'Volúmenes Docker', 'doc.volumes.body': 'Qué persiste cada volumen: base Admin, configs proxies Edge, tokens Agent, base GeoIP.',
       'doc.security.title': 'Motores de seguridad', 'doc.security.body': 'WAF (13 conjuntos CRS-4, inspección de respuesta), Sentinel, bans, GeoIP, timeouts y escáner CVE.',
+      'doc.rgpd.sub': 'RGPD', 'doc.rgpd.title': 'Guía RGPD', 'doc.rgpd.body': 'Datos recogidos y retención, anonimización y seudonimización de IP, supresión, delegación de la revelación, checklist del operador.',
+      'hero.gdpr': 'Pensado para el RGPD',
       'doc.github': 'Ver en GitHub →',
       'f1.sub': 'Pasarela', 'f1.title': 'Las pasarelas de tráfico',
       'f1.body': 'Las pasarelas son la puerta pública. Reciben a los visitantes en tus direcciones https://… y envían a cada uno al sitio correcto de la flota — en silencio y a escala.',
@@ -3065,6 +3111,12 @@ volumes:
       'f7.p1': 'Terminal web seguro hacia VMs y contenedores',
       'f7.p2': 'Invitar operadores solo con el acceso necesario',
       'f7.p3': 'Segundo factor opcional en lugar de contraseñas compartidas',
+      'f9.sub': 'Privacidad', 'f9.title': 'Pensado para el RGPD',
+      'f9.body': 'Las direcciones IP de los visitantes son datos personales. Decide cómo y durante cuánto tiempo se conservan, quién puede verlas, y atiende las solicitudes de supresión — desde el Admin, la CLI o la API.',
+      'f9.p1': 'IP conservadas completas, anonimizadas o seudonimizadas (cifrado AES-256, revelables)',
+      'f9.p2': 'IP real revelada solo por las cuentas que autorizas — superadministrador, DPO, delegación — con un motivo en la auditoría',
+      'f9.p3': 'Retención configurable y derecho de supresión (art. 17) por IP o por usuario',
+      'f9.p4': 'Autoalojado: sigues siendo el responsable del tratamiento, los logs se quedan en tus servidores',
       'f8.sub': 'Asistente de arquitectura',
       'f8.title': 'Dibuja tu setup, instálalo o reconfigúralo',
       'f8.body': 'En el Admin, coloca tus máquinas en un lienzo y suelta lo que cada una necesita — panel, pasarelas, Agent, Portainer. GoProxify convierte ese dibujo en pasos de instalación listos, y te permite reconfigurar un despliegue existente sin editar los archivos compose tú mismo.',
@@ -3155,6 +3207,8 @@ volumes:
       'doc.contrib.title': 'Beitragen', 'doc.contrib.body': 'PR-Workflow, Tests, DCO-Signoff, Codierungskonventionen.',
       'doc.volumes.title': 'Docker-Volumes', 'doc.volumes.body': 'Was jedes Volume persistiert: Admin-Datenbank, Edge-Proxy-Configs, Agent-Tokens, GeoIP-Datenbank.',
       'doc.security.title': 'Sicherheits-Engines', 'doc.security.body': 'WAF (13 CRS-4-Regelwerke, Antwort-Inspektion), Sentinel, Sperren, GeoIP, Timeouts und CVE-Scanner.',
+      'doc.rgpd.sub': 'DSGVO', 'doc.rgpd.title': 'DSGVO-Leitfaden', 'doc.rgpd.body': 'Erhobene Daten und Aufbewahrung, IP-Anonymisierung und -Pseudonymisierung, Löschung, Delegation der Aufdeckung, Checkliste für Betreiber.',
+      'hero.gdpr': 'DSGVO-gerecht',
       'doc.github': 'Auf GitHub ansehen →',
       'f1.sub': 'Gateway', 'f1.title': 'Die Traffic-Gateways',
       'f1.body': 'Gateways sind die öffentliche Haustür. Sie empfangen Besucher auf Ihren https://…-Adressen und senden jeden zur richtigen Site in der Flotte — ruhig und skalierbar.',
@@ -3237,6 +3291,12 @@ volumes:
       'f7.p1': 'Sicheres Web-Terminal zu VMs und Containern',
       'f7.p2': 'Operatoren nur mit dem nötigen Zugang einladen',
       'f7.p3': 'Optionaler zweiter Faktor statt geteilter Passwörter',
+      'f9.sub': 'Datenschutz', 'f9.title': 'Für die DSGVO gebaut',
+      'f9.body': 'IP-Adressen von Besuchern sind personenbezogene Daten. Legen Sie fest, wie und wie lange sie gespeichert werden, wer sie sehen darf, und bearbeiten Sie Löschanfragen — im Admin, per CLI oder API.',
+      'f9.p1': 'IPs vollständig, anonymisiert oder pseudonymisiert gespeichert (AES-256-verschlüsselt, aufdeckbar)',
+      'f9.p2': 'Echte IP nur durch die von Ihnen berechtigten Konten aufdeckbar — Super-Admin, DSB, Delegation — mit Begründung im Audit-Log',
+      'f9.p3': 'Einstellbare Aufbewahrung und Recht auf Löschung (Art. 17) nach IP oder Benutzer',
+      'f9.p4': 'Selbst gehostet: Sie bleiben Verantwortlicher, die Logs bleiben auf Ihren Servern',
       'f8.sub': 'Architektur-Assistent',
       'f8.title': 'Setup zeichnen, installieren oder neu konfigurieren',
       'f8.body': 'Im Admin platzieren Sie Maschinen auf einer Leinwand und legen ab, was jede braucht — Bedienpanel, Gateways, Agent, Portainer. GoProxify macht daraus fertige Install-Schritte und ermöglicht die Neukonfiguration bestehender Deployments, ohne Compose-Dateien manuell zu bearbeiten.',
@@ -3357,6 +3417,8 @@ volumes:
       'docs-delegation':   base + 'docs/delegation.md',
       'docs-features':     base + 'docs/fonctionnalites.md',
       'docs-faq':          base + 'docs/faq.md',
+      'docs-security':     base + 'docs/security.md',
+      'docs-rgpd':         base + 'docs/rgpd.md',
       'docs-cli':          base + 'docs/cli.md',
       'docs-labels':       base + 'docs/labels.md',
       'docs-config':       base + 'docs/config_schema.json',

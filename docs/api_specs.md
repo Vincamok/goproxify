@@ -480,9 +480,9 @@ Supprime un fournisseur DNS nommé.
 
 Demande un certificat ACME. La méthode suit `domains.cert_method` du domaine : DNS-01 (`dns` + `dns_provider`), HTTP-01 (`acme-http`) ou TLS-ALPN-01 (`acme-tls-alpn`). Avec HTTP-01 / TLS-ALPN-01, l'Admin pose la réponse du challenge sur les passerelles connectées (port 80 / 443 publics du domaine) ; un wildcard est refusé (`400` sur `POST`/`PUT /api/v1/domains`, `cert_method` `acme-http` ou `acme-tls-alpn`).
 
-**Corps :**
 `edge_id` (passerelle d'entrée) accepte un token passerelle, un `node_name`, ou `ha:<groupe>` pour un groupe HA déclaré dans `architecture.json` : le périmètre domaine est alors posé sur tous les membres et les délégations sont poussées à chacun. Un groupe sans membre renvoie `400 groupe HA introuvable`. `delegated_to_edge_id` reste une passerelle unique.
 
+**Corps :**
 ```json
 { "domain": "*.example.fr", "dns_provider": "ovh_prod" }
 ```

@@ -13,6 +13,8 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ### Ajouté
 
+- **Landing 0.3.4 — RGPD mis en avant** : neuvième carte « Vie privée — Pensé pour le RGPD » dans « Comment fonctionne GoProxify » (IP entières, anonymisées ou pseudonymisées en AES-256, révélation par les seuls comptes autorisés — super-admin, DPO, délégation — avec motif au journal d'audit, rétention réglable et droit à l'effacement par IP ou utilisateur, auto-hébergement). La grille passe à 3×3. Badge « Pensé pour le RGPD » dans le hero, carte « Guide RGPD » (`docs/rgpd.md`) dans la documentation. Traductions EN/FR/ES/DE. Corrigé : la carte « Moteurs de sécurité » ne pointait vers rien (lien vers `docs/security.md` manquant). (Landing `0.3.4`)
+
 - **Admin 0.78.0 — RGPD : délégation du droit de révéler les IP pseudonymisées** : réservée jusqu'ici au superadmin, la révélation (`gdpr:reveal`) peut être déléguée de trois façons, par le superadmin seul :
   - nouveau rôle plateforme **`dpo`** (délégué à la protection des données) : droits d'un compte `user`, plus la révélation ;
   - **droit accordé en propre** à un compte, quel que soit son rôle (`permissions: ["gdpr:reveal"]` sur `POST/PUT /api/v1/users`, case dans la modale utilisateur, `goproxify user update <id> -permissions gdpr:reveal`) ;
