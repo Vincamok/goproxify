@@ -326,6 +326,13 @@ func (s *Server) handleWSAdminMessage(connID string, msg edgews.Message) error {
 			s.adminTokenMu.Unlock()
 		}
 
+	case edgews.TypePushClusterPeers:
+		var peers map[string]string
+		if err := json.Unmarshal(msg.Payload, &peers); err != nil {
+			return err
+		}
+		s.applyClusterPeers(peers)
+
 	case edgews.TypePushGatewayPeers:
 		return s.applyGatewayPeersWS(msg.Payload)
 

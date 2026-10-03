@@ -1476,10 +1476,7 @@ func (s *Server) handlePushClusterPeers(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if s.clusterGroup != nil && len(peers) > 0 {
-		s.clusterGroup.UpdatePeers(peers)
-		s.log.Info("cluster: topologie reçue depuis Admin", "peers", len(peers))
-	}
+	s.applyClusterPeers(peers)
 	w.WriteHeader(http.StatusNoContent)
 }
 

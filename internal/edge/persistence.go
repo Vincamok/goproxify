@@ -223,6 +223,45 @@ func (s *Server) loadTunnelConfigFromDisk() {
 	s.log.Info("tunnel: pairs chargés depuis le disque", "count", len(payload.Peers))
 }
 
+// clusterPeersPath est la copie locale chiffrée de la topologie Raft poussée par l'Admin.
+func clusterPeersPath() string {
+	if p := os.Getenv("GPX_CLUSTER_PEERS_PATH"); p != "" {
+		return p
+	}
+	return "/etc/goproxify/cluster-peers.gpx"
+}
+
+// applyClusterPeers persiste la topologie Raft reçue de l'Admin puis l'applique. Une config locale
+// (cluster.peers) reste prioritaire et n'est jamais écrasée.
+func (s *Server) applyClusterPeers(peers map[string]string) {
+	if len(s.cfg.Cluster.Peers) > 0 || len(peers) == 0 {
+		return
+	}
+	if err := s.cache.SaveFile(clusterPeersPath(), peers); err != nil {
+		s.log.Warn("cluster: persistance de la topologie échouée", "err", err)
+	}
+	if s.clusterGroup != nil {
+		s.clusterGroup.UpdatePeers(peers)
+		s.log.Info("cluster: topologie reçue depuis Admin", "peers", len(peers))
+	}
+}
+
+// loadClusterPeersFromDisk retourne la dernière topologie Raft connue, pour qu'un redémarrage sans
+// Admin retrouve ses pairs.
+func (s *Server) loadClusterPeersFromDisk() map[string]string {
+	var peers map[string]string
+	ok, err := s.cache.LoadFile(clusterPeersPath(), &peers)
+	if err != nil {
+		s.log.Warn("cluster: copie locale illisible — en attente de l'Admin", "err", err)
+		return nil
+	}
+	if !ok {
+		return nil
+	}
+	s.log.Info("cluster: topologie chargée depuis le disque", "peers", len(peers))
+	return peers
+}
+
 // pushedServerConfig est la configuration serveur HTTP poussée par l'Admin (0 = non défini).
 type pushedServerConfig struct {
 	ReadHeaderSeconds int `json:"read_header_seconds"`

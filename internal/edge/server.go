@@ -365,10 +365,14 @@ func New(cfg *config.EdgeConfig) (*Server, error) {
 		if raftPort == 0 {
 			raftPort = 8002
 		}
+		peers := cfg.Cluster.Peers
+		if len(peers) == 0 {
+			peers = s.loadClusterPeersFromDisk()
+		}
 		grp := cluster.NewGroup(cluster.Config{
 			NodeID:    nodeID,
 			GroupName: cfg.Cluster.GroupName,
-			Peers:     cfg.Cluster.Peers,
+			Peers:     peers,
 			RaftPort:  raftPort,
 			ApplyFunc: func(entry raft.LogEntry) {
 				s.applyClusterCommand(entry)
