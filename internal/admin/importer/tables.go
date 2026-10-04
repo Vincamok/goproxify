@@ -21,6 +21,7 @@ import (
 var backupTables = []string{
 	"settings",
 	"backup_schedule",
+	"backup_destinations",
 	"fail2ban_config",
 	"crowdsec_config",
 	"rules_engine_rules",

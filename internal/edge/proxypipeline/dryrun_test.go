@@ -98,3 +98,32 @@ func TestRewriteHTTPSTypeInConfig(t *testing.T) {
 		t.Fatalf("extra field lost: %v", m["extra"])
 	}
 }
+
+func TestValidateRouteBasicsBotChallengeAndProxyProtocol(t *testing.T) {
+	base := func() *router.Route {
+		return &router.Route{Type: router.RouteHTTP, Host: "a.test", Backends: []router.Backend{{URL: "http://127.0.0.1:1"}}}
+	}
+	if errs := validateRouteBasics(base()); len(errs) != 0 {
+		t.Fatalf("route valide refusée : %v", errs)
+	}
+	cases := map[string]func(*router.Route){
+		"proxy_protocol": func(r *router.Route) { r.ProxyProtocol = "v3" },
+		"provider":       func(r *router.Route) { r.Bot = &router.BotConfig{ChallengeProvider: "recaptcha"} },
+		"clés manquantes": func(r *router.Route) { r.Bot = &router.BotConfig{ChallengeProvider: "turnstile"} },
+		"difficulté":     func(r *router.Route) { r.Bot = &router.BotConfig{ChallengeDifficulty: 30} },
+		"ttl":            func(r *router.Route) { r.Bot = &router.BotConfig{ChallengeTTL: "dix minutes"} },
+	}
+	for name, mutate := range cases {
+		r := base()
+		mutate(r)
+		if errs := validateRouteBasics(r); len(errs) == 0 {
+			t.Errorf("%s : aucune erreur", name)
+		}
+	}
+	ok := base()
+	ok.ProxyProtocol = "v2"
+	ok.Bot = &router.BotConfig{ChallengeProvider: "hcaptcha", ChallengeSiteKey: "k", ChallengeProviderSecret: "s", ChallengeDifficulty: 20, ChallengeTTL: "12h"}
+	if errs := validateRouteBasics(ok); len(errs) != 0 {
+		t.Errorf("config valide refusée : %v", errs)
+	}
+}

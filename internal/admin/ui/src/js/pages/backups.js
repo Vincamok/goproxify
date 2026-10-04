@@ -28,6 +28,12 @@ const BK_TABS = [
     descKey: 'backups.tab.schedule.desc',
     icon: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
   },
+  {
+    id: 'destinations',
+    titleKey: 'backups.tab.destinations.title',
+    descKey: 'backups.tab.destinations.desc',
+    icon: '<path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"/>',
+  },
 ];
 
 function bkNewSchedule(partial = {}) {
@@ -80,7 +86,7 @@ pages.backups = async function() {
   const content = document.getElementById('content');
   content.innerHTML = '<p style="color:var(--text2)">' + t('common.loading') + '</p>';
 
-  let activeTab = 'snapshots'; // snapshots | schedule
+  let activeTab = 'snapshots'; // snapshots | schedule | destinations
   let draftSchedules = [];
 
   function setTopbar() {
@@ -131,6 +137,11 @@ pages.backups = async function() {
     const needsSched = activeTab === 'snapshots' || activeTab === 'schedule';
     const needsSnaps = activeTab === 'snapshots';
 
+    const [status, dests] = await Promise.all([
+      activeTab === 'snapshots' ? api('GET', '/backups/status').catch(() => null) : Promise.resolve(null),
+      activeTab === 'destinations' ? api('GET', '/backups/destinations').catch(() => []) : Promise.resolve([]),
+    ]);
+    window._bkDests = dests;
     const [cfg, snaps] = await Promise.all([
       needsSched
         ? api('GET', '/backups/schedule').catch(() => ({schedules:[], max: BK_MAX_SCHEDULES}))
@@ -145,7 +156,8 @@ pages.backups = async function() {
     }
 
     let body = '';
-    if (activeTab === 'snapshots') body = snapshotsTab(snaps, draftSchedules);
+    if (activeTab === 'snapshots') body = statusBanner(status) + snapshotsTab(snaps, draftSchedules);
+    else if (activeTab === 'destinations') body = destinationsTab(dests);
     else body = scheduleTab(draftSchedules);
 
     content.innerHTML = `${navHtml()}<div id="bk-body">${body}</div>`;
@@ -220,7 +232,7 @@ pages.backups = async function() {
         <p>${t('backups.empty_snapshots')}</p>
       </div>`;
     return `<div class="table-wrap"><table>
-      <thead><tr><th>${t('common.name')}</th><th>${t('backups.col.schedule')}</th><th>${t('common.size')}</th><th>${t('common.date')}</th><th style="text-align:right">${t('common.actions')}</th></tr></thead>
+      <thead><tr><th>${t('common.name')}</th><th>${t('backups.col.schedule')}</th><th>${t('common.size')}</th><th>${t('common.date')}</th><th>${t('backups.col.integrity')}</th><th style="text-align:right">${t('common.actions')}</th></tr></thead>
       <tbody>${snaps.map(s => {
         const ts = new Date(s.created_at).toISOString().slice(0,10);
         const fname = `goproxify-backup-${ts}.gpx-admin-backup`;
@@ -230,7 +242,11 @@ pages.backups = async function() {
           <td style="color:var(--text2);font-size:12px">${esc(plan)}</td>
           <td style="color:var(--text2);white-space:nowrap">${fmtBytes(s.size_bytes)}</td>
           <td style="font-size:12px;white-space:nowrap">${fmtDate(s.created_at)}</td>
+          <td style="font-size:12px">${integrityCell(s)}</td>
           <td style="display:flex;gap:4px;justify-content:flex-end;align-items:center">
+            <button class="btn btn-ghost btn-icon" onclick="bkVerify('${s.id}')" title="${t('backups.verify')}">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            </button>
             <button class="btn btn-ghost btn-icon" onclick="bkDownload('${s.id}','${esc(fname)}')" title="${t('common.download')}">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             </button>
@@ -245,6 +261,109 @@ pages.backups = async function() {
       }).join('')}</tbody>
     </table></div>`;
   }
+
+  function integrityCell(s) {
+    const ok = s.verified_at
+      ? '<span style="color:var(--success,#2a8)" title="' + esc(s.sha256 || '') + '">✓ ' + t('backups.verified') + '</span>'
+      : '<span style="color:var(--warning,#c80)">' + t('backups.not_verified') + '</span>';
+    const copies = (s.deliveries || []).map(d => d.ok
+      ? '<span style="color:var(--success,#2a8)" title="' + esc(d.at) + '">☁ ' + esc(d.destination) + '</span>'
+      : '<span style="color:var(--danger,#c44)" title="' + esc(d.error) + '">☁ ' + esc(d.destination) + ' ✗</span>').join('<br>');
+    return ok + (copies ? '<br>' + copies : '');
+  }
+
+  function statusBanner(st) {
+    if (!st) return '';
+    const warns = [];
+    if (!st.key_set) warns.push(t('backups.warn.no_key'));
+    (st.stale || []).forEach(n => warns.push(t('backups.warn.stale', { name: esc(n) })));
+    const enabled = (st.destinations || []).filter(d => d.enabled);
+    if (!enabled.length) warns.push(t('backups.warn.no_destination'));
+    enabled.filter(d => d.last_error).forEach(d => warns.push(t('backups.warn.dest_failed', { name: esc(d.name), err: esc(d.last_error) })));
+    if (!warns.length) return '<div class="card" style="margin-bottom:12px;color:var(--success,#2a8);font-size:13px">✓ ' + t('backups.status.ok') + '</div>';
+    return '<div class="card" style="margin-bottom:12px;border-left:3px solid var(--warning,#c80);font-size:13px"><ul style="margin:0;padding-left:18px;line-height:1.7">' +
+      warns.map(w => '<li>' + w + '</li>').join('') + '</ul></div>';
+  }
+
+  window.bkVerify = async function(id) {
+    try {
+      const r = await api('POST', '/backups/snapshots/' + id + '/verify', {});
+      if (r.ok) toast(t('backups.verify_ok'), 'success');
+      else toast(t('backups.verify_failed', { msg: r.error }), 'error');
+      render();
+    } catch (e) { toast(e.message, 'error'); }
+  };
+
+  // ── Onglet Destinations ───────────────────────────────────────────────────
+  function destinationsTab(dests) {
+    const rows = dests.length ? dests.map(d => '<tr>' +
+      '<td style="font-weight:600">' + esc(d.name) + '</td>' +
+      '<td style="color:var(--text2)">' + esc(t('backups.dest.type.' + d.type)) + '</td>' +
+      '<td style="color:var(--text2);font-size:12px">' + esc(d.config.path || d.config.url || d.config.endpoint || '') + '</td>' +
+      '<td>' + (d.enabled ? t('common.enabled') : t('common.disabled')) + '</td>' +
+      '<td>' + (d.retention || '∞') + '</td>' +
+      '<td style="display:flex;gap:4px;justify-content:flex-end"><button class="btn btn-ghost btn-sm" onclick="bkDestTest(\'' + d.id + '\')">' + t('backups.dest.test') + '</button>' +
+      '<button class="btn btn-ghost btn-sm" onclick="bkDestEdit(\'' + d.id + '\')">' + t('common.edit') + '</button>' +
+      '<button class="btn btn-ghost btn-sm" style="color:var(--danger,#c44)" onclick="bkDestDelete(\'' + d.id + '\')">' + t('common.delete') + '</button></td></tr>').join('')
+      : '<tr><td colspan="6" style="color:var(--text2)">' + t('backups.dest.empty') + '</td></tr>';
+    return '<div class="card blueprint"><div class="card-kicker">' + t('backups.dest.kicker') + '</div>' +
+      '<div class="card-title">' + t('backups.tab.destinations.title') + '</div>' +
+      '<p style="color:var(--text2);font-size:13px;margin:12px 0;line-height:1.6;max-width:680px">' + t('backups.dest.intro') + '</p>' +
+      '<div class="table-wrap"><table><thead><tr><th>' + t('common.name') + '</th><th>' + t('backups.dest.col_type') + '</th><th>' + t('backups.dest.target') + '</th><th>' + t('backups.dest.col_status') + '</th><th>' + t('backups.dest.retention') + '</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+      '<div style="margin-top:14px"><button class="btn btn-primary btn-sm" onclick="bkDestEdit(\'\')">' + t('backups.dest.add') + '</button></div></div>';
+  }
+
+  window.bkDestEdit = function(id) {
+    const d = (window._bkDests || []).find(x => x.id === id) || { type: 'dir', enabled: true, config: {}, retention: 14 };
+    const c = d.config || {};
+    const f = (key, label, val, type, ph) => '<div class="field"><label>' + label + '</label><input class="input" id="bkd-' + key + '" type="' + (type || 'text') + '" value="' + esc(val || '') + '" placeholder="' + esc(ph || '') + '"></div>';
+    const secretPh = k => c[k + '_set'] ? t('backups.dest.secret_kept') : '';
+    modal(d.id ? t('backups.dest.edit') : t('backups.dest.add'),
+      f('name', t('common.name'), d.name) +
+      '<div class="field"><label>' + t('backups.dest.col_type') + '</label><select class="input" id="bkd-type" onchange="bkDestType()">' +
+        ['dir', 'webdav', 's3'].map(x => '<option value="' + x + '"' + (d.type === x ? ' selected' : '') + '>' + t('backups.dest.type.' + x) + '</option>').join('') + '</select></div>' +
+      '<div data-t="dir">' + f('path', t('backups.dest.path'), c.path, 'text', '/mnt/backup') + '</div>' +
+      '<div data-t="webdav">' + f('url', 'URL', c.url, 'text', 'https://cloud.example.com/remote.php/dav/files/me/gpx') + f('username', t('backups.dest.username'), c.username) + f('password', t('backups.dest.password'), '', 'password', secretPh('password')) + '</div>' +
+      '<div data-t="s3">' + f('endpoint', 'Endpoint', c.endpoint, 'text', 'https://s3.fr-par.scw.cloud') + f('region', t('backups.dest.region'), c.region, 'text', 'fr-par') + f('bucket', 'Bucket', c.bucket) + f('prefix', t('backups.dest.prefix'), c.prefix) + f('access_key', t('backups.dest.access_key'), c.access_key) + f('secret_key', t('backups.dest.secret_key'), '', 'password', secretPh('secret_key')) + '</div>' +
+      f('retention', t('backups.dest.retention_label'), d.retention, 'number') +
+      '<label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" id="bkd-enabled"' + (d.enabled ? ' checked' : '') + '> ' + t('common.enable') + '</label>' +
+      '<input type="hidden" id="bkd-id" value="' + esc(d.id || '') + '">',
+      '<button class="btn btn-secondary btn-sm" onclick="closeModal()">' + t('common.cancel') + '</button><button class="btn btn-primary btn-sm" onclick="bkDestSave()">' + t('common.save') + '</button>');
+    bkDestType();
+  };
+
+  window.bkDestType = function() {
+    const ty = document.getElementById('bkd-type').value;
+    document.querySelectorAll('[data-t]').forEach(el => { el.style.display = el.getAttribute('data-t') === ty ? '' : 'none'; });
+  };
+
+  window.bkDestSave = async function() {
+    const v = k => document.getElementById('bkd-' + k)?.value.trim() || '';
+    const type = v('type');
+    const keys = { dir: ['path'], webdav: ['url', 'username', 'password'], s3: ['endpoint', 'region', 'bucket', 'prefix', 'access_key', 'secret_key'] }[type];
+    const config = {};
+    keys.forEach(k => { config[k] = v(k); });
+    const id = v('id');
+    const body = { name: v('name'), type, enabled: document.getElementById('bkd-enabled').checked, retention: parseInt(v('retention'), 10) || 0, config };
+    try {
+      await api(id ? 'PUT' : 'POST', '/backups/destinations' + (id ? '/' + id : ''), body);
+      closeModal();
+      toast(t('backups.dest.saved'), 'success');
+      render();
+    } catch (e) { toast(e.message, 'error'); }
+  };
+
+  window.bkDestTest = async function(id) {
+    try {
+      const r = await api('POST', '/backups/destinations/' + id + '/test', {});
+      toast(r.ok ? t('backups.dest.test_ok') : t('backups.dest.test_failed', { msg: r.error }), r.ok ? 'success' : 'error');
+    } catch (e) { toast(e.message, 'error'); }
+  };
+
+  window.bkDestDelete = async function(id) {
+    if (!confirm(t('backups.dest.delete_confirm'))) return;
+    try { await api('DELETE', '/backups/destinations/' + id); render(); } catch (e) { toast(e.message, 'error'); }
+  };
 
   window.bkDownload = function(id, filename) {
     authDownload(`/api/v1/backups/snapshots/${id}`, filename);

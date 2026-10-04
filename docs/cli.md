@@ -142,7 +142,12 @@ goproxify backup list
 
 goproxify backup restore -file <chemin> [-yes]
 goproxify backup restore -id <snapshot-id>  [-yes]
+goproxify backup status
+goproxify backup verify <snapshot-id>
+goproxify backup destinations list|add|test|delete
 ```
+
+`status` affiche la clé, le dernier snapshot, les planifications manquées et l'état de chaque destination. `verify` contrôle la somme de contrôle et le déchiffrement d'un snapshot (code retour 1 si invalide). `destinations add -name <n> -type dir|webdav|s3 [-retention N]` prend `-path` (dir), `-url -username -password` (webdav) ou `-endpoint -bucket -access-key -secret-key [-region -prefix -path-style false]` (s3).
 
 Si le snapshot ou le fichier contient une section `secrets` (créée quand `GPX_BACKUP_KEY` est définie sur l'Admin), la restauration la rejoue aussi — mots de passe, MFA, clés, CA interne, fichiers d'état — à condition que l'Admin ait la même clé et que le token CLI soit celui d'un superadmin ; sinon `secrets_error` est renvoyé et le reste est restauré. Redémarrer l'Admin ensuite. Voir [sauvegardes.md](sauvegardes.md).
 
@@ -187,6 +192,8 @@ goproxify proxy get     <id> [-admin-url …] [-token …]
 goproxify proxy enable  <id> [-admin-url …] [-token …]
 goproxify proxy disable <id> [-admin-url …] [-token …]
 goproxify proxy metrics [-admin-url …] [-token …]
+goproxify proxy cache-purge <id> [-tag a,b] [-path /x,/y*] [-admin-url …] [-token …]
+  Sans -tag ni -path, tout le cache du proxy est vidé
 goproxify proxy delete  <id> [-y] [-admin-url …] [-token …]
   -y  Confirmation automatique
   -method  Validation ACME par la passerelle (sans fournisseur DNS) : `http-01` (port 80) ou `tls-alpn-01` (port 443), sans wildcard ; `renew` réutilise la méthode du domaine

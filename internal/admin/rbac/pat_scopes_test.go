@@ -111,6 +111,9 @@ func TestToolRequiredScope(t *testing.T) {
 	if rbac.ToolRequiredScope("update_proxy") != rbac.ScopeProxiesWrite {
 		t.Fatal()
 	}
+	if rbac.ToolRequiredScope("purge_proxy_cache") != rbac.ScopeProxiesWrite {
+		t.Error("purge_proxy_cache doit exiger proxies:write")
+	}
 	if rbac.ToolRequiredScope("set_proxy_enabled") != rbac.ScopeProxiesWrite {
 		t.Fatal()
 	}

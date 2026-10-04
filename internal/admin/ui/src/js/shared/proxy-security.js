@@ -1292,6 +1292,8 @@ window._psecBuildConfig = function(baseCfg) {
       enabled: true,
       mode: botMode === 'challenge' ? 'challenge' : (botMode === 'log' ? 'log' : 'block'),
       js_challenge: botMode === 'challenge',
+      ...Object.fromEntries(['challenge_provider', 'challenge_difficulty', 'challenge_ttl', 'challenge_site_key', 'challenge_provider_secret', 'challenge_exempt_paths', 'challenge_secret']
+        .filter(k => baseCfg?.bot?.[k] !== undefined).map(k => [k, baseCfg.bot[k]])),
     } : undefined,
     jwt: (jwtEnabled || jwtJwks) ? {
       enabled: !!jwtEnabled,

@@ -124,6 +124,9 @@ type CustomListsConfig struct {
 	IPs   []string `json:"ips,omitempty"`   // IP ou CIDR à bloquer
 	UAs   []string `json:"uas,omitempty"`   // sous-chaînes UA à bloquer
 	Paths []string `json:"paths,omitempty"` // préfixes de path à bloquer
+	// TLSFingerprints : signatures JA3 (MD5, 32 caractères hexadécimaux) ou JA4 (ex. t13d1516h2_8daaf6152771_02713d6af862)
+	// des clients à bannir. Ne s'applique qu'aux connexions TLS reçues par la passerelle (pas au HTTP clair ni à HTTP/3).
+	TLSFingerprints []string `json:"tls_fingerprints,omitempty"`
 }
 
 type ListsConfig struct {

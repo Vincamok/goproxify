@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/vincamok/goproxify/internal/edge/tlsfp"
 )
 
 func TestStripHostPort(t *testing.T) {
@@ -136,5 +138,33 @@ func TestAccessLoggerSkipsInternal(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	if got != 0 {
 		t.Errorf("internal path should not ship, got %d", got)
+	}
+}
+
+func TestAccessLoggerRecordsTLSFingerprint(t *testing.T) {
+	al := NewAccessLogger("")
+	got := make(chan ShipEntry, 16)
+	al.SetForwarder(func(batch []ShipEntry) {
+		for _, e := range batch {
+			got <- e
+		}
+	})
+	h := al.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+
+	req := httptest.NewRequest(http.MethodGet, "https://app.example.com/x", nil)
+	req.Host = "app.example.com"
+	req.RemoteAddr = "203.0.113.42:51234"
+	req = req.WithContext(tlsfp.WithContext(req.Context(), &tlsfp.Fingerprint{JA3Hash: "abc", JA4: "t13d0101h2_a_b"}))
+	for range 5 {
+		h.ServeHTTP(httptest.NewRecorder(), req)
+	}
+
+	select {
+	case e := <-got:
+		if e.TLSJA3 != "abc" || e.TLSJA4 != "t13d0101h2_a_b" {
+			t.Fatalf("empreintes absentes du log : %+v", e)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("aucune entrée expédiée")
 	}
 }

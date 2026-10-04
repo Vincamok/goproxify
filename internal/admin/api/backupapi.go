@@ -60,6 +60,21 @@ func (h *BackupHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.snapshotSummary(w, r, id)
 	case r.Method == http.MethodPost && sub == "snapshots" && id != "" && action == "restore":
 		h.restoreSnapshot(w, r, id)
+	case r.Method == http.MethodPost && sub == "snapshots" && id != "" && action == "verify":
+		h.verifySnapshot(w, r, id)
+	// Destinations externes et état
+	case r.Method == http.MethodGet && sub == "status":
+		jsonOK(w, h.Scheduler.Status())
+	case r.Method == http.MethodGet && sub == "destinations" && id == "":
+		h.listDestinations(w, r)
+	case r.Method == http.MethodPost && sub == "destinations" && id == "":
+		h.saveDestination(w, r, "")
+	case r.Method == http.MethodPut && sub == "destinations" && id != "" && action == "":
+		h.saveDestination(w, r, id)
+	case r.Method == http.MethodDelete && sub == "destinations" && id != "" && action == "":
+		h.deleteDestination(w, r, id)
+	case r.Method == http.MethodPost && sub == "destinations" && id != "" && action == "test":
+		h.testDestination(w, r, id)
 	// Proxy history
 	case r.Method == http.MethodGet && sub == "proxy-history" && id != "" && action == "":
 		h.listProxyHistory(w, r, id)
@@ -248,4 +263,57 @@ func (h *BackupHandler) restoreProxyVersion(w http.ResponseWriter, r *http.Reque
 		go h.Pusher.PushRoutes(context.Background())
 	}
 	jsonOK(w, map[string]string{"proxy_id": v.ProxyID, "restored_version": versionID})
+}
+
+// ── Destinations externes et vérification ─────────────────────────────────────
+
+func (h *BackupHandler) verifySnapshot(w http.ResponseWriter, _ *http.Request, id string) {
+	if err := h.Scheduler.VerifySnapshot(id); err != nil {
+		jsonOK(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	jsonOK(w, map[string]any{"ok": true})
+}
+
+func (h *BackupHandler) listDestinations(w http.ResponseWriter, _ *http.Request) {
+	ds, err := h.Scheduler.ListDestinations()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonOK(w, ds)
+}
+
+func (h *BackupHandler) saveDestination(w http.ResponseWriter, r *http.Request, id string) {
+	var d backup.Destination
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&d); err != nil {
+		writeErr(w, r, http.StatusBadRequest, "api.err.json")
+		return
+	}
+	d.ID = id
+	saved, err := h.Scheduler.SaveDestination(d)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if id == "" {
+		w.WriteHeader(http.StatusCreated)
+	}
+	jsonOK(w, saved)
+}
+
+func (h *BackupHandler) deleteDestination(w http.ResponseWriter, _ *http.Request, id string) {
+	if err := h.Scheduler.DeleteDestination(id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *BackupHandler) testDestination(w http.ResponseWriter, r *http.Request, id string) {
+	if err := h.Scheduler.TestDestination(r.Context(), id); err != nil {
+		jsonOK(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	jsonOK(w, map[string]any{"ok": true})
 }

@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/vincamok/goproxify/internal/edge/tlsfp"
 	"gopkg.in/lumberjack.v2"
 )
 
@@ -77,6 +78,8 @@ type accessEntry struct {
 	Referrer      string   `json:"referrer,omitempty"`
 	WAFMatches    []string `json:"waf_matches,omitempty"`
 	ThreatSignal  string   `json:"threat_signal,omitempty"`
+	TLSJA3        string   `json:"tls_ja3,omitempty"`
+	TLSJA4        string   `json:"tls_ja4,omitempty"`
 }
 
 // ShipEntry est le format attendu par l'Admin (WS access_log / POST /internal/v1/logs).
@@ -102,6 +105,8 @@ type ShipEntry struct {
 	RequestID     string   `json:"request_id,omitempty"`
 	WAFMatches    []string `json:"waf_matches,omitempty"`
 	ThreatSignal  string   `json:"threat_signal,omitempty"`
+	TLSJA3        string   `json:"tls_ja3,omitempty"`
+	TLSJA4        string   `json:"tls_ja4,omitempty"`
 }
 
 func NewAccessLogger(path string) *AccessLogger {
@@ -191,6 +196,8 @@ func (a *AccessLogger) ship() {
 				RequestID:    e.RequestID,
 				WAFMatches:   e.WAFMatches,
 				ThreatSignal: e.ThreatSignal,
+				TLSJA3:       e.TLSJA3,
+				TLSJA4:       e.TLSJA4,
 			}
 			payload[i] = se
 		}
@@ -421,6 +428,10 @@ func (a *AccessLogger) Middleware(next http.Handler) http.Handler {
 		a.anonymizeMu.RUnlock()
 		logIP, shipIP := ipFields(ip, anon, pseudo)
 
+		var fp tlsfp.Fingerprint
+		if f := tlsfp.FromContext(r.Context()); f != nil {
+			fp = *f
+		}
 		select {
 		case a.ch <- accessEntry{
 			Time:         start.UTC().Format(time.RFC3339Nano),
@@ -438,6 +449,8 @@ func (a *AccessLogger) Middleware(next http.Handler) http.Handler {
 			Referrer:     r.Referer(),
 			WAFMatches:   wafMatches,
 			ThreatSignal: threatSignal,
+			TLSJA3:       fp.JA3Hash,
+			TLSJA4:       fp.JA4,
 		}:
 		default:
 		}

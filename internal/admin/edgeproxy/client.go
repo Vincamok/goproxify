@@ -131,12 +131,14 @@ func (c *Client) Delete(ctx context.Context, t Target, id string) error {
 }
 
 // PurgeCache vide le cache disque d'une route sur cet Edge. Retourne le nombre
-// d'entrées supprimées (0 si le cache n'est pas activé pour cette route).
-func (c *Client) PurgeCache(ctx context.Context, t Target, id string) (int, error) {
+// d'entrées supprimées (0 si le cache n'est pas activé pour cette route). Sans
+// tags ni chemins, tout le cache de la route est vidé.
+func (c *Client) PurgeCache(ctx context.Context, t Target, id string, tags, paths []string) (int, error) {
 	var out struct {
 		Purged int `json:"purged"`
 	}
-	if err := c.do(ctx, t, http.MethodPost, "/internal/v1/proxies/"+id+"/cache/purge", nil, &out); err != nil {
+	body := map[string]any{"tags": tags, "paths": paths}
+	if err := c.do(ctx, t, http.MethodPost, "/internal/v1/proxies/"+id+"/cache/purge", body, &out); err != nil {
 		return 0, err
 	}
 	return out.Purged, nil

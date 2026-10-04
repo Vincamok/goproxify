@@ -274,7 +274,8 @@ function sentDrawerForm(cfg) {
       ${fld(t('security.threat.refresh'), '', `<input id="threat-refresh" class="input" value="${esc(lists.refresh_interval || '6h')}" placeholder="6h">`)}
       ${fld('IPs / CIDRs bloqués', '', ta('threat-custom-ips', 3, '192.168.1.0/24&#10;1.2.3.4', custom.ips))}
       ${fld('User-Agents bloqués', '', ta('threat-custom-uas', 3, 'badbot&#10;scrapy', custom.uas))}
-      ${fld('Paths bloqués (préfixes)', '', ta('threat-custom-paths', 3, '/admin/secret&#10;/phpmyadmin', custom.paths))}`)}
+      ${fld('Paths bloqués (préfixes)', '', ta('threat-custom-paths', 3, '/admin/secret&#10;/phpmyadmin', custom.paths))}
+      ${fld('Empreintes TLS bloquées', '(JA3 MD5 ou JA4, une par ligne ; TLS uniquement)', ta('threat-custom-tls', 3, 'e7d705a3286e19ea42f587b344ee6865&#10;t13d1516h2_8daaf6152771_02713d6af862', custom.tls_fingerprints))}`)}
     ${sec('exceptions', 'Exceptions', `
       ${fld(t('security.threat.wl_ips'), '', ta('threat-wl-ips', 2, '10.0.0.0/8&#10;203.0.113.1', wl.ips))}
       ${fld(t('security.threat.wl_uas'), '', ta('threat-wl-uas', 2, 'mon-crawler&#10;pingdom', wl.uas))}
@@ -413,7 +414,7 @@ function sentCollectConfig(enabled) {
       path_enabled: $('threat-path')?.checked ?? false,
       ip_enabled: $('threat-ip')?.checked ?? false,
     },
-    custom_lists: { ips: lines('threat-custom-ips'), uas: lines('threat-custom-uas'), paths: lines('threat-custom-paths') },
+    custom_lists: { ips: lines('threat-custom-ips'), uas: lines('threat-custom-uas'), paths: lines('threat-custom-paths'), tls_fingerprints: lines('threat-custom-tls') },
     whitelist: { ips: lines('threat-wl-ips'), uas: lines('threat-wl-uas'), paths: lines('threat-wl-paths') },
   };
 }

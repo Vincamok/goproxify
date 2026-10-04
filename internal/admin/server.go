@@ -208,6 +208,17 @@ func (s *Server) Start(ctx context.Context) error {
 			"certs": filepath.Join(s.cfg.Storage.BasePath, "certs"),
 		})
 	}
+	backupSched.SetNotifier(func(severity, title string, detail map[string]any) {
+		if s.alertingEngine == nil {
+			return
+		}
+		sev := alerting.SevCritical
+		if severity == "warning" {
+			sev = alerting.SevWarning
+		}
+		detail["title"] = title
+		s.alertingEngine.Emit(alerting.Event{Trigger: alerting.TriggerBackupFailed, Severity: sev, Component: "admin", Detail: detail})
+	})
 	proxiesH := &api.ProxiesHandler{DB: s.db, Log: s.log, Pusher: manager, Versioner: backupSched}
 	backupH := &api.BackupHandler{DB: s.db, Log: s.log, Scheduler: backupSched, Pusher: manager}
 	tokensH := &api.TokensHandler{

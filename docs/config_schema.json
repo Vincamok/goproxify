@@ -343,7 +343,7 @@
 
       "performance": {
         "cache_proxy":      { "enabled": false, "repertoire": "/etc/goproxify/cache", "validite": "10m" },
-        "compression_gzip": { "enabled": false, "niveau": 6, "taille_min_bytes": 1024 },
+        "compression":      { "enabled": false, "algorithms": ["zstd", "br", "gzip"], "min_length": 1024, "level": 0, "types": ["text/*", "application/json"] },
         "buffers":          { "client_max_body_size": "100m", "proxy_buffer_size": "4k" }
       },
 

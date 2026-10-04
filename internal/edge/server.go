@@ -6,6 +6,7 @@ package edge
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -32,6 +33,7 @@ import (
 	"github.com/vincamok/goproxify/internal/edge/middleware"
 	"github.com/vincamok/goproxify/internal/edge/portal"
 	"github.com/vincamok/goproxify/internal/edge/proxy"
+	"github.com/vincamok/goproxify/internal/edge/proxyproto"
 	"github.com/vincamok/goproxify/internal/edge/proxypipeline"
 	"github.com/vincamok/goproxify/internal/edge/proxystore"
 	edgequic "github.com/vincamok/goproxify/internal/edge/quic"
@@ -41,6 +43,7 @@ import (
 	"github.com/vincamok/goproxify/internal/edge/threat"
 	edgetls "github.com/vincamok/goproxify/internal/edge/tls"
 	edgetokens "github.com/vincamok/goproxify/internal/edge/tokens"
+	"github.com/vincamok/goproxify/internal/edge/tlsfp"
 	"github.com/vincamok/goproxify/internal/edge/tracing"
 	"github.com/vincamok/goproxify/internal/edge/tunnel"
 	"github.com/vincamok/goproxify/internal/edge/waf"
@@ -710,12 +713,36 @@ func (s *Server) startHTTP() error {
 		IdleTimeout:       idle,
 		MaxHeaderBytes:    s.cfg.MaxHeaderBytes(),
 	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("écoute TCP %s : %w", addr, err)
+	}
+	if ln, err = s.withProxyProtocol(ln); err != nil {
+		return err
+	}
 	go func() {
-		if err := s.httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := s.httpSrv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			s.log.Error("http server", "err", err)
 		}
 	}()
 	return nil
+}
+
+// withProxyProtocol enveloppe ln pour lire l'en-tête PROXY quand network.proxy_protocol est activé.
+func (s *Server) withProxyProtocol(ln net.Listener) (net.Listener, error) {
+	pp := s.cfg.Network.ProxyProtocol
+	if !pp.Enabled {
+		return ln, nil
+	}
+	trusted, err := proxyproto.ParseTrusted(pp.TrustedCIDRs)
+	if err == nil && len(trusted) == 0 {
+		err = errors.New("proxy_protocol : trusted_cidrs requis (sans source de confiance, n'importe quel client pourrait usurper son IP)")
+	}
+	if err != nil {
+		ln.Close()
+		return nil, err
+	}
+	return proxyproto.NewListener(ln, trusted), nil
 }
 
 func (s *Server) startHTTPS() error {
@@ -734,9 +761,14 @@ func (s *Server) startHTTPS() error {
 	if err != nil {
 		return fmt.Errorf("écoute TCP %s : %w", addr, err)
 	}
+	if ln, err = s.withProxyProtocol(ln); err != nil {
+		return err
+	}
 
 	s.ech.Bind(tlsCfg)
-	sniLn := &sniListener{inner: ln, table: s.table, log: s.log.Logger(), tlsCfg: tlsCfg, ech: s.ech}
+	// Empreintes JA3/JA4 des connexions TLS vivantes, retrouvées par http.Server via ConnContext.
+	fps := &sync.Map{}
+	sniLn := &sniListener{inner: ln, table: s.table, log: s.log.Logger(), tlsCfg: tlsCfg, ech: s.ech, fps: fps}
 
 	rh, r, w, idle := s.serverTimeouts()
 	s.httpsSrv = &http.Server{
@@ -747,8 +779,15 @@ func (s *Server) startHTTPS() error {
 		WriteTimeout:      w,
 		IdleTimeout:       idle,
 		MaxHeaderBytes:    s.cfg.MaxHeaderBytes(),
+		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
+			if fp, ok := fps.Load(c); ok {
+				return tlsfp.WithContext(ctx, fp.(*tlsfp.Fingerprint))
+			}
+			return ctx
+		},
 		ConnState: func(conn net.Conn, state http.ConnState) {
 			if state == http.StateClosed || state == http.StateHijacked {
+				fps.Delete(conn)
 				if tc, ok := conn.(*tls.Conn); ok {
 					sni := tc.ConnectionState().ServerName
 					metrics.TLS.ActiveConns.WithLabelValues(sni).Dec()
@@ -772,6 +811,7 @@ type sniListener struct {
 	log    *slog.Logger
 	tlsCfg *tls.Config
 	ech    *edgetls.ECHManager // clés ECH courantes ; la config TLS est choisie par connexion
+	fps    *sync.Map           // *tls.Conn → *tlsfp.Fingerprint, vidé à la fermeture (ConnState)
 }
 
 func (l *sniListener) Accept() (net.Conn, error) {
@@ -783,7 +823,7 @@ func (l *sniListener) Accept() (net.Conn, error) {
 		// Deadline courte : les scanners qui ouvrent TCP sans envoyer de ClientHello
 		// ne doivent pas bloquer la boucle Accept indéfiniment.
 		conn.SetReadDeadline(time.Now().Add(10 * time.Second)) //nolint:errcheck
-		sni, peeked, err := edgetls.PeekSNI(conn)
+		sni, fp, peeked, err := edgetls.PeekClientHello(conn)
 		conn.SetReadDeadline(time.Time{}) //nolint:errcheck
 		if err != nil {
 			conn.Close()
@@ -804,6 +844,9 @@ func (l *sniListener) Accept() (net.Conn, error) {
 			cfg = c
 		}
 		tlsConn := tls.Server(peeked, cfg)
+		if fp != nil && l.fps != nil {
+			l.fps.Store(tlsConn, fp)
+		}
 		go l.measureHandshake(tlsConn, sni)
 		return tlsConn, nil
 	}
@@ -837,6 +880,13 @@ func (l *sniListener) doPassthrough(client net.Conn, route *router.Route) {
 		return
 	}
 	defer upstream.Close()
+	if v := route.ProxyProtocol; v == "v1" || v == "v2" {
+		hdr := proxyproto.Header(v, proxyproto.AddrPort(client.RemoteAddr()), proxyproto.AddrPort(client.LocalAddr()))
+		if _, err := upstream.Write(hdr); err != nil {
+			l.log.Warn("passthrough: écriture PROXY protocol", "host", route.Host, "err", err)
+			return
+		}
+	}
 	l.log.Debug("passthrough", "host", route.Host, "target", target, "id", route.ID)
 
 	buf := middleware.GetBuf()

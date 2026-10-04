@@ -5,6 +5,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -23,12 +24,23 @@ import (
 type DiskCache struct {
 	dir string
 	mu  sync.Mutex
+
+	fmu        sync.Mutex
+	flights    map[string]*flight
+	refreshing map[string]bool
+}
+
+// flight regroupe les requêtes simultanées sur une même clé : une seule
+// interroge le backend, les autres attendent son résultat.
+type flight struct {
+	done chan struct{}
+	res  *fetched
 }
 
 // New crée un DiskCache utilisant dir comme répertoire de stockage.
 func New(dir string) *DiskCache {
 	_ = os.MkdirAll(dir, 0o755)
-	return &DiskCache{dir: dir}
+	return &DiskCache{dir: dir, flights: map[string]*flight{}, refreshing: map[string]bool{}}
 }
 
 type cacheEntry struct {
@@ -36,6 +48,12 @@ type cacheEntry struct {
 	Headers map[string][]string `json:"headers"`
 	Body    []byte              `json:"body"`
 	Expires time.Time           `json:"expires"`
+	// StaleUntil : fin de la fenêtre stale-while-revalidate (servie périmée pendant la revalidation).
+	StaleUntil time.Time `json:"stale_until,omitempty"`
+	// ErrorUntil : fin de la fenêtre stale-if-error (servie périmée si le backend échoue).
+	ErrorUntil time.Time `json:"error_until,omitempty"`
+	Tags       []string  `json:"tags,omitempty"`
+	URI        string    `json:"uri,omitempty"`
 }
 
 func cacheKey(r *http.Request) string {
@@ -123,7 +141,8 @@ func (dc *DiskCache) filePath(key string) string {
 	return fmt.Sprintf("%s/%s.json", dc.dir, key)
 }
 
-func (dc *DiskCache) get(key string) *cacheEntry {
+// load lit une entrée sans tenir compte de son expiration.
+func (dc *DiskCache) load(key string) *cacheEntry {
 	dc.mu.Lock()
 	defer dc.mu.Unlock()
 
@@ -132,13 +151,18 @@ func (dc *DiskCache) get(key string) *cacheEntry {
 		return nil
 	}
 	var entry cacheEntry
-	if err := json.Unmarshal(data, &entry); err != nil {
-		return nil
-	}
-	if time.Now().After(entry.Expires) {
+	if err := json.Unmarshal(data, &entry); err != nil || entry.Status == 0 {
 		return nil
 	}
 	return &entry
+}
+
+func (dc *DiskCache) get(key string) *cacheEntry {
+	entry := dc.load(key)
+	if entry == nil || time.Now().After(entry.Expires) {
+		return nil
+	}
+	return entry
 }
 
 func (dc *DiskCache) set(key string, entry *cacheEntry) {
@@ -155,6 +179,45 @@ func (dc *DiskCache) set(key string, entry *cacheEntry) {
 // Purge supprime toutes les entrées en cache de ce proxy (son répertoire est
 // dédié : un dir par route, voir dispatch.go). Retourne le nombre de fichiers supprimés.
 func (dc *DiskCache) Purge() (int, error) {
+	return dc.PurgeMatching(PurgeSelector{})
+}
+
+// PurgeSelector cible des entrées : par tag (en-tête Cache-Tag / Surrogate-Key
+// de la réponse) ou par URL (chemin, avec ou sans query ; suffixe "*" = préfixe).
+// Un sélecteur vide vise tout le cache.
+type PurgeSelector struct {
+	Tags  []string `json:"tags,omitempty"`
+	Paths []string `json:"paths,omitempty"`
+}
+
+func (sel PurgeSelector) all() bool { return len(sel.Tags) == 0 && len(sel.Paths) == 0 }
+
+func (sel PurgeSelector) matches(e *cacheEntry) bool {
+	for _, want := range sel.Tags {
+		for _, t := range e.Tags {
+			if t == want {
+				return true
+			}
+		}
+	}
+	path := e.URI
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		path = path[:i]
+	}
+	for _, p := range sel.Paths {
+		if prefix, ok := strings.CutSuffix(p, "*"); ok {
+			if strings.HasPrefix(e.URI, prefix) {
+				return true
+			}
+		} else if p == e.URI || p == path {
+			return true
+		}
+	}
+	return false
+}
+
+// PurgeMatching supprime les entrées visées par sel et retourne leur nombre.
+func (dc *DiskCache) PurgeMatching(sel PurgeSelector) (int, error) {
 	dc.mu.Lock()
 	defer dc.mu.Unlock()
 
@@ -170,7 +233,18 @@ func (dc *DiskCache) Purge() (int, error) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
-		if err := os.Remove(dc.dir + "/" + e.Name()); err == nil {
+		path := dc.dir + "/" + e.Name()
+		if !sel.all() {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			var entry cacheEntry
+			if json.Unmarshal(data, &entry) != nil || entry.Status == 0 || !sel.matches(&entry) {
+				continue
+			}
+		}
+		if err := os.Remove(path); err == nil {
 			n++
 		}
 	}
@@ -190,6 +264,40 @@ func parseMaxAge(cc string) int {
 		}
 	}
 	return -1
+}
+
+// parseDirective extrait la valeur entière (secondes) d'une directive
+// Cache-Control (ex. stale-while-revalidate). Retourne -1 si absente ou invalide.
+func parseDirective(cc, name string) int {
+	for _, part := range strings.Split(cc, ",") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(part), name+"="); ok {
+			if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n >= 0 {
+				return n
+			}
+		}
+	}
+	return -1
+}
+
+// extractTags lit puis retire Cache-Tag (virgules) et Surrogate-Key (espaces) :
+// ces en-têtes ne concernent que le cache, pas le client.
+func extractTags(h http.Header) []string {
+	var tags []string
+	for _, name := range []string{"Cache-Tag", "Surrogate-Key"} {
+		for _, line := range h.Values(name) {
+			tags = append(tags, strings.FieldsFunc(line, func(r rune) bool { return r == ',' || r == ' ' })...)
+		}
+		h.Del(name)
+	}
+	return tags
+}
+
+// staleWindow retourne la durée de tolérance : directive du backend, sinon valeur de configuration.
+func staleWindow(cc, directive, cfgValue string) time.Duration {
+	if n := parseDirective(cc, directive); n >= 0 {
+		return time.Duration(n) * time.Second
+	}
+	return parseTTL(cfgValue)
 }
 
 // responseRecorder capture la réponse du handler suivant.
@@ -247,55 +355,168 @@ func (dc *DiskCache) MiddlewareWithConfig(cfg *router.CacheConfig) func(http.Han
 			}
 			key := variantKey(primary, r, vary, cfg)
 
-			if entry := dc.get(key); entry != nil {
-				for name, vals := range entry.Headers {
-					for _, v := range vals {
-						w.Header().Add(name, v)
-					}
+			now := time.Now()
+			old := dc.load(key)
+			if old != nil {
+				if now.Before(old.Expires) {
+					writeEntry(w, old, "HIT")
+					return
 				}
-				w.Header().Set("X-Cache", "HIT")
-				w.WriteHeader(entry.Status)
-				w.Write(entry.Body) //nolint:errcheck
-				return
-			}
-
-			rec := &responseRecorder{
-				code:    http.StatusOK,
-				headers: make(http.Header),
-			}
-			next.ServeHTTP(rec, r)
-
-			w.Header().Set("X-Cache", "MISS")
-			for name, vals := range rec.headers {
-				for _, v := range vals {
-					w.Header().Add(name, v)
+				if now.Before(old.StaleUntil) {
+					writeEntry(w, old, "STALE")
+					dc.refreshAsync(next, r, cfg, key, primary, vary, old)
+					return
 				}
 			}
-			w.WriteHeader(rec.code)
-			w.Write(rec.buf.Bytes()) //nolint:errcheck
 
-			// Déterminer le TTL à appliquer
-			ttl := resolveTTL(rec.code, rec.headers, cfg)
-			if ttl <= 0 || !responseCacheable(rec.headers) {
+			fetch := func() *fetched { return dc.fetchOrigin(next, r, cfg, primary, vary, old) }
+			var f *fetched
+			shared := false
+			if cfg != nil && cfg.DisableCoalescing {
+				f = fetch()
+			} else {
+				f, shared = dc.coalesce(r, key, primary, cfg, fetch)
+			}
+
+			if f.rec.code >= 500 && old != nil && now.Before(old.ErrorUntil) {
+				writeEntry(w, old, "STALE")
 				return
 			}
-			names, star := parseVary(rec.headers)
-			if star {
-				return
+			xc := "MISS"
+			if shared {
+				xc = "COALESCED"
 			}
-			if len(names) > 0 || len(vary) > 0 {
-				data, _ := json.Marshal(names)
-				dc.setRaw(primary+"-vary", data)
-				key = variantKey(primary, r, names, cfg)
-			}
-			dc.set(key, &cacheEntry{
-				Status:  rec.code,
-				Headers: map[string][]string(rec.headers),
-				Body:    rec.buf.Bytes(),
-				Expires: time.Now().Add(ttl),
-			})
+			writeRec(w, f.rec, xc)
 		})
 	}
+}
+
+type fetched struct {
+	rec   *responseRecorder
+	key   string   // clé sous laquelle la réponse est stockée ("" si non stockée)
+	names []string // en-têtes Vary de la réponse
+}
+
+// fetchOrigin interroge le backend, puis stocke la réponse si elle est cacheable.
+// old est l'entrée périmée éventuelle : une 5xx ne la remplace pas tant que sa
+// fenêtre stale-if-error court.
+func (dc *DiskCache) fetchOrigin(next http.Handler, r *http.Request, cfg *router.CacheConfig, primary string, vary []string, old *cacheEntry) *fetched {
+	rec := &responseRecorder{code: http.StatusOK, headers: make(http.Header)}
+	next.ServeHTTP(rec, r)
+	f := &fetched{rec: rec}
+
+	tags := extractTags(rec.headers)
+	ttl := resolveTTL(rec.code, rec.headers, cfg)
+	if ttl <= 0 || !responseCacheable(rec.headers) {
+		return f
+	}
+	if rec.code >= 500 && old != nil && time.Now().Before(old.ErrorUntil) {
+		return f
+	}
+	names, star := parseVary(rec.headers)
+	if star {
+		return f
+	}
+	key := variantKey(primary, r, vary, cfg)
+	if len(names) > 0 || len(vary) > 0 {
+		data, _ := json.Marshal(names)
+		dc.setRaw(primary+"-vary", data)
+		key = variantKey(primary, r, names, cfg)
+	}
+
+	cc := rec.headers.Get("Cache-Control")
+	var swr, sie string
+	if cfg != nil {
+		swr, sie = cfg.StaleWhileRevalidate, cfg.StaleIfError
+	}
+	expires := time.Now().Add(ttl)
+	dc.set(key, &cacheEntry{
+		Status:     rec.code,
+		Headers:    map[string][]string(rec.headers),
+		Body:       rec.buf.Bytes(),
+		Expires:    expires,
+		StaleUntil: expires.Add(staleWindow(cc, "stale-while-revalidate", swr)),
+		ErrorUntil: expires.Add(staleWindow(cc, "stale-if-error", sie)),
+		Tags:       tags,
+		URI:        r.URL.RequestURI(),
+	})
+	f.key, f.names = key, names
+	return f
+}
+
+// coalesce exécute fn une seule fois pour les requêtes simultanées sur key. Un
+// suiveur ne réutilise la réponse du meneur que si elle est stockée sous la clé
+// qu'il aurait calculée lui-même (même variante) ; sinon il interroge le backend.
+func (dc *DiskCache) coalesce(r *http.Request, key, primary string, cfg *router.CacheConfig, fn func() *fetched) (*fetched, bool) {
+	dc.fmu.Lock()
+	if fl, ok := dc.flights[key]; ok {
+		dc.fmu.Unlock()
+		select {
+		case <-fl.done:
+		case <-r.Context().Done():
+			return &fetched{rec: &responseRecorder{code: http.StatusBadGateway, headers: make(http.Header)}}, false
+		}
+		if fl.res != nil && fl.res.key != "" && variantKey(primary, r, fl.res.names, cfg) == fl.res.key {
+			return fl.res, true
+		}
+		return fn(), false
+	}
+	fl := &flight{done: make(chan struct{})}
+	dc.flights[key] = fl
+	dc.fmu.Unlock()
+
+	defer func() {
+		dc.fmu.Lock()
+		delete(dc.flights, key)
+		dc.fmu.Unlock()
+		close(fl.done)
+	}()
+	fl.res = fn()
+	return fl.res, false
+}
+
+// refreshAsync revalide une entrée servie périmée (stale-while-revalidate), une
+// seule revalidation à la fois par clé.
+func (dc *DiskCache) refreshAsync(next http.Handler, r *http.Request, cfg *router.CacheConfig, key, primary string, vary []string, old *cacheEntry) {
+	dc.fmu.Lock()
+	if dc.refreshing[key] {
+		dc.fmu.Unlock()
+		return
+	}
+	dc.refreshing[key] = true
+	dc.fmu.Unlock()
+
+	rr := r.Clone(context.WithoutCancel(r.Context()))
+	go func() {
+		defer func() {
+			dc.fmu.Lock()
+			delete(dc.refreshing, key)
+			dc.fmu.Unlock()
+		}()
+		dc.fetchOrigin(next, rr, cfg, primary, vary, old)
+	}()
+}
+
+func writeEntry(w http.ResponseWriter, e *cacheEntry, xcache string) {
+	for name, vals := range e.Headers {
+		for _, v := range vals {
+			w.Header().Add(name, v)
+		}
+	}
+	w.Header().Set("X-Cache", xcache)
+	w.WriteHeader(e.Status)
+	w.Write(e.Body) //nolint:errcheck
+}
+
+func writeRec(w http.ResponseWriter, rec *responseRecorder, xcache string) {
+	for name, vals := range rec.headers {
+		for _, v := range vals {
+			w.Header().Add(name, v)
+		}
+	}
+	w.Header().Set("X-Cache", xcache)
+	w.WriteHeader(rec.code)
+	w.Write(rec.buf.Bytes()) //nolint:errcheck
 }
 
 // isBypass retourne vrai si la requête doit contourner le cache.

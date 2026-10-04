@@ -6,6 +6,8 @@ package tls
 import (
 	"fmt"
 	"net"
+
+	"github.com/vincamok/goproxify/internal/edge/tlsfp"
 )
 
 const maxClientHelloRecord = 16 << 10 // 16 KiB — ClientHello TLS 1.3 + PQ dépasse souvent 1 KiB
@@ -20,6 +22,13 @@ const maxClientHelloRecord = 16 << 10 // 16 KiB — ClientHello TLS 1.3 + PQ dé
 //
 // Retourne ("", peeked, nil) si la connexion n'est pas TLS ou si le SNI est absent.
 func PeekSNI(conn net.Conn) (sni string, peeked net.Conn, err error) {
+	sni, _, peeked, err = PeekClientHello(conn)
+	return sni, peeked, err
+}
+
+// PeekClientHello fait comme PeekSNI et calcule en plus l'empreinte JA3/JA4 du ClientHello
+// (nil si la connexion n'est pas du TLS).
+func PeekClientHello(conn net.Conn) (sni string, fp *tlsfp.Fingerprint, peeked net.Conn, err error) {
 	buf := make([]byte, 0, 2048)
 	tmp := make([]byte, 2048)
 
@@ -30,17 +39,17 @@ func PeekSNI(conn net.Conn) (sni string, peeked net.Conn, err error) {
 			buf = append(buf, tmp[:n]...)
 		}
 		if rerr != nil {
-			return "", &peekConn{Conn: conn, buf: buf}, rerr
+			return "", nil, &peekConn{Conn: conn, buf: buf}, rerr
 		}
 	}
 
 	if buf[0] != 0x16 { // ContentType: Handshake
-		return "", &peekConn{Conn: conn, buf: buf}, nil
+		return "", nil, &peekConn{Conn: conn, buf: buf}, nil
 	}
 	recLen := int(buf[3])<<8 | int(buf[4])
 	need := 5 + recLen
 	if need > maxClientHelloRecord {
-		return "", &peekConn{Conn: conn, buf: buf}, fmt.Errorf("tls ClientHello trop grand: %d octets", recLen)
+		return "", nil, &peekConn{Conn: conn, buf: buf}, fmt.Errorf("tls ClientHello trop grand: %d octets", recLen)
 	}
 
 	for len(buf) < need {
@@ -49,12 +58,12 @@ func PeekSNI(conn net.Conn) (sni string, peeked net.Conn, err error) {
 			buf = append(buf, tmp[:n]...)
 		}
 		if rerr != nil {
-			return "", &peekConn{Conn: conn, buf: buf}, rerr
+			return "", nil, &peekConn{Conn: conn, buf: buf}, rerr
 		}
 	}
 
 	sni = extractSNI(buf[:need])
-	return sni, &peekConn{Conn: conn, buf: buf}, nil
+	return sni, tlsfp.Parse(buf[:need]), &peekConn{Conn: conn, buf: buf}, nil
 }
 
 // extractSNI parse manuellement le ClientHello TLS pour trouver le SNI.

@@ -296,6 +296,7 @@ func (s *Server) handlerForRoute(route *router.Route, locPath string) http.Handl
 		h = stripRequestIDResponse(h)
 	}
 	h = middleware.Transform(route.Transform)(h)
+	h = middleware.Compress(route.Compression)(h)
 
 	s.dispatchHandlers.Store(key, &cachedDispatch{gen: gen, h: h})
 	return h

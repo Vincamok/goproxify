@@ -157,6 +157,40 @@ func runProxy() {
 		}
 		fmt.Printf("Proxy %s supprimé.\n", id)
 
+	case "cache-purge":
+		args := parseFlags(os.Args[3:])
+		id := flagValue(args, "-id", "")
+		if id == "" && len(os.Args) > 3 && !strings.HasPrefix(os.Args[3], "-") {
+			id = os.Args[3]
+		}
+		if id == "" {
+			fmt.Fprintln(os.Stderr, "usage: goproxify proxy cache-purge <id> [-tag a,b] [-path /x,/y*]")
+			os.Exit(1)
+		}
+		splitList := func(key string) []string {
+			var out []string
+			for _, s := range strings.Split(flagValue(args, key, ""), ",") {
+				if s = strings.TrimSpace(s); s != "" {
+					out = append(out, s)
+				}
+			}
+			return out
+		}
+		client, err := newAdminClient(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+			os.Exit(1)
+		}
+		var out struct {
+			Purged int `json:"purged"`
+		}
+		body := map[string]any{"tags": splitList("-tag"), "paths": splitList("-path")}
+		if _, err := client.DoJSON("POST", "/api/v1/proxies/"+url.PathEscape(id)+"/cache/purge", body, &out, 200); err != nil {
+			fmt.Fprintf(os.Stderr, "proxy cache-purge : %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("%d entrée(s) supprimée(s) du cache de %s.\n", out.Purged, id)
+
 	case "help":
 		fmt.Print(`Usage: goproxify proxy <sous-commande> [options]
 
@@ -167,12 +201,15 @@ Sous-commandes :
   disable Désactive un proxy
   delete  Supprime un proxy
   metrics Débit, erreurs et p95 par host (dernier relevé)
+  cache-purge Vide le cache HTTP d'un proxy (tout, par tag ou par chemin)
 
 goproxify proxy list   [-admin-url …] [-token …]
 goproxify proxy get    <id> [-admin-url …] [-token …]
 goproxify proxy enable <id> [-admin-url …] [-token …]
 goproxify proxy disable <id> [-admin-url …] [-token …]
 goproxify proxy metrics [-admin-url …] [-token …]
+goproxify proxy cache-purge <id> [-tag a,b] [-path /x,/y*] [-admin-url …] [-token …]
+  Sans -tag ni -path, tout le cache du proxy est vidé.
 goproxify proxy delete <id> [-y] [-admin-url …] [-token …]
   -y  Confirmation automatique (skip prompt)
 `)

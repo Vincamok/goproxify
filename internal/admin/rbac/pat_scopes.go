@@ -101,7 +101,7 @@ func ScopeCatalog() []ScopeMeta {
 // la carte scope → outils de /mcp-access sans dupliquer ToolRequiredScope.
 // Doit contenir exactement les outils du serveur MCP (vérifié par un test de internal/admin/mcp).
 var mcpTools = []string{
-	"list_proxies", "get_proxy", "create_proxy", "update_proxy", "set_proxy_enabled", "delete_proxy",
+	"list_proxies", "get_proxy", "create_proxy", "update_proxy", "set_proxy_enabled", "delete_proxy", "purge_proxy_cache",
 	"list_nodes", "list_agents", "list_declared_nodes", "get_topology_live", "get_architecture",
 	"approve_agent", "revoke_agent", "create_declared_node", "delete_declared_node",
 	"create_bootstrap_ticket", "accept_node", "reject_node",
@@ -228,7 +228,7 @@ func ToolRequiredScope(tool string) string {
 	switch tool {
 	case "list_proxies", "get_proxy":
 		return ScopeProxiesRead
-	case "create_proxy", "update_proxy", "set_proxy_enabled":
+	case "create_proxy", "update_proxy", "set_proxy_enabled", "purge_proxy_cache":
 		return ScopeProxiesWrite
 	case "delete_proxy":
 		return ScopeProxiesDelete

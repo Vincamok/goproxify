@@ -4,16 +4,12 @@
 package middleware
 
 import (
-	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/vincamok/goproxify/internal/edge/metrics"
 	"github.com/vincamok/goproxify/internal/edge/router"
@@ -49,6 +45,10 @@ func BotProtection(cfg *router.BotConfig) func(http.Handler) http.Handler {
 		if secret == "" {
 			secret = processBotSecret()
 		}
+		var challenge *botChallenge
+		if jsChallenge {
+			challenge = newBotChallenge(cfg, secret)
+		}
 
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ua := r.Header.Get("User-Agent")
@@ -72,12 +72,19 @@ func BotProtection(cfg *router.BotConfig) func(http.Handler) http.Handler {
 				}
 			}
 
-			// 2. JS Challenge
+			// 2. Challenge navigateur (preuve de travail ou captcha)
 			if jsChallenge {
-				if !hasChallengeProof(r, secret) {
-					metrics.Pipeline.BlockedTotal.WithLabelValues(r.Host, "bot", "js_challenge").Inc()
-					serveChallengeJS(w, r, secret)
+				if r.Method == http.MethodPost && r.URL.Path == botChallengePath {
+					challenge.handleVerify(w, r)
 					return
+				}
+				if !challenge.isExempt(r.URL.Path) {
+					if !challenge.hasProof(r) {
+						metrics.Pipeline.BlockedTotal.WithLabelValues(r.Host, "bot", "js_challenge").Inc()
+						challenge.serve(w, r)
+						return
+					}
+					stripCookie(r, botCookie)
 				}
 			}
 
@@ -104,59 +111,13 @@ func matchesUABlacklist(ua string, blacklist []string) bool {
 	return false
 }
 
-func hasChallengeProof(r *http.Request, secret string) bool {
-	c, err := r.Cookie("_gpx_bot")
-	if err != nil || c.Value == "" {
-		return false
+// stripCookie retire un cookie de la requête transmise au backend : la preuve ne le concerne pas.
+func stripCookie(r *http.Request, name string) {
+	cookies := r.Cookies()
+	r.Header.Del("Cookie")
+	for _, c := range cookies {
+		if c.Name != name {
+			r.AddCookie(c)
+		}
 	}
-	parts := strings.SplitN(c.Value, ".", 2)
-	if len(parts) != 2 || len(parts[0]) < 16 || parts[1] == "" {
-		return false
-	}
-	return hmac.Equal([]byte(parts[1]), []byte(signChallengeToken(secret, parts[0])))
-}
-
-func serveChallengeJS(w http.ResponseWriter, r *http.Request, secret string) {
-	token := generateChallengeToken()
-	signed := token + "." + signChallengeToken(secret, token)
-	redirectJSON, _ := json.Marshal(SafeLocalRedirect(r.URL.RequestURI()))
-	tokenJSON, _ := json.Marshal(signed)
-	secureAttr := ""
-	if CookieSecure(r) {
-		secureAttr = "; Secure"
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache, no-store")
-	w.WriteHeader(http.StatusOK)
-	page := `<!DOCTYPE html>
-<html>
-<head><title>Checking your browser...</title></head>
-<body>
-<p>Checking your browser, please wait...</p>
-<script>
-(function(){
-  var t = ` + string(tokenJSON) + `;
-  document.cookie = "_gpx_bot=" + encodeURIComponent(t) + "; path=/; SameSite=Lax` + secureAttr + `; expires=" +
-    new Date(Date.now() + 86400000).toUTCString();
-  window.location.href = ` + string(redirectJSON) + `;
-})();
-</script>
-</body>
-</html>`
-	w.Write([]byte(page)) //nolint:errcheck
-}
-
-func signChallengeToken(secret, token string) string {
-	mac := hmac.New(sha256.New, []byte(secret))
-	_, _ = mac.Write([]byte(token))
-	return hex.EncodeToString(mac.Sum(nil))
-}
-
-func generateChallengeToken() string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return hex.EncodeToString([]byte(time.Now().String()))
-	}
-	return hex.EncodeToString(b)
 }

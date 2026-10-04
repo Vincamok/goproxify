@@ -1157,12 +1157,26 @@ window.openProxyModal = async function(id, initialTab, secTab, opts = {}) {
                 <span style="font-size:13px;font-weight:500;">Cache proxy</span>
               </label>
               <div class="field" style="margin:0;"><label class="field-label" style="font-size:11px">TTL cache</label><input id="p-cache-ttl" class="input" placeholder="1h" value="${esc(cfg.performance?.cache_proxy?.ttl||'')}"></div>
-              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-                <label class="toggle"><input type="checkbox" id="p-gzip-enabled" ${cfg.performance?.compression_gzip?.enabled?'checked':''}><span class="toggle-slider"></span></label>
-                <span style="font-size:13px;font-weight:500;">Compression gzip</span>
-              </label>
-              <div class="field" style="margin:0;"><label class="field-label" style="font-size:11px">Min size (octets)</label><input id="p-gzip-minsize" class="input" type="number" placeholder="1024" value="${cfg.performance?.compression_gzip?.min_length||''}"></div>
             </div>
+            ${(() => {
+              const comp = cfg.compression || (cfg.performance?.compression_gzip?.enabled ? { enabled: true, algorithms: ['gzip'], min_length: cfg.performance.compression_gzip.min_length } : {});
+              const algos = comp.algorithms?.length ? comp.algorithms : ['zstd', 'br', 'gzip'];
+              return `
+            <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                <label class="toggle"><input type="checkbox" id="p-comp-enabled" ${comp.enabled?'checked':''}><span class="toggle-slider"></span></label>
+                <span style="font-size:13px;font-weight:500;">Compression des réponses</span>
+              </label>
+              <div style="font-size:11px;color:var(--text3);margin:6px 0 8px;">Négociée selon l'<code>Accept-Encoding</code> du client, dans l'ordre de préférence ci-dessous (zstd, puis Brotli, puis gzip). Les contenus déjà compressés ou binaires (images, vidéos, archives) et les flux SSE sont laissés tels quels.</div>
+              <div style="display:flex;gap:16px;margin-bottom:10px;">
+                ${[['zstd','Zstandard'],['br','Brotli'],['gzip','gzip']].map(([k,l]) => `<label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" class="p-comp-algo" value="${k}" ${algos.includes(k)?'checked':''}> ${l}</label>`).join('')}
+              </div>
+              <div class="gp-split-2" style="gap:10px;">
+                <div class="field" style="margin:0;"><label class="field-label" style="font-size:11px">Taille min (octets)</label><input id="p-comp-minsize" class="input" type="number" min="0" placeholder="1024" value="${comp.min_length||''}"></div>
+                <div class="field" style="margin:0;"><label class="field-label" style="font-size:11px">Niveau (1 rapide – 9 max, vide = défaut)</label><input id="p-comp-level" class="input" type="number" min="1" max="9" placeholder="défaut" value="${comp.level||''}"></div>
+              </div>
+            </div>`;
+            })()}
             <div class="field" style="margin-top:10px;max-width:50%;"><label class="field-label" style="font-size:11px">Max body client (Mo)</label><input id="p-body-size" class="input" type="number" min="1" placeholder="100" value="${cfg.max_body_size > 0 ? Math.round(cfg.max_body_size/1048576) : ''}"></div>
           </div>
           <!-- Cache avancé -->
@@ -1904,12 +1918,19 @@ window.saveProxy = async function(id, opts = {}) {
   // Performance
   const cacheEnabled = document.getElementById('p-cache-enabled')?.checked;
   const cacheTtl = document.getElementById('p-cache-ttl')?.value.trim();
-  const gzipEnabled = document.getElementById('p-gzip-enabled')?.checked;
-  const gzipMin = parseInt(document.getElementById('p-gzip-minsize')?.value||'0');
+  const compEnabled = document.getElementById('p-comp-enabled')?.checked;
+  const compAlgos = Array.from(document.querySelectorAll('.p-comp-algo:checked')).map(el => el.value);
+  const compMin = parseInt(document.getElementById('p-comp-minsize')?.value||'0');
+  const compLevel = parseInt(document.getElementById('p-comp-level')?.value||'0');
+  const compression = compEnabled ? {
+    enabled: true,
+    ...(compAlgos.length && compAlgos.length < 3 ? { algorithms: ['zstd','br','gzip'].filter(a => compAlgos.includes(a)) } : {}),
+    ...(compMin > 0 ? { min_length: compMin } : {}),
+    ...(compLevel > 0 ? { level: Math.min(compLevel, 9) } : {}),
+  } : undefined;
   const bodySizeMB = parseInt(document.getElementById('p-body-size')?.value||'0');
-  const performance = (cacheEnabled || gzipEnabled) ? {
-    ...(cacheEnabled || cacheTtl ? { cache_proxy: { enabled: cacheEnabled, ttl: cacheTtl||undefined } } : {}),
-    ...(gzipEnabled || gzipMin ? { compression_gzip: { enabled: gzipEnabled, min_length: gzipMin||undefined } } : {}),
+  const performance = cacheEnabled ? {
+    cache_proxy: { enabled: cacheEnabled, ttl: cacheTtl||undefined },
   } : undefined;
 
   // Cache avancé
@@ -2036,6 +2057,7 @@ window.saveProxy = async function(id, opts = {}) {
     ...(headers ? { headers } : {}),
     headers_manipulation,
     ...(performance ? { performance } : {}),
+    ...(compression ? { compression } : {}),
     ...(protocols ? { protocols } : {}),
     ...(bodySizeMB > 0 ? { max_body_size: bodySizeMB * 1048576 } : {}),
     ...(connectTimeoutS > 0 ? { connect_timeout: connectTimeoutS * 1e9 } : {}),

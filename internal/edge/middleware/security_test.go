@@ -79,53 +79,6 @@ func TestBotUABlacklistAndMonitor(t *testing.T) {
 	}
 }
 
-func TestBotJSChallengeHMAC(t *testing.T) {
-	secret := "test-secret-key"
-	nextOK := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	})
-	h := BotProtection(&router.BotConfig{
-		Enabled:         true,
-		Mode:            "challenge",
-		JSChallenge:     true,
-		ChallengeSecret: secret,
-	})(nextOK)
-
-	// Sans cookie → challenge HTML
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/app?x=1", nil)
-	req.Header.Set("User-Agent", "Mozilla/5.0")
-	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "_gpx_bot=") {
-		t.Fatalf("challenge page missing: %d %s", rr.Code, rr.Body.String())
-	}
-	if strings.Contains(rr.Body.String(), "</script>") && strings.Contains(rr.Body.String(), `"/app?x=1"`) {
-		// redirect JSON-escaped — OK
-	}
-
-	// Cookie forgé → refusé
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/app", nil)
-	req.Header.Set("User-Agent", "Mozilla/5.0")
-	req.AddCookie(&http.Cookie{Name: "_gpx_bot", Value: "aaaaaaaaaaaaaaaa.deadbeef"})
-	h.ServeHTTP(rr, req)
-	if !strings.Contains(rr.Body.String(), "Checking your browser") {
-		t.Fatal("forged cookie should not pass")
-	}
-
-	// Cookie signé → OK
-	token := "0123456789abcdef0123456789abcdef"
-	signed := token + "." + signChallengeToken(secret, token)
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/app", nil)
-	req.Header.Set("User-Agent", "Mozilla/5.0")
-	req.AddCookie(&http.Cookie{Name: "_gpx_bot", Value: signed})
-	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusNoContent {
-		t.Fatalf("valid cookie: %d body=%s", rr.Code, rr.Body.String())
-	}
-}
-
 func TestBotChallengeEscapesRedirect(t *testing.T) {
 	h := BotProtection(&router.BotConfig{
 		Enabled:         true,

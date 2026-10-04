@@ -287,6 +287,15 @@ var tools = []map[string]any{
 		"description": "Supprime un proxy par son ID.",
 		"inputSchema": schema(req("id", "string", "ID du proxy à supprimer")),
 	},
+	{
+		"name":        "purge_proxy_cache",
+		"description": "Vide le cache HTTP d'un proxy sur toutes les passerelles : tout le cache, ou seulement les entrées portant un tag (Cache-Tag / Surrogate-Key) ou correspondant à un chemin.",
+		"inputSchema": schema(
+			req("id", "string", "ID, nom ou domaine du proxy"),
+			opt("tags", "string", "Tags à purger, séparés par des virgules"),
+			opt("paths", "string", "Chemins à purger (avec ou sans query, suffixe * = préfixe), séparés par des virgules"),
+		),
+	},
 	// Nœuds / Agents
 	{
 		"name":        "list_nodes",
@@ -776,6 +785,8 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 	case "delete_proxy":
 		id, _ := p.Arguments["id"].(string)
 		result, toolErr = h.toolDeleteProxy(r, id)
+	case "purge_proxy_cache":
+		result, toolErr = h.toolPurgeProxyCache(r, p.Arguments)
 	case "list_nodes":
 		result, toolErr = h.toolListNodes(r)
 	case "list_agents":
@@ -1366,6 +1377,46 @@ func (h *Handler) toolDeleteProxy(r *http.Request, id string) (any, error) {
 	}
 	_ = admindb.WriteAudit(h.DB, actor, "delete", "proxy:"+id, "")
 	return map[string]any{"deleted": id}, nil
+}
+
+func (h *Handler) toolPurgeProxyCache(r *http.Request, args map[string]any) (any, error) {
+	idArg, _ := args["id"].(string)
+	env, err := h.resolveProxyEnvelope(r.Context(), idArg)
+	if err != nil {
+		return nil, err
+	}
+	splitList := func(key string) []string {
+		raw, _ := args[key].(string)
+		var out []string
+		for _, s := range strings.Split(raw, ",") {
+			if s = strings.TrimSpace(s); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	tags, paths := splitList("tags"), splitList("paths")
+	targets, err := edgeproxy.ListTargets(r.Context(), h.DB)
+	if err != nil || len(targets) == 0 {
+		return nil, fmt.Errorf("aucune passerelle joignable")
+	}
+	client := edgeproxy.NewClient()
+	total, ok := 0, 0
+	var lastErr error
+	for _, t := range targets {
+		n, err := client.PurgeCache(r.Context(), t, env.ID, tags, paths)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		total += n
+		ok++
+	}
+	if ok == 0 {
+		return nil, fmt.Errorf("purge échouée : %w", lastErr)
+	}
+	_ = admindb.WriteAudit(h.DB, adminauth.ActorFromContext(r.Context()), "purge_cache", "proxy:"+env.ID, env.Host)
+	return map[string]any{"purged": total}, nil
 }
 
 func (h *Handler) toolListNodes(r *http.Request) (any, error) {

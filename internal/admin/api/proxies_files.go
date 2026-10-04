@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"io"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -197,11 +198,21 @@ func (h *ProxiesHandler) purgeCacheFiles(w http.ResponseWriter, r *http.Request,
 		writeErr(w, r, http.StatusServiceUnavailable, "api.err.no_edge")
 		return
 	}
+	var sel struct {
+		Tags  []string `json:"tags"`
+		Paths []string `json:"paths"`
+	}
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&sel); err != nil && err != io.EOF {
+			http.Error(w, "corps JSON invalide", http.StatusBadRequest)
+			return
+		}
+	}
 	client := edgeproxy.NewClient()
 	total, ok := 0, 0
 	var lastErr error
 	for _, t := range targets {
-		n, err := client.PurgeCache(r.Context(), t, id)
+		n, err := client.PurgeCache(r.Context(), t, id, sel.Tags, sel.Paths)
 		if err != nil {
 			lastErr = err
 			h.Log.Warn("proxies/files: purge cache", "edge", t.NodeName, "err", err)

@@ -59,6 +59,15 @@ type Route struct {
 	// Cache avancé : TTL par code, bypass, no-store (équivalent nginx proxy_cache_valid / proxy_cache_bypass).
 	Cache *CacheConfig `json:"cache,omitempty"`
 
+	// Compression négocie la compression des réponses (zstd, br, gzip) selon Accept-Encoding.
+	Compression *CompressionConfig `json:"compression,omitempty"`
+
+	// ProxyProtocol : "v1" ou "v2" = la passerelle écrit l'en-tête PROXY (IP du client) au début
+	// de chaque connexion vers le backend (le backend doit l'attendre). Vide = désactivé.
+	// Sur une route HTTP, chaque requête ouvre sa propre connexion (pas de réutilisation :
+	// l'en-tête décrit un seul client).
+	ProxyProtocol string `json:"proxy_protocol,omitempty"`
+
 	// Timeouts vers le backend (0 = valeurs par défaut Go)
 	ConnectTimeout  time.Duration `json:"connect_timeout,omitempty"`  // TCP dial (nginx: proxy_connect_timeout)
 	ResponseTimeout time.Duration `json:"response_timeout,omitempty"` // attente headers réponse (nginx: proxy_read_timeout)
@@ -236,6 +245,29 @@ type CacheConfig struct {
 	VaryCookies []string `json:"vary_cookies,omitempty"`
 	// Methods : méthodes mises en cache (défaut : ["GET", "HEAD"]).
 	Methods []string `json:"methods,omitempty"`
+	// StaleWhileRevalidate : durée pendant laquelle une entrée expirée est servie
+	// pendant qu'elle est revalidée en arrière-plan (ex. "30s"). La directive
+	// stale-while-revalidate du backend a priorité.
+	StaleWhileRevalidate string `json:"stale_while_revalidate,omitempty"`
+	// StaleIfError : durée pendant laquelle une entrée expirée remplace une
+	// réponse 5xx du backend (ex. "1h"). La directive stale-if-error du backend a priorité.
+	StaleIfError string `json:"stale_if_error,omitempty"`
+	// DisableCoalescing : désactive le regroupement des requêtes simultanées sur
+	// un même MISS (une seule va au backend par défaut).
+	DisableCoalescing bool `json:"disable_coalescing,omitempty"`
+}
+
+// CompressionConfig configure la compression des réponses vers le client.
+type CompressionConfig struct {
+	Enabled bool `json:"enabled"`
+	// Algorithms par ordre de préférence serveur parmi zstd | br | gzip (défaut : zstd, br, gzip).
+	Algorithms []string `json:"algorithms,omitempty"`
+	// MinLength : taille minimale (octets) sous laquelle on ne compresse pas quand Content-Length est connu (défaut 1024).
+	MinLength int `json:"min_length,omitempty"`
+	// Level 1 (rapide) à 9 (max), traduit par algorithme ; 0 = défaut de chaque algorithme.
+	Level int `json:"level,omitempty"`
+	// Types : Content-Type compressés, "text/*" accepté (défaut : texte, JSON, JS, XML, SVG, polices).
+	Types []string `json:"types,omitempty"`
 }
 
 // CacheValidRule associe un TTL à un ensemble de codes HTTP.
@@ -414,6 +446,17 @@ type BotConfig struct {
 	UABlacklist     []string `json:"ua_blacklist,omitempty"`
 	JSChallenge     bool     `json:"js_challenge"`
 	ChallengeSecret string   `json:"challenge_secret,omitempty"`
+	// ChallengeProvider : pow (défaut, preuve de travail SHA-256 résolue par le navigateur) | turnstile | hcaptcha.
+	ChallengeProvider string `json:"challenge_provider,omitempty"`
+	// ChallengeDifficulty : bits de tête à zéro exigés de la preuve de travail (défaut 16, max 24 ; chaque bit double le travail).
+	ChallengeDifficulty int `json:"challenge_difficulty,omitempty"`
+	// ChallengeTTL : durée de validité de la preuve (défaut 24h, minimum 1m).
+	ChallengeTTL string `json:"challenge_ttl,omitempty"`
+	// ChallengeSiteKey / ChallengeProviderSecret : clés du fournisseur turnstile ou hcaptcha.
+	ChallengeSiteKey        string `json:"challenge_site_key,omitempty"`
+	ChallengeProviderSecret string `json:"challenge_provider_secret,omitempty"`
+	// ChallengeExemptPaths : préfixes de chemin jamais défiés (API, webhooks, flux appelés par des machines).
+	ChallengeExemptPaths []string `json:"challenge_exempt_paths,omitempty"`
 }
 
 // JWTConfig configure la validation JWT.

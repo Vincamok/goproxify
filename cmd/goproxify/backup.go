@@ -129,6 +129,78 @@ func runBackup() {
 				s.ID, truncate(s.Name, 28), formatBytes(s.SizeBytes), s.CreatedAt.Format(time.RFC3339))
 		}
 
+	case "status":
+		args := parseFlags(os.Args[3:])
+		client, err := newAdminClient(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+			os.Exit(1)
+		}
+		var st struct {
+			KeySet         bool       `json:"key_set"`
+			LastSnapshotAt *time.Time `json:"last_snapshot_at"`
+			LastVerifiedAt *time.Time `json:"last_verified_at"`
+			Stale          []string   `json:"stale"`
+			Destinations   []struct {
+				Name      string     `json:"name"`
+				Type      string     `json:"type"`
+				Enabled   bool       `json:"enabled"`
+				LastOKAt  *time.Time `json:"last_ok_at"`
+				LastError string     `json:"last_error"`
+				Copies    int        `json:"copies"`
+			} `json:"destinations"`
+		}
+		if _, err := client.DoJSON("GET", "/api/v1/backups/status", nil, &st); err != nil {
+			fmt.Fprintf(os.Stderr, "backup status : %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Clé GPX_BACKUP_KEY (secrets inclus) : %v\n", st.KeySet)
+		fmt.Printf("Dernier snapshot : %s\n", fmtOptTime(st.LastSnapshotAt))
+		fmt.Printf("Dernière vérification : %s\n", fmtOptTime(st.LastVerifiedAt))
+		for _, n := range st.Stale {
+			fmt.Printf("ALERTE : planification « %s » manquée\n", n)
+		}
+		for _, d := range st.Destinations {
+			state := "ok"
+			if d.LastError != "" {
+				state = "ÉCHEC : " + d.LastError
+			}
+			fmt.Printf("Destination %-20s %-7s actif=%-5v copies=%-3d dernier succès=%s  %s\n", d.Name, d.Type, d.Enabled, d.Copies, fmtOptTime(d.LastOKAt), state)
+		}
+
+	case "verify":
+		args := parseFlags(os.Args[3:])
+		id := flagValue(args, "-id", "")
+		if id == "" && len(os.Args) >= 4 && !strings.HasPrefix(os.Args[3], "-") {
+			id = os.Args[3]
+			args = parseFlags(os.Args[4:])
+		}
+		if id == "" {
+			fmt.Fprintln(os.Stderr, "usage: goproxify backup verify <snapshot-id>")
+			os.Exit(1)
+		}
+		client, err := newAdminClient(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+			os.Exit(1)
+		}
+		var res struct {
+			OK    bool   `json:"ok"`
+			Error string `json:"error"`
+		}
+		if _, err := client.DoJSON("POST", "/api/v1/backups/snapshots/"+id+"/verify", map[string]any{}, &res); err != nil {
+			fmt.Fprintf(os.Stderr, "backup verify : %v\n", err)
+			os.Exit(1)
+		}
+		if !res.OK {
+			fmt.Fprintf(os.Stderr, "snapshot %s INVALIDE : %s\n", id, res.Error)
+			os.Exit(1)
+		}
+		fmt.Printf("snapshot %s vérifié\n", id)
+
+	case "destinations":
+		runBackupDestinations()
+
 	case "help", "":
 		fmt.Print(`Usage: goproxify backup <sous-commande> [options]
 
@@ -136,6 +208,17 @@ Sous-commandes :
   create   Crée un snapshot / export
   restore  Restaure depuis un fichier ou un snapshot stocké
   list     Liste les snapshots Admin
+  status   État des sauvegardes (clé, dernier snapshot, destinations, planifications manquées)
+  verify   Contrôle l'intégrité d'un snapshot stocké (somme de contrôle, déchiffrement, format)
+  destinations  list | add | test | delete — copies hors serveur (dossier, WebDAV, S3)
+
+goproxify backup destinations list
+goproxify backup destinations add -name <nom> -type dir|webdav|s3 [-retention N]
+    dir    : -path <chemin absolu>
+    webdav : -url <url> [-username u] [-password p]
+    s3     : -endpoint <url> -bucket <b> -access-key <k> -secret-key <s> [-region r] [-prefix p] [-path-style false]
+goproxify backup destinations test <id>
+goproxify backup destinations delete <id>
 
 goproxify backup create [-target admin|full] [-output <dir>] [-admin-url …] [-token …]
   -target  admin : snapshot SQLite Admin (.gpx-admin-backup JSON, défaut)

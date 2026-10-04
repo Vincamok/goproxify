@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/vincamok/goproxify/internal/edge/tlsfp"
 )
 
 // Name est l'identifiant affiché dans les logs pour ce moteur.
@@ -43,7 +45,7 @@ type signal struct {
 // scoreForReason retourne le score par défaut selon la raison.
 func scoreForReason(reason string) int {
 	switch reason {
-	case "ip", "custom_ip":
+	case "ip", "custom_ip", "tls_fp":
 		return 5 // critique
 	case "ua", "custom_ua":
 		return 3 // moyen
@@ -230,6 +232,9 @@ func (e *Engine) Check(r *http.Request, ip string) (blocked bool, reason string)
 	}
 	if custom != nil && custom.matchIP(ip) {
 		signals = append(signals, signal{"custom_ip", scoreForReason("custom_ip")})
+	}
+	if custom != nil && custom.matchTLS(tlsfp.FromContext(r.Context())) {
+		signals = append(signals, signal{"tls_fp", scoreForReason("tls_fp")})
 	}
 	if cfg.Lists.UAEnabled && ua != "" && e.lists.MatchUA(ua) {
 		signals = append(signals, signal{"ua", scoreForReason("ua")})
@@ -645,6 +650,7 @@ type customLists struct {
 	ips   []net.IP
 	uas   []string
 	paths []string
+	tls   map[string]struct{} // JA3 (MD5) et JA4, en minuscules
 }
 
 func buildCustomLists(c CustomListsConfig) *customLists {
@@ -672,7 +678,20 @@ func buildCustomLists(c CustomListsConfig) *customLists {
 			cl.paths = append(cl.paths, strings.ToLower(t))
 		}
 	}
+	for _, s := range c.TLSFingerprints {
+		if t := strings.ToLower(strings.TrimSpace(s)); t != "" {
+			if cl.tls == nil {
+				cl.tls = map[string]struct{}{}
+			}
+			cl.tls[t] = struct{}{}
+		}
+	}
 	return cl
+}
+
+// matchTLS : l'empreinte JA3 ou JA4 de la connexion figure dans la liste (jamais vrai en HTTP clair ou QUIC).
+func (cl *customLists) matchTLS(fp *tlsfp.Fingerprint) bool {
+	return cl != nil && fp.Matches(cl.tls)
 }
 
 func (cl *customLists) matchIP(ipStr string) bool {

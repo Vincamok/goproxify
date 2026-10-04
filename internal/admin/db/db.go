@@ -599,6 +599,30 @@ func migrate(db *sql.DB) error {
 	db.Exec(`ALTER TABLE backup_snapshots ADD COLUMN schedule_id TEXT NOT NULL DEFAULT ''`)                                //nolint:errcheck
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_backup_snapshots_schedule ON backup_snapshots (schedule_id, created_at DESC)`) //nolint:errcheck
 
+	// Fiabilité des sauvegardes : somme de contrôle, vérification, destinations externes et envois.
+	db.Exec(`ALTER TABLE backup_snapshots ADD COLUMN sha256 TEXT NOT NULL DEFAULT ''`)      //nolint:errcheck
+	db.Exec(`ALTER TABLE backup_snapshots ADD COLUMN verified_at DATETIME`)                 //nolint:errcheck
+	db.Exec(`CREATE TABLE IF NOT EXISTS backup_destinations (
+		id         TEXT PRIMARY KEY,
+		name       TEXT UNIQUE NOT NULL,
+		type       TEXT NOT NULL,
+		enabled    INTEGER NOT NULL DEFAULT 1,
+		config     TEXT NOT NULL DEFAULT '{}',
+		retention  INTEGER NOT NULL DEFAULT 0,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`) //nolint:errcheck
+	db.Exec(`CREATE TABLE IF NOT EXISTS backup_deliveries (
+		snapshot_id    TEXT NOT NULL,
+		destination_id TEXT NOT NULL,
+		object_name    TEXT NOT NULL DEFAULT '',
+		ok             INTEGER NOT NULL DEFAULT 0,
+		error          TEXT NOT NULL DEFAULT '',
+		size           INTEGER NOT NULL DEFAULT 0,
+		sha256         TEXT NOT NULL DEFAULT '',
+		at             DATETIME DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (snapshot_id, destination_id)
+	)`) //nolint:errcheck
+
 	// H12 : hash des tokens nœuds (lookup) — chiffrement appliqué au démarrage Admin si clé dispo.
 	db.Exec(`ALTER TABLE tokens ADD COLUMN token_hash TEXT NOT NULL DEFAULT ''`) //nolint:errcheck
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_tokens_hash ON tokens (token_hash)`) //nolint:errcheck

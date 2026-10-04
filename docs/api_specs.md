@@ -220,7 +220,11 @@ Corps `{"enabled": bool}`. Active/désactive le proxy (republié sur toutes les 
 
 ### `POST /api/v1/proxies/{id}/cache/purge`
 
-Vide le cache disque de ce proxy sur toutes les passerelles qui l'hébergent (best-effort, un proxy peut être répliqué sur plusieurs Edges). No-op si le cache n'est pas activé pour ce proxy. Réponse `{"purged": <nombre d'entrées supprimées>}`. Relaie en interne `POST /internal/v1/proxies/{id}/cache/purge` sur chaque Edge (le cache est stocké par route, un répertoire dédié par proxy — voir `router.Route.Cache`).
+Vide le cache disque de ce proxy sur toutes les passerelles qui l'hébergent (best-effort, un proxy peut être répliqué sur plusieurs Edges). No-op si le cache n'est pas activé pour ce proxy. Corps JSON optionnel `{"tags": ["news"], "paths": ["/blog/*", "/a?x=1"]}` : sans corps, tout le cache est vidé ; sinon seules les entrées portant l'un des tags (en-tête `Cache-Tag` ou `Surrogate-Key` de la réponse backend, retiré avant l'envoi au client) ou correspondant à l'un des chemins (avec ou sans query, suffixe `*` = préfixe) sont supprimées. Réponse `{"purged": <nombre d'entrées supprimées>}`. Relaie en interne `POST /internal/v1/proxies/{id}/cache/purge` (même corps) sur chaque Edge (le cache est stocké par route, un répertoire dédié par proxy — voir `router.Route.Cache`).
+
+Options de cache par proxy (`cache`) : `stale_while_revalidate` (ex. `"30s"` : une entrée expirée est servie `X-Cache: STALE` pendant qu'une seule requête la revalide en arrière-plan), `stale_if_error` (ex. `"1h"` : une entrée expirée remplace une réponse 5xx du backend), `disable_coalescing` (par défaut, les requêtes simultanées sur un même MISS sont regroupées : une seule atteint le backend, les autres reçoivent `X-Cache: COALESCED`). Les directives `stale-while-revalidate` / `stale-if-error` du backend ont priorité sur ces valeurs.
+
+Champ `proxy_protocol` de la config d'un proxy (`"v1"` ou `"v2"`, vide = désactivé) : la passerelle écrit l'en-tête PROXY (IP du client) au début de chaque connexion vers le backend HTTP ou le passthrough TLS ; le backend doit l'attendre. Une route HTTP ouvre alors une connexion backend par requête (pas de keep-alive). Toute autre valeur est refusée par la validation (dry-run). La lecture de l'en-tête en entrée se règle dans la configuration de la passerelle (`network.proxy_protocol: { enabled, trusted_cidrs }`), pas via l'API.
 
 ### `POST /api/v1/proxies/:domain/enable`
 ### `POST /api/v1/proxies/:domain/disable`
@@ -383,6 +387,18 @@ Résumé du contenu d'un snapshot, sans rien écrire — même format que `impor
 ### `POST /api/v1/backups/snapshots/:id/restore`
 
 Restaure un snapshot. Corps optionnel `{"selection": {…}}` (mêmes champs que `import/backup/apply`) ; **sans corps**, restauration complète en mode `overwrite` (utilisateurs, tokens, PAT, snippets, canaux, règles, tables de configuration). En `overwrite`, un snapshot de sécurité `avant-restauration-<date>` est pris d'abord ; s'il échoue, la restauration est annulée (500). Réponse : `ImportResult` (dont `secret_rows`, `secret_files`, `secrets_error`). Avec `selection.import_secrets` (ou sans corps, si le snapshot a une section `secrets` et que l'appelant est superadmin), restaure la section secrets chiffrée de `GPX_BACKUP_KEY` : hash des mots de passe, MFA, clés, CA interne, fichiers `state/` et `certs/`. Superadmin seulement (`secrets_error` sinon).
+
+### `GET /api/v1/backups/status`
+
+État des sauvegardes : `key_set` (GPX_BACKUP_KEY définie), `last_snapshot_at`, `last_verified_at`, `stale[]` (planifications dont une exécution a été manquée), `destinations[]` (`last_ok_at`, `last_error`, `copies`).
+
+### `POST /api/v1/backups/snapshots/:id/verify`
+
+Relit le snapshot stocké : somme de contrôle SHA-256, déchiffrement, format et, s'il existe, déchiffrement de la section secrets. Réponse `{"ok":true}` ou `{"ok":false,"error":"…"}`. `GET /backups/snapshots` expose `sha256`, `verified_at` et `deliveries[]` (copies externes).
+
+### `/api/v1/backups/destinations`
+
+Copies hors serveur de chaque snapshot (10 au plus). `GET` liste ; `POST` crée ; `PUT /:id` modifie ; `DELETE /:id` supprime (les copies déjà déposées sont conservées) ; `POST /:id/test` écrit, relit et supprime un objet (`{"ok":…}`). Corps : `{"name","type":"dir|webdav|s3","enabled","retention","config":{…}}`. `config` — `dir` : `path` (absolu) ; `webdav` : `url`, `username`, `password` ; `s3` : `endpoint`, `bucket`, `access_key`, `secret_key`, `region`, `prefix`, `path_style` (`false` = adressage par sous-domaine). `password` et `secret_key` ne sont jamais renvoyés (`password_set` / `secret_key_set`) ; vides en mise à jour, ils conservent la valeur existante. Admin uniquement.
 
 ### `POST /api/v1/import/backup/preview`
 
@@ -958,7 +974,7 @@ Déclenche une synchronisation LAPI immédiate.
 
 ### `GET /api/v1/security/threat-config` · `PUT /api/v1/security/threat-config`
 
-Configuration du moteur Sentinel. Paramètre optionnel `edge=<id ou nom>` :
+Configuration du moteur Sentinel. `custom_lists` accepte `ips`, `uas`, `paths` et `tls_fingerprints` : signatures **JA3** (MD5, 32 caractères hexadécimaux) ou **JA4** (ex. `t13d1516h2_8daaf6152771_02713d6af862`, insensible à la casse) dont le client est banni (signal `tls_fp`, score critique comme une IP de liste de menaces). L'empreinte est calculée par la passerelle depuis le ClientHello TLS ; elle ne s'applique ni au HTTP clair ni à HTTP/3, et chaque requête loguée porte `tls_ja3` / `tls_ja4` dans le log d'accès de la passerelle (pour repérer la signature d'un scanner ou d'un scraper avant de la lister). Paramètre optionnel `edge=<id ou nom>` :
 
 - passerelle **membre d'un groupe HA** (déclaré dans `architecture.json`, `config.cluster` + `config.cluster_group`) : la configuration est **celle du groupe** — lue et écrite une seule fois, poussée à tous les membres, et rejouée à la connexion d'un membre qui la manquait ;
 - passerelle hors groupe : configuration propre à la passerelle ;

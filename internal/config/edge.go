@@ -24,6 +24,12 @@ type EdgeConfig struct {
 		InternalAPIPort int    `mapstructure:"internal_api_port"` // :8000 — reçoit les pushes de l'Admin
 		BindAddress     string `mapstructure:"bind_address"`      // 0.0.0.0 par défaut
 		APIHost         string `mapstructure:"api_host"`          // hostname résolvable par l'Admin (ex: goproxify-edge)
+		// ProxyProtocol : lit l'en-tête PROXY (v1/v2) sur :80 et :443 pour conserver l'IP client
+		// derrière un load balancer L4. Seules les sources de TrustedCIDRs sont crues.
+		ProxyProtocol struct {
+			Enabled      bool     `mapstructure:"enabled"`
+			TrustedCIDRs []string `mapstructure:"trusted_cidrs"`
+		} `mapstructure:"proxy_protocol"`
 	} `mapstructure:"network"`
 
 	Cluster struct {

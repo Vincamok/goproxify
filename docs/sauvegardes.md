@@ -91,6 +91,20 @@ Si `GPX_BACKUP_KEY` est définie, le snapshot contient en plus une section `secr
 
 **Responsabilités** : un snapshot avec section `secrets` est sensible. La perte de `GPX_BACKUP_KEY` rend ces secrets irrécupérables : la conserver **hors du serveur**, séparément des snapshots. Les fichiers de la passerelle et de l'Agent ne sont pas inclus (voir [volumes.md](volumes.md)).
 
+## 4 ter. Destinations hors serveur, intégrité et alertes
+
+| Élément | Détail |
+|---|---|
+| Destinations | Jusqu'à 10 : dossier local ou partage monté (`dir`), WebDAV, stockage compatible S3 (signature SigV4). Gérées dans *Sauvegardes › Destinations*, l'API `/backups/destinations` et `goproxify backup destinations` |
+| Copie | Après chaque snapshot, sur toutes les destinations actives : écriture, relecture, comparaison de la somme de contrôle. Résultat par destination et par snapshot dans la liste (☁) |
+| Rétention | Par destination (`retention`, 0 = illimité) : les copies les plus anciennes déposées par l'Admin sont supprimées. Supprimer un snapshot localement ne supprime pas ses copies externes |
+| Secrets de destination | `password` et `secret_key` ne sont jamais renvoyés par l'API ; ils sont absents des snapshots standard et présents dans la section `secrets` chiffrée |
+| Intégrité | SHA-256 enregistré à la création ; le snapshot est relu, déchiffré et contrôlé avant d'être accepté ; `POST /backups/snapshots/{id}/verify` ou le bouton *Vérifier* le refait. Un snapshot altéré est signalé « somme de contrôle différente » |
+| Alertes | Déclencheur `backup_failed` : sauvegarde planifiée échouée, copie vers une destination échouée, planification manquée (contrôle toutes les 30 min, tolérance 1 h). À brancher sur un canal via une règle d'alerte |
+| État | Bandeau de la page Sauvegardes et `GET /backups/status` : clé absente, aucune destination, destination en échec, exécution manquée |
+
+**Limites** : pas de SFTP ; pas de restauration directe depuis une destination (télécharger la copie, puis *Restaurer › fichier*) ; les envois ne sont pas relancés automatiquement (le prochain snapshot réessaie) ; les fichiers de la passerelle et de l'Agent ne sont pas concernés.
+
 ## 5. Restauration
 
 | Point | Comportement |
@@ -110,7 +124,7 @@ Si `GPX_BACKUP_KEY` est définie, le snapshot contient en plus une section `secr
 
 1. Définir `GPX_BACKUP_KEY` (**obligatoire** pour une restauration complète) et la conserver **hors** du serveur, séparément des snapshots.
 2. Planifier au moins une sauvegarde quotidienne avec rétention ≥ 7.
-3. Copier régulièrement `<storage.base_path>/backups/` hors de l'hôte.
+3. Configurer au moins une **destination hors serveur** (§4 ter) ; à défaut, copier régulièrement `<storage.base_path>/backups/` hors de l'hôte.
 4. Activer `ExportConfigs` (ou sauvegarder à part) si le cluster utilise la HA : sans cette section, `NodeID`/`Peers`/`RaftPort` ne sont pas dans le snapshot et une restauration sur une instance vierge perd la topologie du cluster.
 5. Sauvegarder à part : fichiers de la passerelle et de l'Agent, et fichiers de configuration (si `ExportConfigs` n'est pas utilisé).
 6. Tester une restauration sur une instance de test après tout changement majeur.

@@ -16,6 +16,7 @@ import (
 	"math"
 	"math/rand"
 	"net"
+	"net/netip"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -29,6 +30,7 @@ import (
 	edgelog "github.com/vincamok/goproxify/internal/edge/logger"
 	"github.com/vincamok/goproxify/internal/edge/metrics"
 	"github.com/vincamok/goproxify/internal/edge/middleware"
+	"github.com/vincamok/goproxify/internal/edge/proxyproto"
 	"github.com/vincamok/goproxify/internal/edge/router"
 	"github.com/vincamok/goproxify/internal/edge/tracing"
 )
@@ -128,11 +130,12 @@ func buildTransport(route *router.Route) http.RoundTripper {
 		tlsTimeout = route.SendTimeout
 	}
 
+	dial := (&net.Dialer{
+		Timeout:   connectTimeout,
+		KeepAlive: 30 * time.Second,
+	}).DialContext
 	t := &http.Transport{
-		DialContext: (&net.Dialer{
-			Timeout:   connectTimeout,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
+		DialContext:           dial,
 		TLSHandshakeTimeout:   tlsTimeout,
 		ResponseHeaderTimeout: responseTimeout,
 		MaxIdleConnsPerHost:   100,
@@ -142,6 +145,11 @@ func buildTransport(route *router.Route) http.RoundTripper {
 		},
 	}
 	applyHTTPVersion(t, route.HttpVersion)
+	if v := route.ProxyProtocol; v == "v1" || v == "v2" {
+		// L'en-tête PROXY décrit un seul client : une connexion n'est jamais réutilisée.
+		t.DisableKeepAlives = true
+		t.DialContext = proxyProtocolDial(dial, v)
+	}
 	// Délégation terminate (et backends HTTPS adressés par IP) : le SNI doit être
 	// le Host virtuel (domaine client), pas l'IP de l'URL backend — sinon passerelle B
 	// ne trouve pas de certificat (GetCertificate(SNI=192.168.x.x)).
@@ -149,6 +157,40 @@ func buildTransport(route *router.Route) http.RoundTripper {
 		return &hostSNITransport{base: t}
 	}
 	return t
+}
+
+type ppClientKey struct{}
+
+// ppClient porte l'adresse du client (et de la socket qui l'a reçu) jusqu'au dial du backend.
+type ppClient struct {
+	remote string
+	local  any // net.Addr posé par http.Server (http.LocalAddrContextKey)
+}
+
+// proxyProtocolDial écrit l'en-tête PROXY juste après la connexion TCP au backend, avant
+// tout octet applicatif (donc avant le handshake TLS d'un backend HTTPS).
+func proxyProtocolDial(dial func(ctx context.Context, network, addr string) (net.Conn, error), version string) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		conn, err := dial(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
+		var src, dst netip.AddrPort
+		if c, ok := ctx.Value(ppClientKey{}).(ppClient); ok {
+			src, _ = netip.ParseAddrPort(c.remote)
+			if la, ok := c.local.(net.Addr); ok {
+				dst = proxyproto.AddrPort(la)
+			}
+		}
+		if !dst.IsValid() {
+			dst = proxyproto.AddrPort(conn.RemoteAddr())
+		}
+		if _, err := conn.Write(proxyproto.Header(version, src, dst)); err != nil {
+			conn.Close()
+			return nil, err
+		}
+		return conn, nil
+	}
 }
 
 // applyHTTPVersion force HTTP/1.1 ou HTTP/2 vers le backend (auto = défaut Go).
@@ -654,6 +696,9 @@ func (h *Handler) do(w http.ResponseWriter, r *http.Request, b *router.Backend, 
 	att := &proxyAttempt{writeOnError: writeOnError, attempt: attempt, backend: b.URL, secure: middleware.CookieSecure(r)}
 	ctx := context.WithValue(r.Context(), proxyAttemptKey{}, att)
 	ctx = context.WithValue(ctx, backendCallStartKey{}, callStart)
+	if h.route.ProxyProtocol != "" {
+		ctx = context.WithValue(ctx, ppClientKey{}, ppClient{remote: r.RemoteAddr, local: r.Context().Value(http.LocalAddrContextKey)})
+	}
 	r = r.WithContext(ctx)
 	r, endSpan := h.traceBackend(r, target.Host, attempt)
 	sr := &statusRecorder{ResponseWriter: w, status: http.StatusOK}

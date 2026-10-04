@@ -34,6 +34,7 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - **Traçage d’une IP ou d’un CIDR** : onglet Sécurité › Traçage IP — parcours chronologique d’une IP malveillante ou d’une plage sur une longue période (requêtes regroupées en épisodes, détections WAF/Sentinel/CrowdSec, bans et débans, bans en cours, profils IP concernés) ; aussi en CLI (`security trace`) et MCP (`trace_ip`) (Admin `0.82.0`) ; raccourci « Analyser l’IP » depuis les bans, menaces, Sentinel, Prism et les logs, sur l’IP ou sa plage (Admin `0.83.0`)
 - **Profils IP : saisie manuelle et modèles** : modification d’un profil existant ; un profil peut être une liste d’IP/CIDR saisie à la main (en plus d’un feed), le formulaire propose des modèles de feeds (Bogons, blocklist.de, CINS Army) et explique la portée globale et la priorité `allow` sur `deny` (Admin 0.81.0)
 - **Restauration sélective des snapshots** : le bouton *Restaurer* permet de choisir les entités à restaurer et le mode de conflit ; menu Sauvegardes réduit à Snapshots / Planification (Admin `0.80.0`)
+- **Sauvegardes : destinations hors serveur (S3, WebDAV, dossier), vérification d’intégrité et alertes** : chaque snapshot est copié, relu et comparé ; alerte sur échec ou exécution manquée (Admin `0.105.0`)
 - **Sauvegardes : section secrets chiffrée** : avec `GPX_BACKUP_KEY`, les snapshots embarquent mots de passe, MFA, tokens, clés RGPD/ECH, CA interne et fichiers d’état pour restaurer une infrastructure complète (superadmin) (Admin `0.98.0`)
 - **Recherche de fonctionnalités (Ctrl+K)** : palette de recherche dans la barre du haut (aussi `/`) pour retrouver n’importe quelle page de l’Admin ou d’une passerelle par titre ou mot-clé (WAF, ACME, SSO, sauvegardes…), retrouve aussi proxies, certificats, domaines, passerelles, snippets et utilisateurs par leur nom, filtrée selon le rôle (Admin `0.73.0`)
 - **Menu Sécurité en onglets** (Synthèse, Vulnérabilités, Bans, Sentinel, Score par proxy — note de A à F sur 9 contrôles), Synthèse unique (score, bans par source, menaces, timeline) et fenêtre « Moteurs de sécurité » à interrupteurs par capacité et page **Vulnérabilités** en vue Parc / Liste avec tiroir de détail, identique pour l’Admin et les passerelles, adaptée au mobile
@@ -49,6 +50,7 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - **Prism** : refonte « centre de commande » (carte zoomable, anomalies détectées, onglets) — livré
 - **Observabilité** : Synthèse commune à l’Admin et aux passerelles, Prism recentré (onglets Chemins / IP / Sources / Pays), carte Leaflet avec vues par ville et par région et connexions en direct, carte « Attaques en direct » dans la Synthèse sécurité, anomalies calculées côté serveur (API, MCP `get_prism_anomalies` / `get_prism_geo`, CLI `goproxify prism`) — livré
 - **Vue Proxy** : nouveau menu racine (remplace « Explorer ») — barre de recherche + période + Live, sélection cumulable de proxies (tuiles, KPI, carte, anomalies, courbe, chemins, IP) ; temps réel uniquement sur demande — livré
+- **Compression des réponses** : zstd, Brotli et gzip négociés par proxy selon `Accept-Encoding` (Avancé › Compression des réponses) — livré
 - [x] **Sentinel — page en onglets et tiroir de réglages** : vue d'ensemble, détections, listes et exceptions ; simulation sur les logs récents avant d'enregistrer (`POST /security/threat-config/simulate`, `goproxify security threat simulate`)
 
 ### v0.2 — Architecture distribuée _(juillet – août 2026)_
@@ -101,6 +103,13 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 
 ### Fonctionnalités à venir
 
+- [x] **Cache HTTP complet** : `stale-while-revalidate`, `stale-if-error`, coalescing des requêtes, purge par tag (`Cache-Tag`) ou URL — livré
+- [x] **PROXY protocol v1/v2** : en entrée (derrière un load balancer L4) et en sortie vers les backends HTTP et le passthrough TLS — livré
+- [ ] **PROXY protocol : sondes de santé** : envoyer l'en-tête aussi aux sondes des backends qui l'exigent
+- [x] **Challenge anti-bot par preuve de travail** : page de validation navigateur (type Anubis), Turnstile / hCaptcha en option — livré
+- [ ] **Challenge anti-bot : réglages dans l'interface** : saisie de la difficulté, du fournisseur, des clés et des chemins exemptés (aujourd'hui via la config du proxy)
+- [x] **Empreinte TLS JA3/JA4** : calculée au ClientHello et branchée sur Sentinel pour bannir sur signature — livré
+- [ ] **JA3/JA4 dans les logs Admin** : colonnes et filtre dans Logs / Prism (aujourd'hui dans le log d'accès de la passerelle)
 - [x] **Dashboard Sentinel** : endpoint `/security/bans/countries` (heatmap par pays, JOIN `geoip_cache`)
 - [x] **Webhooks sur événements** : canal webhook générique sur `sentinel_ban` et `backend_down` ; `Manager.SetAlertEngine` pour injecter l'engine d'alertes ; callback `BackendHealth.OnDown` → message WS passerelle→Admin
 - [x] **Discovery Kubernetes** : Agent qui lit les `Ingress`/`Service` avec annotations `goproxify.*`, symétrique du mode Docker existant

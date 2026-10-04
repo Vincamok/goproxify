@@ -5,10 +5,10 @@
 package backup
 
 import (
-	"errors"
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -79,11 +79,14 @@ func DefaultConfig() ScheduleConfig {
 
 // Snapshot représente une sauvegarde stockée.
 type Snapshot struct {
-	ID         string    `json:"id"`
-	Name       string    `json:"name"`
-	ScheduleID string    `json:"schedule_id,omitempty"`
-	SizeBytes  int64     `json:"size_bytes"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID         string           `json:"id"`
+	Name       string           `json:"name"`
+	ScheduleID string           `json:"schedule_id,omitempty"`
+	SizeBytes  int64            `json:"size_bytes"`
+	CreatedAt  time.Time        `json:"created_at"`
+	SHA256     string           `json:"sha256,omitempty"`
+	VerifiedAt *time.Time       `json:"verified_at,omitempty"`
+	Deliveries []map[string]any `json:"deliveries,omitempty"`
 }
 
 // Scheduler orchestre les sauvegardes planifiées.
@@ -94,7 +97,9 @@ type Scheduler struct {
 	wake    chan struct{}
 	snapDir string // répertoire de persistance des snapshots sur disque
 	// secretDirs : dossiers d'état copiés dans la section secrets (étiquette → chemin).
-	secretDirs map[string]string
+	secretDirs    map[string]string
+	notifier      Notifier
+	staleNotified map[string]bool
 }
 
 // New crée un Scheduler.
@@ -125,6 +130,7 @@ func (s *Scheduler) SecretDirs() map[string]string {
 // Start lance la boucle de planification en arrière-plan.
 func (s *Scheduler) Start(ctx context.Context) {
 	go s.loop(ctx)
+	go s.staleLoop(ctx)
 }
 
 // Reload réveille la boucle pour relire les planifications (après une restauration).
@@ -224,6 +230,7 @@ func (s *Scheduler) loop(ctx context.Context) {
 			name := snapshotName(sch, fireAt)
 			if err := s.TakeSnapshot(name, sch.ID, sch.Retention); err != nil {
 				s.log.Error("backup: snapshot planifié échoué", "schedule", sch.Name, "err", err)
+				s.alert("critical", fmt.Sprintf("Sauvegarde « %s » échouée", sch.Name), map[string]any{"schedule": sch.Name, "message": err.Error()})
 			} else {
 				lastFired[sch.ID] = fireAt.Truncate(time.Minute)
 			}
@@ -527,10 +534,15 @@ func (s *Scheduler) TakeSnapshot(name string, scheduleID string, retention int) 
 
 	id := uuid.New().String()
 	_, err = s.db.Exec(
-		`INSERT INTO backup_snapshots (id, name, schedule_id, size, data) VALUES (?, ?, ?, ?, ?)`,
-		id, name, scheduleID, len(data), string(data))
+		`INSERT INTO backup_snapshots (id, name, schedule_id, size, data, sha256) VALUES (?, ?, ?, ?, ?, ?)`,
+		id, name, scheduleID, len(data), string(data), sha256Hex(data))
 	if err != nil {
 		return fmt.Errorf("insert: %w", err)
+	}
+	// Un snapshot qui ne se relit pas ne doit pas passer pour une sauvegarde valide.
+	if err := s.VerifySnapshot(id); err != nil {
+		s.db.Exec(`DELETE FROM backup_snapshots WHERE id=?`, id) //nolint:errcheck
+		return fmt.Errorf("vérification: %w", err)
 	}
 
 	if scheduleID != "" && retention > 0 {
@@ -538,6 +550,7 @@ func (s *Scheduler) TakeSnapshot(name string, scheduleID string, retention int) 
 	}
 
 	s.writeSnapFile(id, name, data)
+	go s.deliver(id, name, data)
 	s.log.Info("backup: snapshot créé", "id", id, "name", name, "bytes", len(data), "schedule_id", scheduleID)
 	return nil
 }
@@ -582,18 +595,21 @@ func (s *Scheduler) pruneSchedule(scheduleID string, keep int) {
 // Si la DB est vide, lit les fichiers .snap depuis snapDir.
 func (s *Scheduler) ListSnapshots() []Snapshot {
 	rows, err := s.db.Query(
-		`SELECT id, name, COALESCE(schedule_id,''), size, created_at FROM backup_snapshots ORDER BY created_at DESC`)
+		`SELECT id, name, COALESCE(schedule_id,''), size, created_at, sha256, COALESCE(verified_at,'') FROM backup_snapshots ORDER BY created_at DESC`)
 	if err != nil {
 		return s.listSnapshotsFromDisk()
 	}
 	defer rows.Close()
 	var out []Snapshot
+	deliveries := s.Deliveries()
 	for rows.Next() {
 		var snap Snapshot
-		var ts string
-		if rows.Scan(&snap.ID, &snap.Name, &snap.ScheduleID, &snap.SizeBytes, &ts) != nil {
+		var ts, ver string
+		if rows.Scan(&snap.ID, &snap.Name, &snap.ScheduleID, &snap.SizeBytes, &ts, &snap.SHA256, &ver) != nil {
 			continue
 		}
+		snap.VerifiedAt = parseTS(ver)
+		snap.Deliveries = deliveries[snap.ID]
 		snap.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", ts)
 		if snap.CreatedAt.IsZero() {
 			snap.CreatedAt, _ = time.Parse(time.RFC3339, ts)

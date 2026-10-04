@@ -22,6 +22,8 @@ async function renderObsSynthese(scope) {
   const bucket = _obsSynRangeMs <= 21600000 ? 'minute' : 'hour';
 
   main.innerHTML = `<div class="spinner" style="margin:60px auto"></div>`;
+  const page = state.page;
+  const token = main._obsSynToken = (main._obsSynToken || 0) + 1;
 
   const allEdges = scope.lock ? [] : ((await api('GET', '/nodes').catch(() => [])) || []).filter(n => n.role === 'edge');
   const [kpis, uniq, timeline, status, geo, anoms, backends, domains, slo, sloCfg, deploys, edgeKpis] = await Promise.all([
@@ -41,6 +43,7 @@ async function renderObsSynthese(scope) {
       return api('GET', '/prism/kpis?' + p).catch(() => ({}));
     })),
   ]);
+  if (state.page !== page || main._obsSynToken !== token) return;
 
   const rangeBtns = OBS_RANGES.map(([l, ms]) =>
     `<button type="button" class="btn btn-secondary btn-sm${ms === _obsSynRangeMs ? ' is-active' : ''}" data-obs="range" data-ms="${ms}">${l}</button>`).join('');

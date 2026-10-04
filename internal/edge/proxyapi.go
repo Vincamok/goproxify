@@ -5,6 +5,7 @@ package edge
 
 import (
 	"encoding/json"
+	"io"
 	"errors"
 	"net/http"
 	"strings"
@@ -209,7 +210,14 @@ func (s *Server) handlePurgeProxyCache(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"purged": 0})
 		return
 	}
-	n, err := proxy.New(routeCacheDir(route)).Purge()
+	var sel proxy.PurgeSelector
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&sel); err != nil && err != io.EOF {
+			http.Error(w, "corps JSON invalide", http.StatusBadRequest)
+			return
+		}
+	}
+	n, err := proxy.New(routeCacheDir(route)).PurgeMatching(sel)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

@@ -20,7 +20,7 @@ Chaque outil exige un scope, le même que sa route REST équivalente. Les outils
 | Scope | Outils |
 |-------|--------|
 | `proxies:read` | `list_proxies`, `get_proxy` |
-| `proxies:write` | `create_proxy`, `update_proxy`, `set_proxy_enabled` |
+| `proxies:write` | `create_proxy`, `update_proxy`, `set_proxy_enabled`, `purge_proxy_cache` |
 | `proxies:delete` | `delete_proxy` |
 | `nodes:read` | `list_nodes`, `list_declared_nodes`, `get_topology_live`, `list_agents` †, `get_architecture` † |
 | `nodes:write` | `create_declared_node`, `delete_declared_node`, `create_bootstrap_ticket`, `accept_node`, `reject_node`, `approve_agent` †, `revoke_agent` † |
@@ -159,6 +159,20 @@ Active ou désactive un proxy sans modifier sa configuration.
 |-----------|---------|--------|-------------------------------------|
 | `id`      | string  | ✓      | ID, nom ou domaine                  |
 | `enabled` | boolean | ✓      | `true` = activer, `false` = couper  |
+
+---
+
+### `purge_proxy_cache`
+
+Vide le cache HTTP d'un proxy sur toutes les passerelles : tout le cache, ou seulement certaines entrées.
+
+| Paramètre | Type   | Requis | Description |
+|-----------|--------|--------|-------------|
+| `id`      | string | ✓      | ID, nom ou domaine |
+| `tags`    | string |        | Tags à purger (`Cache-Tag` / `Surrogate-Key` de la réponse), séparés par des virgules |
+| `paths`   | string |        | Chemins à purger (avec ou sans query ; suffixe `*` = préfixe), séparés par des virgules |
+
+**Réponse :** `{ "purged": 3 }`
 
 ---
 
