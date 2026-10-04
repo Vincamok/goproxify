@@ -124,7 +124,7 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - [x] **Challenge anti-bot par preuve de travail** : page de validation navigateur (type Anubis), Turnstile / hCaptcha en option — livré
 - [x] **Challenge anti-bot : réglages dans l'interface** : fournisseur, difficulté, durée, clés et chemins exemptés dans Protection › Protection bot — livré (Admin `0.115.0`)
 - [x] **Empreinte TLS JA3/JA4** : calculée au ClientHello et branchée sur Sentinel pour bannir sur signature — livré
-- [x] **JA3/JA4 dans les logs Admin** : colonne, détail et filtre dans Logs ; API, CLI et MCP — livré (Admin `0.115.0`, Edge `0.44.0`) ; l'affichage dans Prism reste à faire
+- [x] **JA3/JA4 dans les logs Admin** : colonne, détail et filtre dans Logs ; API, CLI et MCP — livré (Admin `0.115.0`, Edge `0.44.0`) ; onglet « Empreintes TLS » de Prism (top JA4 : requêtes, erreurs, requêtes signalées, IP distinctes ; API, CLI `prism tls`, MCP `get_prism_tls_fingerprints`) — livré (Admin `0.117.0`)
 - [x] **Dashboard Sentinel** : endpoint `/security/bans/countries` (heatmap par pays, JOIN `geoip_cache`)
 - [x] **Webhooks sur événements** : canal webhook générique sur `sentinel_ban` et `backend_down` ; `Manager.SetAlertEngine` pour injecter l'engine d'alertes ; callback `BackendHealth.OnDown` → message WS passerelle→Admin
 - [x] **Discovery Kubernetes** : Agent qui lit les `Ingress`/`Service` avec annotations `goproxify.*`, symétrique du mode Docker existant

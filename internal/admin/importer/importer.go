@@ -177,14 +177,25 @@ type ImportResult struct {
 }
 
 // SummarizeBackup parse le JSON et retourne un résumé sans tout charger.
-func SummarizeBackup(data []byte) (*Backup, *BackupSummary, error) {
+// ParseBackup décode une sauvegarde sans calculer son résumé : c'est ce qu'il faut pour restaurer, sans
+// déchiffrer deux fois les sections chiffrées (le résumé n'est utile qu'à l'affichage).
+func ParseBackup(data []byte) (*Backup, error) {
 	var b Backup
 	if err := json.Unmarshal(data, &b); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if b.Version != "" && b.Version != "1" {
-		return nil, nil, fmt.Errorf("version de sauvegarde %q non supportée (attendue : 1)", b.Version)
+		return nil, fmt.Errorf("version de sauvegarde %q non supportée (attendue : 1)", b.Version)
 	}
+	return &b, nil
+}
+
+func SummarizeBackup(data []byte) (*Backup, *BackupSummary, error) {
+	bp, err := ParseBackup(data)
+	if err != nil {
+		return nil, nil, err
+	}
+	b := *bp
 	sum := &BackupSummary{
 		Version:           b.Version,
 		CreatedAt:         b.CreatedAt,

@@ -15,10 +15,8 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync/atomic"
 )
@@ -229,6 +227,7 @@ func AttachSecrets(db *sql.DB, b *Backup, dirs map[string]string, extra map[stri
 		return nil, ErrNoBackupKey
 	}
 	sb := SecretBundle{Tables: exportRawTables(db, append(append([]string{}, secretTables...), backupTables...))}
+	pruneNonSecretTables(sb.Tables)
 	sb.Files = readDirs(dirs)
 	for name, data := range extra {
 		sb.Files["config/"+name] = data
@@ -237,6 +236,7 @@ func AttachSecrets(db *sql.DB, b *Backup, dirs map[string]string, extra map[stri
 	for name, data := range gw {
 		sb.Files[name] = data
 	}
+	warnings = append(warnings, SizeNotes("section secrets", sb.Tables, sb.Files)...)
 	plain, err := json.Marshal(sb)
 	if err != nil {
 		return warnings, err
@@ -283,29 +283,14 @@ type SecretsSummary struct {
 
 // OpenSecretsSummary déchiffre la section secrets et en résume le contenu.
 func OpenSecretsSummary(b *Backup) (*SecretsSummary, error) {
-	sb, err := openBundle(b)
+	if b.Secrets == "" {
+		return nil, errors.New("cette sauvegarde ne contient pas de section secrets")
+	}
+	plain, err := openSecrets(b.Secrets)
 	if err != nil {
 		return nil, err
 	}
-	sum := &SecretsSummary{Tables: TableCounts(sb.Tables), Files: len(sb.Files)}
-	seen := map[string]bool{}
-	for name := range sb.Files {
-		label, rest, _ := strings.Cut(name, "/")
-		switch label {
-		case gatewayLabel:
-			if node, _, ok := strings.Cut(rest, "/"); ok && !seen[node] {
-				seen[node] = true
-				if n, err := url.PathUnescape(node); err == nil {
-					sum.Gateways = append(sum.Gateways, n)
-				}
-			}
-		case "config":
-			sum.ConfigFiles = append(sum.ConfigFiles, rest)
-		}
-	}
-	sort.Strings(sum.Gateways)
-	sort.Strings(sum.ConfigFiles)
-	return sum, nil
+	return summarizeSecretsPlain(plain)
 }
 
 func openBundle(b *Backup) (*SecretBundle, error) {
@@ -333,6 +318,18 @@ func restoreSecrets(db *sql.DB, b *Backup, dirs map[string]string) (rows, files 
 	gwFiles := map[string][]byte{}
 	order := append(append([]string{}, secretTables...), backupTables...)
 	rows, _ = applyTablesOrdered(db, sb.Tables, order, true, true)
+	// Les tables sans secret ne sont plus recopiées dans la section secrets (elles sont entières dans la
+	// section standard) : la restauration des secrets les reprend de là, comme avant ce changement.
+	rest := map[string][]map[string]any{}
+	for _, table := range backupTables {
+		if _, inBundle := sb.Tables[table]; !inBundle && len(b.Tables[table]) > 0 {
+			rest[table] = b.Tables[table]
+		}
+	}
+	if len(rest) > 0 {
+		w, _ := applyTablesOrdered(db, rest, backupTables, true, true)
+		rows += w
+	}
 	for name, data := range sb.Files {
 		label, rel, ok := strings.Cut(name, "/")
 		if label == gatewayLabel {

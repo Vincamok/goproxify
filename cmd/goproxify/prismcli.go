@@ -14,9 +14,9 @@ import (
 func runPrism() {
 	sub := subcommand(os.Args, 2)
 	switch sub {
-	case "anomalies", "geo":
+	case "anomalies", "geo", "tls":
 	default:
-		fmt.Fprintln(os.Stderr, "usage : goproxify prism anomalies|geo [-hours N] [-edge <nœud>] [-proxy <hôte>] [-level country|city] [-limit N]")
+		fmt.Fprintln(os.Stderr, "usage : goproxify prism anomalies|geo|tls [-hours N] [-edge <nœud>] [-proxy <hôte>] [-level country|city] [-limit N]")
 		os.Exit(1)
 	}
 	args := parseFlags(os.Args[3:])
@@ -39,6 +39,24 @@ func runPrism() {
 	}
 	if v := flagValue(args, "-proxy", ""); v != "" {
 		q.Set("proxy", v)
+	}
+
+	if sub == "tls" {
+		q.Set("limit", flagValue(args, "-limit", "30"))
+		var rows []map[string]any
+		if _, err := client.DoJSON("GET", "/api/v1/prism/tls-fingerprints?"+q.Encode(), nil, &rows); err != nil {
+			fmt.Fprintf(os.Stderr, "prism tls : %v\n", err)
+			os.Exit(1)
+		}
+		if len(rows) == 0 {
+			fmt.Println("(aucune empreinte TLS)")
+			return
+		}
+		for _, r := range rows {
+			fmt.Printf("%-40s requêtes=%-8.0f erreurs=%-7.0f signalées=%-7.0f ip=%-6.0f ja3=%s\n",
+				firstString(r["ja4"]), num(r["requests"]), num(r["errors"]), num(r["flagged"]), num(r["unique_ips"]), firstString(r["ja3"]))
+		}
+		return
 	}
 
 	if sub == "anomalies" {

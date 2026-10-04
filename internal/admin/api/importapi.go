@@ -78,7 +78,7 @@ func (h *ImportHandler) backupApply(w http.ResponseWriter, r *http.Request) {
 		importJSONErr(w, err, http.StatusBadRequest)
 		return
 	}
-	b, _, err := importer.SummarizeBackup(body.Data)
+	b, err := importer.ParseBackup(body.Data)
 	if err != nil {
 		importJSONErr(w, err, http.StatusBadRequest)
 		return

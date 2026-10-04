@@ -212,7 +212,7 @@ func (h *BackupHandler) restoreSnapshot(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	bk, _, err := importer.SummarizeBackup(data)
+	bk, err := importer.ParseBackup(data)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

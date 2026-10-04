@@ -309,6 +309,7 @@ async function renderPrismPage() {
   const PRISM_TABS = [
     ['paths', t('pz.tab_paths'), 'px-paths'], ['ips', 'IP', 'px-ips'], ['sources', t('pz.tab_sources'), 'px-sources'],
     ['countries', t('pz.tab_countries'), 'px-countries'],
+    ['tls', t('pz.tab_tls'), 'px-tls'],
   ];
 
   let activeTab = 'paths';
@@ -380,6 +381,10 @@ async function renderPrismPage() {
       })
       .catch(guard(() => upd('px-ips', ipsHtml([]))));
 
+
+    apiP('GET', '/prism/tls-fingerprints?' + q + '&limit=30', signal)
+      .then(d => upd('px-tls', tlsHtml(d)))
+      .catch(guard(() => upd('px-tls', tlsHtml([]))));
 
     apiP('GET', '/prism/geo?' + q, signal)
       .then(d => {
@@ -962,6 +967,33 @@ async function renderPrismPage() {
     dr.classList.add('open');
   }
 
+  // Empreintes TLS (JA4) : une même signature sur de nombreuses IP, surtout si le WAF ou Sentinel la
+  // signalent, trahit un outil ou un botnet — le clic ouvre les logs filtrés dessus.
+  function tlsHtml(rows) {
+    const head = `<div class="prism-panel-title">${esc(t('pz.tab_tls'))}</div><p class="prism-muted" style="margin:0 0 8px">${esc(t('pz.tls_hint'))}</p>`;
+    if (!rows || rows.length === 0) return head + `<p style="color:var(--text3);font-size:13px">${esc(t('pz.tls_none'))}</p>`;
+    const maxR = Math.max(...rows.map(r => r.requests), 1);
+    return `${head}
+      <table class="prism-table">
+        <thead><tr><th>JA4</th><th>${esc(t('prism.req_short'))}</th><th>${esc(t('pz.err_short'))}</th><th>${esc(t('pz.tls_flagged'))}</th><th>${esc(t('pz.tls_ips'))}</th><th>${esc(t('pz.volume'))}</th><th></th></tr></thead>
+        <tbody>${rows.map(r => {
+          const rate = r.requests ? r.flagged / r.requests : 0;
+          return `
+          <tr>
+            <td style="font-family:monospace;font-size:11px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.ja4)}${r.ja3 ? ' · JA3 ' + esc(r.ja3) : ''}">${esc(r.ja4)}</td>
+            <td>${fmtNum(r.requests)}</td>
+            <td style="color:${r.errors > 0 ? 'var(--red)' : 'var(--text3)'}">${fmtNum(r.errors)}</td>
+            <td style="color:${r.flagged > 0 ? 'var(--red)' : 'var(--text3)'}">${fmtNum(r.flagged)}${r.flagged > 0 ? ` <span style="font-size:10px">(${(rate * 100).toFixed(0)}%)</span>` : ''}</td>
+            <td>${fmtNum(r.unique_ips)}</td>
+            <td><span class="prism-bar-bg"><span class="prism-bar-fill" style="width:${(r.requests / maxR * 100).toFixed(1)}%"></span></span></td>
+            <td><button type="button" class="btn btn-ghost btn-icon btn-sm" data-prism="to-logs-fp" data-ja4="${esc(r.ja4)}" title="${esc(t('prism.filter_logs'))}">
+              <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 8h10M7 12h10M7 16h6"/></svg>
+            </button></td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>`;
+  }
+
   function sourcesHtml(agents, refs) {
     return `<div class="prism-two"><div>${agentsHtml(agents)}</div><div>${referrersHtml(refs)}</div></div>`;
   }
@@ -1105,6 +1137,7 @@ async function renderPrismPage() {
       ip: extra.ip || selIp || '',
       path: extra.path || selPathFilter || '',
       status: extra.status || '',
+      tls_ja4: extra.tls_ja4 || '',
       date_from: selFrom ? new Date(selFrom).toISOString() : '',
       date_to: selTo ? new Date(selTo).toISOString() : '',
     };
@@ -1207,6 +1240,10 @@ async function renderPrismPage() {
           path: el.getAttribute('data-path') || '',
           status: el.getAttribute('data-status') || '',
         });
+      }
+      else if (act === 'to-logs-fp') {
+        e.preventDefault();
+        goToLogs({ tls_ja4: el.getAttribute('data-ja4') || '' });
       }
       else if (act === 'to-logs-status') {
         e.preventDefault();

@@ -22,6 +22,16 @@ func init() {
 			),
 		},
 		map[string]any{
+			"name":        "get_prism_tls_fingerprints",
+			"description": "Empreintes TLS (JA4, avec le JA3 associé) les plus actives sur la période : requêtes, erreurs, requêtes signalées par le WAF ou Sentinel et IP distinctes. Un JA4 très signalé partagé par beaucoup d'IP est la signature d'un scanner ou d'un botnet, à ajouter à custom_lists.tls_fingerprints de Sentinel. Uniquement le trafic TLS terminé par une passerelle (ni HTTP clair ni HTTP/3).",
+			"inputSchema": schema(
+				opt("hours", "number", "Fenêtre analysée en heures (défaut 24, max 720)"),
+				opt("edge", "string", "Passerelle (nom du nœud ou id du token) ; omis = toutes"),
+				opt("proxy", "string", "Domaine du proxy ; omis = tous"),
+				opt("limit", "number", "Nombre d'empreintes retournées (défaut 30)"),
+			),
+		},
+		map[string]any{
 			"name":        "get_prism_slo",
 			"description": "SLO de disponibilité (réponses non-5xx) sur une fenêtre glissante : disponibilité, budget d'erreur restant, vitesse de consommation (1 h et 6 h) et état.",
 			"inputSchema": schema(
@@ -92,4 +102,12 @@ func (h *Handler) toolGetPrismSLO(r *http.Request, args map[string]any) (any, er
 	target, _ := args["target"].(float64)
 	days, _ := args["days"].(float64)
 	return analytics.GetSLO(r.Context(), h.DB, analytics.Params{Proxy: p.Proxy, NodeName: p.NodeName}, target, int(days)), nil
+}
+
+func (h *Handler) toolGetPrismTLSFingerprints(r *http.Request, args map[string]any) (any, error) {
+	limit := 0
+	if v, ok := args["limit"].(float64); ok {
+		limit = int(v)
+	}
+	return analytics.GetTopTLSFingerprints(h.DB, h.prismToolParams(r, args), limit), nil
 }

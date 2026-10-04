@@ -39,6 +39,8 @@ func (h *PrismHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.paths(w, r)
 	case r.Method == http.MethodGet && path == "ips":
 		h.ips(w, r)
+	case r.Method == http.MethodGet && path == "tls-fingerprints":
+		h.tlsFingerprints(w, r)
 	case r.Method == http.MethodGet && path == "agents":
 		h.agents(w, r)
 	case r.Method == http.MethodGet && path == "geo":
@@ -496,4 +498,11 @@ func (h *PrismHandler) bansTopIPs(w http.ResponseWriter, r *http.Request) {
 		out = []row{}
 	}
 	jsonOK(w, out)
+}
+
+// tlsFingerprints : empreintes TLS (JA4) les plus actives, avec leur part de requêtes signalées.
+func (h *PrismHandler) tlsFingerprints(w http.ResponseWriter, r *http.Request) {
+	p := prismParams(r)
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	jsonOK(w, analytics.GetTopTLSFingerprints(h.DB, p, limit))
 }

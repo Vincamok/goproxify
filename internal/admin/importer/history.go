@@ -100,11 +100,14 @@ type HistorySummary struct {
 
 // OpenHistorySummary déchiffre l'historique et en résume le contenu.
 func OpenHistorySummary(b *Backup) (*HistorySummary, error) {
-	hb, err := openHistory(b)
-	if err != nil {
-		return nil, err
+	if b.History == "" {
+		return nil, errors.New("cette sauvegarde ne contient pas d'historique")
 	}
-	return &HistorySummary{Tables: TableCounts(hb.Tables), Truncated: hb.Truncated}, nil
+	plain, err := openWith(historyEncPrefix, b.History)
+	if err != nil {
+		return nil, fmt.Errorf("historique : %w", err)
+	}
+	return summarizeHistoryPlain(plain)
 }
 
 // restoreHistory ajoute les lignes d'historique : une ligne dont l'identifiant existe déjà est ignorée.

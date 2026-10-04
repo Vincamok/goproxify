@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -547,6 +548,9 @@ func (s *Scheduler) TakeSnapshotWith(name string, scheduleID string, retention i
 	defer s.run.end()
 	err := s.takeSnapshot(name, scheduleID, retention, history)
 	s.run.finish(name, err)
+	// Rend au système la mémoire de la sauvegarde : sans cela, le tas Go reste gonflé de plusieurs
+	// centaines de Mo après un gros snapshot, ce qui pèse sur une VM à mémoire limitée.
+	debug.FreeOSMemory()
 	return err
 }
 
@@ -562,6 +566,7 @@ func (s *Scheduler) takeSnapshot(name string, scheduleID string, retention int, 
 	importer.RedactSecrets(bk)
 	s.run.setPhase(PhaseSecrets)
 	warnings, err := importer.AttachSecrets(s.db, bk, s.secretDirs, s.extraFiles())
+	warnings = append(warnings, importer.SizeNotes("section standard", bk.Tables, nil)...)
 	for _, w := range warnings {
 		if strings.HasPrefix(w, importer.InfoPrefix) {
 			s.log.Info("backup: " + strings.TrimPrefix(w, importer.InfoPrefix))

@@ -126,3 +126,63 @@ func TestSummaryExposesGatewaysAndLockedSections(t *testing.T) {
 		t.Fatalf("section illisible non signalée : %+v", sum)
 	}
 }
+
+// Le résumé lu en flux doit donner exactement ce que donnerait un décodage complet.
+func TestStreamingSummaryMatchesFullDecode(t *testing.T) {
+	sb := SecretBundle{
+		Tables: map[string][]map[string]any{
+			"users":     {{"id": "u1"}, {"id": "u2"}},
+			"gdpr_keys": {{"id": "k1"}},
+		},
+		Files: map[string][]byte{
+			"gateway/gw-paris/proxies/a.yaml": []byte("x"),
+			"gateway/gw%20lyon/edge.json":     []byte("y"),
+			"config/admin-ha.json":            []byte("{}"),
+			"state/architecture.json":         []byte("{}"),
+		},
+	}
+	plain, _ := json.Marshal(sb)
+	got, err := summarizeSecretsPlain(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Files != 4 || got.Tables["users"] != 2 || got.Tables["gdpr_keys"] != 1 ||
+		strings.Join(got.Gateways, ",") != "gw lyon,gw-paris" || strings.Join(got.ConfigFiles, ",") != "admin-ha.json" {
+		t.Fatalf("résumé en flux : %+v", got)
+	}
+
+	// Sections vides ou absentes, et valeurs null : pas d'erreur.
+	for _, raw := range []string{`{}`, `{"tables":null,"files":null}`, `{"tables":{"t":null},"files":{}}`} {
+		if s, err := summarizeSecretsPlain([]byte(raw)); err != nil || s.Files != 0 {
+			t.Fatalf("%s : %+v %v", raw, s, err)
+		}
+	}
+	if _, err := summarizeSecretsPlain([]byte(`[1,2]`)); err == nil {
+		t.Fatal("format invalide accepté")
+	}
+
+	hb, _ := json.Marshal(HistoryBundle{Tables: map[string][]map[string]any{"audit_log": {{"id": 1}, {"id": 2}, {"id": 3}}}, Truncated: map[string]int{"logs": 7}})
+	hs, err := summarizeHistoryPlain(hb)
+	if err != nil || hs.Tables["audit_log"] != 3 || hs.Truncated["logs"] != 7 {
+		t.Fatalf("historique : %+v %v", hs, err)
+	}
+}
+
+func TestParseBackupDoesNotDecryptSections(t *testing.T) {
+	// Une section secrets illisible (mauvaise clé) ne doit pas empêcher d'analyser la sauvegarde pour la
+	// restaurer : le résumé la signale, l'analyse ne la déchiffre pas.
+	t.Setenv("GPX_BACKUP_KEY", "une-cle")
+	sealed, _ := sealSecrets([]byte(`{"tables":{"users":[{"id":"u1"}]}}`))
+	raw, _ := json.Marshal(Backup{Version: "1", Secrets: sealed})
+	t.Setenv("GPX_BACKUP_KEY", "une-autre-cle")
+	b, err := ParseBackup(raw)
+	if err != nil || b.Secrets == "" {
+		t.Fatalf("analyse : %v", err)
+	}
+	if _, sum, _ := SummarizeBackup(raw); !sum.SecretsLocked {
+		t.Fatal("le résumé doit signaler la section illisible")
+	}
+	if _, err := ParseBackup([]byte(`{"version":"9"}`)); err == nil {
+		t.Fatal("version inconnue acceptée")
+	}
+}

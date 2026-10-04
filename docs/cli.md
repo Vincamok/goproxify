@@ -389,6 +389,11 @@ goproxify prism anomalies
   [-hours <n>]  [-edge <nœud>]  [-proxy <hôte>]
   [-admin-url …] [-token …]
 
+goproxify prism tls
+  [-limit <n>]
+  [-hours <n>]  [-edge <nœud>]  [-proxy <hôte>]
+  [-admin-url …] [-token …]
+
 goproxify prism geo
   [-level country|city]  [-limit <n>]
   [-hours <n>]  [-edge <nœud>]  [-proxy <hôte>]
@@ -400,6 +405,7 @@ Exemples :
 ```bash
 goproxify prism anomalies -hours 6 -edge paris-01
 goproxify prism geo -level city -limit 20
+goproxify prism tls -hours 24 -limit 10
 ```
 
 ---

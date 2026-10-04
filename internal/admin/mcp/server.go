@@ -932,6 +932,8 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 		result, toolErr = h.toolGetPrismAnomalies(r, p.Arguments)
 	case "get_prism_slo":
 		result, toolErr = h.toolGetPrismSLO(r, p.Arguments)
+	case "get_prism_tls_fingerprints":
+		result, toolErr = h.toolGetPrismTLSFingerprints(r, p.Arguments)
 	case "get_prism_geo":
 		result, toolErr = h.toolGetPrismGeo(r, p.Arguments)
 	case "get_portal_config":
