@@ -11,7 +11,7 @@ const TR_KIND = {
   system: { color: 'var(--text3)', icon: '•' },
 };
 
-const _tr = { target: '', scope: 'ip', period: '30d', node: '', status: '', hideInternal: true, edges: null, from: '', to: '', order: 'desc', data: null, steps: [], loading: false };
+const _tr = { target: '', scope: 'ip', period: '30d', node: '', edges: null, from: '', to: '', order: 'desc', data: null, steps: [], loading: false };
 
 function trDay(iso) {
   const opts = { dateStyle: 'full' };
@@ -36,8 +36,6 @@ function trQuery(offset) {
   const q = new URLSearchParams({ target: _tr.target, order: _tr.order, limit: TR_PAGE, offset });
   if (_tr.scope !== 'ip') q.set('scope', _tr.scope);
   if (_tr.node) q.set('node', _tr.node);
-  if (_tr.status) q.set('status', _tr.status);
-  if (_tr.hideInternal) q.set('exclude_internal', '1');
   if (_tr.period === 'custom') {
     if (_tr.from) q.set('from', _tr.from);
     if (_tr.to) q.set('to', _tr.to);
@@ -138,8 +136,7 @@ function trSummaryHTML() {
 
 const TR_SEG = [['24h', '24h'], ['7d', '7d'], ['30d', '30d'], ['90d', '90d'], ['365d', '1y'], ['all', null]];
 
-// Bandeau de filtres (même présentation que les logs) : passerelle, période, cible, classe de statut,
-// trafic interne. Les filtres relancent le parcours quand une cible est saisie.
+// Bandeau de filtres (même présentation que les logs) : passerelle, période, cible. Les filtres relancent le parcours quand une cible est saisie.
 function trFormHTML() {
   const edges = _tr.edges || [];
   const nodeChip = (v, label) => `<button type="button" class="chip${_tr.node === v ? ' active' : ''}" onclick="trSetNode(this.dataset.n)" data-n="${esc(v)}">${v && typeof nodeColor === 'function' ? `<span class="logs-node-dot" style="background:${nodeColor(v)}"></span>` : ''}${esc(label)}</button>`;
@@ -148,7 +145,6 @@ function trFormHTML() {
       ${nodeChip('', t('logs.node_all'))}</div>` : '';
   const seg = TR_SEG.map(([k, label]) => `<button type="button" class="seg-btn${_tr.period === k ? ' active' : ''}" onclick="trPeriod('${k}')">${esc(label || t('lg.q_all'))}</button>`).join('')
     + `<button type="button" class="seg-btn${_tr.period === 'custom' ? ' active' : ''}" onclick="trPeriod('custom')">${esc(t('trace.period.custom'))}</button>`;
-  const cls = ['', '2xx', '3xx', '4xx', '5xx'].map(c => `<button type="button" class="chip${_tr.status === c ? ' active' : ''}" onclick="trSetStatus('${c}')">${c || esc(t('lg.status_all'))}</button>`).join('');
   return `<form class="card blueprint logs-filterbar" onsubmit="trSubmit(event)">
     <div class="logs-filter-row">
       <div style="flex:1;min-width:0">${nodes}</div>
@@ -159,11 +155,6 @@ function trFormHTML() {
       <span id="tr-custom" style="display:${_tr.period === 'custom' ? 'inline-flex' : 'none'};gap:6px">
         <input id="tr-from" type="date" class="input" value="${esc(_tr.from)}"><input id="tr-to" type="date" class="input" value="${esc(_tr.to)}">
       </span>
-      <div class="logs-quick-g">${cls}</div>
-      <label class="logs-toggle-inline">
-        <span class="toggle"><input type="checkbox" ${_tr.hideInternal ? 'checked' : ''} onchange="trHideInternal(this.checked)"><span class="toggle-slider"></span></span>
-        ${esc(t('logs.hide_internal'))}
-      </label>
       <button class="btn btn-primary" type="submit">${esc(t('trace.go'))}</button>
     </div>
   </form>`;
@@ -182,8 +173,6 @@ function trRefilter() {
 }
 
 window.trSetNode = v => { _tr.node = _tr.node === v ? '' : v; trRefilter(); };
-window.trSetStatus = v => { _tr.status = v; trRefilter(); };
-window.trHideInternal = v => { _tr.hideInternal = v; trRefilter(); };
 
 function trPaint(body) {
   const content = document.getElementById('content');

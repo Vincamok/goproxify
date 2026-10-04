@@ -72,9 +72,8 @@ type TraceQuery struct {
 	Scope string
 	ASN   string
 	// Filtres du bandeau, appliqués aux requêtes d'accès seulement (bans et détections restent visibles) :
-	// passerelle, classe de statut (2xx…5xx), exclusion du trafic interne.
-	Node, StatusClass string
-	ExcludeInternal   bool
+	// passerelle.
+	Node string
 	// Renseignés par ResolveTraceScope.
 	ScopeLabel string
 	Context    map[string]any
@@ -107,9 +106,7 @@ func ParseTraceQuery(get func(string) string) (TraceQuery, error) {
 	if !from.Before(to) {
 		return TraceQuery{}, errBadTraceRange
 	}
-	qy := TraceQuery{Target: target, From: from, To: to, Desc: get("order") == "desc", Limit: 500, Scope: get("scope"), ASN: get("asn"),
-		Node: get("node"), StatusClass: strings.ToLower(get("status")),
-		ExcludeInternal: get("exclude_internal") == "1" || get("exclude_internal") == "true"}
+	qy := TraceQuery{Target: target, From: from, To: to, Desc: get("order") == "desc", Limit: 500, Scope: get("scope"), ASN: get("asn"), Node: get("node")}
 	if v, _ := strconv.Atoi(get("limit")); v > 0 && v <= 2000 {
 		qy.Limit = v
 	}
@@ -475,14 +472,3 @@ func parseTraceBound(s string, def time.Time, endOfDay bool) (time.Time, error) 
 	return t.UTC(), nil
 }
 
-func (qy *TraceQuery) keepRow(ip, node string, status int) bool {
-	if qy.ExcludeInternal {
-		if a, err := netip.ParseAddr(ip); err == nil && (a.IsPrivate() || a.IsLoopback() || a.IsLinkLocalUnicast()) {
-			return false
-		}
-	}
-	if len(qy.StatusClass) == 3 && qy.StatusClass[1:] == "xx" && strconv.Itoa(status/100) != qy.StatusClass[:1] {
-		return false
-	}
-	return true
-}

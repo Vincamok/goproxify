@@ -914,8 +914,6 @@ Parcours complet d'une IP ou d'un CIDR (rôle admin). Reconstitue, sur la pério
 | `scope` | Étendue du parcours : `ip` (défaut, la cible seule), `range` (la plage que l'opérateur de l'adresse annonce, lue dans la base ASN) ou `asn` (toutes les plages de l'ASN de l'adresse). `404` si l'adresse est inconnue de la base (privée, réservée), `503` si la base ASN est indisponible, `400` si la valeur est inconnue |
 | `asn` | Numéro d'ASN (`AS16276`) à tracer en entier, à la place d'une adresse ; exige `scope=asn`. `404` si l'ASN n'annonce aucune plage |
 | `node` | Ne garde que les requêtes vues par cette passerelle (nom du nœud). Les bans et détections ne sont pas filtrés |
-| `status` | Ne garde que les requêtes d'une classe de statut : `2xx`, `3xx`, `4xx` ou `5xx` |
-| `exclude_internal` | `1` : ignore les requêtes dont l'IP est privée, loopback ou link-local |
 | `from`, `to` | RFC3339 ou `AAAA-MM-JJ` (`to` en date seule inclut la journée). Défaut : 30 derniers jours jusqu'à maintenant. `400` si `from` ≥ `to` |
 | `order` | `asc` (chronologique, défaut) ou `desc` |
 | `limit`, `offset` | Pagination des étapes (défaut 500, max 2000) |

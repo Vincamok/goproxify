@@ -2,7 +2,7 @@
 
 const DASH_TAB_KEY = 'gpx_dash_tab';
 const DASH_TABS = ['health', 'cockpit', 'map'];
-let _dashWorldSvg = null;
+let _dashMapCtl = null;
 
 const dashLocale = () => (typeof gpxBCP47 === 'function' ? gpxBCP47() : 'en-US');
 const dashInt = n => n == null ? '—' : Math.round(n).toLocaleString(dashLocale());
@@ -337,7 +337,7 @@ function dashViewMap(d, mode) {
         </div>
         <div class="btn-group" role="group">${modes}</div>
       </div>
-      <div id="dash-geo-map" class="gp-d-map wm-wrap">${d.geo.length ? '<div class="spinner" style="margin:80px auto"></div>' : `<div class="gp-d-empty">${t('dash.no_geo')}</div>`}</div>
+      <div id="dash-geo-map" class="prism-mapbox gm-box" style="height:440px;border-radius:0;border:0">${d.geo.length ? '<div class="spinner" style="margin:80px auto"></div>' : `<div class="gp-d-empty">${t('dash.no_geo')}</div>`}</div>
       ${d.geo.length ? '<div class="gp-d-mapinfo sub" id="dash-geo-info"></div>' : ''}
     </div>
     <div class="gp-d-grid">
@@ -358,45 +358,21 @@ function dashViewMap(d, mode) {
 
 async function dashDrawMap(d, mode) {
   const box = document.getElementById('dash-geo-map');
+  if (_dashMapCtl) { try { _dashMapCtl.destroy(); } catch {} _dashMapCtl = null; }
   if (!box || !d.geo.length) return;
-  if (!_dashWorldSvg) {
-    try { _dashWorldSvg = await (await fetch('/world.svg')).text(); }
-    catch { box.innerHTML = `<div class="gp-d-empty">${t('dash.no_geo')}</div>`; return; }
-  }
-  if (!document.getElementById('dash-geo-map')) return;
-  const svg = new DOMParser().parseFromString(_dashWorldSvg, 'image/svg+xml').documentElement;
-  svg.removeAttribute('width'); svg.removeAttribute('height');
-  const sphere = svg.querySelector('.wm-sphere');
-  if (sphere) sphere.setAttribute('fill', 'var(--bg3)');
-  const grat = svg.querySelector('.wm-graticule');
-  if (grat) { grat.setAttribute('fill', 'none'); grat.setAttribute('stroke', 'var(--border)'); grat.setAttribute('stroke-width', '0.3'); grat.setAttribute('opacity', '0.5'); }
-  const border = svg.querySelector('.wm-border');
-  if (border) { border.setAttribute('fill', 'none'); border.setAttribute('stroke', 'var(--border)'); border.setAttribute('stroke-width', '0.8'); border.setAttribute('opacity', '0.6'); }
-
-  const m = DASH_GEO_MODES[mode];
-  const val = c => m.key === 'error_rate' ? (c.error_rate || 0) : (c[m.key] || 0);
-  const byCC = Object.fromEntries(d.geo.map(c => [c.country_code, c]));
-  const max = Math.max(...d.geo.map(val), 0);
-  svg.querySelectorAll('.wm-countries path').forEach(p => {
-    const c = byCC[p.id];
-    const v = c ? val(c) : 0;
-    const share = max > 0 && v > 0 ? Math.round(14 + v / max * 80) : 0;
-    p.style.fill = share ? `color-mix(in srgb, ${m.color} ${share}%, var(--bg2))` : 'var(--bg2)';
-    if (c) {
-      const ti = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-      ti.textContent = `${c.country_name || c.country_code} · ${dashInt(c.requests)} req · ${(c.pct || 0).toFixed(1)}% · ${(c.error_rate || 0).toFixed(1)}% err · ${c.banned_ips || 0} bans`;
-      p.appendChild(ti);
-    }
-  });
   const info = document.getElementById('dash-geo-info');
-  svg.addEventListener('click', e => {
-    const c = byCC[e.target.closest('path')?.id];
-    if (!c || !info) return;
-    info.innerHTML = `<b>${dashFlag(c.country_code)}${esc(c.country_name || c.country_code)}</b> · ${dashInt(c.requests)} req · ${(c.pct || 0).toFixed(1)}% · ${(c.error_rate || 0).toFixed(1)}% err · ${c.banned_ips || 0} ${t('dash.geo_bans').toLowerCase()}`;
-  });
-  box.innerHTML = '';
-  box.appendChild(svg);
-  box.scrollLeft = (box.scrollWidth - box.clientWidth) / 2;
+  const byCC = Object.fromEntries(d.geo.map(c => [c.country_code, c]));
+  let ctl;
+  try {
+    ctl = await gpxGeoMap(box, { onCountry: cc => {
+      const c = byCC[cc];
+      if (!c || !info) return;
+      info.innerHTML = `<b>${dashFlag(c.country_code)}${esc(c.country_name || c.country_code)}</b> · ${dashInt(c.requests)} req · ${(c.pct || 0).toFixed(1)}% · ${(c.error_rate || 0).toFixed(1)}% err · ${c.banned_ips || 0} ${t('dash.geo_bans').toLowerCase()}`;
+    } });
+  } catch { box.innerHTML = `<div class="gp-d-empty">${t('dash.no_geo')}</div>`; return; }
+  if (!document.getElementById('dash-geo-map')) { ctl.destroy(); return; }
+  _dashMapCtl = ctl;
+  ctl.update({ countries: d.geo, points: [], mode, style: 'zones', selected: '' });
 }
 
 // ── Page ────────────────────────────────────────────────────────────────────
