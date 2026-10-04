@@ -67,6 +67,18 @@ type TraceQuery struct {
 	Desc     bool
 	Limit    int
 	Offset   int
+	// Scope : ip (défaut), range (plage annoncée par l'opérateur) ou asn (tout l'ASN) ; ASN fixe l'ASN
+	// (scope=asn) au lieu de le déduire de l'adresse. Voir ResolveTraceScope.
+	Scope string
+	ASN   string
+	// Filtres du bandeau, appliqués aux requêtes d'accès seulement (bans et détections restent visibles) :
+	// passerelle, classe de statut (2xx…5xx), exclusion du trafic interne.
+	Node, StatusClass string
+	ExcludeInternal   bool
+	// Renseignés par ResolveTraceScope.
+	ScopeLabel string
+	Context    map[string]any
+	matcher    traceMatcher
 }
 
 // ParseTraceQuery lit target (ou ip), from, to (RFC3339 ou AAAA-MM-JJ, défaut : 30 derniers jours),
@@ -75,6 +87,9 @@ func ParseTraceQuery(get func(string) string) (TraceQuery, error) {
 	raw := get("target")
 	if raw == "" {
 		raw = get("ip")
+	}
+	if raw == "" && get("asn") != "" {
+		raw = "0.0.0.0/0" // ASN désigné par son numéro : la cible est remplacée par l'étendue de l'ASN
 	}
 	target, err := security.ParseTraceTarget(raw)
 	if err != nil {
@@ -92,7 +107,9 @@ func ParseTraceQuery(get func(string) string) (TraceQuery, error) {
 	if !from.Before(to) {
 		return TraceQuery{}, errBadTraceRange
 	}
-	qy := TraceQuery{Target: target, From: from, To: to, Desc: get("order") == "desc", Limit: 500}
+	qy := TraceQuery{Target: target, From: from, To: to, Desc: get("order") == "desc", Limit: 500, Scope: get("scope"), ASN: get("asn"),
+		Node: get("node"), StatusClass: strings.ToLower(get("status")),
+		ExcludeInternal: get("exclude_internal") == "1" || get("exclude_internal") == "true"}
 	if v, _ := strconv.Atoi(get("limit")); v > 0 && v <= 2000 {
 		qy.Limit = v
 	}
@@ -107,6 +124,10 @@ func (h *SecurityHandler) ipTrace(w http.ResponseWriter, r *http.Request) {
 	qy, err := ParseTraceQuery(r.URL.Query().Get)
 	if err != nil {
 		secJSONErr(w, err, http.StatusBadRequest)
+		return
+	}
+	if err := ResolveTraceScope(r.Context(), h.DB, h.ASN, &qy); err != nil {
+		secJSONErr(w, err, asnStatus(err))
 		return
 	}
 	res, err := TraceIP(r.Context(), h.DB, qy)
@@ -162,7 +183,17 @@ func TraceIP(ctx context.Context, db *sql.DB, qy TraceQuery) (map[string]any, er
 	                 COALESCE(threat_signal,''), component, level, message
 	          FROM logs WHERE ts >= ? AND ts <= ?`
 	args := []any{from.Format(time.RFC3339), to.Format(time.RFC3339Nano)}
-	if lo, hi, ok := security.TraceIPRange(target); ok {
+	if qy.Node != "" {
+		query += ` AND node_name = ?`
+		args = append(args, qy.Node)
+	}
+	sqlTarget := target
+	if qy.matcher.sqlPrefix != nil {
+		sqlTarget = *qy.matcher.sqlPrefix
+	}
+	if qy.matcher.scanAll {
+		// Tout un ASN : pas de borne sur la colonne ip, la sélection se fait en mémoire.
+	} else if lo, hi, ok := security.TraceIPRange(sqlTarget); ok {
 		query += ` AND ip >= ? AND ip < ?`
 		args = append(args, lo, hi)
 	}
@@ -183,7 +214,7 @@ func TraceIP(ctx context.Context, db *sql.DB, qy TraceQuery) (map[string]any, er
 		if rows.Scan(&ts, &ip, &domain, &method, &path, &status, &node, &wafJSON, &signal, &component, &level, &message) != nil {
 			continue
 		}
-		if !security.TraceMatch(target, ip) {
+		if !qy.matcher.matchIP(target, ip) {
 			continue
 		}
 		if scanned++; scanned > traceMaxScan {
@@ -256,7 +287,7 @@ func TraceIP(ctx context.Context, db *sql.DB, qy TraceQuery) (map[string]any, er
 		defer hr.Close()
 		for hr.Next() {
 			var ip, domain, action, reason, source, ts string
-			if hr.Scan(&ip, &domain, &action, &reason, &source, &ts) != nil || !security.TraceOverlap(target, ip) {
+			if hr.Scan(&ip, &domain, &action, &reason, &source, &ts) != nil || !qy.matcher.overlap(target, ip) {
 				continue
 			}
 			t, err := sqltime.Parse(ts)
@@ -284,7 +315,7 @@ func TraceIP(ctx context.Context, db *sql.DB, qy TraceQuery) (map[string]any, er
 		for tr.Next() {
 			var ip, scenario, origin, typ, created, last string
 			var occ int
-			if tr.Scan(&ip, &scenario, &origin, &typ, &occ, &created, &last) != nil || !security.TraceOverlap(target, ip) {
+			if tr.Scan(&ip, &scenario, &origin, &typ, &occ, &created, &last) != nil || !qy.matcher.overlap(target, ip) {
 				continue
 			}
 			t, err := sqltime.Parse(created)
@@ -307,7 +338,7 @@ func TraceIP(ctx context.Context, db *sql.DB, qy TraceQuery) (map[string]any, er
 		defer br.Close()
 		for br.Next() {
 			var b traceBan
-			if br.Scan(&b.ID, &b.IP, &b.Domain, &b.Reason, &b.Source, &b.ExpiresAt) == nil && security.TraceOverlap(target, b.IP) {
+			if br.Scan(&b.ID, &b.IP, &b.Domain, &b.Reason, &b.Source, &b.ExpiresAt) == nil && qy.matcher.overlap(target, b.IP) {
 				sum.ActiveBans = append(sum.ActiveBans, b)
 			}
 		}
@@ -323,7 +354,7 @@ func TraceIP(ctx context.Context, db *sql.DB, qy TraceQuery) (map[string]any, er
 			var cidrs []string
 			json.Unmarshal([]byte(cidrsJSON), &cidrs) //nolint:errcheck
 			for _, c := range cidrs {
-				if security.TraceOverlap(target, c) {
+				if qy.matcher.overlap(target, c) {
 					sum.Profiles = append(sum.Profiles, p)
 					break
 				}
@@ -367,9 +398,21 @@ func TraceIP(ctx context.Context, db *sql.DB, qy TraceQuery) (map[string]any, er
 	if target.Bits() != target.Addr().BitLen() {
 		kind = "cidr"
 	}
+	scope := qy.Scope
+	if scope == "" {
+		scope = TraceScopeIP
+	}
+	targetLabel := target.String()
+	if qy.ASN != "" {
+		targetLabel = qy.ScopeLabel
+		kind = TraceScopeASN
+	}
 	return map[string]any{
-		"target":      target.String(),
+		"target":      targetLabel,
 		"kind":        kind,
+		"scope":       scope,
+		"scope_label": qy.ScopeLabel,
+		"asn_context": qy.Context,
 		"from":        from,
 		"to":          to,
 		"summary":     sum,
@@ -430,4 +473,16 @@ func parseTraceBound(s string, def time.Time, endOfDay bool) (time.Time, error) 
 		t = t.Add(24*time.Hour - time.Nanosecond)
 	}
 	return t.UTC(), nil
+}
+
+func (qy *TraceQuery) keepRow(ip, node string, status int) bool {
+	if qy.ExcludeInternal {
+		if a, err := netip.ParseAddr(ip); err == nil && (a.IsPrivate() || a.IsLoopback() || a.IsLinkLocalUnicast()) {
+			return false
+		}
+	}
+	if len(qy.StatusClass) == 3 && qy.StatusClass[1:] == "xx" && strconv.Itoa(status/100) != qy.StatusClass[:1] {
+		return false
+	}
+	return true
 }

@@ -28,11 +28,25 @@ type Entry struct {
 	Ranges  []Range // triées, sans chevauchement
 }
 
-// Addresses est le nombre d'adresses annoncées (approximatif pour IPv6, au-delà de 2^53).
-func (e *Entry) Addresses() float64 {
+// V4Addresses est le nombre d'adresses IPv4 annoncées. Les plages IPv6 ne se comptent pas en adresses
+// (un seul /32 en contient 2^96) : voir V6Ranges.
+func (e *Entry) V4Addresses() float64 {
 	var n float64
 	for _, r := range e.Ranges {
-		n += addrFloat(r.End) - addrFloat(r.Start) + 1
+		if r.Start.Is4() {
+			n += addrFloat(r.End) - addrFloat(r.Start) + 1
+		}
+	}
+	return n
+}
+
+// V6Ranges est le nombre de plages IPv6 annoncées.
+func (e *Entry) V6Ranges() int {
+	n := 0
+	for _, r := range e.Ranges {
+		if r.Start.Is6() {
+			n++
+		}
 	}
 	return n
 }
@@ -123,13 +137,38 @@ func (x *Index) ByIP(a netip.Addr) (*Entry, bool) {
 	a = a.Unmap()
 	i := sort.Search(len(x.sorted), func(i int) bool { return a.Less(x.sorted[i].start) })
 	// Les plages de ip2asn ne se chevauchent pas : la candidate est la dernière qui commence avant a.
-	for j := i - 1; j >= 0 && j >= i-1; j-- {
-		r := x.sorted[j]
-		if r.start.Is4() == a.Is4() && !a.Less(r.start) && !r.end.Less(a) {
-			return x.byASN[r.asn], true
-		}
+	if i == 0 {
+		return nil, false
+	}
+	if r := x.sorted[i-1]; r.start.Is4() == a.Is4() && !r.end.Less(a) {
+		return x.byASN[r.asn], true
 	}
 	return nil, false
+}
+
+// Find retourne l'ASN qui annonce l'adresse et la plage exacte annoncée qui la contient (telle que le jeu
+// de données la liste, sans fusion avec les plages voisines de l'ASN).
+func (x *Index) Find(a netip.Addr) (*Entry, Range, bool) {
+	a = a.Unmap()
+	i := sort.Search(len(x.sorted), func(i int) bool { return a.Less(x.sorted[i].start) })
+	if i == 0 {
+		return nil, Range{}, false
+	}
+	if r := x.sorted[i-1]; r.start.Is4() == a.Is4() && !r.end.Less(a) {
+		return x.byASN[r.asn], Range{r.start, r.end}, true
+	}
+	return nil, Range{}, false
+}
+
+// Overlaps dit si le préfixe recoupe l'une des plages de l'ASN.
+func (e *Entry) Overlaps(p netip.Prefix) bool {
+	p = p.Masked()
+	first, last := p.Addr().Unmap(), lastAddr(p)
+	if p.Addr().Is4In6() {
+		last = last.Unmap()
+	}
+	i := sort.Search(len(e.Ranges), func(i int) bool { return !e.Ranges[i].End.Less(first) })
+	return i < len(e.Ranges) && e.Ranges[i].Start.Is4() == first.Is4() && !last.Less(e.Ranges[i].Start)
 }
 
 // Contains dit si l'adresse appartient à l'une des plages de l'ASN.
@@ -157,7 +196,7 @@ func (x *Index) Search(q string, limit int) []*Entry {
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if a, b := out[i].Addresses(), out[j].Addresses(); a != b {
+		if a, b := out[i].V4Addresses(), out[j].V4Addresses(); a != b {
 			return a > b
 		}
 		return out[i].ASN < out[j].ASN

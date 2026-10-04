@@ -14,11 +14,14 @@ import (
 // tracePath construit l'URL de GET /security/ip-trace à partir des flags.
 func tracePath(args map[string]string) (string, error) {
 	target := flagValue(args, "-target", flagValue(args, "-ip", ""))
-	if target == "" {
-		return "", fmt.Errorf("usage: goproxify security trace -target <ip|cidr> [-from <date>] [-to <date>] [-order asc|desc] [-limit N] [-offset N] [-json]")
+	if target == "" && flagValue(args, "-asn", "") == "" {
+		return "", fmt.Errorf("usage: goproxify security trace -target <ip|cidr> [-scope ip|range|asn] [-asn <ASN>] [-from <date>] [-to <date>] [-order asc|desc] [-limit N] [-offset N] [-json]")
 	}
-	q := url.Values{"target": {target}}
-	for flag, param := range map[string]string{"-from": "from", "-to": "to", "-order": "order", "-limit": "limit", "-offset": "offset"} {
+	q := url.Values{}
+	if target != "" {
+		q.Set("target", target)
+	}
+	for flag, param := range map[string]string{"-scope": "scope", "-asn": "asn", "-from": "from", "-to": "to", "-order": "order", "-limit": "limit", "-offset": "offset"} {
 		if v := flagValue(args, flag, ""); v != "" {
 			q.Set(param, v)
 		}
@@ -58,6 +61,18 @@ func formatTrace(res map[string]any) string {
 	str := func(m map[string]any, k string) string { v, _ := m[k].(string); return v }
 
 	fmt.Fprintf(&sb, "%s (%s)\n", str(res, "target"), str(res, "kind"))
+	if label := str(res, "scope_label"); label != "" {
+		fmt.Fprintf(&sb, "  étendue : %s — %s\n", str(res, "scope"), label)
+	}
+	if c, ok := res["asn_context"].(map[string]any); ok {
+		if info, ok := c["asn"].(map[string]any); ok {
+			n, _ := info["asn"].(float64)
+			fmt.Fprintf(&sb, "  ASN : AS%.0f %s (%s)\n", n, str(info, "name"), str(info, "country"))
+		}
+		if r, ok := c["range"].(map[string]any); ok {
+			fmt.Fprintf(&sb, "  plage annoncée : %s – %s\n", str(r, "start"), str(r, "end"))
+		}
+	}
 	fmt.Fprintf(&sb, "  première vue : %s   dernière vue : %s\n", orDash(str(sum, "first_seen")), orDash(str(sum, "last_seen")))
 	fmt.Fprintf(&sb, "  %d requêtes (%d bloquées/détectées) · %d IP · %d épisodes · %d bans / %d débans · %d détections\n",
 		num(sum, "requests"), num(sum, "blocked"), num(sum, "ip_count"), num(sum, "episodes"), num(sum, "bans"), num(sum, "unbans"), num(sum, "threats"))

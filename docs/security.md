@@ -305,6 +305,19 @@ Garde-fous :
 
 Limites : débannir une adresse située dans une plage bannie ne lève pas le ban de la plage — supprimer la plage, ou ajouter l'adresse à la [liste blanche](#liste-blanche-des-bans) ; la répartition des bans par pays ne compte pas les plages (elle repose sur la géolocalisation d'adresses précises) ; Fail2Ban, CrowdSec et Sentinel continuent de poser des bans d'adresse (Fail2Ban par /64 en IPv6).
 
+### Bans par ASN
+
+Un **ASN** (système autonome) est l'ensemble des adresses d'un opérateur : hébergeur, fournisseur d'accès, cloud. Bannir un ASN revient à bannir toutes les plages qu'il annonce, utile contre un hébergeur dont viennent les scanners et les robots (page Bans › **+ ASN**, API `POST /security/asn/ban`, CLI `security bans asn`, outils MCP `lookup_asn`, `preview_asn_ban`, `ban_asn`, `unban_asn`).
+
+- **Chercher** par numéro (`AS16276`), par adresse IP (l'ASN qui l'annonce) ou par nom.
+- **Mesurer avant de bannir** : l'aperçu donne le nombre de plages, celles qui seraient ignorées (déjà bannies, en liste blanche, privées), le trafic de l'ASN sur les dernières heures et surtout les requêtes **réussies** qui seraient coupées. Un gros opérateur grand public (un fournisseur d'accès) a des millions d'adresses : vérifier qu'il s'agit bien d'abus.
+- **Bannir** crée un ban par plage (souvent des centaines), avec la portée, l'expiration et le motif choisis, en une transaction et **un seul envoi** aux passerelles. Les plages plus larges que `/16` (IPv4) sont découpées en `/16`. Un ASN qui contient votre adresse est refusé. Les plages en liste blanche restent exemptées.
+- **Lever** : le bandeau « Bans par ASN » de la page Bans (une ligne par ASN, bouton « Lever »), `DELETE /security/asn/ban` ou `security bans asn unban` retirent tous les bans de l'ASN d'un coup. Les centaines de plages sont masquées de la liste des bans (bouton « Afficher les N plages »).
+
+Les données viennent du jeu public **ip2asn** d'[iptoasn.com](https://iptoasn.com) (domaine public, sans compte, mis à jour toutes les heures), que l'Admin télécharge au premier usage dans `<stockage>/asn/ip2asn-combined.tsv.gz` (9 Mo ; `GPX_ASN_DB_PATH` pour l'emplacement, `GPX_ASN_DB_URL` pour la source) et recharge quand le fichier change. `POST /security/asn/refresh` (ou `security bans asn refresh`) le met à jour. **Les passerelles n'en ont pas besoin** : elles reçoivent de simples bans par plage, comme tout autre ban, et restent autonomes si l'Admin tombe.
+
+Limites : le ban est un **instantané** des plages annoncées au moment où il est posé (relancer l'opération ajoute les plages annoncées depuis, sans doublon) ; chaque requête est comparée aux bans un par un : mesuré sur de vraies données, un gros ASN donne de quelques centaines à quelques milliers de plages (OVH : 660, Cloudflare : 2 837), mais l'effet de dizaines de milliers de plages sur la latence n'a pas été mesuré, donc éviter de bannir de très nombreux gros ASN ; une plage annoncée qui donnerait plus de 1 024 morceaux n'est pas bannie (comptée dans `too_wide`) ; la liste blanche et les profils `allow` l'emportent toujours.
+
 ### Import de liste
 
 Page Bans › **Importer** (API `POST /security/bans/import`, CLI `security bans import`, outil MCP `import_security_bans`) : crée des bans, ou des entrées de la [liste blanche](#liste-blanche-des-bans), depuis une liste collée ou un fichier. Formats : **texte** (une adresse ou un CIDR par ligne, commentaires `#` et `;` — le commentaire devient le motif —, ce qui couvre les listes publiques FireHOL, blocklist.de, Spamhaus DROP), **CSV** (colonnes `ip`, `reason`, `domain`, `expires_at` ; l'export des bans se réimporte tel quel) et **JSON** (tableau de chaînes ou d'objets). 10 000 entrées et 2 Mo au plus par import.
@@ -361,6 +374,8 @@ Bouncer LAPI en mode stream : les décisions CrowdSec sont poussées en temps r�
 - **Épisodes** : les requêtes de la cible séparées de moins de 10 minutes forment une seule étape (volume, bloquées, domaines, chemins, statuts, catégories WAF), pour qu'une période d'un an reste lisible.
 - **CIDR** : toutes les IP du préfixe sont réunies ; l'en-tête donne leurs requêtes cumulées et les IP les plus actives. Un ban posé sur un CIDR apparaît dans le parcours d'une IP qu'il contient.
 - **Limites** : les requêtes remontent aussi loin que la rétention des logs d'accès (365 jours par défaut, réglable dans les réglages des Logs) ; les bans et détections ont leur propre historique. Les IP pseudonymisées ou tronquées par la passerelle (RGPD) ne peuvent pas être retrouvées.
+
+- **Opérateur, plage annoncée et ASN** : quand la base ASN est installée (voir [Bans par ASN](#bans-par-asn)), l'en-tête du parcours d'une IP indique son opérateur (ASN, nom, pays) et la plage exacte qu'il annonce, avec trois boutons : **Cette IP**, **Plage annoncée** (toute la plage, sans avoir à connaître le CIDR) et **Tout l'ASN**, plus « Bannir l'ASN » (aperçu d'impact puis ban). Un traçage simple ne télécharge jamais la base : l'en-tête n'apparaît que si elle est déjà installée. Les adresses privées ou réservées, que le jeu de données ne connaît pas, se tracent comme avant, en choisissant l'IP ou un CIDR à la main. La plage annoncée est celle de l'opérateur, pas forcément celle d'un attaquant : un opérateur qui annonce un très large préfixe regroupe beaucoup d'acteurs, d'où le choix de l'étendue. Tracer tout un ASN parcourt les logs sans borne sur l'adresse (limites habituelles du traçage).
 
 **Raccourci** : une loupe « Analyser l'IP » à côté des IP publiques (page Bans, menaces, Sentinel, Prism, tiroir des logs) ouvre ce parcours pour l'IP seule ou sa plage (`/24`, `/16` ; `/64`, `/48` en IPv6). Les adresses privées, pseudonymisées ou tronquées n'ont pas de bouton.
 

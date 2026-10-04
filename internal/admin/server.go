@@ -22,6 +22,7 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/analytics"
 	"github.com/vincamok/goproxify/internal/admin/api"
 	"github.com/vincamok/goproxify/internal/admin/archstore"
+	"github.com/vincamok/goproxify/internal/admin/asn"
 	"github.com/vincamok/goproxify/internal/admin/audit"
 	"github.com/vincamok/goproxify/internal/admin/auth"
 	"github.com/vincamok/goproxify/internal/admin/backup"
@@ -392,6 +393,12 @@ func (s *Server) Start(ctx context.Context) error {
 			go manager.PushUnban(context.Background(), []string{ip})
 		}
 	}
+	pushUnbanMany := func(ips []string) {
+		if manager != nil {
+			go manager.PushUnban(context.Background(), ips)
+		}
+	}
+	asnStore := asn.NewStore(asnDBPath(s.cfg.Storage.BasePath), os.Getenv("GPX_ASN_DB_URL"), s.log)
 	// Les profils IP (dont la liste blanche des bans) ne partaient vers les passerelles qu'à leur
 	// connexion : un changement depuis l'Admin n'était appliqué qu'à la reconnexion suivante.
 	pushIPProfiles := func() {
@@ -436,6 +443,8 @@ func (s *Server) Start(ctx context.Context) error {
 		ScanCtx:      ctx,
 		OnBansChange: pushBans,
 		OnUnban:      pushUnban,
+		OnUnbanMany:  pushUnbanMany,
+		ASN:          asnStore,
 		OnWhitelistChange: pushIPProfiles,
 		OnThreatConfigChange: func(scope string, cfg any) {
 			if manager != nil {
@@ -872,6 +881,8 @@ func (s *Server) Start(ctx context.Context) error {
 		},
 		OnBansChange: pushBans,
 		OnUnban:      pushUnban,
+		OnUnbanMany:  pushUnbanMany,
+		ASN:          asnStore,
 		OnWhitelistChange: pushIPProfiles,
 		RulesEngine:  s.rulesEngine,
 		Groups:       banGroups,

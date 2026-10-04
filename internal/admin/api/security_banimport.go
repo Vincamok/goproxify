@@ -25,6 +25,9 @@ const (
 	ImportTargetBans      = "bans"
 	ImportTargetWhitelist = "whitelist"
 
+	// ImportFormatPreparsed : format indiqué dans le rapport quand les entrées viennent de ImportRequest.Entries.
+	ImportFormatPreparsed = "asn"
+
 	// importMaxIssues borne les listes du rapport (les compteurs restent exacts).
 	importMaxIssues = 200
 	importMaxSample = 20
@@ -48,6 +51,10 @@ type ImportRequest struct {
 	DryRun bool   `json:"dry_run"`
 	// Groups résout les groupes HA pour valider Scope.
 	Groups GroupResolver `json:"-"`
+	// Entries : entrées déjà lues, qui remplacent Content (ban d'un ASN : pas de limite de taille de liste).
+	Entries []security.ImportEntry `json:"-"`
+	// ASN rattache les bans créés à un ASN, pour les retrouver et les lever ensemble.
+	ASN uint32 `json:"-"`
 }
 
 // ImportIssue situe une entrée ignorée ou rejetée.
@@ -109,11 +116,15 @@ func ImportBans(ctx context.Context, db *sql.DB, req ImportRequest, requester, a
 	if res.Target != ImportTargetBans && res.Target != ImportTargetWhitelist {
 		return res, fmt.Errorf("target inconnue %q (bans ou whitelist)", req.Target)
 	}
-	entries, format, err := security.ParseImport(req.Content, req.Format)
-	res.Format = format
-	if err != nil {
-		return res, err
+	entries, format := req.Entries, ImportFormatPreparsed
+	var err error
+	if entries == nil {
+		if entries, format, err = security.ParseImport(req.Content, req.Format); err != nil {
+			res.Format = format
+			return res, err
+		}
 	}
+	res.Format = format
 	res.Total = len(entries)
 	defaultExp, err := security.NormalizeBanExpiry(req.ExpiresAt)
 	if err != nil {
@@ -252,8 +263,8 @@ func ImportBans(ctx context.Context, db *sql.DB, req ImportRequest, requester, a
 	for _, it := range items {
 		id := uuid.New().String()
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO security_bans (id, ip, domain, reason, source, expires_at, target_scope) VALUES (?, ?, ?, ?, 'native', ?, ?)`,
-			id, it.target.Value, it.domain, it.reason, it.expiresAt, scope); err != nil {
+			`INSERT INTO security_bans (id, ip, domain, reason, source, expires_at, target_scope, asn) VALUES (?, ?, ?, ?, 'native', ?, ?, ?)`,
+			id, it.target.Value, it.domain, it.reason, it.expiresAt, scope, req.ASN); err != nil {
 			return res, err
 		}
 		if _, err := tx.ExecContext(ctx,

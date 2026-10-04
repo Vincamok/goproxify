@@ -143,7 +143,7 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - [x] **Page Bans — import de liste** : création de bans (ou d'entrées de la liste blanche) en une fois depuis un texte, un CSV (dont l'export des bans) ou un JSON ; chaque entrée validée comme un ban unitaire, rapport ligne par ligne, mode analyse sans rien créer ; UI, API, CLI et MCP
 - [x] **Page Bans — ban ciblant une passerelle ou un groupe** : un ban (manuel ou importé) ne s'applique qu'à une passerelle ou aux membres d'un groupe HA ; chaque passerelle ne reçoit que les bans qui la concernent
 - [x] **Page Bans — filtres enregistrés** : combinaisons de filtres de la liste nommées, rappelées et supprimées depuis la page (gardées dans le navigateur)
-- [ ] **Page Bans — ASN** : bans par ASN (avec le même aperçu)
+- [x] **Page Bans — bans par ASN** : recherche d'un ASN (numéro, IP ou nom), aperçu d'impact, ban de toutes ses plages en une opération, levée groupée (UI, API, CLI, MCP) ; données ip2asn publiques téléchargées par l'Admin
 
 ### Intégrations Infrastructure as Code
 

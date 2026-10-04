@@ -5,6 +5,9 @@
 // Si l'administrateur a posé un fond vectoriel PMTiles (voir docs/fonctionnalites.md), il est dessiné
 // sous les pays et la carte zoome jusqu'à la rue dans la zone qu'il couvre.
 
+// Leaflet pose fill/stroke en attributs SVG, où var(--x) n'est pas résolu : on lit la valeur calculée.
+const gmVar = n => getComputedStyle(document.querySelector('.gm-box') || document.documentElement).getPropertyValue(n).trim() || '#888';
+
 const GEO_PALETTES = {
   requests:   [89, 128, 166],
   error_rate: [220, 53, 69],
@@ -216,8 +219,8 @@ async function gpxGeoMap(el, opts = {}) {
     basemapLayer.bringToBack?.();
   };
   drawBasemap();
-  const themeObs = basemap ? new MutationObserver(drawBasemap) : null;
-  if (themeObs) themeObs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  const themeObs = new MutationObserver(() => { drawBasemap(); restyle(); drawRegions(); });
+  themeObs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
   let state = { countries: [], points: [], mode: 'requests', style: 'zones', selected: '' };
   let byCC = {};
@@ -231,13 +234,13 @@ async function gpxGeoMap(el, opts = {}) {
 
   const centroids = {};
   const countryLayer = L.geoJSON(countries, {
-    style: () => ({ fillColor: 'var(--bg2)', fillOpacity: 1, color: 'var(--border)', weight: 0.6 }),
+    style: () => ({ fillColor: gmVar('--gm-land'), fillOpacity: 1, color: gmVar('--gm-line'), weight: 0.6 }),
     onEachFeature: (f, layer) => {
       const cc = f.properties.iso;
       centroids[cc] = mainlandCenter(L, f.geometry);
       layer.on({
         click: () => { if (byCC[cc] && opts.onCountry) opts.onCountry(cc); },
-        mouseover: () => { if (byCC[cc]) layer.setStyle({ color: 'var(--accent)', weight: 1.4 }); },
+        mouseover: () => { if (byCC[cc]) layer.setStyle({ color: gmVar('--accent'), weight: 1.4 }); },
         mouseout: () => restyle(),
       });
       layer.bindTooltip(() => {
@@ -274,7 +277,7 @@ async function gpxGeoMap(el, opts = {}) {
     const [r, g, b] = colorOf();
     countryLayer.eachLayer(layer => {
       const cc = layer.feature.properties.iso, e = byCC[cc];
-      let fill = 'var(--bg2)';
+      let fill = gmVar('--gm-land');
       if (e && state.style === 'zones' && max > 0) {
         const v = _geoValue(e, state.mode);
         fill = `rgba(${r},${g},${b},${v > 0 ? (0.12 + Math.pow(v / max, 0.55) * 0.83).toFixed(2) : '0.06'})`;
@@ -282,7 +285,7 @@ async function gpxGeoMap(el, opts = {}) {
       const sel = cc === state.selected;
       layer.setStyle({
         fillColor: fill, fillOpacity: fade,
-        color: sel ? 'var(--text)' : e ? 'var(--bg)' : 'var(--border)',
+        color: sel ? gmVar('--text') : e ? gmVar('--gm-sea') : gmVar('--gm-line'),
         weight: sel ? 1.8 : e ? 0.6 : 0.4,
       });
       if (sel) layer.bringToFront();
@@ -307,7 +310,7 @@ async function gpxGeoMap(el, opts = {}) {
         const v = s ? _geoValue(s, state.mode) : 0;
         return {
           fillColor: `rgb(${r},${g},${b})`, fillOpacity: v > 0 && max > 0 ? 0.12 + Math.pow(v / max, 0.55) * 0.83 : 0,
-          color: 'var(--text3)', weight: 0.5, opacity: 0.6,
+          color: gmVar('--text3'), weight: 0.5, opacity: 0.6,
         };
       },
       onEachFeature: (f, layer) => {

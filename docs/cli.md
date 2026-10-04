@@ -726,11 +726,12 @@ goproxify security bans list   [-edge <passerelle>] [-source <source>] [-active 
 goproxify security bans add    -ip <ip|cidr> [-reason <raison>] [-ttl <durée>] [-scope <passerelle|group:nom>] [-admin-url …] [-token …]
 goproxify security bans preview -ip <ip|cidr> [-hours N] [-json] [-admin-url …] [-token …]   # impact d'un ban avant de le créer
 goproxify security bans whitelist list|add|delete [-ip <ip|cidr>] [-comment <texte>] [-admin-url …] [-token …]   # liste blanche des bans
+goproxify security bans asn lookup|preview|ban|unban|info|refresh [-asn <ASN>] [-q <ASN|IP|nom>] [-hours N] [-ttl <durée>] [-scope <passerelle|group:nom>] [-dry-run] [-json]   # bans par ASN
 goproxify security bans import -file <chemin|-> [-format auto|text|csv|json] [-target bans|whitelist] [-reason …] [-domain …] [-ttl …] [-scope <passerelle|group:nom>] [-dry-run] [-json] [-admin-url …] [-token …]
 goproxify security bans delete -id <ban-id> [-admin-url …] [-token …]
 
 # Parcours d'une IP ou d'un CIDR
-goproxify security trace -target <ip|cidr> [-from <date>] [-to <date>] [-order asc|desc] [-limit N] [-offset N] [-json] [-admin-url …] [-token …]
+goproxify security trace -target <ip|cidr> [-scope ip|range|asn] [-asn <ASN>] [-from <date>] [-to <date>] [-order asc|desc] [-limit N] [-offset N] [-json] [-admin-url …] [-token …]
 
 # WAF par proxy
 goproxify security waf get -proxy <proxy-id> [-admin-url …] [-token …]
@@ -751,9 +752,11 @@ goproxify security cve sla set -file <sla.json> [-admin-url …] [-token …]
 
 `security bans import` crée des bans (ou, avec `-target whitelist`, des entrées de la liste blanche) depuis une liste lue dans `-file` (`-` = entrée standard) : texte (une adresse ou un CIDR par ligne, commentaires `#` et `;`, comme les listes publiques FireHOL, blocklist.de ou Spamhaus DROP), CSV (l'export des bans se réimporte tel quel) ou JSON ; `-format` force le format, détecté sinon. `-reason` (motif par défaut, `import` sinon), `-domain` et `-ttl` (durée Go ou `7d`, expiration par défaut ; sans, permanents) s'appliquent aux entrées qui n'ont pas les leurs. Chaque entrée est validée comme `bans add` ; les doublons, cibles déjà couvertes et plages privées sont ignorés. **`-dry-run` analyse sans rien créer** : à lancer d'abord. Le rapport liste les entrées rejetées et ignorées avec leur ligne ; `-json` affiche la réponse brute (`POST /api/v1/security/bans/import`).
 
+`security bans asn` bannit un **ASN** (tout un opérateur) : `lookup -q OVH` (ou `-q AS16276`, ou `-q 51.77.0.1` pour l'ASN d'une adresse) cherche ; `preview -asn AS16276` mesure l'impact sans rien créer (plages, trafic des dernières heures, avertissements) ; `ban -asn AS16276 [-reason …] [-ttl 7d] [-scope …] [-dry-run]` crée un ban par plage annoncée, en un seul envoi aux passerelles ; `unban -asn AS16276` les lève tous ; `info` et `refresh` montrent ou mettent à jour la base ASN de l'Admin. Un ASN qui contient votre adresse est refusé.
+
 `security bans whitelist` gère la **liste blanche des bans** : `list` affiche les entrées (avec le nombre de bans actifs qu'elles neutralisent), `add -ip <ip|cidr> [-comment …]` ajoute une adresse ou une plage (normalisée comme un ban, `/16` IPv4 et `/32` IPv6 au plus larges), `delete -ip <valeur>` la retire. Une adresse en liste blanche n'est atteinte par aucun ban et n'est pas évaluée par Sentinel ; les bans existants ne sont pas supprimés.
 
-**`security trace`** — reconstitue tout ce qu'une IP ou un CIDR a fait : synthèse (requêtes, bloquées, IP distinctes, épisodes, bans/débans, détections, bans en cours, profils IP) puis les étapes (épisodes d'activité, bans, débans, détections) avec leur date. `-from` / `-to` acceptent une date `AAAA-MM-JJ` ou RFC3339 (défaut : 30 derniers jours) ; `-order desc` met le plus récent en premier ; `-limit` / `-offset` paginent (500 étapes par défaut) ; `-json` renvoie la réponse brute de `GET /api/v1/security/ip-trace`. Exemple : `goproxify security trace -target 198.51.100.0/24 -from 2026-01-01`. Les requêtes remontent aussi loin que la rétention des logs d'accès.
+**`security trace`** (`-scope range` : la plage annoncée par l'opérateur de l'adresse ; `-scope asn` : tout l'ASN de l'adresse, ou `-asn AS16276` sans adresse ; sans saisir de CIDR, grâce à la base ASN) — reconstitue tout ce qu'une IP ou un CIDR a fait : synthèse (requêtes, bloquées, IP distinctes, épisodes, bans/débans, détections, bans en cours, profils IP) puis les étapes (épisodes d'activité, bans, débans, détections) avec leur date. `-from` / `-to` acceptent une date `AAAA-MM-JJ` ou RFC3339 (défaut : 30 derniers jours) ; `-order desc` met le plus récent en premier ; `-limit` / `-offset` paginent (500 étapes par défaut) ; `-json` renvoie la réponse brute de `GET /api/v1/security/ip-trace`. Exemple : `goproxify security trace -target 198.51.100.0/24 -from 2026-01-01`. Les requêtes remontent aussi loin que la rétention des logs d'accès.
 
 **`security cve sla`** — lit ou écrit le délai de correction attendu des CVE (en jours après détection), par tranche de gravité CVSS ; réglage global (Admin `0.52.3`). Fichier `sla.json` :
 
@@ -786,6 +789,10 @@ goproxify security bans add -ip 1.2.3.4 -reason "scan" -ttl 24h
 goproxify security bans preview -ip 203.0.113.0/24
 goproxify security bans whitelist add -ip 198.51.100.0/24 -comment "bureau Paris"
 goproxify security bans whitelist list
+goproxify security bans asn lookup -q OVH
+goproxify security bans asn preview -asn AS16276
+goproxify security bans asn ban -asn AS16276 -ttl 30d -dry-run
+goproxify security bans asn unban -asn AS16276
 goproxify security bans import -file blocklist.txt -dry-run
 goproxify security bans import -file blocklist.txt -reason "blocklist.de" -ttl 30d
 curl -s https://lists.blocklist.de/lists/ssh.txt | goproxify security bans import -file - -ttl 7d

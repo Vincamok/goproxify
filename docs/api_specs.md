@@ -862,6 +862,18 @@ Crée un ban manuel. Corps : `{ "ip", "domain", "reason", "expires_at", "target_
 
 Les bans existants ne sont jamais supprimés par un ajout : ils cessent seulement de s'appliquer, et `GET /security/bans` les marque `"exempt": true` quand la liste blanche couvre toute leur cible. Les entrées sont recopiées dans un profil IP en mode `allow` d'identifiant `bans-whitelist` (nom « Liste blanche (bans) ») que les passerelles reçoivent et conservent : elles l'appliquent sans l'Admin, y compris après un redémarrage. Ce profil est **géré ici** : `PUT` et `DELETE /ip-profiles/bans-whitelist` renvoient `409`. À la différence d'un profil allow ordinaire, il exempte aussi de la détection Sentinel (requêtes non évaluées ni comptées). Un ban dont la cible est entièrement en liste blanche est refusé (`409`) ; une plage qui ne fait que recouper une entrée reste permise, l'entrée en restant exemptée. Outils MCP `list_ban_whitelist`, `add_ban_whitelist`, `remove_ban_whitelist` ; CLI `goproxify security bans whitelist`.
 
+### `GET /api/v1/security/asn` · `GET /preview` · `POST /ban` · `DELETE /ban` · `GET /info` · `POST /refresh`
+
+**Bans par ASN.** Bannir un ASN crée un ban par plage qu'il annonce (CIDR), comme un import de liste. Réservé aux administrateurs. Les données viennent du jeu public ip2asn (iptoasn.com), téléchargé par l'Admin au premier usage (`503` s'il est absent et injoignable).
+
+- `GET /security/asn?q=<AS16276|16276|adresse IP|nom>` : `[{ "asn", "name", "country", "ranges", "v4_addresses", "v6_ranges", "banned_ranges" }]` ; une adresse IP donne l'ASN qui l'annonce, un nom jusqu'à 20 ASN (les plus grands d'abord) ; `banned_ranges` = bans actifs déjà créés pour cet ASN.
+- `GET /security/asn/preview?asn=<ASN>&hours=24` : aperçu sans rien créer. `would_create`, `skipped_count`, `rejected_count` (avec `skipped` / `rejected` : `[{ "line", "value", "reason" }]`), `prefixes`, `too_wide`, trafic de la période (`requests`, `blocked`, `ok_requests`, `ips`, `ok_ips`, `top_ips`, `countries`), `requester_in` et `warnings`.
+- `POST /security/asn/ban` : corps `{ "asn", "reason", "domain", "expires_at", "scope", "dry_run" }`. Réponse : l'ASN (`asn`, `name`, `country`, `announced_ranges`, `prefixes`, `too_wide`) et le rapport d'import (`created`, `skipped_count`, `rejected_count`, `skipped`, `rejected`, `dry_run`). `reason` vaut par défaut « AS<numéro> <nom> » ; `scope` se comporte comme `target_scope` d'un ban. Les plages plus larges que `/16` (IPv4) sont découpées en `/16` (une plage qui donnerait plus de 1 024 morceaux est ignorée : `too_wide`) ; les plages déjà bannies, en liste blanche ou privées sont ignorées. `409` si l'ASN contient l'adresse de l'appelant ; `404` si l'ASN est inconnu ; `400` pour une valeur invalide. Un seul envoi aux passerelles pour tout le lot. Le ban est un instantané : relancer la même requête ajoute les plages annoncées depuis.
+- `DELETE /security/asn/ban?asn=<ASN>` : supprime les bans créés pour l'ASN (historique alimenté) et les lève sur les passerelles en un seul envoi. Réponse `{ "asn", "removed" }`.
+- `GET /security/asn/info` : état de la base (`installed`, `updated_at`, `size_bytes`, `asns`, `ranges`) ; `POST /security/asn/refresh` la télécharge à nouveau.
+
+`GET /security/bans` renvoie `asn` (numéro, absent hors ban d'ASN) pour chaque ban créé de cette façon.
+
 ### `POST /api/v1/security/bans/import`
 
 **Import de liste** : crée des bans (ou des entrées de la [liste blanche](#getpostdelete-apiv1securitybanswhitelist)) à partir d'une liste d'adresses IP et de CIDR. Corps JSON : `content` (le texte de la liste, 2 Mo et 10 000 entrées au plus), `scope` (portée des bans créés, comme `target_scope` de `POST /security/bans` ; ignorée pour la liste blanche), `format` (`auto` par défaut, `text`, `csv` ou `json`), `target` (`bans` par défaut, ou `whitelist`), `reason` (motif des bans, ou commentaire des entrées, sans motif propre ; `import` par défaut), `domain` (domaine ciblé par les bans sans domaine propre), `expires_at` (expiration RFC3339 des bans sans expiration propre ; vide = permanent) et `dry_run`.
@@ -892,11 +904,18 @@ Liste les menaces CrowdSec (`security_threats`), triées par `last_seen_at` déc
 
 ### `GET /api/v1/security/ip-trace`
 
+**Étendue ASN.** La réponse contient `scope`, `scope_label` (par exemple `5.0.0.0 – 5.0.1.255 (AS64500 EXEMPLE)` ou `AS64500 EXEMPLE`) et `asn_context` : `{ "asn": { "asn", "name", "country", "ranges", "v4_addresses", "v6_ranges", "banned_ranges" }, "range": { "start", "end", "cidrs": […] } }`, `range` donnant la plage annoncée qui contient l'adresse et sa décomposition en CIDR. `asn_context` n'est renseigné que si la base ASN est **déjà installée** (un traçage simple ne la télécharge jamais), sinon `null` ; avec `scope=range` ou `scope=asn` elle est chargée, et téléchargée au besoin.
+
 Parcours complet d'une IP ou d'un CIDR (rôle admin). Reconstitue, sur la période demandée, les requêtes d'accès (logs), les détections (`security_threats`), les bans et débans (`security_ban_history`), les bans en cours et les profils IP qui contiennent la cible.
 
 | Paramètre | Description |
 |-----------|-------------|
-| `target` (alias `ip`) | **Requis.** IP (`203.0.113.7`, `2001:db8::1`) ou CIDR (`198.51.100.0/24`). `400` si invalide |
+| `target` (alias `ip`) | **Requis** (sauf avec `asn`). IP (`203.0.113.7`, `2001:db8::1`) ou CIDR (`198.51.100.0/24`). `400` si invalide |
+| `scope` | Étendue du parcours : `ip` (défaut, la cible seule), `range` (la plage que l'opérateur de l'adresse annonce, lue dans la base ASN) ou `asn` (toutes les plages de l'ASN de l'adresse). `404` si l'adresse est inconnue de la base (privée, réservée), `503` si la base ASN est indisponible, `400` si la valeur est inconnue |
+| `asn` | Numéro d'ASN (`AS16276`) à tracer en entier, à la place d'une adresse ; exige `scope=asn`. `404` si l'ASN n'annonce aucune plage |
+| `node` | Ne garde que les requêtes vues par cette passerelle (nom du nœud). Les bans et détections ne sont pas filtrés |
+| `status` | Ne garde que les requêtes d'une classe de statut : `2xx`, `3xx`, `4xx` ou `5xx` |
+| `exclude_internal` | `1` : ignore les requêtes dont l'IP est privée, loopback ou link-local |
 | `from`, `to` | RFC3339 ou `AAAA-MM-JJ` (`to` en date seule inclut la journée). Défaut : 30 derniers jours jusqu'à maintenant. `400` si `from` ≥ `to` |
 | `order` | `asc` (chronologique, défaut) ou `desc` |
 | `limit`, `offset` | Pagination des étapes (défaut 500, max 2000) |

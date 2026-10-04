@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/vincamok/goproxify/internal/admin/crowdsec"
+	"github.com/vincamok/goproxify/internal/admin/asn"
 	"github.com/vincamok/goproxify/internal/admin/fail2ban"
 	"github.com/vincamok/goproxify/internal/admin/security"
 	"github.com/vincamok/goproxify/internal/admin/vulnscan"
@@ -40,6 +41,11 @@ type SecurityHandler struct {
 	// OnUnban lève les bans d'une IP sur les passerelles, y compris ceux qu'elles ont posés elles-mêmes,
 	// puis leur renvoie la liste des bans (remplace OnBansChange pour un déban).
 	OnUnban func(ip string)
+	// OnUnbanMany lève les bans de plusieurs adresses d'un coup (déban d'un ASN) : un seul envoi par
+	// passerelle au lieu d'un par plage.
+	OnUnbanMany func(ips []string)
+	// ASN est la base des systèmes autonomes (nil = fonctions ASN indisponibles).
+	ASN *asn.Store
 	// OnWhitelistChange pousse aux passerelles les profils IP (la liste blanche des bans en est un)
 	// après un ajout ou un retrait.
 	OnWhitelistChange func()
@@ -75,6 +81,8 @@ func (h *SecurityHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.banPreview(w, r)
 	case r.Method == http.MethodPost && sub == "bans" && id == "import":
 		h.bansImport(w, r)
+	case sub == "asn":
+		h.asnRoute(w, r, id)
 	case r.Method == http.MethodGet && sub == "bans" && id == "whitelist":
 		h.whitelistList(w, r)
 	case r.Method == http.MethodPost && sub == "bans" && id == "whitelist":
@@ -264,7 +272,7 @@ func (h *SecurityHandler) listBans(w http.ResponseWriter, r *http.Request) {
 		where = " WHERE " + strings.Join(clauses, " AND ")
 	}
 	rows, err := h.DB.QueryContext(r.Context(),
-		`SELECT id, ip, domain, reason, source, edge_name, target_scope, expires_at, strftime('%Y-%m-%dT%H:%M:%SZ', created_at) FROM security_bans`+where+` ORDER BY created_at DESC`,
+		`SELECT id, ip, domain, reason, source, edge_name, target_scope, asn, expires_at, strftime('%Y-%m-%dT%H:%M:%SZ', created_at) FROM security_bans`+where+` ORDER BY created_at DESC`,
 		args...)
 	if err != nil {
 		secJSONErr(w, err, http.StatusInternalServerError)
@@ -277,7 +285,7 @@ func (h *SecurityHandler) listBans(w http.ResponseWriter, r *http.Request) {
 		var b security.Ban
 		var exp sql.NullString
 		var createdAt string
-		if err := rows.Scan(&b.ID, &b.IP, &b.Domain, &b.Reason, &b.Source, &b.EdgeName, &b.TargetScope, &exp, &createdAt); err != nil {
+		if err := rows.Scan(&b.ID, &b.IP, &b.Domain, &b.Reason, &b.Source, &b.EdgeName, &b.TargetScope, &b.ASN, &exp, &createdAt); err != nil {
 			if h.Log != nil {
 				h.Log.Warn("security bans: scan", "err", err)
 			}

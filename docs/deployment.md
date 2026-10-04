@@ -703,6 +703,10 @@ Par défaut, les cartes de l'Admin (Prism, Sécurité, Vue Proxy) utilisent des 
 
 Le fond n'est dessiné que dans la zone qu'il couvre : à l'extérieur, la carte garde ses contours de pays. Le fichier est servi tel quel (`GET /map/basemap.pmtiles`, requêtes partielles `Range`, sans authentification : ce sont des données cartographiques publiques) ; le navigateur ne lit que les tuiles visibles. Le thème clair ou sombre de l'interface est suivi. Le fichier n'est pas inclus dans les sauvegardes de l'Admin : il se retélécharge.
 
+## Base des systèmes autonomes (ASN)
+
+Les bans par ASN s'appuient sur le jeu public ip2asn (iptoasn.com). L'Admin le télécharge **tout seul au premier usage** (9 Mo, depuis `https://iptoasn.com/data/ip2asn-combined.tsv.gz`) : il faut donc que l'Admin puisse joindre ce site, ou que le fichier soit posé à la main. Il est rangé dans `<stockage>/asn/ip2asn-combined.tsv.gz` (`/etc/goproxify/asn/…` par défaut, dans le volume de l'Admin). Variables : `GPX_ASN_DB_PATH` (emplacement du fichier) et `GPX_ASN_DB_URL` (source, par exemple un miroir interne). Sur un Admin sans accès à Internet, télécharger le fichier ailleurs et le copier à l'emplacement ci-dessus. Mise à jour : `goproxify security bans asn refresh`.
+
 ## Références
 
 - [Architecture](architecture.md) — détail des composants et flux internes

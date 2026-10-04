@@ -10,7 +10,7 @@ const BN_SRC_COLORS = { fail2ban: 'var(--orange,#d97706)', crowdsec: 'var(--blue
 const _bn = {
   mode: 'admin', edgeCtx: null, tab: 'actifs',
   edgeNames: new Map(), bans: [], history: [], kpis: {}, timeline: [], byReason: [], countries: [], rec: new Map(),
-  q: '', src: '', exp: '', edge: '', sort: 'created_desc', shown: BN_PAGE, sel: new Set(),
+  q: '', src: '', exp: '', edge: '', sort: 'created_desc', shown: BN_PAGE, sel: new Set(), showAsn: false,
 };
 
 const BN_ICONS = {
@@ -100,6 +100,7 @@ function bnFiltered() {
   const now = Date.now();
   const needle = q.trim().toLowerCase();
   const list = _bn.bans.filter(b => {
+    if (b.asn && !_bn.showAsn) return false;
     if (src && bnSrc(b) !== src) return false;
     if (edge && (b.edge_name || '') !== (edge === '__global' ? '' : edge)) return false;
     const e = bnExpiry(b);
@@ -333,7 +334,7 @@ function bnListCardHTML() {
         <span id="bn-count" class="sec-bans-count" style="margin-left:auto"></span>
       </div>
       <div class="sec-bans-toolbar-row" id="bn-chips"></div>
-    </div><div id="bn-bulk"></div>` : '';
+    </div><div id="bn-asn"></div><div id="bn-bulk"></div>` : '';
   return `<div class="card blueprint" style="padding:0">
     <div class="tabs" role="tablist" style="margin:0;padding:0 8px">${tabs}</div>
     ${toolbar}<div id="bn-body"></div></div>`;
@@ -352,6 +353,8 @@ function bnPaint() {
   }
   const chips = document.getElementById('bn-chips');
   if (chips) chips.innerHTML = bnChipsHTML();
+  const asnBox = document.getElementById('bn-asn');
+  if (asnBox) asnBox.innerHTML = bnAsnStripHTML();
   const total = _bn.bans.length, shown = bnFiltered().length;
   const count = document.getElementById('bn-count');
   if (count) count.textContent = shown === total ? `${total} ban${total > 1 ? 's' : ''}` : `${shown} sur ${total}`;
@@ -504,6 +507,7 @@ async function renderBans({ mode }) {
     <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="exportBansCSV()">Export CSV</button>
     <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="openBanImport()" title="Créer des bans (ou des entrées de la liste blanche) depuis une liste d'adresses et de CIDR">Importer</button>
     <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="openBanWhitelist()" title="Adresses et plages qu'aucun ban n'atteint">Liste blanche</button>
+    <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="openBanAsn()" title="Bannir toutes les plages d'un opérateur (système autonome)">+ ASN</button>
     <button class="btn btn-primary btn-sm" onclick="openBanModal()">+ Ban</button>
     <button class="btn btn-secondary btn-sm" onclick="reloadCurrentSecurityPage()" title="Actualiser" aria-label="Actualiser">↺</button>`;
   try {
@@ -575,6 +579,122 @@ window.bnWhitelistRemove = async function(value) {
     await api('DELETE', '/security/bans/whitelist?ip=' + encodeURIComponent(value));
     toast('Retiré de la liste blanche', 'success');
     await bnWhitelistRepaint();
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+// ── Bans par ASN ──────────────────────────────────────────────────────────────
+// Un ban d'ASN crée un ban par plage annoncée (souvent des centaines) : la liste les masque et les
+// résume dans un bandeau, une ligne par ASN, avec « Lever » pour les retirer ensemble.
+
+function bnAsnStripHTML() {
+  const groups = new Map();
+  for (const b of _bn.bans) {
+    if (!b.asn) continue;
+    const g = groups.get(b.asn) || { asn: b.asn, n: 0, name: '' };
+    g.n++;
+    if (!g.name) g.name = String(b.reason || '').replace(/^AS\d+\s*/, '');
+    groups.set(b.asn, g);
+  }
+  if (!groups.size) return '';
+  const total = [...groups.values()].reduce((s, g) => s + g.n, 0);
+  const chips = [...groups.values()].sort((a, b) => b.n - a.n).map(g => `<span class="tag tag-neutral" style="display:inline-flex;gap:8px;align-items:center;padding:3px 8px">
+      <b>AS${g.asn}</b>${g.name ? ' ' + esc(g.name) : ''} · ${g.n} plage${g.n > 1 ? 's' : ''}
+      <button type="button" class="btn btn-ghost btn-sm" style="font-size:11px;padding:0 6px" onclick="bnAsnUnban(${g.asn})" title="Retirer les ${g.n} bans de cet ASN">Lever</button></span>`).join(' ');
+  return `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:8px 12px;border-bottom:1px solid var(--border);font-size:12px">
+    <span style="color:var(--text3)">Bans par ASN :</span>${chips}
+    <button type="button" class="btn btn-ghost btn-sm" style="font-size:11px;margin-left:auto" onclick="bnToggleAsn()">${_bn.showAsn ? 'Masquer' : 'Afficher'} les ${total} plages dans la liste</button></div>`;
+}
+
+window.bnToggleAsn = () => { _bn.showAsn = !_bn.showAsn; bnRefilter(); };
+
+window.bnAsnUnban = async function(asn) {
+  if (!confirm('Retirer tous les bans de l\'ASN AS' + asn + ' ?')) return;
+  try {
+    const r = await api('DELETE', '/security/asn/ban?asn=' + encodeURIComponent(asn));
+    toast(`${r.removed} plage(s) débannie(s)`, 'success');
+    reloadCurrentSecurityPage();
+  } catch (e) { toast(e.message, 'error'); }
+};
+
+let _bnAsn = { sel: null };
+
+window.openBanAsn = function(prefill) {
+  _bnAsn = { sel: null };
+  modal('Bannir un ASN', `
+    <p style="font-size:12.5px;color:var(--text2);margin:0 0 10px">Un ASN est l'ensemble des adresses d'un opérateur (hébergeur, fournisseur d'accès…). Chercher par numéro (<code>AS16276</code>), par adresse IP ou par nom, puis mesurer l'impact avant de bannir. Chaque plage annoncée devient un ban ; relancer plus tard ajoute les nouvelles plages.</p>
+    <div style="display:flex;gap:8px;margin-bottom:8px"><input id="asn-q" class="input" placeholder="AS16276, 51.77.0.1 ou OVH" style="flex:1" onkeydown="if(event.key==='Enter')bnAsnSearch()"><button class="btn btn-secondary" onclick="bnAsnSearch()">Chercher</button></div>
+    <div id="asn-results"></div>
+    <div id="asn-form" style="display:none">
+      <div class="field"><label class="field-label">Motif (optionnel)</label><input id="asn-reason" class="input" placeholder="AS… nom de l'opérateur"></div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <div class="field" style="flex:1;min-width:190px;margin:0"><label class="field-label">Expire le (optionnel, vide = permanent)</label><input id="asn-exp" type="datetime-local" class="input"></div>
+        <div class="field" style="flex:1;min-width:190px;margin:0"><label class="field-label">${t('security.ban_modal.scope')}</label><select id="asn-scope" class="input"><option value="">${esc(t('security.ban_modal.scope_all'))}</option></select></div>
+      </div>
+    </div>
+    <div id="asn-preview" style="margin-top:12px"></div>`,
+    `<button class="btn btn-secondary" onclick="closeModal();reloadCurrentSecurityPage()">Fermer</button>
+     <button id="asn-ban-btn" class="btn btn-danger" style="display:none" onclick="bnAsnBan()">Bannir cet ASN</button>`, true);
+  window.fillBanScopes?.('asn-scope');
+  const q = document.getElementById('asn-q');
+  if (prefill && q) { q.value = 'AS' + prefill; bnAsnSearch(); } else q?.focus();
+};
+
+window.bnAsnSearch = async function() {
+  const q = document.getElementById('asn-q')?.value.trim();
+  const box = document.getElementById('asn-results');
+  if (!q || !box) return;
+  box.innerHTML = '<div style="font-size:12.5px;color:var(--text3)">…</div>';
+  try {
+    const list = await api('GET', '/security/asn?q=' + encodeURIComponent(q));
+    if (!list.length) { box.innerHTML = '<div style="font-size:12.5px;color:var(--text3)">Aucun ASN trouvé.</div>'; return; }
+    box.innerHTML = `<div style="max-height:180px;overflow:auto;border:1px solid var(--border);border-radius:6px">${list.map(a => `
+      <div style="display:flex;gap:10px;align-items:center;padding:6px 10px;cursor:pointer;font-size:12.5px;border-bottom:1px solid var(--border)" onclick="bnAsnPick(${a.asn})">
+        <b style="min-width:80px">AS${a.asn}</b><span style="flex:1">${esc(a.name)} <span style="opacity:.6">${esc(a.country || '')}</span></span>
+        <span style="color:var(--text3)">${gmNumFmt(a.v4_addresses)} adresses IPv4 · ${a.ranges} plages${a.banned_ranges ? ' · <span class="tag tag-yellow">' + a.banned_ranges + ' bannies</span>' : ''}</span></div>`).join('')}</div>`;
+    if (list.length === 1) bnAsnPick(list[0].asn);
+  } catch (e) {
+    box.innerHTML = `<div style="font-size:12.5px;color:var(--red)">${esc(e.message)}</div>`;
+  }
+};
+
+const gmNumFmt = n => n >= 1e6 ? (n / 1e6).toFixed(1) + ' M' : n >= 1e3 ? (n / 1e3).toFixed(1) + ' k' : String(Math.round(n || 0));
+
+window.bnAsnPick = async function(asn) {
+  _bnAsn.sel = asn;
+  const form = document.getElementById('asn-form'), btn = document.getElementById('asn-ban-btn'), box = document.getElementById('asn-preview');
+  if (form) form.style.display = '';
+  if (btn) btn.style.display = '';
+  if (!box) return;
+  box.innerHTML = '<div style="font-size:12.5px;color:var(--text3)">Analyse de l\'impact…</div>';
+  try {
+    const r = await api('GET', '/security/asn/preview?asn=' + encodeURIComponent(asn));
+    const warns = (r.warnings || []).map(w => `<li>${esc(w)}</li>`).join('');
+    const reason = document.getElementById('asn-reason');
+    if (reason && !reason.value) reason.placeholder = `AS${r.asn.asn} ${r.asn.name}`;
+    if (btn) btn.disabled = !!r.requester_in;
+    box.innerHTML = `<div style="font-size:12.5px;line-height:1.55;padding:8px 10px;border:1px solid var(--border);border-radius:6px">
+      <strong>AS${r.asn.asn} ${esc(r.asn.name)}</strong> — ${r.would_create} plage${r.would_create > 1 ? 's' : ''} à bannir${r.skipped_count ? `, ${r.skipped_count} ignorée${r.skipped_count > 1 ? 's' : ''}` : ''}${r.rejected_count ? `, ${r.rejected_count} rejetée${r.rejected_count > 1 ? 's' : ''}` : ''}<br>
+      Trafic ${r.hours} h : ${r.requests} requête(s) de ${r.ips} adresse(s), dont ${r.ok_requests} réussie(s) qui seraient coupées
+      ${warns ? `<ul style="margin:6px 0 0 16px;padding:0;color:var(--yellow)">${warns}</ul>` : '<div style="color:var(--green);margin-top:4px">Aucun avertissement.</div>'}</div>`;
+  } catch (e) {
+    box.innerHTML = `<div style="font-size:12.5px;color:var(--red)">${esc(e.message)}</div>`;
+  }
+};
+
+window.bnAsnBan = async function() {
+  if (!_bnAsn.sel) return;
+  const body = { asn: String(_bnAsn.sel) };
+  const reason = document.getElementById('asn-reason')?.value.trim();
+  if (reason) body.reason = reason;
+  const exp = document.getElementById('asn-exp')?.value;
+  if (exp) body.expires_at = new Date(exp).toISOString();
+  const scope = document.getElementById('asn-scope')?.value;
+  if (scope) body.scope = scope;
+  try {
+    const r = await api('POST', '/security/asn/ban', body);
+    closeModal();
+    toast(`${r.created} plage(s) bannie(s) pour AS${r.asn} ${r.name}`, 'success');
+    reloadCurrentSecurityPage();
   } catch (e) { toast(e.message, 'error'); }
 };
 

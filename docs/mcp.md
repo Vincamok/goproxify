@@ -36,9 +36,9 @@ Chaque outil exige un scope, le même que sa route REST équivalente. Les outils
 | `domains:write` | `create_domain`, `renew_domain`, `rotate_cert` |
 | `certs:read` | `list_certs`, `get_cert_status`, `list_cert_deploy_targets`, `list_internal_cas` †, `list_internal_certs` †, `get_ech_status` † |
 | `certs:write` | `obtain_cert`, `import_cert`, `trigger_cert_deploy`, `create_internal_ca` †, `issue_internal_cert` †, `revoke_internal_cert` † |
-| `logs:read` | `list_logs`, `get_prism_anomalies`, `get_prism_geo`, `get_prism_slo`, `simulate_sentinel_config` †, `trace_ip` †, `preview_security_ban` † |
-| `audit:read` | `get_audit_log`, `list_ip_profiles`, `get_security_overview` †, `list_security_bans` †, `list_ban_whitelist` †, `list_security_threats` †, `list_security_cves` †, `list_auth_providers` †, `list_rules` †, `list_rule_history` †, `list_rule_versions` †, `list_pending_actions` †, `list_silences` †, `export_automation` †, `list_scheduled_tasks` †, `list_scheduled_task_runs` †, `list_playbooks` †, `list_playbook_runs` †, `get_playbook_run` † |
-| `security:write` | `create_ip_profile`, `delete_ip_profile`, `create_security_ban` †, `delete_security_ban` †, `ban_ip` †, `unban_ip` †, `add_ban_whitelist` †, `remove_ban_whitelist` †, `import_security_bans` †, `create_auth_provider` †, `delete_auth_provider` †, `run_rule` †, `replay_rule_history` †, `restore_rule_version` †, `approve_pending_action` †, `reject_pending_action` †, `create_silence` †, `import_automation` †, `create_scheduled_task` †, `update_scheduled_task` †, `delete_scheduled_task` †, `run_scheduled_task` †, `create_playbook` †, `update_playbook` †, `delete_playbook` †, `run_playbook_now` †, `approve_playbook_run` †, `reject_playbook_run` † |
+| `logs:read` | `list_logs`, `get_prism_anomalies`, `get_prism_geo`, `get_prism_slo`, `simulate_sentinel_config` †, `trace_ip` †, `preview_security_ban` †, `preview_asn_ban` † |
+| `audit:read` | `get_audit_log`, `list_ip_profiles`, `get_security_overview` †, `list_security_bans` †, `lookup_asn` †, `list_ban_whitelist` †, `list_security_threats` †, `list_security_cves` †, `list_auth_providers` †, `list_rules` †, `list_rule_history` †, `list_rule_versions` †, `list_pending_actions` †, `list_silences` †, `export_automation` †, `list_scheduled_tasks` †, `list_scheduled_task_runs` †, `list_playbooks` †, `list_playbook_runs` †, `get_playbook_run` † |
+| `security:write` | `create_ip_profile`, `delete_ip_profile`, `create_security_ban` †, `delete_security_ban` †, `ban_ip` †, `unban_ip` †, `add_ban_whitelist` †, `remove_ban_whitelist` †, `import_security_bans` †, `ban_asn` †, `unban_asn` †, `create_auth_provider` †, `delete_auth_provider` †, `run_rule` †, `replay_rule_history` †, `restore_rule_version` †, `approve_pending_action` †, `reject_pending_action` †, `create_silence` †, `import_automation` †, `create_scheduled_task` †, `update_scheduled_task` †, `delete_scheduled_task` †, `run_scheduled_task` †, `create_playbook` †, `update_playbook` †, `delete_playbook` †, `run_playbook_now` †, `approve_playbook_run` †, `reject_playbook_run` † |
 | `portal:read` / `portal:write` | outils Access (`*_portal_*`, `push_portal`) † — voir [GoProxify Access](#goproxify-access-portail) |
 
 Les scopes d'écriture (`proxies:delete`, `nodes:write`, `alerts:write`, `domains:write`, `certs:write`, `security:write`, `import:write`) ainsi que `users:read`, `teams:read` et `portal:*` sont réservés aux rôles admin et superadmin (`proxies:write` et `snippets:write` sont aussi ouverts à un compte `user` qui a un droit d'écriture). Un refus est renvoyé comme erreur d'outil (`isError: true`) :
@@ -580,6 +580,60 @@ Importe une liste d'adresses IP et de CIDR : crée des bans natifs, ou des entr�
 
 **Scope :** `security:write` †  
 **Réponse :** `{ "dry_run", "target", "format", "total", "created", "addresses", "skipped": [{ "line", "value", "reason" }], "skipped_count", "rejected": […], "rejected_count", "sample": […] }`
+
+---
+
+### `lookup_asn`
+
+Cherche un système autonome (ASN) par numéro (`AS16276`), par adresse IP (l'ASN qui l'annonce) ou par nom. Retourne le numéro, le nom, le pays, le nombre de plages annoncées, d'adresses IPv4 et de plages IPv6, et le nombre de plages déjà bannies. Données publiques ip2asn, installées sur l'Admin au premier usage.
+
+| Paramètre | Type | Requis | Description |
+|-----------|------|--------|-------------|
+| `q` | string | ✓ | Numéro d'ASN, adresse IP ou nom |
+
+**Scope :** `audit:read` †
+
+---
+
+### `preview_asn_ban`
+
+Aperçu de l'impact d'un ban d'ASN, sans rien modifier : plages bannies, ignorées ou rejetées, trafic récent de l'ASN (dont les requêtes réussies qui seraient coupées) et avertissements (l'ASN contient l'appelant, plages trop larges, aucune requête récente).
+
+| Paramètre | Type | Requis | Description |
+|-----------|------|--------|-------------|
+| `asn` | string | ✓ | Numéro d'ASN (`AS16276` ou `16276`) |
+| `hours` | number | — | Période de trafic analysée (défaut 24, max 168) |
+
+**Scope :** `logs:read` †
+
+---
+
+### `ban_asn`
+
+Bannit un ASN : un ban par plage qu'il annonce, en une opération et un seul envoi aux passerelles. Plages plus larges que `/16` (IPv4) découpées ; plages déjà bannies, en liste blanche ou privées ignorées ; refusé si l'ASN contient l'adresse de l'appelant. Instantané des plages annoncées : relancer l'outil ajoute les nouvelles. Mesurer l'impact avant avec `preview_asn_ban`.
+
+| Paramètre | Type | Requis | Description |
+|-----------|------|--------|-------------|
+| `asn` | string | ✓ | Numéro d'ASN (`AS16276` ou `16276`) |
+| `reason` | string | — | Motif ; défaut `AS<numéro> <nom>` |
+| `domain` | string | — | Domaine ciblé (vide = global) |
+| `expires_at` | string | — | Expiration RFC3339 ; omis = permanent |
+| `scope` | string | — | Nom d'une passerelle ou `group:<nom>` ; omis = toutes |
+| `dry_run` | boolean | — | `true` : simuler sans rien créer |
+
+**Scope :** `security:write` †
+
+---
+
+### `unban_asn`
+
+Lève les bans créés pour un ASN (toutes ses plages) sur les passerelles, en un seul envoi. Ne touche pas aux autres bans.
+
+| Paramètre | Type | Requis | Description |
+|-----------|------|--------|-------------|
+| `asn` | string | ✓ | Numéro d'ASN (`AS16276` ou `16276`) |
+
+**Scope :** `security:write` †
 
 ---
 
@@ -1236,7 +1290,9 @@ Parcours complet d'une IP ou d'un CIDR sur une longue période : requêtes d'acc
 
 | Paramètre | Type   | Requis | Description |
 |-----------|--------|--------|-------------|
-| `target`  | string | ✓      | IP ou CIDR (`203.0.113.7`, `198.51.100.0/24`, `2001:db8::/32`) |
+| `target`  | string | ✓      | IP ou CIDR (`203.0.113.7`, `198.51.100.0/24`, `2001:db8::/32`) ; facultatif avec `scope=asn` et `asn` |
+| `scope`   | string | —      | `ip` (défaut), `range` (la plage annoncée par l'opérateur de l'adresse) ou `asn` (tout l'ASN de l'adresse) ; nécessite la base ASN |
+| `asn`     | string | —      | Numéro d'ASN (`AS16276`) à tracer en entier, avec `scope=asn` |
 | `from`    | string | —      | RFC3339 ou `AAAA-MM-JJ` (défaut : 30 jours avant `to`) |
 | `to`      | string | —      | RFC3339 ou `AAAA-MM-JJ` (défaut : maintenant) |
 | `order`   | string | —      | `asc` (défaut) ou `desc` |

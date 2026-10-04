@@ -23,6 +23,7 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/alerting"
 	"github.com/vincamok/goproxify/internal/admin/api"
 	"github.com/vincamok/goproxify/internal/admin/archstore"
+	"github.com/vincamok/goproxify/internal/admin/asn"
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
 	"github.com/vincamok/goproxify/internal/admin/edgeproxy"
@@ -66,6 +67,10 @@ type Handler struct {
 	// OnUnban (optionnel) — lève les bans d'une IP sur les passerelles, y compris ceux qu'elles ont posés
 	// elles-mêmes, puis renvoie la liste des bans (remplace OnBansChange pour un déban).
 	OnUnban func(ip string)
+	// OnUnbanMany (optionnel) — lève les bans de plusieurs adresses d'un coup (déban d'un ASN).
+	OnUnbanMany func(ips []string)
+	// ASN (optionnel) — base des systèmes autonomes pour les outils ASN.
+	ASN *asn.Store
 	// OnWhitelistChange (optionnel) — pousse les profils IP aux passerelles après un changement de la
 	// liste blanche des bans (qui en est un).
 	OnWhitelistChange func()
@@ -987,6 +992,14 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 		result, toolErr = h.toolTraceIP(r, p.Arguments)
 	case "preview_security_ban":
 		result, toolErr = h.toolPreviewSecurityBan(r, p.Arguments)
+	case "lookup_asn":
+		result, toolErr = h.toolLookupASN(r, p.Arguments)
+	case "preview_asn_ban":
+		result, toolErr = h.toolPreviewASNBan(r, p.Arguments)
+	case "ban_asn":
+		result, toolErr = h.toolBanASN(r, p.Arguments)
+	case "unban_asn":
+		result, toolErr = h.toolUnbanASN(r, p.Arguments)
 	case "import_security_bans":
 		result, toolErr = h.toolImportSecurityBans(r, p.Arguments)
 	case "list_ban_whitelist":

@@ -53,6 +53,7 @@ goproxify security threat simulate -file <config.json> [-hours N] [-domain <d>] 
 goproxify security bans list   [-admin-url …] [-token …]
 goproxify security bans add    -ip <ip|cidr> [-reason <raison>] [-ttl <durée>] [-scope <passerelle|group:nom>] [-admin-url …] [-token …]
 goproxify security bans preview -ip <ip|cidr> [-hours N] [-json] [-admin-url …] [-token …]   # impact d'un ban avant de le créer
+goproxify security bans asn lookup|preview|ban|unban|info|refresh [-asn <ASN>] [-q <ASN|IP|nom>] [-ttl …] [-scope …] [-dry-run] [-json]   # bans par ASN
 goproxify security bans delete -id <ban-id> [-admin-url …] [-token …]
 goproxify security bans whitelist list|add|delete [-ip <ip|cidr>] [-comment <texte>] [-admin-url …] [-token …]   # liste blanche des bans
 goproxify security bans import -file <chemin|-> [-format auto|text|csv|json] [-target bans|whitelist] [-reason …] [-domain …] [-ttl …] [-scope <passerelle|group:nom>] [-dry-run] [-json] [-admin-url …] [-token …]
@@ -553,6 +554,9 @@ func runSecurityBans() {
 
 	case "import":
 		runSecurityBansImport()
+
+	case "asn":
+		runSecurityBansASN()
 
 	case "preview":
 		args := parseFlags(os.Args[4:])

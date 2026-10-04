@@ -25,6 +25,8 @@ type Ban struct {
 	EdgeName  string    `json:"edge_name"`
 	// TargetScope : passerelles qui appliquent le ban ; vide = toutes, sinon une passerelle ou "group:<nom>".
 	TargetScope string    `json:"target_scope"`
+	// ASN : numéro d'ASN dont ce ban est l'une des plages ; 0 si le ban n'en vient pas.
+	ASN uint32 `json:"asn,omitempty"`
 	ExpiresAt   *string   `json:"expires_at"`
 	CreatedAt   time.Time `json:"created_at"`
 }

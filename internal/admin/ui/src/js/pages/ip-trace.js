@@ -11,7 +11,7 @@ const TR_KIND = {
   system: { color: 'var(--text3)', icon: '•' },
 };
 
-const _tr = { target: '', period: '30d', from: '', to: '', order: 'desc', data: null, steps: [], loading: false };
+const _tr = { target: '', scope: 'ip', period: '30d', node: '', status: '', hideInternal: true, edges: null, from: '', to: '', order: 'desc', data: null, steps: [], loading: false };
 
 function trDay(iso) {
   const opts = { dateStyle: 'full' };
@@ -34,6 +34,10 @@ function trDuration(a, b) {
 
 function trQuery(offset) {
   const q = new URLSearchParams({ target: _tr.target, order: _tr.order, limit: TR_PAGE, offset });
+  if (_tr.scope !== 'ip') q.set('scope', _tr.scope);
+  if (_tr.node) q.set('node', _tr.node);
+  if (_tr.status) q.set('status', _tr.status);
+  if (_tr.hideInternal) q.set('exclude_internal', '1');
   if (_tr.period === 'custom') {
     if (_tr.from) q.set('from', _tr.from);
     if (_tr.to) q.set('to', _tr.to);
@@ -117,11 +121,11 @@ function trSummaryHTML() {
       ${tile(s.threats, t('trace.kpi.threats'), s.threats ? 'var(--orange,#d97706)' : '')}
     </div>
     <div class="card blueprint" style="padding:16px;margin-bottom:16px">
-      <div class="tr-meta" style="margin-bottom:8px">${esc(t('trace.first_seen'))} <b>${esc(fmtDate(s.first_seen))}</b> · ${esc(t('trace.last_seen'))} <b>${esc(fmtDate(s.last_seen))}</b>${d.kind === 'cidr' ? ' · ' + esc(t('trace.kind_cidr')) : ''}</div>
+      <div class="tr-meta" style="margin-bottom:8px">${esc(t('trace.first_seen'))} <b>${esc(fmtDate(s.first_seen))}</b> · ${esc(t('trace.last_seen'))} <b>${esc(fmtDate(s.last_seen))}</b>${d.kind === 'cidr' ? ' · ' + esc(t('trace.kind_cidr')) : ''}${d.scope !== 'ip' ? ' · ' + esc(d.scope_label || '') : ''}</div>
       ${state_ ? `<div class="tr-row" style="margin-bottom:10px">${state_}</div>` : ''}
       ${trDaysChart(s.days || [])}
       <div class="tr-lists">
-        ${d.kind === 'cidr' ? list(t('trace.top_ips'), s.top_ips, true, true) : ''}
+        ${d.kind === 'cidr' || d.scope !== 'ip' ? list(t('trace.top_ips'), s.top_ips, true, true) : ''}
         ${list(t('trace.top_domains'), s.top_domains)}
         ${list(t('trace.top_paths'), s.top_paths, true)}
         ${list(t('trace.top_waf'), s.waf_matches)}
@@ -132,17 +136,54 @@ function trSummaryHTML() {
     </div>`;
 }
 
+const TR_SEG = [['24h', '24h'], ['7d', '7d'], ['30d', '30d'], ['90d', '90d'], ['365d', '1y'], ['all', null]];
+
+// Bandeau de filtres (même présentation que les logs) : passerelle, période, cible, classe de statut,
+// trafic interne. Les filtres relancent le parcours quand une cible est saisie.
 function trFormHTML() {
-  const opt = p => `<option value="${p}"${_tr.period === p ? ' selected' : ''}>${esc(t('trace.period.' + p))}</option>`;
-  return `<form class="tr-form" onsubmit="trSubmit(event)">
-    <input id="tr-target" class="input tr-mono" placeholder="${esc(t('trace.placeholder'))}" value="${esc(_tr.target)}" autocomplete="off" spellcheck="false" style="flex:1;min-width:220px">
-    <select id="tr-period" class="input" onchange="trPeriod(this.value)">${[...Object.keys(TR_PERIODS), 'custom'].map(opt).join('')}</select>
-    <span id="tr-custom" style="display:${_tr.period === 'custom' ? 'inline-flex' : 'none'};gap:6px">
-      <input id="tr-from" type="date" class="input" value="${esc(_tr.from)}"><input id="tr-to" type="date" class="input" value="${esc(_tr.to)}">
-    </span>
-    <button class="btn btn-primary" type="submit">${esc(t('trace.go'))}</button>
+  const edges = _tr.edges || [];
+  const nodeChip = (v, label) => `<button type="button" class="chip${_tr.node === v ? ' active' : ''}" onclick="trSetNode(this.dataset.n)" data-n="${esc(v)}">${v && typeof nodeColor === 'function' ? `<span class="logs-node-dot" style="background:${nodeColor(v)}"></span>` : ''}${esc(label)}</button>`;
+  const nodes = edges.length ? `<div class="logs-node-chips"><span class="logs-node-chips-label">${esc(t('logs.node'))}</span>
+      ${edges.map(n => { const v = n.node_name || n.display_name || n.id; return nodeChip(v, n.display_name || n.node_name || n.id); }).join('')}
+      ${nodeChip('', t('logs.node_all'))}</div>` : '';
+  const seg = TR_SEG.map(([k, label]) => `<button type="button" class="seg-btn${_tr.period === k ? ' active' : ''}" onclick="trPeriod('${k}')">${esc(label || t('lg.q_all'))}</button>`).join('')
+    + `<button type="button" class="seg-btn${_tr.period === 'custom' ? ' active' : ''}" onclick="trPeriod('custom')">${esc(t('trace.period.custom'))}</button>`;
+  const cls = ['', '2xx', '3xx', '4xx', '5xx'].map(c => `<button type="button" class="chip${_tr.status === c ? ' active' : ''}" onclick="trSetStatus('${c}')">${c || esc(t('lg.status_all'))}</button>`).join('');
+  return `<form class="card blueprint logs-filterbar" onsubmit="trSubmit(event)">
+    <div class="logs-filter-row">
+      <div style="flex:1;min-width:0">${nodes}</div>
+      <div class="logs-seg">${seg}</div>
+    </div>
+    <div class="logs-filter-row" style="margin-top:10px">
+      <input id="tr-target" class="input search-input tr-mono" placeholder="${esc(t('trace.placeholder'))}" value="${esc(_tr.target)}" autocomplete="off" spellcheck="false" style="flex:1;max-width:none;min-width:220px">
+      <span id="tr-custom" style="display:${_tr.period === 'custom' ? 'inline-flex' : 'none'};gap:6px">
+        <input id="tr-from" type="date" class="input" value="${esc(_tr.from)}"><input id="tr-to" type="date" class="input" value="${esc(_tr.to)}">
+      </span>
+      <div class="logs-quick-g">${cls}</div>
+      <label class="logs-toggle-inline">
+        <span class="toggle"><input type="checkbox" ${_tr.hideInternal ? 'checked' : ''} onchange="trHideInternal(this.checked)"><span class="toggle-slider"></span></span>
+        ${esc(t('logs.hide_internal'))}
+      </label>
+      <button class="btn btn-primary" type="submit">${esc(t('trace.go'))}</button>
+    </div>
   </form>`;
 }
+
+async function trLoadEdges() {
+  if (_tr.edges) return;
+  _tr.edges = ((await api('GET', '/nodes').catch(() => [])) || []).filter(n => n.role === 'edge');
+}
+
+function trRefilter() {
+  _tr.target = document.getElementById('tr-target')?.value.trim() || _tr.target;
+  _tr.from = document.getElementById('tr-from')?.value || '';
+  _tr.to = document.getElementById('tr-to')?.value || '';
+  if (_tr.target) trRun(); else trPaint(`<p class="tr-empty">${esc(t('trace.empty_hint'))}</p>`);
+}
+
+window.trSetNode = v => { _tr.node = _tr.node === v ? '' : v; trRefilter(); };
+window.trSetStatus = v => { _tr.status = v; trRefilter(); };
+window.trHideInternal = v => { _tr.hideInternal = v; trRefilter(); };
 
 function trPaint(body) {
   const content = document.getElementById('content');
@@ -150,11 +191,37 @@ function trPaint(body) {
   content.innerHTML = `<div class="tr-page"><p class="tr-meta" style="margin:0 0 10px">${esc(t('trace.subtitle'))}</p>${trFormHTML()}${body}</div>`;
 }
 
+// Opérateur de l'adresse (base ASN) : on bascule entre l'IP seule, la plage que l'opérateur annonce et tout
+// son ASN, sans connaître le CIDR. Absent quand la base ASN n'est pas installée ou ne connaît pas l'adresse.
+function trAsnBarHTML() {
+  const c = _tr.data.asn_context;
+  if (!c || !c.asn) return '';
+  const a = c.asn, r = c.range;
+  const chip = (scope, label, title) => `<button type="button" class="btn btn-sm ${_tr.scope === scope ? 'btn-primary' : 'btn-secondary'}" onclick="trSetScope('${scope}')" title="${esc(title || '')}">${esc(label)}</button>`;
+  const addrs = a.v4_addresses >= 1e6 ? (a.v4_addresses / 1e6).toFixed(1) + ' M' : a.v4_addresses >= 1e3 ? Math.round(a.v4_addresses / 1e3) + ' k' : Math.round(a.v4_addresses);
+  return `<div class="card blueprint" style="padding:10px 14px;margin-bottom:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12.5px">
+    <span style="color:var(--text3)">${esc(t('trace.asn.label'))}</span>
+    <b>AS${a.asn}</b><span>${esc(a.name)} <span style="opacity:.6">${esc(a.country || '')}</span></span>
+    <span style="color:var(--text3)">${a.ranges} plage${a.ranges > 1 ? 's' : ''} · ${addrs} adresses IPv4</span>
+    <span style="margin-left:auto;display:inline-flex;gap:6px;flex-wrap:wrap">
+      ${chip('ip', t('trace.scope.ip'))}
+      ${r ? chip('range', t('trace.scope.range'), `${r.start} – ${r.end}`) : ''}
+      ${chip('asn', t('trace.scope.asn'), `AS${a.asn}`)}
+      <button type="button" class="btn btn-ghost btn-sm" onclick="openBanAsn('${a.asn}')">${esc(t('trace.asn.ban'))}</button>
+    </span>
+    ${r ? `<span class="tr-mono" style="flex-basis:100%;color:var(--text3);font-size:11.5px">${esc(r.start)} – ${esc(r.end)}${r.cidrs?.length ? ' · ' + esc(r.cidrs.join(', ')) : ''}</span>` : ''}</div>`;
+}
+
+window.trSetScope = function(scope) {
+  _tr.scope = scope;
+  trRun();
+};
+
 function trPaintResult() {
   const d = _tr.data;
   const order = `<button class="btn btn-ghost btn-sm" onclick="trToggleOrder()">${esc(t(_tr.order === 'desc' ? 'trace.order_desc' : 'trace.order_asc'))}</button>`;
-  const widen = d.kind === 'ip' && trIsPublic(d.target) ? trRanges(d.target.split('/')[0]).slice(1).map(([l, x]) => `<button type="button" class="btn btn-ghost btn-sm" onclick="openIPTrace('${esc(x)}')">${esc(t('trace.widen'))} ${esc(l)}</button>`).join('') : '';
-  trPaint(`<h3 class="tr-title"><span class="tr-mono">${esc(d.target)}</span> ${widen}</h3>${trSummaryHTML()}
+  const widen = d.kind === 'ip' && d.scope === 'ip' && trIsPublic(d.target) ? trRanges(d.target.split('/')[0]).slice(1).map(([l, x]) => `<button type="button" class="btn btn-ghost btn-sm" onclick="openIPTrace('${esc(x)}')">${esc(t('trace.widen'))} ${esc(l)}</button>`).join('') : '';
+  trPaint(`<h3 class="tr-title"><span class="tr-mono">${esc(d.scope !== 'ip' && d.scope_label ? d.scope_label : d.target)}</span> ${widen}</h3>${trAsnBarHTML()}${trSummaryHTML()}
     <div class="card blueprint" style="padding:16px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
       <h4 style="margin:0">${esc(t('trace.timeline'))} <span class="tr-meta">(${d.total_steps})</span></h4>${order}</div>${trTimelineHTML()}</div>`);
 }
@@ -165,12 +232,17 @@ async function trRun() {
     _tr.data = await api('GET', trQuery(0));
     _tr.steps = _tr.data.steps;
     trPaintResult();
-  } catch (e) { toast(e.message, 'error'); trPaint(''); }
+  } catch (e) {
+    toast(e.message, 'error');
+    if (_tr.scope !== 'ip' && _tr.data) { _tr.scope = 'ip'; return trPaintResult(); }
+    trPaint('');
+  }
 }
 
 window.trSubmit = function(ev) {
   ev.preventDefault();
   _tr.target = document.getElementById('tr-target').value.trim();
+  _tr.scope = 'ip';
   _tr.from = document.getElementById('tr-from')?.value || '';
   _tr.to = document.getElementById('tr-to')?.value || '';
   if (_tr.target) trRun();
@@ -178,9 +250,17 @@ window.trSubmit = function(ev) {
 
 window.trPeriod = function(v) {
   _tr.period = v;
-  const c = document.getElementById('tr-custom');
-  if (c) c.style.display = v === 'custom' ? 'inline-flex' : 'none';
+  if (v === 'custom') {
+    trRefilterPaint();
+    return;
+  }
+  trRefilter();
 };
+
+function trRefilterPaint() {
+  _tr.target = document.getElementById('tr-target')?.value.trim() || _tr.target;
+  if (_tr.data) trPaintResult(); else trPaint('');
+}
 
 window.trToggleOrder = function() {
   _tr.order = _tr.order === 'desc' ? 'asc' : 'desc';
@@ -197,19 +277,20 @@ window.trLoadMore = async function() {
 };
 
 // Ouvre le parcours d'une IP/CIDR depuis une autre page (liste des bans, historique d'une IP).
-window.openIPTrace = function(target, period) {
-  window._traceInit = { target, period };
+window.openIPTrace = function(target, period, scope) {
+  window._traceInit = { target, period, scope };
   closeModal?.();
   navigate('security-trace');
 };
 
-pages['security-trace'] = () => {
+pages['security-trace'] = async () => {
+  await trLoadEdges();
   const ta = document.getElementById('topbar-actions');
   if (ta) ta.innerHTML = '';
   const init = window._traceInit;
   window._traceInit = null;
   if (init?.target) {
-    Object.assign(_tr, { target: init.target, period: init.period || '90d' });
+    Object.assign(_tr, { target: init.target, scope: init.scope || 'ip', period: init.period || '90d' });
     return trRun();
   }
   if (_tr.data) return trPaintResult();

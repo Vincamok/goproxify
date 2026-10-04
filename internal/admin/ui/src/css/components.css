@@ -2154,7 +2154,8 @@ button.bn-rank:hover{background:var(--bg2)}
 
 /* ── Carte Leaflet partagée (shared/geomap.js) ───────────────────────────── */
 .prism-mapbox.gm-box{cursor:auto;touch-action:auto;isolation:isolate}
-.gm-box.leaflet-container{background:var(--bg3);font:inherit;color:var(--text)}
+.gm-box.leaflet-container{--gm-sea:#dbe7f1;--gm-land:#f3f1ec;--gm-line:#b9c3cf;background:var(--gm-sea);font:inherit;color:var(--text)}
+[data-theme="dark"] .gm-box.leaflet-container{--gm-sea:#141a26;--gm-land:#262e40;--gm-line:#3a4459}
 .gm-box .leaflet-bar a,.gm-box .leaflet-bar a:hover{background:var(--bg2);color:var(--text);border-color:var(--border)}
 .gm-box .leaflet-bar a:hover{border-color:var(--accent)}
 .gm-box .leaflet-control-attribution{background:color-mix(in srgb,var(--bg2) 80%,transparent);color:var(--text3);font-size:10px}
