@@ -146,6 +146,7 @@ Met à jour un proxy existant (champs partiels).
 | `tls_enabled` | boolean | —      | Active ou désactive HTTPS                      |
 | `lb`          | string  | —      | `round_robin`, `weighted`, `adaptive`          |
 | `enabled`     | boolean | —      | Active ou désactive la route                   |
+| `options`     | object  | —      | Options avancées à poser (`null` = retirer) : `split`, `maintenance`, `signed_url`, `graphql`, `bandwidth`, `redact_json`, `hedge`, `grpc_web`, `rate_limit`, `conditions` ; clé inconnue refusée |
 
 **Réponse :** `{ "id", "name", "enabled", "config" }`
 

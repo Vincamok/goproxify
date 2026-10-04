@@ -527,6 +527,27 @@ P95 latency / error_rate: fields planned in payload, not used in v1 score.
 
 Docker labels `goproxify.canary` / `goproxify.shadow`: automatic detection via Agent discovery — the Edge activates `CanaryConfig` / `ShadowConfig` on the `docker-host:` route without manual config. The canary/shadow container stays outside the LB pool (same `goproxify.host` as normal backends).
 
+### Advanced routing and API protection (per proxy, JSON config)
+
+All options run on the Edge alone — no Admin needed, even after an Edge restart.
+
+| Option | Effect |
+|---|---|
+| `split` | `variants: [{name, backend, weight}]`, `sticky_cookie` (stable A/B assignment), `override` (header/cookie naming a variant, for tests) |
+| `conditions[].type = "jwt_claim"` | Route on a claim of a JWT **validated by the route** (`jwt`); array claims such as `groups` match on any element; never true without JWT validation |
+| `signed_url` | `secret`, `param_sig` (`sig`), `param_expires` (`expires`), `paths`; `sig = base64url(HMAC-SHA256(secret, path + "\n" + expires))` — 403 if missing, wrong or expired; params stripped before the backend |
+| `rate_limit.quota` / `quota_period` | Fixed-window quota per key (`minute`, `hour`, `day`); `key_by` also accepts `header:<name>` (API key) and `cookie:<name>`. Per-Edge counters. A client-chosen header key is spoofable: combine with authentication |
+| `bandwidth.bytes_per_sec` | Per-response throughput cap (nginx `limit_rate`) |
+| `maintenance` | 503 + `Retry-After`, optional HTML; `bypass_cidrs`, `bypass_header` (`"Name: value"`) |
+| `redact_json` | `fields` (key at any depth, or `a.b` path), `mask`; fails closed (502) on invalid, oversized (16 MB) or non-gzip-encoded bodies |
+| `graphql` | `max_depth`, `max_aliases`, `block_introspection` (POST, batches, GET) |
+| `hedge` | `delay_ms`, `max_extra`: a GET/HEAD without body not answered after the delay is also sent to the next backend; first response wins |
+| `grpc_web` | Translates gRPC-Web (binary and `-text`) to gRPC for an HTTP/2 backend, trailers returned in the final frame |
+| `rate_limit.shared` | HA group members add up each other's quota counts (~2 s lag, clocks must be in sync); local count if peers are unreachable |
+| `sso.provider = "oauth2_proxy"` / `authelia` / `authentik` / `forward` | Forward-auth: any 2xx allows; `forward_auth_signin_url` redirects a 401 (`?rd=`); `forward_auth_timeout_ms`; `headers_to_forward` accepts a trailing `*`; client-supplied identity headers are stripped |
+
+Set from the CLI (`goproxify proxy option`) or MCP (`update_proxy` `options`). Not available yet: REST↔gRPC transcoding, UI controls, HA-shared instantaneous rate (`rps`) and bandwidth cap.
+
 ### Network connectivity
 
 - Optional **WireGuard** tunnels for inter-node communication (port `:51820` UDP)

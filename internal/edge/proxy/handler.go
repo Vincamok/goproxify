@@ -429,6 +429,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if h.route.Split != nil {
+		if b := h.pickSplit(w, r); b != "" {
+			h.doURL(w, r, b, 0)
+			return
+		}
+	}
+
 	candidates := h.failoverCandidates(r)
 	if len(candidates) == 0 {
 		h.writeError(w, r, http.StatusServiceUnavailable)
@@ -470,6 +477,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		attempts = allowed
+	}
+
+	if len(attempts) > 1 && h.hedgeable(r) {
+		if !h.serveHedged(w, r, attempts) {
+			h.writeError(w, r, http.StatusBadGateway)
+		}
+		return
 	}
 
 	for i, backend := range attempts {
@@ -623,6 +637,15 @@ func (h *Handler) matchCondition(r *http.Request) string {
 func conditionMatches(c router.Condition, re *regexp.Regexp, r *http.Request) bool {
 	var actual string
 	switch c.Type {
+	case "jwt_claim":
+		// Seuls les claims d'un JWT validé par la route comptent ; une claim tableau (groups, roles) correspond
+		// si l'un de ses éléments correspond.
+		for _, v := range claimValues(middleware.GetJWTClaims(r.Context())[c.Name]) {
+			if (c.Regex && re != nil && re.MatchString(v)) || (!c.Regex && v == c.Value) {
+				return true
+			}
+		}
+		return false
 	case "header":
 		actual = r.Header.Get(c.Name)
 	case "cookie":
@@ -643,6 +666,24 @@ func conditionMatches(c router.Condition, re *regexp.Regexp, r *http.Request) bo
 		return re.MatchString(actual)
 	}
 	return actual == c.Value
+}
+
+func claimValues(v any) []string {
+	switch t := v.(type) {
+	case string:
+		return []string{t}
+	case bool:
+		return []string{strconv.FormatBool(t)}
+	case float64:
+		return []string{strconv.FormatFloat(t, 'f', -1, 64)}
+	case []any:
+		var out []string
+		for _, e := range t {
+			out = append(out, claimValues(e)...)
+		}
+		return out
+	}
+	return nil
 }
 
 // doURL envoie la requête vers une URL de backend spécifique.
@@ -692,6 +733,11 @@ func (h *Handler) do(w http.ResponseWriter, r *http.Request, b *router.Backend, 
 		r.Body = http.MaxBytesReader(w, r.Body, limit)
 	}
 
+	if h.route.GRPCWeb {
+		if mode := grpcWebMode(r); mode != 0 {
+			r = toGRPCRequest(r, mode)
+		}
+	}
 	callStart := time.Now()
 	att := &proxyAttempt{writeOnError: writeOnError, attempt: attempt, backend: b.URL, secure: middleware.CookieSecure(r)}
 	ctx := context.WithValue(r.Context(), proxyAttemptKey{}, att)
@@ -785,6 +831,9 @@ func (h *Handler) reverseProxyFor(b *router.Backend, target *url.URL) *httputil.
 			}
 			applyForwardedHeaders(req, h.route, xfHost)
 			applyRequestHeaderManipulation(req, h.route)
+			if h.route.RedactJSON != nil {
+				req.Header.Set("Accept-Encoding", "gzip")
+			}
 			if h.route.RequestID != nil && !*h.route.RequestID {
 				req.Header.Del("X-Request-ID")
 			}
@@ -792,6 +841,9 @@ func (h *Handler) reverseProxyFor(b *router.Backend, target *url.URL) *httputil.
 		Transport:  transport,
 		BufferPool: bufferPoolFor(h.route.BufferSize),
 		ModifyResponse: func(resp *http.Response) error {
+			if h.route.GRPCWeb {
+				fromGRPCResponse(resp)
+			}
 			if resp.Request != nil && metrics.RequestMetricsOn() {
 				if t, ok := resp.Request.Context().Value(backendCallStartKey{}).(time.Time); ok {
 					metrics.Backend.TTFB.WithLabelValues(h.route.Host, urlHost).Observe(time.Since(t).Seconds())
@@ -820,6 +872,9 @@ func (h *Handler) reverseProxyFor(b *router.Backend, target *url.URL) *httputil.
 				if err := applySubFilters(resp, h.route.SubFilters, subFilterRes); err != nil {
 					return err
 				}
+			}
+			if err := applyRedactJSON(resp, h.route.RedactJSON); err != nil {
+				return err
 			}
 			if resp.StatusCode >= 300 && resp.StatusCode < 400 && len(h.route.ProxyRedirects) > 0 {
 				for _, hdr := range []string{"Location", "Refresh"} {

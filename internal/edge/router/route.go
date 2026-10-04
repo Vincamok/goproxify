@@ -90,6 +90,22 @@ type Route struct {
 	// Trafic avancé
 	Canary     *CanaryConfig    `json:"canary,omitempty"`
 	Shadow     *ShadowConfig    `json:"shadow,omitempty"`
+	// Split répartit le trafic entre plusieurs backends nommés selon des poids (A/B, déploiement progressif).
+	Split *SplitConfig `json:"split,omitempty"`
+	// Maintenance coupe la route avec une page 503, sans la supprimer.
+	Maintenance *MaintenanceConfig `json:"maintenance,omitempty"`
+	// SignedURL n'accepte que les URLs signées (HMAC + expiration), comme nginx secure_link.
+	SignedURL *SignedURLConfig `json:"signed_url,omitempty"`
+	// GraphQL borne la profondeur et la taille des requêtes GraphQL.
+	GraphQL *GraphQLConfig `json:"graphql,omitempty"`
+	// Hedge double une requête GET/HEAD lente vers un autre backend ; la première réponse gagne.
+	Hedge *HedgeConfig `json:"hedge,omitempty"`
+	// GRPCWeb traduit gRPC-Web (navigateurs) en gRPC vers le backend, qui doit parler HTTP/2.
+	GRPCWeb bool `json:"grpc_web,omitempty"`
+	// Bandwidth plafonne le débit de chaque réponse (octets par seconde, par connexion).
+	Bandwidth *BandwidthConfig `json:"bandwidth,omitempty"`
+	// RedactJSON masque des champs des réponses JSON avant de les envoyer au client.
+	RedactJSON *RedactConfig `json:"redact_json,omitempty"`
 	Conditions []Condition      `json:"conditions,omitempty"`
 	Locations  []Location       `json:"locations,omitempty"`
 	// StripPrefix is applied at proxy time (usually copied from the matched Location).
@@ -202,7 +218,14 @@ type RateLimitConfig struct {
 	Burst             int     `json:"burst"`
 	// KeyBy détermine la clé de rate-limit : "ip" (défaut), "jwt_sub", "jwt_email",
 	// ou "jwt_claim:<nom>" pour un claim JWT arbitraire.
+	// "header:<nom>" (clé d'API) et "cookie:<nom>" sont aussi acceptés.
 	KeyBy string `json:"key_by,omitempty"`
+	// Quota : nombre max de requêtes par clé et par QuotaPeriod ("minute" | "hour" | "day"),
+	// en plus du débit instantané. 0 = pas de quota.
+	Quota       int    `json:"quota,omitempty"`
+	QuotaPeriod string `json:"quota_period,omitempty"`
+	// Shared : les passerelles d'un groupe HA échangent leurs comptes de quota (au plus ~2 s de retard) pour appliquer un quota commun.
+	Shared bool `json:"shared,omitempty"`
 }
 
 // LimitConnConfig limite le nombre de connexions simultanées par IP
@@ -482,11 +505,15 @@ type MTLSConfig struct {
 // SSOConfig configure le provider SSO.
 type SSOConfig struct {
 	Enabled          bool        `json:"enabled"`
-	// Provider : authentik | authelia | basic | forward | pocket_id | oidc |
+	// Provider : authentik | authelia | oauth2_proxy | basic | forward | pocket_id | oidc |
 	//            keycloak | zitadel | google | microsoft | auth0 | okta | casdoor | dex |
 	//            github | ldap | ldap_ad | saml
 	Provider         string      `json:"provider"`
 	ForwardAuthURL   string      `json:"forward_auth_url,omitempty"`
+	// ForwardAuthTimeoutMs : délai max du service d'authentification (défaut 5000).
+	ForwardAuthTimeoutMs int `json:"forward_auth_timeout_ms,omitempty"`
+	// ForwardAuthSignInURL : un 401 du service redirige le navigateur ici (?rd=<URL d'origine>), ex. /oauth2/start d'oauth2-proxy.
+	ForwardAuthSignInURL string `json:"forward_auth_signin_url,omitempty"`
 	HeadersToForward []string    `json:"headers_to_forward,omitempty"`
 	BasicUsers       []BasicUser `json:"basic_users,omitempty"`
 	Realm            string      `json:"realm,omitempty"`
@@ -619,4 +646,67 @@ type Location struct {
 	SendTimeout     time.Duration       `json:"send_timeout,omitempty"`
 	Logging         *RouteLoggingConfig `json:"logging,omitempty"`
 	ErrorPages      *ErrorPagesConfig   `json:"error_pages,omitempty"`
+}
+
+// SplitConfig répartit les requêtes entre Variants au prorata de leur Weight.
+// Avec StickyCookie, un visiteur garde la variante qui lui a été attribuée (test A/B stable).
+// Override nomme un header ou un cookie dont la valeur (nom de variante) force le choix.
+type SplitConfig struct {
+	Variants     []SplitVariant `json:"variants"`
+	StickyCookie string         `json:"sticky_cookie,omitempty"`
+	Override     string         `json:"override,omitempty"`
+}
+
+// SplitVariant est une destination nommée du Split.
+type SplitVariant struct {
+	Name    string `json:"name"`
+	Backend string `json:"backend"`
+	Weight  int    `json:"weight"`
+}
+
+// MaintenanceConfig met une route en maintenance : 503 + Retry-After, page HTML optionnelle.
+// BypassCIDRs et BypassHeader laissent passer les équipes qui testent la route.
+type MaintenanceConfig struct {
+	Enabled       bool     `json:"enabled"`
+	Message       string   `json:"message,omitempty"`
+	HTML          string   `json:"html,omitempty"`
+	RetryAfterSec int      `json:"retry_after_sec,omitempty"`
+	BypassCIDRs   []string `json:"bypass_cidrs,omitempty"`
+	BypassHeader  string   `json:"bypass_header,omitempty"` // "Nom: valeur" attendu
+}
+
+// SignedURLConfig décrit la vérification d'URLs signées :
+// sig = base64url(HMAC-SHA256(secret, chemin + "\n" + expires)), expires en secondes Unix.
+type SignedURLConfig struct {
+	Enabled      bool     `json:"enabled"`
+	Secret       string   `json:"secret"`
+	ParamSig     string   `json:"param_sig,omitempty"`     // défaut "sig"
+	ParamExpires string   `json:"param_expires,omitempty"` // défaut "expires"
+	Paths        []string `json:"paths,omitempty"`         // préfixes protégés (vide = toute la route)
+}
+
+// GraphQLConfig borne les requêtes GraphQL (POST JSON ou GET ?query=).
+type GraphQLConfig struct {
+	Enabled            bool `json:"enabled"`
+	MaxDepth           int  `json:"max_depth,omitempty"`   // profondeur max des sélections (0 = illimitée)
+	MaxAliases         int  `json:"max_aliases,omitempty"` // nombre max d'alias (0 = illimité)
+	BlockIntrospection bool `json:"block_introspection,omitempty"`
+}
+
+// BandwidthConfig plafonne le débit d'une réponse.
+type BandwidthConfig struct {
+	BytesPerSec int64 `json:"bytes_per_sec"`
+}
+
+// RedactConfig masque des champs JSON. Fields : noms de clés (à toute profondeur) ou chemins "a.b.c".
+type RedactConfig struct {
+	Fields []string `json:"fields"`
+	Mask   string   `json:"mask,omitempty"` // défaut "***"
+}
+
+// HedgeConfig : si le backend n'a pas commencé à répondre après DelayMs, la même requête
+// (GET/HEAD sans corps) part vers le backend suivant. MaxExtra : tentatives supplémentaires (défaut 1).
+type HedgeConfig struct {
+	DelayMs  int `json:"delay_ms"`
+	MaxExtra int `json:"max_extra,omitempty"`
 }

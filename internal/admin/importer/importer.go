@@ -135,6 +135,7 @@ type ImportSelection struct {
 	ImportRules    bool     `json:"import_alert_rules"`
 	OnConflict     string   `json:"on_conflict"`     // skip | overwrite
 	RestoreConfigs bool     `json:"restore_configs"` // écrire les fichiers config sur disque
+	SkipNodes      bool     `json:"skip_nodes"`      // ne pas recréer la topologie déclarée (restaurée par défaut)
 	ImportSecrets  bool     `json:"import_secrets"`  // restaurer la section secrets chiffrée (superadmin, GPX_BACKUP_KEY requise)
 	ImportConfig   bool     `json:"import_config"`   // restaurer les tables de configuration (règles auto, équipes, domaines, settings…)
 	// AllowPrivileged : import lancé par le superadmin. Sinon, ni le rôle dpo ni la composition
@@ -449,8 +450,11 @@ func Apply(db *sql.DB, b *Backup, sel ImportSelection) ImportResult {
 		}
 	}
 
-	// Declared nodes — toujours restaurés (base de la topologie déclarée)
+	// Declared nodes — restaurés par défaut (base de la topologie déclarée), sauf skip_nodes
 	for _, n := range b.DeclaredNodes {
+		if sel.SkipNodes {
+			break
+		}
 		id, _ := n["id"].(string)
 		// Ne pas restaurer les nœuds synthétiques issus de config (préfixe "cfg:")
 		if strings.HasPrefix(id, "cfg:") {

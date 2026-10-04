@@ -75,20 +75,34 @@ var rlStore = &rateLimitStore{
 // RateLimit retourne un middleware appliquant la config de rate limit de la route.
 func RateLimit(cfg *router.RateLimitConfig) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
-		if cfg == nil || cfg.RequestsPerSecond <= 0 {
+		if cfg == nil || (cfg.RequestsPerSecond <= 0 && cfg.Quota <= 0) {
 			return next
 		}
+		period := quotaPeriod(cfg.QuotaPeriod)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			key := rateLimitKey(r, cfg)
-			rl := rlStore.get(key, cfg)
-			allowed, tokens := rl.allowWithTokens()
-			metrics.RateLimit.TokensCurrent.WithLabelValues(r.Host, key).Set(tokens)
-			if !allowed {
-				metrics.Pipeline.BlockedTotal.WithLabelValues(r.Host, "ratelimit", "rate_exceeded").Inc()
-				w.Header().Set("Retry-After", "1")
-				w.Header().Set("X-RateLimit-Limit", formatRPS(cfg.RequestsPerSecond))
-				http.Error(w, "429 Too Many Requests", http.StatusTooManyRequests)
-				return
+			if cfg.RequestsPerSecond > 0 {
+				rl := rlStore.get(key, cfg)
+				allowed, tokens := rl.allowWithTokens()
+				metrics.RateLimit.TokensCurrent.WithLabelValues(r.Host, key).Set(tokens)
+				if !allowed {
+					metrics.Pipeline.BlockedTotal.WithLabelValues(r.Host, "ratelimit", "rate_exceeded").Inc()
+					w.Header().Set("Retry-After", "1")
+					w.Header().Set("X-RateLimit-Limit", formatRPS(cfg.RequestsPerSecond))
+					http.Error(w, "429 Too Many Requests", http.StatusTooManyRequests)
+					return
+				}
+			}
+			if cfg.Quota > 0 {
+				ok, remaining, retry := quotas.take(r.Host+"\x00"+key, cfg.Quota, period, cfg.Shared)
+				w.Header().Set("X-Quota-Limit", strconv.Itoa(cfg.Quota))
+				w.Header().Set("X-Quota-Remaining", strconv.Itoa(remaining))
+				if !ok {
+					metrics.Pipeline.BlockedTotal.WithLabelValues(r.Host, "ratelimit", "quota_exceeded").Inc()
+					w.Header().Set("Retry-After", strconv.Itoa(max(int(retry.Seconds()), 1)))
+					http.Error(w, "429 Quota Exceeded", http.StatusTooManyRequests)
+					return
+				}
 			}
 			next.ServeHTTP(w, r)
 		})
@@ -103,6 +117,18 @@ func RateLimit(cfg *router.RateLimitConfig) func(http.Handler) http.Handler {
 func rateLimitKey(r *http.Request, cfg *router.RateLimitConfig) string {
 	ip := clientIP(r)
 	if cfg.KeyBy == "" || cfg.KeyBy == "ip" {
+		return ip
+	}
+	if name, ok := strings.CutPrefix(cfg.KeyBy, "header:"); ok {
+		if v := r.Header.Get(name); v != "" {
+			return "h:" + v
+		}
+		return ip
+	}
+	if name, ok := strings.CutPrefix(cfg.KeyBy, "cookie:"); ok {
+		if c, err := r.Cookie(name); err == nil && c.Value != "" {
+			return "c:" + c.Value
+		}
 		return ip
 	}
 	claims := GetJWTClaims(r.Context())

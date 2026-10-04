@@ -264,7 +264,7 @@ var tools = []map[string]any{
 	},
 	{
 		"name":        "update_proxy",
-		"description": "Met à jour un proxy existant (host, backend, tls, lb, enabled).",
+		"description": "Met à jour un proxy existant (host, backend, tls, lb, enabled, options avancées).",
 		"inputSchema": schema(
 			req("id", "string", "ID, nom ou domaine du proxy"),
 			opt("host", "string", "Nouveau domaine"),
@@ -272,6 +272,7 @@ var tools = []map[string]any{
 			opt("tls_enabled", "boolean", "Active ou désactive HTTPS"),
 			opt("lb", "string", "Load balancing: round_robin, weighted, adaptive"),
 			opt("enabled", "boolean", "Active ou désactive la route"),
+			opt("options", "object", "Options avancées à poser (valeur null = retirer) : split, maintenance, signed_url, graphql, bandwidth, redact_json, hedge, grpc_web, rate_limit, conditions"),
 		),
 	},
 	{
@@ -1312,6 +1313,19 @@ func (h *Handler) toolUpdateProxy(r *http.Request, args map[string]any) (any, er
 			enabled = 1
 		} else {
 			enabled = 0
+		}
+		changed = true
+	}
+	if opts, ok := args["options"].(map[string]any); ok && len(opts) > 0 {
+		for k, v := range opts {
+			if !advancedProxyOptions[k] {
+				return nil, fmt.Errorf("option inconnue : %q", k)
+			}
+			if v == nil {
+				delete(cfg, k)
+			} else {
+				cfg[k] = v
+			}
 		}
 		changed = true
 	}
@@ -2953,4 +2967,10 @@ func (h *Handler) toolListAlertEvents(r *http.Request, args map[string]any) (any
 	trigger, _ := args["trigger"].(string)
 	node, _ := args["node"].(string)
 	return alerting.RecentEvents(r.Context(), h.DB, int(days), int(limit), trigger, node)
+}
+
+// advancedProxyOptions : clés de la configuration d'un proxy modifiables par update_proxy (`options`).
+var advancedProxyOptions = map[string]bool{
+	"split": true, "maintenance": true, "signed_url": true, "graphql": true, "bandwidth": true,
+	"redact_json": true, "hedge": true, "grpc_web": true, "rate_limit": true, "conditions": true,
 }

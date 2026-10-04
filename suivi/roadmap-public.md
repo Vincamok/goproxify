@@ -103,6 +103,16 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 
 ### Fonctionnalités à venir
 
+- [x] **Forward-auth** compatible Authelia, Authentik, oauth2-proxy (2xx accepté, redirection de connexion, jokers d'en-têtes, en-têtes d'identité forgés retirés) — livré
+- [x] **Routage avancé** : split pondéré avec affectation A/B persistante, condition sur claim JWT — livré
+- [x] **URLs signées** (HMAC + expiration), **quotas par clé d'API ou cookie**, **plafond de débit par réponse** — livré
+- [x] **Mode maintenance par route**, **masquage de champs JSON**, **limites de profondeur et d'introspection GraphQL** — livré
+- [x] **Requêtes « hedged »** : GET/HEAD doublé vers un second backend après un délai, première réponse gardée — livré
+- [x] **gRPC-Web** vers un backend gRPC — livré
+- [ ] **Transcodage REST↔gRPC** (demande des descripteurs protobuf)
+- [x] **Quotas partagés entre les passerelles d'un groupe HA** (`rate_limit.shared`) — livré ; le débit instantané reste local
+- [x] **Options de routage avancé en CLI et MCP** (`proxy option`, `update_proxy` `options`) — livré
+- [ ] **Options de routage avancé dans l'interface graphique** (split, URLs signées, maintenance, masquage, GraphQL, quotas, hedge, gRPC-Web)
 - [x] **Cache HTTP complet** : `stale-while-revalidate`, `stale-if-error`, coalescing des requêtes, purge par tag (`Cache-Tag`) ou URL — livré
 - [x] **PROXY protocol v1/v2** : en entrée (derrière un load balancer L4) et en sortie vers les backends HTTP et le passthrough TLS — livré
 - [ ] **PROXY protocol : sondes de santé** : envoyer l'en-tête aussi aux sondes des backends qui l'exigent

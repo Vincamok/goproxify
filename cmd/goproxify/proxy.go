@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -191,6 +192,60 @@ func runProxy() {
 		}
 		fmt.Printf("%d entrée(s) supprimée(s) du cache de %s.\n", out.Purged, id)
 
+	case "option":
+		args := parseFlags(os.Args[3:])
+		pos := positionalArgs(os.Args[3:])
+		if len(pos) < 3 || !advancedProxyOptions[pos[1]] {
+			fmt.Fprintf(os.Stderr, "usage: goproxify proxy option <id> <%s> <json|@fichier|off>\n", strings.Join(sortedKeys(advancedProxyOptions), "|"))
+			os.Exit(1)
+		}
+		id, name, value := pos[0], pos[1], pos[2]
+		var raw any
+		switch {
+		case value == "off":
+		case strings.HasPrefix(value, "@"):
+			data, err := os.ReadFile(value[1:])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "lecture de %s : %v\n", value[1:], err)
+				os.Exit(1)
+			}
+			value = string(data)
+			fallthrough
+		default:
+			if err := json.Unmarshal([]byte(value), &raw); err != nil {
+				fmt.Fprintf(os.Stderr, "valeur JSON invalide : %v\n", err)
+				os.Exit(1)
+			}
+		}
+		client, err := newAdminClient(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+			os.Exit(1)
+		}
+		var cur struct {
+			Config  map[string]any `json:"config"`
+			Enabled bool           `json:"enabled"`
+		}
+		if _, err := client.DoJSON("GET", "/api/v1/proxies/"+url.PathEscape(id), nil, &cur); err != nil {
+			fmt.Fprintf(os.Stderr, "proxy option : %v\n", err)
+			os.Exit(1)
+		}
+		if raw == nil {
+			delete(cur.Config, name)
+		} else {
+			cur.Config[name] = raw
+		}
+		if _, err := client.DoJSON("PUT", "/api/v1/proxies/"+url.PathEscape(id),
+			map[string]any{"config": cur.Config, "enabled": cur.Enabled}, nil, 200); err != nil {
+			fmt.Fprintf(os.Stderr, "proxy option : %v\n", err)
+			os.Exit(1)
+		}
+		if raw == nil {
+			fmt.Printf("Option %s retirée de %s.\n", name, id)
+		} else {
+			fmt.Printf("Option %s posée sur %s.\n", name, id)
+		}
+
 	case "help":
 		fmt.Print(`Usage: goproxify proxy <sous-commande> [options]
 
@@ -202,6 +257,7 @@ Sous-commandes :
   delete  Supprime un proxy
   metrics Débit, erreurs et p95 par host (dernier relevé)
   cache-purge Vide le cache HTTP d'un proxy (tout, par tag ou par chemin)
+  option  Pose ou retire une option avancée (split, maintenance, signed_url, graphql, bandwidth, redact_json, hedge, grpc_web, rate_limit, conditions)
 
 goproxify proxy list   [-admin-url …] [-token …]
 goproxify proxy get    <id> [-admin-url …] [-token …]
@@ -210,6 +266,8 @@ goproxify proxy disable <id> [-admin-url …] [-token …]
 goproxify proxy metrics [-admin-url …] [-token …]
 goproxify proxy cache-purge <id> [-tag a,b] [-path /x,/y*] [-admin-url …] [-token …]
   Sans -tag ni -path, tout le cache du proxy est vidé.
+goproxify proxy option <id> <option> <json|@fichier|off> [-admin-url …] [-token …]
+  ex. proxy option 7 maintenance '{"enabled":true,"bypass_cidrs":["10.0.0.0/8"]}'
 goproxify proxy delete <id> [-y] [-admin-url …] [-token …]
   -y  Confirmation automatique (skip prompt)
 `)
@@ -230,4 +288,34 @@ func proxyHost(p map[string]any) string {
 		return h
 	}
 	return ""
+}
+
+// advancedProxyOptions : clés de configuration posées par `proxy option` (même liste que l'outil MCP update_proxy).
+var advancedProxyOptions = map[string]bool{
+	"split": true, "maintenance": true, "signed_url": true, "graphql": true, "bandwidth": true,
+	"redact_json": true, "hedge": true, "grpc_web": true, "rate_limit": true, "conditions": true,
+}
+
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// positionalArgs retourne les arguments qui ne sont ni un flag (-x) ni sa valeur.
+func positionalArgs(args []string) []string {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "-") {
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+			}
+			continue
+		}
+		out = append(out, args[i])
+	}
+	return out
 }

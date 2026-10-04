@@ -39,14 +39,14 @@ Sauvegardées telles quelles (toutes colonnes), avec redaction des secrets.
 | Paramètres | `settings` | Paramètres clé/valeur (dont l'allowlist d'IP du MCP `mcp.allowed_ips`) |
 | Sauvegardes | `backup_schedule` | Planifications |
 | Sécurité | `fail2ban_config`, `crowdsec_config` | Configuration des moteurs IPS |
-| Automatisation | `rules_engine_rules` | Règles automatiques (condition, action, cooldown, compteurs) |
+| Automatisation | `rules_engine_rules`, `rules_engine_rule_versions`, `playbooks`, `scheduled_tasks`, `automation_silences` | Règles automatiques, leurs versions, playbooks, tâches planifiées, silences (condition, action, cooldown, compteurs) |
 | Domaines & certificats | `domains`, `cert_deploy_targets` | Domaines, délégation DNS, cibles de déploiement de certificats |
 | Authentification | `auth_providers` | Fournisseurs OIDC / SAML / LDAP… |
 | Réseau | `ip_profiles`, `node_tunnel_configs` | Profils IP (listes, feeds), tunnels de nœuds |
-| Équipes & RBAC | `teams`, `team_members`, `team_scopes`, `team_scopes_v2`, `token_scopes_v2` | |
+| Équipes & RBAC | `teams`, `team_members`, `team_members_v2`, `team_scopes`, `team_scopes_v2`, `team_scopes_grants`, `user_scopes`, `token_scopes_v2` | |
 | Workspaces | `workspaces`, `workspace_members`, `workspace_resources` | |
 | Pages | `error_page_templates`, `error_page_assets`, `portal_page_templates` | Les assets binaires sont encodés en base64 |
-| Portail Access | `portal_destinations`, `portal_users` | Utilisateurs sans hash d'invitation |
+| Portail Access | `portal_destinations`, `portal_users`, `portal_groups`, `portal_dest_groups` | Utilisateurs sans hash d'invitation |
 
 ### 2.3 Configuration HA et fichiers de config
 
@@ -83,7 +83,7 @@ Si `GPX_BACKUP_KEY` est définie, le snapshot contient en plus une section `secr
 
 | Contenu | Détail |
 |---|---|
-| Tables sensibles, lignes brutes | `users` (hash des mots de passe), `tokens` (secrets des nœuds), `user_api_tokens`, `user_mfa`, `user_backup_codes`, `user_trusted_devices`, `gdpr_keys`, `ech_keys`, `internal_ca`, `internal_ca_certs`, `cert_pull_tokens`, `alert_channels` |
+| Tables sensibles, lignes brutes | `users` (hash des mots de passe), `tokens` (secrets des nœuds), `user_api_tokens`, `user_mfa`, `user_backup_codes`, `user_trusted_devices`, `gdpr_keys`, `ech_keys`, `internal_ca`, `internal_ca_certs`, `cert_pull_tokens`, `alert_channels`, `team_permissions`, `user_permissions` (permissions de capacité : restaurées par le seul superadmin) |
 | Tables de configuration, non rédigées | Les tables du §2.2 avec leurs secrets (secrets OIDC/SAML/LDAP, identifiants DNS, webhooks…) |
 | Fichiers | Copie du dossier `<storage.base_path>/state/` (`architecture.json`, magasins utilisateurs et configuration) et de `<storage.base_path>/certs/` (CA interne, certificats) ; fichiers de plus de 8 Mo ignorés |
 
@@ -113,6 +113,7 @@ Si `GPX_BACKUP_KEY` est définie, le snapshot contient en plus une section `secr
 | Snapshot de sécurité | Avant tout écrasement (restauration de snapshot ou import en `overwrite`), un snapshot `avant-restauration-<date>` / `avant-import-<date>` est pris automatiquement ; s'il échoue, l'opération est annulée. Il permet de revenir en arrière |
 | Version | Une sauvegarde dont la `version` n'est pas `1` est refusée |
 | Résultat | Compteurs par entité : proxies, utilisateurs, tokens, PAT, snippets, canaux, règles, lignes de configuration, nœuds déclarés, ignorés, erreurs |
+| Restaurer un seul proxy | Fenêtre *Restaurer* : liste des proxies du snapshot (recherche, cases, « Tous / Aucun », « Seulement celui-ci » qui décoche tout le reste) ; chaque proxy indique s'il sera créé ou s'il existe. La topologie déclarée a sa propre case |
 | Import d'un fichier (sélection) | Cases par entité : proxies, utilisateurs, tokens, PAT, snippets, canaux, règles, **configuration** (identique dans *Sauvegardes → Restaurer*, *Import* et l'assistant de premier démarrage) ; conflit `skip` (conserver l'existant) ou `overwrite` |
 | Utilisateurs | Créés avec un mot de passe aléatoire ; en overwrite, seul le rôle est mis à jour |
 | Ordre | Les tables de configuration sont restaurées dans un ordre fixe (settings → règles → domaines → équipes → workspaces → pages → portail) |

@@ -456,6 +456,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Sync pools discovery depuis les passerelles pairs (LB cross-passerelle)
 	s.startPeerSyncLoop(ctx)
+	s.startQuotaSyncLoop(ctx)
 
 	// Restauration des profils comportementaux WAF depuis le snapshot disque.
 	s.wafEngine.LoadSnapshot("/etc/goproxify/waf-behavior.json")

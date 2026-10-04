@@ -202,6 +202,8 @@ Contrôles : `syntax`, `structure` (type, host, backends, URLs), `conflicts` (ho
 
 Crée un proxy manuel. Corps : objet conforme au schéma canonique (section `proxies`).
 
+Options avancées de la configuration (Edge 0.37.0, détail dans [fonctionnalites.md](fonctionnalites.md)) : `split`, `maintenance`, `signed_url`, `graphql`, `bandwidth`, `redact_json`, `rate_limit.quota` / `quota_period` / `key_by` (`header:<nom>`, `cookie:<nom>`), condition `jwt_claim`, et pour `sso` : `provider: "oauth2_proxy"`, `forward_auth_signin_url`, `forward_auth_timeout_ms`.
+
 ### `GET /api/v1/proxies/:domain`
 
 Détail complet d'un proxy.
@@ -406,7 +408,7 @@ Corps : JSON de sauvegarde (32 Mo max). Réponse : résumé (`proxies[]`, `user_
 
 ### `POST /api/v1/import/backup/apply`
 
-Corps : `{"data": <sauvegarde>, "selection": {"proxy_ids", "import_users", "import_tokens", "import_pats", "import_snippets", "import_alert_channels", "import_alert_rules", "import_config", "on_conflict": "skip|overwrite"}}` (32 Mo max). En `overwrite`, un snapshot `avant-import-<date>` est pris d'abord. Réponse : `{proxies, users, tokens, pats, snippets, channels, rules, config, declared_nodes, skipped, errors}`.
+Corps : `{"data": <sauvegarde>, "selection": {"proxy_ids", "import_users", "import_tokens", "import_pats", "import_snippets", "import_alert_channels", "import_alert_rules", "skip_nodes", "import_config", "import_secrets", "on_conflict": "skip|overwrite"}}` (32 Mo max). `proxy_ids` : identifiants des proxies à restaurer (vide = tous, `[""]` = aucun) ; `skip_nodes: true` ne recrée pas la topologie déclarée (restaurée par défaut). En `overwrite`, un snapshot `avant-import-<date>` est pris d'abord. Réponse : `{proxies, users, tokens, pats, snippets, channels, rules, config, declared_nodes, skipped, errors}`.
 ---
 
 ## Certificats
@@ -1475,7 +1477,7 @@ Règles (depuis Admin `0.78.0`), contrôlées pour les sessions UI comme pour le
 - **attribuer ou retirer** une permission est réservé au superadmin : rôle `dpo` donné ou retiré, `permissions` d'un compte modifiées, `PUT /teams/{id}/permissions`, ajout ou retrait de membres et suppression d'une équipe qui porte une permission — sinon `403` (`api.err.superadmin_required`). Chaque attribution est auditée (`set_permissions`) ;
 - **compte protégé** : un compte superadmin ou détenteur d'une permission (par n'importe quelle voie) ne peut être modifié (`PUT /users/{id}`), voir son mot de passe changé ou être supprimé que par le superadmin — sinon `403` (`api.err.protected_account`). Auparavant, un admin pouvait changer le mot de passe de n'importe quel compte, superadmin compris.
 
-Les permissions sont copiées dans `users.yaml` (comptes et équipes). Elles ne font pas partie des sauvegardes de configuration (`team_permissions` est exclue). Un import ou une restauration (`POST /api/v1/import/backup/apply`, `POST /api/v1/backups/snapshots/{id}/restore`) lancé par un admin n'attribue jamais le rôle `superadmin` ni `dpo` (compte créé en `user`, rôle d'un compte existant conservé), ne modifie pas le rôle du superadmin ni d'un `dpo`, et n'ajoute aucun membre à une équipe qui porte une permission. Lancé par le superadmin, il restaure le rôle `dpo` et ces membres ; le rôle `superadmin` n'est jamais importé. Auparavant, un import en `overwrite` réécrivait le rôle de tout compte existant, superadmin compris.
+Les permissions sont copiées dans `users.yaml` (comptes et équipes). Elles ne font pas partie des sauvegardes de configuration (`team_permissions` est exclue de la section standard ; elle est dans la section `secrets` chiffrée, restaurable par le seul superadmin). Un import ou une restauration (`POST /api/v1/import/backup/apply`, `POST /api/v1/backups/snapshots/{id}/restore`) lancé par un admin n'attribue jamais le rôle `superadmin` ni `dpo` (compte créé en `user`, rôle d'un compte existant conservé), ne modifie pas le rôle du superadmin ni d'un `dpo`, et n'ajoute aucun membre à une équipe qui porte une permission. Lancé par le superadmin, il restaure le rôle `dpo` et ces membres ; le rôle `superadmin` n'est jamais importé. Auparavant, un import en `overwrite` réécrivait le rôle de tout compte existant, superadmin compris.
 
 ## Workspaces — `/api/v1/workspaces`
 

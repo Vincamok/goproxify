@@ -577,6 +577,61 @@ function bkDiff(current, snap, mode, active) {
   return { before, after };
 }
 
+// Sélecteur de proxies : restaurer tous les proxies, quelques-uns ou un seul.
+function bkProxyPicker(snapProxies, curProxies) {
+  const existing = new Set(curProxies.map(p => p.id));
+  const rows = snapProxies.map(p => `
+    <label class="bk-px-row" data-q="${esc((String(p.name || '') + ' ' + String(p.host || '')).toLowerCase())}" style="display:flex;align-items:center;gap:8px;padding:4px 2px;font-size:13px">
+      <input type="checkbox" class="bk-px-cb" value="${esc(p.id)}" checked onchange="bkRestoreRefresh()">
+      <span style="font-weight:600">${esc(p.name || p.host || p.id)}</span>
+      <span style="color:var(--text2);font-size:12px">${esc(p.host || '')}</span>
+      <span style="margin-left:auto;font-size:11px;color:var(--text2)">${existing.has(p.id) ? t('backups.restore_modal.px_exists') : t('backups.restore_modal.px_new')}</span>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="event.preventDefault();bkOnlyProxy('${esc(p.id)}')">${t('backups.restore_modal.px_only')}</button>
+    </label>`).join('');
+  return `
+    <div id="bk-px" style="margin-top:12px">
+      <div class="bk-sec-t" style="display:flex;align-items:center;gap:10px">
+        <span>${t('backups.restore_modal.px_title')}</span>
+        <input class="input" id="bk-px-q" placeholder="${t('backups.restore_modal.px_search')}" oninput="bkProxyFilter()" style="max-width:220px;margin-left:auto">
+        <a href="#" onclick="bkProxyAll(true);return false">${t('backups.restore_modal.px_all')}</a>
+        <a href="#" onclick="bkProxyAll(false);return false">${t('backups.restore_modal.px_none')}</a>
+      </div>
+      <div style="max-height:190px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:6px 10px">${rows}</div>
+    </div>`;
+}
+
+// null = pas de sélecteur (tous) ; sinon l'ensemble des identifiants cochés.
+function bkPickedProxies() {
+  const cbs = [...document.querySelectorAll('.bk-px-cb')];
+  if (!cbs.length) return null;
+  return new Set(cbs.filter(c => c.checked).map(c => c.value));
+}
+
+function bkProxyIds(proxiesOn) {
+  if (!proxiesOn) return [''];
+  const cbs = [...document.querySelectorAll('.bk-px-cb')];
+  const ids = cbs.filter(c => c.checked).map(c => c.value);
+  if (!cbs.length || ids.length === cbs.length) return []; // vide = tous
+  return ids.length ? ids : ['']; // [''] = aucun
+}
+
+window.bkProxyAll = function(on) {
+  document.querySelectorAll('.bk-px-cb').forEach(c => { if (c.closest('.bk-px-row').style.display !== 'none') c.checked = on; });
+  bkRenderTopology();
+};
+
+window.bkProxyFilter = function() {
+  const q = (document.getElementById('bk-px-q')?.value || '').toLowerCase();
+  document.querySelectorAll('.bk-px-row').forEach(r => { r.style.display = !q || r.dataset.q.includes(q) ? 'flex' : 'none'; });
+};
+
+// « Seul celui-ci » : décoche tout le reste (autres entités, autres proxies).
+window.bkOnlyProxy = function(id) {
+  document.querySelectorAll('.bk-chip input').forEach(c => { c.checked = c.id === 'bk-rs-proxies'; });
+  document.querySelectorAll('.bk-px-cb').forEach(c => { c.checked = c.value === id; });
+  bkRenderTopology();
+};
+
 function bkTopoCol(items, proxies, side) {
   const roles = [...new Set(items.map(n => n.role))].sort((a, b) => {
     const ia = BK_ROLE_ORDER.indexOf(a), ib = BK_ROLE_ORDER.indexOf(b);
@@ -598,8 +653,9 @@ function bkRenderTopology() {
   if (!c || !el) return;
   const checked = id => document.getElementById('bk-rs-' + id)?.checked ?? false;
   const mode = document.getElementById('bk-rs-conflict')?.value || 'overwrite';
-  const nodes = bkDiff(c.curNodes, c.snapNodes, mode, true);
-  const prox = bkDiff(c.curProxies, c.snapProxies, mode, checked('proxies'));
+  const nodes = bkDiff(c.curNodes, c.snapNodes, mode, checked('nodes'));
+  const picked = bkPickedProxies();
+  const prox = bkDiff(c.curProxies, c.snapProxies.filter(p => !picked || picked.has(p.key)), mode, checked('proxies'));
   const count = st => [...nodes.after, ...prox.after].filter(x => x.st === st).length;
   const add = count('add'), over = count('over');
   const keep = [...nodes.after, ...prox.after].filter(x => x.st === 'keep').length;
@@ -630,6 +686,7 @@ window.restoreSnapshot = async function(id, name) {
 
   const entities = [
     ['proxies',  t('trafic.proxies'),          (s.proxies?.length) || 0],
+    ['nodes',    t('backups.restore_modal.nodes'), (s.declared_nodes?.length) || 0],
     ['users',    t('import.entity.users'),    s.user_count   || 0],
     ['tokens',   t('import.entity.tokens'),   s.token_count  || 0],
     ['pats',     t('import.entity.pats'),     s.pat_count    || 0],
@@ -666,6 +723,7 @@ window.restoreSnapshot = async function(id, name) {
           <span>${esc(label)}</span><b>${n}</b>
         </label>`).join('')}
     </div>
+    ${(s.proxies || []).length ? bkProxyPicker(s.proxies, curProxies || []) : ''}
     <div class="field" style="margin:14px 0 8px">
       <label class="field-label">${t('import.conflict')}</label>
       <select id="bk-rs-conflict" class="input" style="max-width:260px" onchange="bkRestoreRefresh()">
@@ -691,7 +749,8 @@ window.applySnapshotRestore = async function() {
   const btn = document.getElementById('bk-rs-apply');
   const selection = {
     // proxy_ids vide = importer tous ; [''] = ID invalide → importer aucun
-    proxy_ids:             checked('proxies') ? [] : [''],
+    proxy_ids:             bkProxyIds(checked('proxies')),
+    skip_nodes:            !checked('nodes'),
     import_users:          checked('users'),
     import_tokens:         checked('tokens'),
     import_pats:           checked('pats'),

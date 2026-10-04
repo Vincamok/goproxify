@@ -264,6 +264,7 @@ func (s *Server) handlerForRoute(route *router.Route, locPath string) http.Handl
 	} else if route.CachePath != "" {
 		h = proxy.New(route.CachePath).Middleware(h)
 	}
+	h = middleware.GraphQLLimits(route.GraphQL)(h)
 	h = middleware.SSOAuth(route.SSO)(h)
 	h = middleware.JWTValidation(route.JWT)(h)
 	h = middleware.MTLSValidation(route.MTLS)(h)
@@ -297,6 +298,9 @@ func (s *Server) handlerForRoute(route *router.Route, locPath string) http.Handl
 	}
 	h = middleware.Transform(route.Transform)(h)
 	h = middleware.Compress(route.Compression)(h)
+	h = middleware.Bandwidth(route.Bandwidth)(h)
+	h = middleware.SignedURL(route.SignedURL)(h)
+	h = middleware.Maintenance(route.Maintenance)(h)
 
 	s.dispatchHandlers.Store(key, &cachedDispatch{gen: gen, h: h})
 	return h
