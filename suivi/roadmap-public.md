@@ -117,14 +117,14 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - [ ] **Transcodage REST↔gRPC** (demande des descripteurs protobuf)
 - [x] **Quotas partagés entre les passerelles d'un groupe HA** (`rate_limit.shared`) — livré ; le débit instantané reste local
 - [x] **Options de routage avancé en CLI et MCP** (`proxy option`, `update_proxy` `options`) — livré
-- [ ] **Options de routage avancé dans l'interface graphique** (split, URLs signées, maintenance, masquage, GraphQL, quotas, hedge, gRPC-Web)
+- [x] **Options de routage avancé dans l'interface graphique** : modale de proxy › Avancé › Routage avancé (split, URLs signées, maintenance, masquage, GraphQL, hedge, gRPC-Web, débit, statique, schéma de requête) et quotas dans Protection › Rate limiting — livré (Admin `0.115.0`)
 - [x] **Cache HTTP complet** : `stale-while-revalidate`, `stale-if-error`, coalescing des requêtes, purge par tag (`Cache-Tag`) ou URL — livré
 - [x] **PROXY protocol v1/v2** : en entrée (derrière un load balancer L4) et en sortie vers les backends HTTP et le passthrough TLS — livré
 - [ ] **PROXY protocol : sondes de santé** : envoyer l'en-tête aussi aux sondes des backends qui l'exigent
 - [x] **Challenge anti-bot par preuve de travail** : page de validation navigateur (type Anubis), Turnstile / hCaptcha en option — livré
-- [ ] **Challenge anti-bot : réglages dans l'interface** : saisie de la difficulté, du fournisseur, des clés et des chemins exemptés (aujourd'hui via la config du proxy)
+- [x] **Challenge anti-bot : réglages dans l'interface** : fournisseur, difficulté, durée, clés et chemins exemptés dans Protection › Protection bot — livré (Admin `0.115.0`)
 - [x] **Empreinte TLS JA3/JA4** : calculée au ClientHello et branchée sur Sentinel pour bannir sur signature — livré
-- [ ] **JA3/JA4 dans les logs Admin** : colonnes et filtre dans Logs / Prism (aujourd'hui dans le log d'accès de la passerelle)
+- [x] **JA3/JA4 dans les logs Admin** : colonne, détail et filtre dans Logs ; API, CLI et MCP — livré (Admin `0.115.0`, Edge `0.44.0`) ; l'affichage dans Prism reste à faire
 - [x] **Dashboard Sentinel** : endpoint `/security/bans/countries` (heatmap par pays, JOIN `geoip_cache`)
 - [x] **Webhooks sur événements** : canal webhook générique sur `sentinel_ban` et `backend_down` ; `Manager.SetAlertEngine` pour injecter l'engine d'alertes ; callback `BackendHealth.OnDown` → message WS passerelle→Admin
 - [x] **Discovery Kubernetes** : Agent qui lit les `Ingress`/`Service` avec annotations `goproxify.*`, symétrique du mode Docker existant

@@ -43,3 +43,28 @@ func TestListLogsFlagsTruncatedIPs(t *testing.T) {
 		}
 	}
 }
+
+func TestListLogsFiltersByTLSFingerprint(t *testing.T) {
+	db, err := admindb.Open(filepath.Join(t.TempDir(), "admin.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	at := time.Now().UTC().Format(time.RFC3339Nano)
+	for _, ja4 := range []string{"t13d1516h2_a_b", "t13d1516h2_a_b", "t13d1517h2_c_d", ""} {
+		if _, err := db.Exec(`INSERT INTO logs (ts, component, domain, method, path, status, ip, tls_ja3, tls_ja4) VALUES (?, 'edge', 'a.test', 'GET', '/', 200, '198.51.100.7', 'ja3x', ?)`, at, ja4); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := &Handler{DB: db}
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+
+	out, err := h.toolListLogsFiltered(req, "", "", "", "", "t13d1516h2_a_b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := out.([]map[string]any)
+	if len(entries) != 2 || entries[0]["tls_ja4"] != "t13d1516h2_a_b" || entries[0]["tls_ja3"] != "ja3x" {
+		t.Fatalf("filtre JA4 : %v", entries)
+	}
+}

@@ -15,6 +15,8 @@ var facetFields = map[string]string{
 	"node_name": "node_name",
 	"domain":    "domain",
 	"method":    "method",
+	"tls_ja3":   "tls_ja3",
+	"tls_ja4":   "tls_ja4",
 }
 
 // Facets compte les valeurs des champs demandés parmi les entrées filtrées par p (jusqu'à 12

@@ -105,6 +105,7 @@ func New(cfg *config.AdminConfig) (*Server, error) {
 	if gdprErr != nil {
 		log.Warn("rgpd: clé de pseudonymisation indisponible", "err", gdprErr)
 	}
+	applyMemoryLimit(log, os.ReadFile)
 
 	s := &Server{
 		cfg:            cfg,
@@ -196,6 +197,8 @@ func (s *Server) Start(ctx context.Context) error {
 				RequestID:    item.RequestID,
 				WAFMatches:   item.WAFMatches,
 				ThreatSignal: item.ThreatSignal,
+				TLSJA3:       item.TLSJA3,
+				TLSJA4:       item.TLSJA4,
 			})
 		}
 	})

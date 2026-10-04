@@ -155,6 +155,30 @@ func DecryptAny(blob []byte) ([]byte, error) {
 	return nil, errors.New("déchiffrement impossible : aucune clé connue ne correspond (clé active ou retirée manquante ?)")
 }
 
+// DecryptAnyConsume est DecryptAny pour un tampon jetable : avec une seule clé connue, le déchiffrement
+// se fait sur place (le texte chiffré est écrasé), sans second tampon de la taille du snapshot. Avec
+// plusieurs clés, un essai raté effacerait le tampon : on retombe sur DecryptAny.
+func DecryptAnyConsume(blob []byte) ([]byte, error) {
+	keys := AllBackupKeys()
+	if len(keys) != 1 {
+		return DecryptAny(blob)
+	}
+	block, err := aes.NewCipher(keys[0])
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil || len(blob) < gcm.NonceSize() {
+		return nil, errors.New("déchiffrement impossible : données tronquées")
+	}
+	ns := gcm.NonceSize()
+	plain, err := gcm.Open(blob[ns:ns], blob[:ns], blob[ns:], nil)
+	if err != nil {
+		return nil, errors.New("déchiffrement impossible : aucune clé connue ne correspond (clé active ou retirée manquante ?)")
+	}
+	return plain, nil
+}
+
 func secretsGCM() (cipher.AEAD, error) {
 	key, ok := BackupKey()
 	if !ok {

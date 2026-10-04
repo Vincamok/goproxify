@@ -187,6 +187,8 @@ type LogEntryPayload struct {
 	RequestID    string   `json:"request_id,omitempty"`
 	WAFMatches   []string `json:"waf_matches,omitempty"`
 	ThreatSignal string   `json:"threat_signal,omitempty"`
+	TLSJA3       string   `json:"tls_ja3,omitempty"`
+	TLSJA4       string   `json:"tls_ja4,omitempty"`
 }
 
 // EdgeHeartbeatPayload est envoyé par passerelle → Admin toutes les 30 s.

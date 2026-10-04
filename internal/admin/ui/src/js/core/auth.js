@@ -253,6 +253,8 @@ async function afterLogin() {
       logsFilters.method = '';
       logsFilters.status = '';
       logsFilters.path = '';
+      logsFilters.tls_ja3 = '';
+      logsFilters.tls_ja4 = '';
       logsFilters.date_from = '';
       logsFilters.date_to = '';
       openLogs({ kind, component, keepFilters: true });

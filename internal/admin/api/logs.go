@@ -209,6 +209,8 @@ func parseLogsParams(r *http.Request) logs.SearchParams {
 		Method:          q.Get("method"),
 		Status:          q.Get("status"),
 		Path:            q.Get("path"),
+		TLSJA3:          q.Get("tls_ja3"),
+		TLSJA4:          q.Get("tls_ja4"),
 		Search:          q.Get("search"),
 		DateFrom:        q.Get("date_from"),
 		DateTo:          q.Get("date_to"),

@@ -342,6 +342,7 @@ goproxify logs list
   [-method GET|POST|…]
   [-status <code>]
   [-path <préfixe>]
+  [-tls-ja4 <empreinte>]  [-tls-ja3 <empreinte>]
   [-search <texte>]
   [-from <RFC3339>]  [-to <RFC3339>]
   [-limit <n>]  [-page <n>]

@@ -451,13 +451,15 @@ Un `days_until_expiry` négatif indique un certificat expiré.
 
 ### `list_logs`
 
-Retourne les 100 derniers logs d'accès, filtrables par domaine, niveau ou `request_id`.
+Retourne les 100 derniers logs d'accès, filtrables par domaine, niveau, `request_id` ou empreinte TLS. Chaque entrée porte `tls_ja4` / `tls_ja3` quand la passerelle a terminé le TLS.
 
 | Paramètre    | Type   | Requis | Description                                                        |
 |--------------|--------|--------|--------------------------------------------------------------------|
 | `domain`     | string | —      | Filtrer par domaine proxy                                          |
 | `level`      | string | —      | Filtrer par niveau : `info`, `warn`, `error`                       |
 | `request_id` | string | —      | Corrélation exacte : retourne tous les logs portant cet identifiant|
+| `tls_ja4`    | string | —      | Filtrer par empreinte TLS JA4 : retrouver un même outil ou botnet quelle que soit son IP |
+| `tls_ja3`    | string | —      | Filtrer par empreinte TLS JA3 (MD5)                                |
 
 **Réponse exemple :**
 ```json

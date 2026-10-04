@@ -4,6 +4,7 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -196,26 +197,38 @@ func (s *Scheduler) TestDestination(ctx context.Context, id string) error {
 
 // verifyData contrôle un snapshot tel que stocké : somme de contrôle, déchiffrement, format,
 // et déchiffrement de la section secrets quand elle existe.
-func verifyData(stored []byte, wantSHA string) error {
-	if wantSHA != "" && sha256Hex(stored) != wantSHA {
-		return errors.New("somme de contrôle différente : snapshot altéré ou corrompu")
-	}
-	plain, err := openSnapshot(stored)
+// verifyData consomme stored (déchiffré sur place) : à n'appeler que sur une copie jetable.
+func verifyData(stored []byte) error {
+	plain, err := openSnapshotConsume(stored)
 	if err != nil {
 		return fmt.Errorf("déchiffrement : %w", err)
 	}
-	b, _, err := importer.SummarizeBackup(plain)
-	if err != nil {
-		return fmt.Errorf("format : %w", err)
+	// Vérification légère : l'enveloppe AES-GCM authentifie tout le contenu (y compris les sections
+	// secrets et historique, chiffrées avec la même clé) ; on ne lit que le début du JSON pour la
+	// version. Décoder tout le snapshot en structures Go multiplie sa taille en mémoire par plusieurs
+	// unités et faisait tomber l'Admin sur un snapshot de 100 Mo.
+	dec := json.NewDecoder(bytes.NewReader(plain))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return errors.New("format : objet JSON attendu")
 	}
-	if b.Secrets != "" {
-		if _, err := importer.OpenSecretsSummary(b); err != nil {
-			return err
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return fmt.Errorf("format : %w", err)
 		}
-	}
-	if b.History != "" {
-		if _, err := importer.OpenHistorySummary(b); err != nil {
-			return err
+		if key == "version" {
+			var v string
+			if err := dec.Decode(&v); err != nil {
+				return fmt.Errorf("format : %w", err)
+			}
+			if v != "" && v != "1" {
+				return fmt.Errorf("format : version %q non supportée", v)
+			}
+			return nil
+		}
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			return fmt.Errorf("format : %w", err)
 		}
 	}
 	return nil
@@ -224,15 +237,20 @@ func verifyData(stored []byte, wantSHA string) error {
 // VerifySnapshot relit un snapshot stocké et le contrôle ; l'horodatage de vérification n'est
 // posé qu'en cas de succès.
 func (s *Scheduler) VerifySnapshot(id string) error {
-	var data, sum string
+	var data []byte
+	var sum string
 	if err := s.db.QueryRow(`SELECT data, sha256 FROM backup_snapshots WHERE id=?`, id).Scan(&data, &sum); err != nil {
 		return errors.New("snapshot introuvable")
 	}
-	if err := verifyData([]byte(data), sum); err != nil {
+	got := sha256Hex(data)
+	if sum != "" && got != sum {
+		return errors.New("somme de contrôle différente : snapshot altéré ou corrompu")
+	}
+	if err := verifyData(data); err != nil {
 		return err
 	}
 	s.db.Exec(`UPDATE backup_snapshots SET verified_at=?, sha256=CASE WHEN sha256='' THEN ? ELSE sha256 END WHERE id=?`, //nolint:errcheck
-		sqltime.Format(time.Now()), sha256Hex([]byte(data)), id)
+		sqltime.Format(time.Now()), got, id)
 	return nil
 }
 

@@ -323,6 +323,8 @@ func New(cfg *config.EdgeConfig) (*Server, error) {
 				RequestID:    e.RequestID,
 				WAFMatches:   e.WAFMatches,
 				ThreatSignal: e.ThreatSignal,
+				TLSJA3:       e.TLSJA3,
+				TLSJA4:       e.TLSJA4,
 			}
 		}
 		msg, err := edgews.NewMessage(0, edgews.TypeAccessLog, payload)

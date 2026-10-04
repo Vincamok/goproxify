@@ -685,6 +685,14 @@ window.openProxyModal = async function(id, initialTab, secTab, opts = {}) {
     ['Circuit breaker', '#34d399', 'resilience', cfg.circuit_breaker],
     ['Canary', '#fbbf24', 'resilience', cfg.canary?.backend],
     ['Cache', '#94a3b8', 'avance', cfg.cache],
+    ['Split', '#fbbf24', 'avance', cfg.split?.variants],
+    ['Maintenance', '#f59e0b', 'avance', cfg.maintenance?.enabled],
+    ['URLs signées', '#a78bfa', 'avance', cfg.signed_url?.enabled],
+    ['GraphQL', '#e879f9', 'avance', cfg.graphql?.enabled],
+    ['Hedge', '#34d399', 'avance', cfg.hedge],
+    ['gRPC-Web', '#60a5fa', 'avance', cfg.grpc_web],
+    ['Statique', '#94a3b8', 'avance', cfg.static?.enabled],
+    ['Schéma requête', '#fb923c', 'avance', cfg.request_schema?.enabled],
   ].filter(f => on(f[3]));
   const tabCount = tab => active.filter(f => f[2] === tab).length;
   const score = typeof computeProxyHeaderScore === 'function' && id ? computeProxyHeaderScore(cfg) : null;
@@ -1149,6 +1157,7 @@ window.openProxyModal = async function(id, initialTab, secTab, opts = {}) {
 
         <!-- Panel Avancé -->
         <div id="ptab-avance" style="display:none;padding:16px 20px;flex-direction:column;gap:14px;">
+          ${typeof _proutRender === 'function' ? _proutRender(cfg) : ''}
           <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
             <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:10px;">Performance</div>
             <div class="gp-split-2" style="gap:10px;">
@@ -1973,6 +1982,11 @@ window.saveProxy = async function(id, opts = {}) {
     error_handling: (err404 || err502) ? { ...(err404?{'404':err404}:{}), ...(err502?{'502':err502,'503':err502}:{}) } : undefined,
   } : undefined;
 
+  let routingOptions = {};
+  try {
+    routingOptions = typeof _proutCollect === 'function' ? _proutCollect(window._openProxyCfg) : {};
+  } catch (err) { toast(err.message, 'error'); switchProxyTab('avance'); return false; }
+
   // Security (géré via le modal dédié — on préserve la config existante des chemins canoniques)
   const security = window._openProxyCfg?.security || undefined;
   const existingWaf = window._openProxyCfg?.waf || undefined;
@@ -2068,6 +2082,7 @@ window.saveProxy = async function(id, opts = {}) {
     ...(existingWaf ? { waf: existingWaf } : {}),
     ...(existingBot ? { bot: existingBot } : {}),
     ...(existingJwt ? { jwt: existingJwt } : {}),
+    ...routingOptions,
     ...(security ? { security } : {}),
     ...(sso ? { sso } : {}),
     ...(observability ? { observability } : {}),
@@ -2076,7 +2091,7 @@ window.saveProxy = async function(id, opts = {}) {
   };
   // Onglet Protection monté : il fait foi. Sinon on conserve ce que le formulaire ne gère pas.
   if (document.getElementById('psec-tabs')) {
-    config = _psecBuildConfig(config);
+    try { config = _psecBuildConfig(config); } catch (err) { toast(err.message, 'error'); return false; }
   } else {
     const prev = window._openProxyCfg || {};
     for (const k of ['rate_limit', 'ip_filter', 'geo_ip', 'snippet_ids', 'sentinel_whitelist']) {

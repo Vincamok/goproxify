@@ -21,9 +21,9 @@ func runLogs() {
 			os.Exit(1)
 		}
 		q := url.Values{}
-		for _, f := range []string{"-level", "-domain", "-ip", "-method", "-status", "-path", "-search", "-from", "-to", "-limit", "-page"} {
+		for _, f := range []string{"-level", "-domain", "-ip", "-method", "-status", "-path", "-tls-ja3", "-tls-ja4", "-search", "-from", "-to", "-limit", "-page"} {
 			if v := flagValue(args, f, ""); v != "" {
-				key := strings.TrimLeft(f, "-")
+				key := strings.ReplaceAll(strings.TrimLeft(f, "-"), "-", "_")
 				if key == "from" {
 					key = "date_from"
 				} else if key == "to" {
@@ -79,9 +79,9 @@ func runLogs() {
 		format := flagValue(args, "-format", "csv")
 		q := url.Values{}
 		q.Set("format", format)
-		for _, f := range []string{"-level", "-domain", "-ip", "-from", "-to"} {
+		for _, f := range []string{"-level", "-domain", "-ip", "-tls-ja3", "-tls-ja4", "-from", "-to"} {
 			if v := flagValue(args, f, ""); v != "" {
-				key := strings.TrimLeft(f, "-")
+				key := strings.ReplaceAll(strings.TrimLeft(f, "-"), "-", "_")
 				if key == "from" {
 					key = "date_from"
 				} else if key == "to" {

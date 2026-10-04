@@ -4,6 +4,7 @@
 package backup
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -11,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/vincamok/goproxify/internal/admin/importer"
 )
@@ -42,16 +42,37 @@ func sealSnapshot(plain []byte) ([]byte, error) {
 	return []byte(backupEncPrefix + base64.StdEncoding.EncodeToString(out)), nil
 }
 
-func openSnapshot(data []byte) ([]byte, error) {
-	s := string(data)
-	if !strings.HasPrefix(s, backupEncPrefix) {
+// openSnapshotConsume est openSnapshot pour un tampon jetable : le base64 est décodé et le contenu
+// déchiffré sur place, si bien que la vérification d'un snapshot de 100 Mo n'a besoin que d'un tampon
+// de cette taille au lieu de trois. data est inutilisable ensuite.
+func openSnapshotConsume(data []byte) ([]byte, error) {
+	if !bytes.HasPrefix(data, []byte(backupEncPrefix)) {
 		return data, nil
 	}
-	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(s, backupEncPrefix))
+	body := data[len(backupEncPrefix):]
+	n, err := base64.StdEncoding.Decode(body, body) // sortie <= entrée : le décodage progresse sans rattraper la lecture
 	if err != nil {
 		return nil, err
 	}
-	plain, err := importer.DecryptAny(raw)
+	plain, err := importer.DecryptAnyConsume(body[:n])
+	if errors.Is(err, importer.ErrNoBackupKey) {
+		return nil, fmt.Errorf("snapshot chiffré — définir la clé de chiffrement des sauvegardes")
+	}
+	return plain, err
+}
+
+func openSnapshot(data []byte) ([]byte, error) {
+	if !bytes.HasPrefix(data, []byte(backupEncPrefix)) {
+		return data, nil
+	}
+	// Sur des octets, sans copie en chaîne : un snapshot peut peser une centaine de Mo.
+	body := data[len(backupEncPrefix):]
+	raw := make([]byte, base64.StdEncoding.DecodedLen(len(body)))
+	n, err := base64.StdEncoding.Decode(raw, body)
+	if err != nil {
+		return nil, err
+	}
+	plain, err := importer.DecryptAny(raw[:n])
 	if errors.Is(err, importer.ErrNoBackupKey) {
 		return nil, fmt.Errorf("snapshot chiffré — définir la clé de chiffrement des sauvegardes")
 	}

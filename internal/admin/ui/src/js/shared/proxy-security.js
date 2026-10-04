@@ -598,8 +598,24 @@ window._psecMount = async function(id, initialTab, embedEl) {
               </label>
               <div class="field" style="flex:1;margin:0;">
                 <label class="field-label" style="font-size:11px">Mode</label>
-                <select id="psec-bot-mode" class="input"><option value="block" ${(!(botCfg?.js_challenge)&& (botCfg?.mode||'block')==='block')?'selected':''}>Bloquer</option><option value="challenge" ${(botCfg?.js_challenge || botCfg?.mode==='challenge')?'selected':''}>Challenge JS</option><option value="log" ${(botCfg?.mode==='log'||botCfg?.mode==='monitor')?'selected':''}>Journaliser</option></select>
+                <select id="psec-bot-mode" class="input" onchange="psecBotProviderChange()"><option value="block" ${(!(botCfg?.js_challenge)&& (botCfg?.mode||'block')==='block')?'selected':''}>Bloquer</option><option value="challenge" ${(botCfg?.js_challenge || botCfg?.mode==='challenge')?'selected':''}>Challenge JS</option><option value="log" ${(botCfg?.mode==='log'||botCfg?.mode==='monitor')?'selected':''}>Journaliser</option></select>
               </div>
+            </div>
+            <div id="psec-bot-challenge" style="display:${(botCfg?.js_challenge || botCfg?.mode==='challenge')?'block':'none'};margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
+              <div style="font-size:11px;color:var(--text3);margin-bottom:8px;">Le visiteur résout une preuve de travail dans son navigateur (ou un captcha) avant d'accéder au site ; un cookie signé évite de la rejouer pendant la durée de validité.</div>
+              <div class="form-row" style="gap:8px;margin-bottom:8px;">
+                <div class="field" style="flex:1;margin:0;"><label class="field-label" style="font-size:11px">Fournisseur</label>
+                  <select id="psec-bot-provider" class="input" onchange="psecBotProviderChange()"><option value="pow" ${(!botCfg?.challenge_provider||botCfg.challenge_provider==='pow')?'selected':''}>Preuve de travail (intégré)</option><option value="turnstile" ${botCfg?.challenge_provider==='turnstile'?'selected':''}>Cloudflare Turnstile</option><option value="hcaptcha" ${botCfg?.challenge_provider==='hcaptcha'?'selected':''}>hCaptcha</option></select></div>
+                <div class="field" style="flex:1;margin:0;"><label class="field-label" style="font-size:11px">Validité de la preuve</label><input id="psec-bot-ttl" class="input" placeholder="24h" value="${esc(botCfg?.challenge_ttl||'')}"></div>
+              </div>
+              <div id="psec-bot-pow" style="display:${(!botCfg?.challenge_provider||botCfg.challenge_provider==='pow')?'block':'none'};margin-bottom:8px;">
+                <div class="field" style="margin:0;max-width:260px;"><label class="field-label" style="font-size:11px">Difficulté (bits, 1–24 — chaque bit double le travail)</label><input id="psec-bot-bits" class="input" type="number" min="1" max="24" placeholder="16" value="${botCfg?.challenge_difficulty||''}"></div>
+              </div>
+              <div id="psec-bot-captcha" style="display:${(botCfg?.challenge_provider==='turnstile'||botCfg?.challenge_provider==='hcaptcha')?'flex':'none'};gap:8px;margin-bottom:8px;">
+                <div class="field" style="flex:1;margin:0;"><label class="field-label" style="font-size:11px">Clé de site</label><input id="psec-bot-sitekey" class="input" value="${esc(botCfg?.challenge_site_key||'')}"></div>
+                <div class="field" style="flex:1;margin:0;"><label class="field-label" style="font-size:11px">Clé secrète</label><input id="psec-bot-providersecret" class="input" type="password" autocomplete="new-password" value="${esc(botCfg?.challenge_provider_secret||'')}"></div>
+              </div>
+              <div class="field" style="margin:0;"><label class="field-label" style="font-size:11px">Chemins jamais défiés (un par ligne — API, webhooks, flux machines)</label><textarea id="psec-bot-exempt" class="input" rows="3" placeholder="/api/&#10;/webhooks/">${esc((botCfg?.challenge_exempt_paths||[]).join('\n'))}</textarea></div>
             </div>
           </div>
           <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
@@ -622,6 +638,12 @@ window._psecMount = async function(id, initialTab, embedEl) {
                 <div class="field" style="flex:1;margin:0;"><label class="field-label" style="font-size:11px">Burst</label><input id="psec-rl-burst" class="input" type="number" min="0" value="${rlCfg.burst ?? 20}"></div>
               </div>
             </div>
+            <div class="form-row" style="gap:8px;margin-bottom:6px;">
+              <div class="field" style="flex:1.4;margin:0;"><label class="field-label" style="font-size:11px">Clé de comptage</label><input id="psec-rl-keyby" class="input" list="psec-rl-keyby-list" placeholder="ip" value="${esc(rlCfg.key_by || '')}"><datalist id="psec-rl-keyby-list"><option value="ip"><option value="jwt_sub"><option value="jwt_email"><option value="jwt_claim:"><option value="header:X-Api-Key"><option value="cookie:"></datalist></div>
+              <div class="field" style="flex:1;margin:0;"><label class="field-label" style="font-size:11px">Quota (requêtes)</label><input id="psec-rl-quota" class="input" type="number" min="0" placeholder="0" value="${rlCfg.quota || ''}"></div>
+              <div class="field" style="flex:1;margin:0;"><label class="field-label" style="font-size:11px">Par</label><select id="psec-rl-period" class="input"><option value="minute" ${rlCfg.quota_period==='minute'?'selected':''}>minute</option><option value="hour" ${rlCfg.quota_period==='hour'?'selected':''}>heure</option><option value="day" ${(!rlCfg.quota_period||rlCfg.quota_period==='day')?'selected':''}>jour</option></select></div>
+            </div>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" id="psec-rl-shared" ${rlCfg.shared?'checked':''}> Quota partagé entre les passerelles d'un groupe HA</label>
           </div>
           <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
             <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:12px;">Filtrage IP</div>
@@ -1235,6 +1257,32 @@ window.psecGeoRenderList = function() {
     : '');
 };
 
+window.psecBotProviderChange = function() {
+  const mode = document.getElementById('psec-bot-mode')?.value;
+  const provider = document.getElementById('psec-bot-provider')?.value || 'pow';
+  const show = (id, on, display = 'block') => { const el = document.getElementById(id); if (el) el.style.display = on ? display : 'none'; };
+  show('psec-bot-challenge', mode === 'challenge');
+  show('psec-bot-pow', provider === 'pow');
+  show('psec-bot-captcha', provider !== 'pow', 'flex');
+};
+
+// Réglages du défi navigateur : les champs vides sont omis (valeurs par défaut de la passerelle).
+function psecBotChallengeFields() {
+  const v = id => document.getElementById(id)?.value.trim() || '';
+  const provider = v('psec-bot-provider') || 'pow';
+  const bits = parseInt(v('psec-bot-bits'), 10);
+  const exempt = (document.getElementById('psec-bot-exempt')?.value || '').split('\n').map(s => s.trim()).filter(Boolean);
+  if (provider !== 'pow' && (!v('psec-bot-sitekey') || !v('psec-bot-providersecret'))) {
+    throw new Error('Challenge ' + provider + ' : clé de site et clé secrète obligatoires');
+  }
+  return {
+    ...(provider !== 'pow' ? { challenge_provider: provider, challenge_site_key: v('psec-bot-sitekey'), challenge_provider_secret: v('psec-bot-providersecret') } : {}),
+    ...(provider === 'pow' && bits > 0 ? { challenge_difficulty: Math.min(bits, 24) } : {}),
+    ...(v('psec-bot-ttl') ? { challenge_ttl: v('psec-bot-ttl') } : {}),
+    ...(exempt.length ? { challenge_exempt_paths: exempt } : {}),
+  };
+}
+
 // Lit les champs de l'onglet Protection (psec-*) et les applique sur `baseCfg`.
 // Utilisé par l'enregistrement unique de la modale proxy (saveProxy).
 window._psecBuildConfig = function(baseCfg) {
@@ -1292,8 +1340,9 @@ window._psecBuildConfig = function(baseCfg) {
       enabled: true,
       mode: botMode === 'challenge' ? 'challenge' : (botMode === 'log' ? 'log' : 'block'),
       js_challenge: botMode === 'challenge',
-      ...Object.fromEntries(['challenge_provider', 'challenge_difficulty', 'challenge_ttl', 'challenge_site_key', 'challenge_provider_secret', 'challenge_exempt_paths', 'challenge_secret']
-        .filter(k => baseCfg?.bot?.[k] !== undefined).map(k => [k, baseCfg.bot[k]])),
+      ...(baseCfg?.bot?.challenge_secret !== undefined ? { challenge_secret: baseCfg.bot.challenge_secret } : {}),
+      ...(botMode === 'challenge' && document.getElementById('psec-bot-provider') ? psecBotChallengeFields() : Object.fromEntries(['challenge_provider', 'challenge_difficulty', 'challenge_ttl', 'challenge_site_key', 'challenge_provider_secret', 'challenge_exempt_paths']
+        .filter(k => baseCfg?.bot?.[k] !== undefined).map(k => [k, baseCfg.bot[k]]))),
     } : undefined,
     jwt: (jwtEnabled || jwtJwks) ? {
       enabled: !!jwtEnabled,
@@ -1304,6 +1353,12 @@ window._psecBuildConfig = function(baseCfg) {
     rate_limit: rlEnabled ? {
       rps: parseFloat(document.getElementById('psec-rl-rps')?.value) || 10,
       burst: parseInt(document.getElementById('psec-rl-burst')?.value, 10) || 20,
+      ...(document.getElementById('psec-rl-keyby')?.value.trim() && document.getElementById('psec-rl-keyby').value.trim() !== 'ip' ? { key_by: document.getElementById('psec-rl-keyby').value.trim() } : {}),
+      ...(parseInt(document.getElementById('psec-rl-quota')?.value, 10) > 0 ? {
+        quota: parseInt(document.getElementById('psec-rl-quota').value, 10),
+        quota_period: document.getElementById('psec-rl-period')?.value || 'day',
+        ...(document.getElementById('psec-rl-shared')?.checked ? { shared: true } : {}),
+      } : {}),
     } : undefined,
     ip_filter: (ipfEnabled && cidrs.length) ? {
       mode: document.getElementById('psec-ipf-mode')?.value || 'deny',

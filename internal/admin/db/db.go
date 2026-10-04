@@ -695,6 +695,11 @@ func migrate(db *sql.DB) error {
 	// un tableau JSON (ex. `["942100"]`), vide pour l'immense majorité des lignes propres.
 	db.Exec(`ALTER TABLE logs ADD COLUMN waf_matches   TEXT NOT NULL DEFAULT ''`) //nolint:errcheck
 	db.Exec(`ALTER TABLE logs ADD COLUMN threat_signal TEXT NOT NULL DEFAULT ''`) //nolint:errcheck
+	// Empreintes TLS JA3/JA4 du client (calculées au ClientHello par la passerelle).
+	db.Exec(`ALTER TABLE logs ADD COLUMN tls_ja3 TEXT NOT NULL DEFAULT ''`) //nolint:errcheck
+	db.Exec(`ALTER TABLE logs ADD COLUMN tls_ja4 TEXT NOT NULL DEFAULT ''`) //nolint:errcheck
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_logs_tls_ja4 ON logs (tls_ja4) WHERE tls_ja4 != ''`) //nolint:errcheck
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_logs_tls_ja3 ON logs (tls_ja3) WHERE tls_ja3 != ''`) //nolint:errcheck
 
 	// Bibliothèque de pages d'erreur (templates HTML + assets) — scope Admin V1.
 	for _, s := range []string{

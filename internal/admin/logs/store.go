@@ -59,6 +59,9 @@ type Entry struct {
 	// une protection s'est déclenchée.
 	WAFMatches    []string   `json:"waf_matches,omitempty"`
 	ThreatSignal  string     `json:"threat_signal,omitempty"`
+	// TLSJA3/TLSJA4 : empreintes TLS du ClientHello calculées par la passerelle (vides en HTTP clair ou sans TLS terminé).
+	TLSJA3        string     `json:"tls_ja3,omitempty"`
+	TLSJA4        string     `json:"tls_ja4,omitempty"`
 	RetainedUntil *time.Time `json:"retained_until,omitempty"`
 	// Country est le code pays ISO résolu depuis geoip_cache — renseigné à la volée
 	// par le handler API (LogsHandler.list), jamais persisté ici.
@@ -85,6 +88,8 @@ type SearchParams struct {
 	Method   string
 	Status   string
 	Path     string
+	TLSJA3   string
+	TLSJA4   string
 	Search   string
 	DateFrom string
 	DateTo   string
@@ -227,12 +232,12 @@ func (s *Store) Write(e Entry) {
 	}
 
 	res, err := s.db.Exec(
-		`INSERT INTO logs (ts, level, component, node_name, node_id, domain, method, path, status, ip, latency_ms, bytes, message, referrer, user_id, request_id, waf_matches, threat_signal, retained_until, ip_enc, ip_hmac, ip_truncated)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO logs (ts, level, component, node_name, node_id, domain, method, path, status, ip, latency_ms, bytes, message, referrer, user_id, request_id, waf_matches, threat_signal, tls_ja3, tls_ja4, retained_until, ip_enc, ip_hmac, ip_truncated)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.Ts.UTC().Format(time.RFC3339Nano),
 		nvl(e.Level, "info"), nvl(e.Component, "admin"), e.NodeName, e.NodeID,
 		e.Domain, e.Method, e.Path, e.Status, e.IP, e.LatencyMs, e.Bytes, e.Message, e.Referrer,
-		e.UserID, e.RequestID, encodeWAFMatches(e.WAFMatches), e.ThreatSignal, retained.Format(time.RFC3339), ipEnc, ipHmac, e.IPTruncated,
+		e.UserID, e.RequestID, encodeWAFMatches(e.WAFMatches), e.ThreatSignal, e.TLSJA3, e.TLSJA4, retained.Format(time.RFC3339), ipEnc, ipHmac, e.IPTruncated,
 	)
 	if err == nil {
 		if id, err2 := res.LastInsertId(); err2 == nil {
@@ -312,7 +317,7 @@ func (s *Store) Search(p SearchParams) ([]Entry, bool, error) {
 		if where == "" {
 			cursorClause = " WHERE id < ?"
 		}
-		q = "SELECT id, ts, level, component, COALESCE(node_name,''), COALESCE(node_id,''), domain, method, path, status, ip, latency_ms, bytes, message, COALESCE(request_id,''), COALESCE(waf_matches,''), COALESCE(threat_signal,''), ip_truncated FROM logs" +
+		q = "SELECT id, ts, level, component, COALESCE(node_name,''), COALESCE(node_id,''), domain, method, path, status, ip, latency_ms, bytes, message, COALESCE(request_id,''), COALESCE(waf_matches,''), COALESCE(threat_signal,''), COALESCE(tls_ja3,''), COALESCE(tls_ja4,''), ip_truncated FROM logs" +
 			where + cursorClause + " ORDER BY id DESC LIMIT ?"
 		qArgs = append(args, p.BeforeID, p.PageSize)
 	} else {
@@ -320,7 +325,7 @@ func (s *Store) Search(p SearchParams) ([]Entry, bool, error) {
 			p.Page = 1
 		}
 		offset := (p.Page - 1) * p.PageSize
-		q = "SELECT id, ts, level, component, COALESCE(node_name,''), COALESCE(node_id,''), domain, method, path, status, ip, latency_ms, bytes, message, COALESCE(request_id,''), COALESCE(waf_matches,''), COALESCE(threat_signal,''), ip_truncated FROM logs" +
+		q = "SELECT id, ts, level, component, COALESCE(node_name,''), COALESCE(node_id,''), domain, method, path, status, ip, latency_ms, bytes, message, COALESCE(request_id,''), COALESCE(waf_matches,''), COALESCE(threat_signal,''), COALESCE(tls_ja3,''), COALESCE(tls_ja4,''), ip_truncated FROM logs" +
 			where + " ORDER BY id DESC LIMIT ? OFFSET ?"
 		qArgs = append(args, p.PageSize, offset)
 	}
@@ -335,7 +340,7 @@ func (s *Store) Search(p SearchParams) ([]Entry, bool, error) {
 		var e Entry
 		var ts, wafMatches string
 		if err := rows.Scan(&e.ID, &ts, &e.Level, &e.Component, &e.NodeName, &e.NodeID, &e.Domain, &e.Method, &e.Path,
-			&e.Status, &e.IP, &e.LatencyMs, &e.Bytes, &e.Message, &e.RequestID, &wafMatches, &e.ThreatSignal, &e.IPTruncated); err != nil {
+			&e.Status, &e.IP, &e.LatencyMs, &e.Bytes, &e.Message, &e.RequestID, &wafMatches, &e.ThreatSignal, &e.TLSJA3, &e.TLSJA4, &e.IPTruncated); err != nil {
 			continue
 		}
 		e.Ts, _ = time.Parse(time.RFC3339Nano, ts)
@@ -468,6 +473,14 @@ func buildWhere(p SearchParams) (string, []any) {
 			clauses = append(clauses, "status=?")
 			args = append(args, p.Status)
 		}
+	}
+	if p.TLSJA3 != "" {
+		clauses = append(clauses, "tls_ja3=?")
+		args = append(args, p.TLSJA3)
+	}
+	if p.TLSJA4 != "" {
+		clauses = append(clauses, "tls_ja4=?")
+		args = append(args, p.TLSJA4)
 	}
 	if p.Path != "" {
 		clauses = append(clauses, "path LIKE ?")
@@ -606,7 +619,7 @@ func (s *Store) CorrelateByRequestID(requestID string) []Entry {
 		return []Entry{}
 	}
 	rows, err := s.db.Query(
-		`SELECT id, ts, level, component, COALESCE(node_name,''), COALESCE(node_id,''), domain, method, path, status, ip, latency_ms, bytes, message, COALESCE(request_id,''), COALESCE(waf_matches,''), COALESCE(threat_signal,'')
+		`SELECT id, ts, level, component, COALESCE(node_name,''), COALESCE(node_id,''), domain, method, path, status, ip, latency_ms, bytes, message, COALESCE(request_id,''), COALESCE(waf_matches,''), COALESCE(threat_signal,''), COALESCE(tls_ja3,''), COALESCE(tls_ja4,'')
 		 FROM logs
 		 WHERE request_id = ?
 		 ORDER BY ts ASC LIMIT 200`,
@@ -631,7 +644,7 @@ func (s *Store) Correlate(domain string, at time.Time, windowSec int) []Entry {
 	domainDash := strings.ReplaceAll(domain, ".", "-")
 	domainFlat := strings.ReplaceAll(domain, ".", "")
 	rows, err := s.db.Query(
-		`SELECT id, ts, level, component, COALESCE(node_name,''), COALESCE(node_id,''), domain, method, path, status, ip, latency_ms, bytes, message, COALESCE(request_id,''), COALESCE(waf_matches,''), COALESCE(threat_signal,'')
+		`SELECT id, ts, level, component, COALESCE(node_name,''), COALESCE(node_id,''), domain, method, path, status, ip, latency_ms, bytes, message, COALESCE(request_id,''), COALESCE(waf_matches,''), COALESCE(threat_signal,''), COALESCE(tls_ja3,''), COALESCE(tls_ja4,'')
 		 FROM logs
 		 WHERE ts BETWEEN ? AND ?
 		   AND status = 0
@@ -662,7 +675,7 @@ func scanEntries(rows interface {
 		var e Entry
 		var ts, wafMatches string
 		if rows.Scan(&e.ID, &ts, &e.Level, &e.Component, &e.NodeName, &e.NodeID, &e.Domain, &e.Method,
-			&e.Path, &e.Status, &e.IP, &e.LatencyMs, &e.Bytes, &e.Message, &e.RequestID, &wafMatches, &e.ThreatSignal) != nil {
+			&e.Path, &e.Status, &e.IP, &e.LatencyMs, &e.Bytes, &e.Message, &e.RequestID, &wafMatches, &e.ThreatSignal, &e.TLSJA3, &e.TLSJA4) != nil {
 			continue
 		}
 		e.Ts, _ = time.Parse(time.RFC3339Nano, ts)

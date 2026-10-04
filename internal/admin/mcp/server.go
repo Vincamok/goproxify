@@ -26,10 +26,10 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/asn"
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
+	"github.com/vincamok/goproxify/internal/admin/ech"
 	"github.com/vincamok/goproxify/internal/admin/edgeproxy"
 	"github.com/vincamok/goproxify/internal/admin/internalca"
 	"github.com/vincamok/goproxify/internal/admin/mcpaccess"
-	"github.com/vincamok/goproxify/internal/admin/ech"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
 	"github.com/vincamok/goproxify/internal/admin/security"
 	"github.com/vincamok/goproxify/internal/edge/proxystore"
@@ -378,11 +378,13 @@ var tools = []map[string]any{
 	// Logs
 	{
 		"name":        "list_logs",
-		"description": "Retourne les derniers logs d'accès (100 entrées max), filtrables par domaine, niveau ou request_id. Une entrée ip_truncated porte une IP tronquée par l'anonymisation RGPD (x.x.x.0, préfixe /48) qui regroupe plusieurs clients : ne pas la bannir.",
+		"description": "Retourne les derniers logs d'accès (100 entrées max), filtrables par domaine, niveau, request_id ou empreinte TLS (tls_ja4, tls_ja3 — renvoyées dans chaque entrée quand la passerelle termine le TLS). Une entrée ip_truncated porte une IP tronquée par l'anonymisation RGPD (x.x.x.0, préfixe /48) qui regroupe plusieurs clients : ne pas la bannir.",
 		"inputSchema": schema(
 			opt("domain", "string", "Filtrer par domaine proxy"),
 			opt("level", "string", "Filtrer par niveau (info, warn, error)"),
 			opt("request_id", "string", "Corrélation exacte par request_id (retourne tous les logs de la requête)"),
+			opt("tls_ja4", "string", "Filtrer par empreinte TLS JA4 du client (repérer un même outil ou botnet, quelle que soit son IP)"),
+			opt("tls_ja3", "string", "Filtrer par empreinte TLS JA3 (hash MD5) du client"),
 		),
 	},
 	// Équipes
@@ -414,7 +416,7 @@ var tools = []map[string]any{
 		),
 	},
 	{
-		"name":        "create_security_ban",
+		"name": "create_security_ban",
 		"description": "Crée un ban IP natif (permanent par défaut) sur une adresse ou une plage CIDR. Pousse les bans aux passerelles. " +
 			"Une plage est normalisée (203.0.113.7/24 devient 203.0.113.0/24), refusée si plus large que /16 (IPv4) ou /32 (IPv6), " +
 			"ou si elle contient l'adresse de l'appelant. Mesurer l'impact avant avec preview_security_ban.",
@@ -441,7 +443,7 @@ var tools = []map[string]any{
 		),
 	},
 	{
-		"name":        "unban_ip",
+		"name": "unban_ip",
 		"description": "Débanne une IP ou une plage CIDR par sa valeur exacte (supprime tous les bans natifs portant cette valeur). " +
 			"Débannir une adresse située dans une plage bannie ne lève pas le ban de la plage : supprimer la plage elle-même, ou créer un profil IP allow.",
 		"inputSchema": schema(req("ip", "string", "Adresse IP ou plage CIDR à débannir, telle qu'enregistrée")),
@@ -823,7 +825,9 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 		domain, _ := p.Arguments["domain"].(string)
 		level, _ := p.Arguments["level"].(string)
 		requestID, _ := p.Arguments["request_id"].(string)
-		result, toolErr = h.toolListLogs(r, domain, level, requestID)
+		ja3, _ := p.Arguments["tls_ja3"].(string)
+		ja4, _ := p.Arguments["tls_ja4"].(string)
+		result, toolErr = h.toolListLogsFiltered(r, domain, level, requestID, ja3, ja4)
 	case "list_teams":
 		result, toolErr = h.toolListTeams(r)
 	case "get_audit_log":
@@ -1681,7 +1685,11 @@ func (h *Handler) toolListCerts(r *http.Request) (any, error) {
 }
 
 func (h *Handler) toolListLogs(r *http.Request, domain, level, requestID string) (any, error) {
-	q := `SELECT ts, level, component, domain, method, path, status, ip, latency_ms, COALESCE(request_id,''), message, ip_truncated
+	return h.toolListLogsFiltered(r, domain, level, requestID, "", "")
+}
+
+func (h *Handler) toolListLogsFiltered(r *http.Request, domain, level, requestID, ja3, ja4 string) (any, error) {
+	q := `SELECT ts, level, component, domain, method, path, status, ip, latency_ms, COALESCE(request_id,''), message, ip_truncated, COALESCE(tls_ja3,''), COALESCE(tls_ja4,'')
 	      FROM logs WHERE 1=1`
 	args := []any{}
 	if requestID != "" {
@@ -1696,6 +1704,14 @@ func (h *Handler) toolListLogs(r *http.Request, domain, level, requestID string)
 		q += ` AND level = ?`
 		args = append(args, level)
 	}
+	if ja3 != "" {
+		q += ` AND tls_ja3 = ?`
+		args = append(args, ja3)
+	}
+	if ja4 != "" {
+		q += ` AND tls_ja4 = ?`
+		args = append(args, ja4)
+	}
 	q += ` ORDER BY ts DESC LIMIT 100`
 	rows, err := h.DB.QueryContext(r.Context(), q, args...)
 	if err != nil {
@@ -1705,10 +1721,10 @@ func (h *Handler) toolListLogs(r *http.Request, domain, level, requestID string)
 	var out []map[string]any
 	for rows.Next() {
 		var ts time.Time
-		var lvl, component, dom, method, path, ip, reqID, message string
+		var lvl, component, dom, method, path, ip, reqID, message, rowJA3, rowJA4 string
 		var status, latency int
 		var ipTruncated bool
-		if err := rows.Scan(&ts, &lvl, &component, &dom, &method, &path, &status, &ip, &latency, &reqID, &message, &ipTruncated); err != nil {
+		if err := rows.Scan(&ts, &lvl, &component, &dom, &method, &path, &status, &ip, &latency, &reqID, &message, &ipTruncated, &rowJA3, &rowJA4); err != nil {
 			continue
 		}
 		entry := map[string]any{
@@ -1718,6 +1734,12 @@ func (h *Handler) toolListLogs(r *http.Request, domain, level, requestID string)
 		}
 		if reqID != "" {
 			entry["request_id"] = reqID
+		}
+		if rowJA4 != "" {
+			entry["tls_ja4"] = rowJA4
+		}
+		if rowJA3 != "" {
+			entry["tls_ja3"] = rowJA3
 		}
 		// IP tronquée par l'anonymisation : ban_ip sur cette valeur ne viserait aucun client.
 		if ipTruncated {

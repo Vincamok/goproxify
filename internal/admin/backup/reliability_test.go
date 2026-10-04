@@ -5,18 +5,21 @@ package backup
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
+	"github.com/vincamok/goproxify/internal/admin/importer"
 )
 
 func newTestScheduler(t *testing.T) *Scheduler {
@@ -313,5 +316,125 @@ func TestLastRunRecordsFailureAndSuccess(t *testing.T) {
 	}
 	if lr := s.LastRun(); lr == nil || lr.OK || lr.Error == "" || s.Status().LastRun == nil {
 		t.Fatalf("échec : %+v", lr)
+	}
+}
+
+// La vérification d'un gros snapshot ne doit pas décoder son contenu : sur un snapshot de 100 Mo,
+// l'ancienne version (décodage complet, section secrets déchiffrée deux fois) faisait tomber l'Admin.
+func TestVerifyBigSnapshotStaysLight(t *testing.T) {
+	resetKeys(t)
+	s := newTestScheduler(t)
+	ks := NewKeyStore(t.TempDir())
+	key, _ := GenerateKey()
+	if _, err := ks.Set(key); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	// La section secrets ne reprend pas les fichiers de plus de 8 Mo : plusieurs fichiers de 7 Mo.
+	const files, each = 5, 7 << 20
+	const payload = files * each
+	for n := 0; n < files; n++ {
+		big := make([]byte, each)
+		for i := range big {
+			big[i] = byte(i*7 + n)
+		}
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("gros%d.bin", n)), big, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.SetSecretDirs(map[string]string{"state": dir})
+	if err := s.TakeSnapshot("gros", "", 0); err != nil {
+		t.Fatal(err)
+	}
+	var id string
+	s.db.QueryRow(`SELECT id FROM backup_snapshots`).Scan(&id)
+
+	// Pic de mémoire (et non cumul des allocations), échantillonné pendant l'opération.
+	peak := func(fn func()) uint64 {
+		runtime.GC()
+		var base runtime.MemStats
+		runtime.ReadMemStats(&base)
+		var max uint64
+		stop, done := make(chan struct{}), make(chan struct{})
+		go func() {
+			defer close(done)
+			var m runtime.MemStats
+			for {
+				runtime.ReadMemStats(&m)
+				if m.HeapAlloc > max {
+					max = m.HeapAlloc
+				}
+				select {
+				case <-stop:
+					return
+				case <-time.After(2 * time.Millisecond):
+				}
+			}
+		}()
+		fn()
+		close(stop)
+		<-done
+		if max < base.HeapAlloc {
+			return 0
+		}
+		return max - base.HeapAlloc
+	}
+	var snapSize int
+	s.db.QueryRow(`SELECT size FROM backup_snapshots WHERE id=?`, id).Scan(&snapSize)
+
+	newPeak := peak(func() {
+		if err := s.VerifySnapshot(id); err != nil {
+			t.Fatal(err)
+		}
+	})
+	oldPeak := peak(func() { // ancienne méthode : décodage complet, sections déchiffrées
+		var data string
+		s.db.QueryRow(`SELECT data FROM backup_snapshots WHERE id=?`, id).Scan(&data)
+		plain, _ := openSnapshot([]byte(data))
+		bk, _, _ := importer.SummarizeBackup(plain)
+		importer.OpenSecretsSummary(bk) //nolint:errcheck
+	})
+	t.Logf("snapshot de %d Mo : pic de %d Mo (nouvelle vérification) contre %d Mo (ancienne méthode)", snapSize>>20, newPeak>>20, oldPeak>>20)
+	if limit := uint64(snapSize) * 3; newPeak > limit {
+		t.Fatalf("vérification trop gourmande : pic de %d Mo pour un snapshot de %d Mo (limite %d Mo)", newPeak>>20, snapSize>>20, limit>>20)
+	}
+	if newPeak > oldPeak {
+		t.Fatalf("la nouvelle vérification (%d Mo) n'est pas plus légère que l'ancienne (%d Mo)", newPeak>>20, oldPeak>>20)
+	}
+}
+
+func TestInPlaceDecodeAndDecryptMatchRegularPath(t *testing.T) {
+	resetKeys(t)
+	ks := NewKeyStore(t.TempDir())
+	key, _ := GenerateKey()
+	if _, err := ks.Set(key); err != nil {
+		t.Fatal(err)
+	}
+	plain := []byte(strings.Repeat(`{"version":"1","x":"données à chiffrer"}`, 1000))
+	sealed, err := sealSnapshot(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := openSnapshot(sealed)
+	if err != nil || string(want) != string(plain) {
+		t.Fatalf("chemin normal : %v", err)
+	}
+	got, err := openSnapshotConsume(append([]byte(nil), sealed...))
+	if err != nil || string(got) != string(plain) {
+		t.Fatalf("déchiffrement sur place : %v", err)
+	}
+	// Avec deux clés connues (rotation), le repli par essais successifs doit encore fonctionner.
+	key2, _ := GenerateKey()
+	if _, err := ks.Set(key2); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := openSnapshotConsume(append([]byte(nil), sealed...)); err != nil || string(got) != string(plain) {
+		t.Fatalf("avec clé retirée : %v", err)
+	}
+	// Une altération doit être refusée, y compris sur place.
+	bad := append([]byte(nil), sealed...)
+	bad[len(bad)/2] ^= 0x01
+	if _, err := openSnapshotConsume(bad); err == nil {
+		t.Fatal("snapshot altéré accepté")
 	}
 }

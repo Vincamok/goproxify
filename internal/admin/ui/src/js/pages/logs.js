@@ -9,7 +9,7 @@
 
 const logsFilters = {
   level: '', component: '', node_name: '', kind: 'access',
-  domain: '', ip: '', method: '', status: '', path: '',
+  domain: '', ip: '', method: '', status: '', path: '', tls_ja3: '', tls_ja4: '',
   search: '', date_from: '', date_to: '',
 };
 
@@ -97,7 +97,7 @@ function stopLogsSSE() {
 function logFilterLabels() {
   const labels = {
     domain: t('logs.domain'), ip: t('logs.ip'), method: t('logs.method'), status: t('logs.status'),
-    path: t('logs.path'), level: t('logs.level'), search: t('logs.search'),
+    path: t('logs.path'), tls_ja3: t('logs.ja3'), tls_ja4: t('logs.ja4'), level: t('logs.level'), search: t('logs.search'),
     date_from: t('logs.from'), date_to: t('logs.to'),
   };
   if (!logsScope.lockComp) labels.node_name = t('logs.node');
@@ -119,7 +119,7 @@ function edgeLogNodeID() {
 
 function hasActiveLogFilters() {
   return !!(logsFilters.domain || logsFilters.ip || logsFilters.method ||
-    logsFilters.status || logsFilters.path || logsFilters.search ||
+    logsFilters.status || logsFilters.path || logsFilters.tls_ja3 || logsFilters.tls_ja4 || logsFilters.search ||
     logsFilters.date_from || logsFilters.date_to || logsFilters.level ||
     (!logsScope.lockComp && logsFilters.node_name));
 }
@@ -153,6 +153,8 @@ function openLogs(preset = {}) {
     logsFilters.method = '';
     logsFilters.status = '';
     logsFilters.path = '';
+    logsFilters.tls_ja3 = '';
+    logsFilters.tls_ja4 = '';
     logsFilters.search = '';
     logsFilters.date_from = '';
     logsFilters.date_to = '';
@@ -164,7 +166,7 @@ window.openLogs = openLogs;
 
 /** Ouvre les logs d'accès avec des filtres pré-remplis (depuis Prism / cellules). */
 window.openLogsFiltered = function(opts = {}) {
-  const keys = ['domain', 'ip', 'method', 'status', 'path', 'level', 'search', 'date_from', 'date_to'];
+  const keys = ['domain', 'ip', 'method', 'status', 'path', 'tls_ja3', 'tls_ja4', 'level', 'search', 'date_from', 'date_to'];
   for (const k of keys) {
     if (opts[k] !== undefined && opts[k] !== null) logsFilters[k] = String(opts[k]);
   }
@@ -447,7 +449,7 @@ async function renderStaticLogs() {
   const head = isSystem
     ? `<th>${t('logs.ts')}</th><th>${t('logs.level')}</th><th>${t('logs.component')}</th><th>${t('logs.node')}</th><th>${t('logs.context')}</th><th>${t('logs.message')}</th>`
     : accessLogHead();
-  const cols = isSystem ? 6 : (logsScope.lockComp ? 7 : 8);
+  const cols = isSystem ? 6 : (logsScope.lockComp ? 8 : 9);
   c.innerHTML = `
     <div class="card blueprint logs-filterbar">
       <div class="logs-filter-row">
@@ -526,7 +528,7 @@ function renderSystemLogEntry(e, i) {
 // pour les deux contextes, seule la portée change ce qui est affiché.
 function accessLogHead() {
   const node = logsScope.lockComp ? '' : `<th>${t('logs.node')}</th>`;
-  return `<th>${t('logs.ts')}</th>${node}<th>${t('logs.status')}</th><th>${t('logs.method')}</th><th>${t('logs.host_path')}</th><th>${t('logs.ip')}</th><th>${t('logs.country')}</th><th>${t('logs.latency')}</th>`;
+  return `<th>${t('logs.ts')}</th>${node}<th>${t('logs.status')}</th><th>${t('logs.method')}</th><th>${t('logs.host_path')}</th><th>${t('logs.ip')}</th><th>${t('logs.country')}</th><th>${t('logs.ja4')}</th><th>${t('logs.latency')}</th>`;
 }
 
 // Le nom affiché doit être le nom lisible de la passerelle (display_name), pas le
@@ -569,6 +571,7 @@ function renderAccessLogRow(e, i) {
     <td class="mono logs-cell-clip" style="font-size:11px;max-width:340px">${hostPath}</td>
     <td class="mono" style="font-size:11px">${logCellFilter('ip', e.ip)}</td>
     <td style="font-size:11px">${countryCellHTML(e)}</td>
+    <td class="mono logs-cell-clip" style="font-size:11px;max-width:120px">${e.tls_ja4 ? logCellFilter('tls_ja4', e.tls_ja4, esc(e.tls_ja4.slice(0, 10) + '…')) : '<span style="color:var(--text3)">—</span>'}</td>
     <td style="color:var(--text2);font-size:11px">${e.latency_ms}ms</td>
   </tr>`;
 }
@@ -628,7 +631,7 @@ async function loadStaticLogs(beforeID) {
   }
   const isSystem = isSystemLogs();
   if (logsHideInternal && !isSystem) params.set('exclude_internal', '1');
-  const cols = isSystem ? 6 : (logsScope.lockComp ? 7 : 8);
+  const cols = isSystem ? 6 : (logsScope.lockComp ? 8 : 9);
   try {
     const data = await api('GET', '/logs?' + params);
     const entries = data?.entries || [];
@@ -1136,6 +1139,8 @@ function openLogDrawer(en, i) {
       ${row(t('lg.latency'), en.latency_ms != null ? esc(String(en.latency_ms)) + ' ms' : '')}
       ${row(t('lg.bytes'), en.bytes ? esc(String(en.bytes)) + ' B' : '')}
       ${row(t('lg.request_id'), en.request_id ? `<span class="mono">${esc(en.request_id)}</span>` : '')}
+      ${row(t('logs.ja4'), en.tls_ja4 ? `<span class="mono">${logCellFilter('tls_ja4', en.tls_ja4)}</span>` : '')}
+      ${row(t('logs.ja3'), en.tls_ja3 ? `<span class="mono">${logCellFilter('tls_ja3', en.tls_ja3)}</span>` : '')}
       ${row(t('logs.message'), esc(en.message || ''))}
     </div>
     <div class="logs-detail-actions">
