@@ -347,7 +347,8 @@ type Status struct {
 	LastVerifiedAt *time.Time   `json:"last_verified_at,omitempty"`
 	Stale          []string     `json:"stale"` // planifications dont une exécution a été manquée
 	Destinations   []DestStatus `json:"destinations"`
-	Running        *RunInfo     `json:"running,omitempty"` // sauvegarde ou copie externe en cours
+	Running        *RunInfo     `json:"running,omitempty"`  // sauvegarde ou copie externe en cours
+	LastRun        *LastRun     `json:"last_run,omitempty"` // résultat de la dernière sauvegarde terminée
 }
 
 func parseTS(s string) *time.Time {
@@ -366,6 +367,7 @@ func (s *Scheduler) Status() Status {
 	st := Status{Stale: []string{}, Destinations: []DestStatus{}}
 	_, st.KeySet = importer.BackupKey()
 	st.Running = s.Running()
+	st.LastRun = s.LastRun()
 	var last, ver sql.NullString
 	s.db.QueryRow(`SELECT MAX(created_at), MAX(verified_at) FROM backup_snapshots`).Scan(&last, &ver) //nolint:errcheck
 	st.LastSnapshotAt, st.LastVerifiedAt = parseTS(last.String), parseTS(ver.String)

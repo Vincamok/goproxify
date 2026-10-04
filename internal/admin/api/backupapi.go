@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	"github.com/vincamok/goproxify/internal/admin/audit"
+	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	"github.com/vincamok/goproxify/internal/admin/backup"
 	"github.com/vincamok/goproxify/internal/admin/importer"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
@@ -156,12 +156,20 @@ func (h *BackupHandler) createSnapshot(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = "manuel-" + time.Now().Format("20060102-150405")
 	}
-	if err := h.Scheduler.TakeSnapshotWith(name, "", 0, body.History); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	// Une sauvegarde complète (secrets, passerelles, historique) peut durer plusieurs dizaines de
+	// secondes : la requête ne l'attend pas, sous peine d'expirer chez le reverse proxy (502/504).
+	// L'avancement et le résultat sont dans GET /backups/status (running, last_run).
+	if h.Scheduler.Running() != nil && h.Scheduler.Running().Name != "" {
+		http.Error(w, "une sauvegarde est déjà en cours", http.StatusConflict)
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	jsonOK(w, map[string]string{"status": "ok"})
+	go func() {
+		if err := h.Scheduler.TakeSnapshotWith(name, "", 0, body.History); err != nil {
+			h.Log.Error("backup: snapshot manuel échoué", "name", name, "err", err)
+		}
+	}()
+	w.WriteHeader(http.StatusAccepted)
+	jsonOK(w, map[string]string{"status": "started", "name": name})
 }
 
 func (h *BackupHandler) downloadSnapshot(w http.ResponseWriter, _ *http.Request, id string) {

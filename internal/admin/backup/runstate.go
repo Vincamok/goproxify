@@ -28,8 +28,17 @@ type RunInfo struct {
 	Delivering []string  `json:"delivering,omitempty"` // destinations en cours d'envoi
 }
 
+// LastRun : résultat de la dernière sauvegarde terminée.
+type LastRun struct {
+	Name  string    `json:"name"`
+	OK    bool      `json:"ok"`
+	Error string    `json:"error,omitempty"`
+	At    time.Time `json:"at"`
+}
+
 type runState struct {
 	mu         sync.Mutex
+	last       *LastRun
 	name       string
 	phase      string
 	started    time.Time
@@ -54,6 +63,23 @@ func (r *runState) end() {
 	r.mu.Lock()
 	r.name, r.phase = "", ""
 	r.mu.Unlock()
+}
+
+func (r *runState) finish(name string, err error) {
+	lr := &LastRun{Name: name, OK: err == nil, At: time.Now()}
+	if err != nil {
+		lr.Error = err.Error()
+	}
+	r.mu.Lock()
+	r.last = lr
+	r.mu.Unlock()
+}
+
+// LastRun renvoie le résultat de la dernière sauvegarde terminée depuis le démarrage, ou nil.
+func (s *Scheduler) LastRun() *LastRun {
+	s.run.mu.Lock()
+	defer s.run.mu.Unlock()
+	return s.run.last
 }
 
 func (r *runState) startDelivery(dest string) {

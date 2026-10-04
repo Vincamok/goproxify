@@ -295,3 +295,23 @@ func TestRunningStateReportedDuringSnapshotAndDelivery(t *testing.T) {
 		t.Logf("aucune phase intermédiaire observée (snapshot trop rapide) : %v", phases)
 	}
 }
+
+func TestLastRunRecordsFailureAndSuccess(t *testing.T) {
+	s := newTestScheduler(t)
+	if s.LastRun() != nil {
+		t.Fatal("résultat avant toute sauvegarde")
+	}
+	if err := s.TakeSnapshot("ok", "", 0); err != nil {
+		t.Fatal(err)
+	}
+	if lr := s.LastRun(); lr == nil || !lr.OK || lr.Name != "ok" {
+		t.Fatalf("succès : %+v", lr)
+	}
+	s.db.Exec(`DROP TABLE backup_snapshots`)
+	if err := s.TakeSnapshot("ko", "", 0); err == nil {
+		t.Fatal("échec attendu")
+	}
+	if lr := s.LastRun(); lr == nil || lr.OK || lr.Error == "" || s.Status().LastRun == nil {
+		t.Fatalf("échec : %+v", lr)
+	}
+}

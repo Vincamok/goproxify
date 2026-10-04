@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -85,4 +86,47 @@ func keys(m map[string][]byte) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+func TestBackupExportReportsSkippedWithReasonAndStreamsValidJSON(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("GPX_EDGE_DATA_DIR", root)
+	t.Setenv("GPX_BACKUP_MAX_FILE_MB", "1")
+	os.WriteFile(filepath.Join(root, "petit.gpx"), []byte("ok"), 0o600)
+	os.WriteFile(filepath.Join(root, "gros.gpx"), bytes.Repeat([]byte("x"), 2<<20), 0o600)
+	// Base WAL ouverte, comme en production : sa copie passe par un dossier de travail du volume.
+	live, _ := sql.Open("sqlite", filepath.Join(root, "bans.db")+"?_pragma=journal_mode(WAL)")
+	defer live.Close()
+	live.SetMaxOpenConns(1)
+	live.Exec(`CREATE TABLE b (ip TEXT)`)
+	live.Exec(`INSERT INTO b VALUES ('203.0.113.9')`)
+
+	rec := httptest.NewRecorder()
+	(&Server{}).handleBackupExport(rec, httptest.NewRequest(http.MethodGet, "/internal/v1/backup/export", nil))
+	var b backupBundle
+	if err := json.Unmarshal(rec.Body.Bytes(), &b); err != nil {
+		t.Fatalf("JSON invalide : %v", err)
+	}
+	if string(b.Files["petit.gpx"]) != "ok" || len(b.Files["bans.db"]) == 0 {
+		t.Fatalf("fichiers : %v", keys(b.Files))
+	}
+	if _, ok := b.Files["gros.gpx"]; ok {
+		t.Fatal("fichier au-delà de la limite exporté")
+	}
+	if len(b.Skipped) != 1 || !strings.Contains(b.Skipped[0], "gros.gpx") || !strings.Contains(b.Skipped[0], "Mo par fichier") {
+		t.Fatalf("raison absente : %v", b.Skipped)
+	}
+	if b.Sizes["petit.gpx"] != 2 || b.Sizes["bans.db"] == 0 {
+		t.Fatalf("tailles : %v", b.Sizes)
+	}
+	if entries, _ := os.ReadDir(root); func() bool {
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), backupTmpPrefix) {
+				return true
+			}
+		}
+		return false
+	}() {
+		t.Fatal("dossier de travail non nettoyé")
+	}
 }

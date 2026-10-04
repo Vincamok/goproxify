@@ -16,6 +16,12 @@ import (
 
 const gatewayLabel = "gateway"
 
+// InfoPrefix marque un avertissement purement informatif : à journaliser, sans alerte.
+const InfoPrefix = "info: "
+
+// bigFileNote : taille à partir de laquelle un fichier de passerelle est signalé dans le journal.
+const bigFileNote = 2 << 20
+
 // collectGateways interroge chaque passerelle enregistrée et renvoie ses fichiers d'état sous la
 // clé "gateway/<passerelle>/<chemin>". Une passerelle injoignable est signalée, pas bloquante.
 func collectGateways(db *sql.DB) (map[string][]byte, []string) {
@@ -38,7 +44,13 @@ func collectGateways(db *sql.DB) (map[string][]byte, []string) {
 			out[gatewayLabel+"/"+url.PathEscape(t.NodeName)+"/"+rel] = data
 		}
 		for _, s := range b.Skipped {
-			warnings = append(warnings, fmt.Sprintf("passerelle %s : %s ignoré (trop volumineux ou illisible)", t.NodeName, s))
+			warnings = append(warnings, fmt.Sprintf("passerelle %s : %s non sauvegardé", t.NodeName, s))
+		}
+		// Les fichiers qui pèsent le plus, pour comprendre la taille d'un snapshot (journal seulement).
+		for rel, size := range b.Sizes {
+			if size >= bigFileNote {
+				warnings = append(warnings, fmt.Sprintf("%spasserelle %s : %s = %d Mo", InfoPrefix, t.NodeName, rel, size>>20))
+			}
 		}
 	}
 	return out, warnings

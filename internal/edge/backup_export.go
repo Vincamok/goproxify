@@ -4,32 +4,44 @@
 package edge
 
 import (
+	"bufio"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 
 	_ "modernc.org/sqlite" // pilote SQLite pour la copie cohérente des bases
-)
-
-const (
-	maxBackupFileBytes  = 64 << 20
-	maxBackupTotalBytes = 256 << 20
 )
 
 // backupSkipDirs : dossiers de l'état de la passerelle qu'une sauvegarde ne reprend pas
 // (téléchargeables ou purement runtime).
 var backupSkipDirs = map[string]bool{"geoip": true, "logs": true, "threat-lists": true, "restore-tmp": true}
 
+// backupTmpPrefix : dossier de travail des copies SQLite, créé dans le volume de données (inscriptible
+// même quand le système de fichiers du conteneur est en lecture seule) et jamais exporté.
+const backupTmpPrefix = ".gpx-backup-"
+
 func edgeDataDir() string {
 	if d := os.Getenv("GPX_EDGE_DATA_DIR"); d != "" {
 		return d
 	}
 	return "/etc/goproxify"
+}
+
+// envMB lit une taille en Mo dans l'environnement.
+func envMB(name string, def int64) int64 {
+	if v, err := strconv.ParseInt(os.Getenv(name), 10, 64); err == nil && v > 0 {
+		return v << 20
+	}
+	return def << 20
 }
 
 func backupSkipFile(name string) bool {
@@ -41,15 +53,29 @@ func backupSkipFile(name string) bool {
 type backupBundle struct {
 	Files   map[string][]byte `json:"files"`
 	Skipped []string          `json:"skipped,omitempty"`
+	Sizes   map[string]int64  `json:"sizes,omitempty"`
 }
 
-// collectBackupFiles lit l'état persisté de la passerelle (proxies, révisions, copies chiffrées
-// *.gpx, bases SQLite, identité…). Les bases SQLite sont copiées par VACUUM INTO (cohérent à chaud).
-func collectBackupFiles(root string) (*backupBundle, error) {
-	b := &backupBundle{Files: map[string][]byte{}}
+type backupEntry struct {
+	rel  string
+	path string // fichier à lire (pour une base SQLite : sa copie cohérente)
+	size int64
+}
+
+// planBackup liste ce qu'une sauvegarde reprend, sans rien charger en mémoire. Les bases SQLite sont
+// copiées par VACUUM INTO (cohérent à chaud) dans un dossier de travail du volume de données. La
+// raison de chaque fichier ignoré est renvoyée. cleanup supprime le dossier de travail.
+func planBackup(root string) (entries []backupEntry, skipped []string, cleanup func(), err error) {
+	maxFile, maxTotal := envMB("GPX_BACKUP_MAX_FILE_MB", 16), envMB("GPX_BACKUP_MAX_TOTAL_MB", 64)
+	var tmp string
+	cleanup = func() {
+		if tmp != "" {
+			os.RemoveAll(tmp)
+		}
+	}
 	var total int64
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
+	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, werr error) error {
+		if werr != nil {
 			return nil
 		}
 		rel, rerr := filepath.Rel(root, p)
@@ -57,7 +83,7 @@ func collectBackupFiles(root string) (*backupBundle, error) {
 			return nil
 		}
 		if d.IsDir() {
-			if backupSkipDirs[rel] {
+			if backupSkipDirs[rel] || strings.HasPrefix(d.Name(), backupTmpPrefix) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -68,29 +94,57 @@ func collectBackupFiles(root string) (*backupBundle, error) {
 		rel = filepath.ToSlash(rel)
 		info, ierr := d.Info()
 		if ierr != nil {
+			skipped = append(skipped, rel+" (illisible : "+ierr.Error()+")")
 			return nil
 		}
-		if info.Size() > maxBackupFileBytes || total+info.Size() > maxBackupTotalBytes {
-			b.Skipped = append(b.Skipped, rel)
-			return nil
-		}
-		var data []byte
+		src, size := p, info.Size()
 		if strings.HasSuffix(d.Name(), ".db") {
-			data, err = vacuumCopy(p)
-		} else {
-			data, err = os.ReadFile(p)
+			if tmp == "" {
+				if tmp, ierr = os.MkdirTemp(root, backupTmpPrefix); ierr != nil {
+					tmp = ""
+					skipped = append(skipped, rel+" (dossier de travail impossible : "+ierr.Error()+")")
+					return nil
+				}
+			}
+			dst := filepath.Join(tmp, strconv.Itoa(len(entries))+".db")
+			if verr := vacuumTo(p, dst); verr != nil {
+				skipped = append(skipped, rel+" (copie de la base impossible : "+verr.Error()+")")
+				return nil
+			}
+			st, serr := os.Stat(dst)
+			if serr != nil {
+				skipped = append(skipped, rel+" (copie illisible : "+serr.Error()+")")
+				return nil
+			}
+			src, size = dst, st.Size()
 		}
-		if err != nil {
-			b.Skipped = append(b.Skipped, rel)
-			return nil
+		switch {
+		case size > maxFile:
+			skipped = append(skipped, fmt.Sprintf("%s (%d Mo, au-delà de %d Mo par fichier)", rel, size>>20, maxFile>>20))
+		case total+size > maxTotal:
+			skipped = append(skipped, fmt.Sprintf("%s (%d Mo, au-delà de %d Mo au total)", rel, size>>20, maxTotal>>20))
+		default:
+			total += size
+			entries = append(entries, backupEntry{rel: rel, path: src, size: size})
 		}
-		total += int64(len(data))
-		b.Files[rel] = data
 		return nil
 	})
-	return b, err
+	sort.Slice(entries, func(i, j int) bool { return entries[i].rel < entries[j].rel })
+	return entries, skipped, cleanup, err
 }
 
+// vacuumTo écrit dans dst une copie cohérente de la base SQLite src, même ouverte (mode WAL) par la passerelle.
+func vacuumTo(src, dst string) error {
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(src)+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	_, err = db.Exec(`VACUUM INTO ?`, dst)
+	return err
+}
+
+// vacuumCopy renvoie le contenu d'une copie cohérente d'une base SQLite (utilisé par les tests).
 func vacuumCopy(path string) ([]byte, error) {
 	dir, err := os.MkdirTemp("", "gpx-vacuum-")
 	if err != nil {
@@ -98,12 +152,7 @@ func vacuumCopy(path string) ([]byte, error) {
 	}
 	defer os.RemoveAll(dir)
 	dst := filepath.Join(dir, "copy.db")
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro&_pragma=busy_timeout(5000)")
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
-	if _, err := db.Exec(`VACUUM INTO ?`, dst); err != nil {
+	if err := vacuumTo(path, dst); err != nil {
 		return nil, err
 	}
 	return os.ReadFile(dst)
@@ -115,7 +164,8 @@ func safeRestorePath(root, rel string) (string, bool) {
 	if clean == "." || filepath.IsAbs(clean) || strings.HasPrefix(clean, "..") || strings.Contains(rel, "\\") {
 		return "", false
 	}
-	if backupSkipDirs[strings.SplitN(filepath.ToSlash(clean), "/", 2)[0]] || backupSkipFile(filepath.Base(clean)) {
+	first := strings.SplitN(filepath.ToSlash(clean), "/", 2)[0]
+	if backupSkipDirs[first] || strings.HasPrefix(first, backupTmpPrefix) || backupSkipFile(filepath.Base(clean)) {
 		return "", false
 	}
 	return filepath.Join(root, clean), true
@@ -149,21 +199,64 @@ func writeRestoredFile(dst string, data []byte) error {
 }
 
 // handleBackupExport : GET /internal/v1/backup/export — état persisté de la passerelle (appelé par l'Admin).
+// La réponse est écrite en flux, un fichier à la fois : la mémoire de la passerelle n'est jamais
+// chargée de l'ensemble de l'état.
 func (s *Server) handleBackupExport(w http.ResponseWriter, r *http.Request) {
-	b, err := collectBackupFiles(edgeDataDir())
+	entries, skipped, cleanup, err := planBackup(edgeDataDir())
+	defer cleanup()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	sizes := make(map[string]int64, len(entries))
+	for _, e := range entries {
+		sizes[e.rel] = e.size
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(b) //nolint:errcheck
+	bw := bufio.NewWriterSize(w, 256<<10)
+	defer bw.Flush()
+	bw.WriteString(`{"files":{`)
+	first := true
+	for _, e := range entries {
+		f, ferr := os.Open(e.path)
+		if ferr != nil {
+			skipped = append(skipped, e.rel+" (illisible : "+ferr.Error()+")")
+			delete(sizes, e.rel)
+			continue
+		}
+		if !first {
+			bw.WriteByte(',')
+		}
+		first = false
+		key, _ := json.Marshal(e.rel)
+		bw.Write(key)
+		bw.WriteString(`:"`)
+		enc := base64.NewEncoder(base64.StdEncoding, bw)
+		_, cerr := io.Copy(enc, f)
+		enc.Close()
+		f.Close()
+		bw.WriteByte('"')
+		if cerr != nil {
+			return // flux interrompu : l'Admin le détecte (JSON incomplet) et le signale
+		}
+	}
+	bw.WriteString(`}`)
+	if len(skipped) > 0 {
+		b, _ := json.Marshal(skipped)
+		bw.WriteString(`,"skipped":`)
+		bw.Write(b)
+	}
+	b, _ := json.Marshal(sizes)
+	bw.WriteString(`,"sizes":`)
+	bw.Write(b)
+	bw.WriteString(`}`)
 }
 
 // handleBackupRestore : POST /internal/v1/backup/restore — réécrit les fichiers d'état. Un
 // redémarrage de la passerelle est nécessaire pour qu'elle les relise.
 func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	var b backupBundle
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 512<<20)).Decode(&b); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<20)).Decode(&b); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

@@ -545,6 +545,12 @@ func (s *Scheduler) TakeSnapshot(name string, scheduleID string, retention int) 
 func (s *Scheduler) TakeSnapshotWith(name string, scheduleID string, retention int, history bool) error {
 	s.run.begin(name)
 	defer s.run.end()
+	err := s.takeSnapshot(name, scheduleID, retention, history)
+	s.run.finish(name, err)
+	return err
+}
+
+func (s *Scheduler) takeSnapshot(name string, scheduleID string, retention int, history bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -557,6 +563,10 @@ func (s *Scheduler) TakeSnapshotWith(name string, scheduleID string, retention i
 	s.run.setPhase(PhaseSecrets)
 	warnings, err := importer.AttachSecrets(s.db, bk, s.secretDirs, s.extraFiles())
 	for _, w := range warnings {
+		if strings.HasPrefix(w, importer.InfoPrefix) {
+			s.log.Info("backup: " + strings.TrimPrefix(w, importer.InfoPrefix))
+			continue
+		}
 		s.log.Warn("backup: " + w)
 		s.alert("warning", "Sauvegarde incomplète : "+w, map[string]any{"message": w})
 	}

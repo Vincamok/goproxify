@@ -309,6 +309,7 @@ pages.backups = async function() {
     const warns = [];
     if (!st.key_set) warns.push(t('backups.warn.no_key'));
     (st.stale || []).forEach(n => warns.push(t('backups.warn.stale', { name: esc(n) })));
+    if (st.last_run && !st.last_run.ok && !st.running) warns.push(t('backups.warn.last_failed', { name: esc(st.last_run.name), err: esc(st.last_run.error || '') }));
     const enabled = (st.destinations || []).filter(d => d.enabled);
     if (!enabled.length) warns.push(t('backups.warn.no_destination'));
     enabled.filter(d => d.last_error).forEach(d => warns.push(t('backups.warn.dest_failed', { name: esc(d.name), err: esc(d.last_error) })));
@@ -694,11 +695,9 @@ pages.backups = async function() {
 
 window.createSnapshot = async function(history) {
   try {
-    const req = api('POST', '/backups/snapshots', history === true ? { history: true } : {});
-    // La requête dure le temps de la sauvegarde : on affiche l'état en cours sans attendre sa fin.
-    setTimeout(() => { if (document.getElementById('bk-body')) pages.backups(); }, 700);
-    await req;
-    toast(t('backups.snapshot_created'), 'success');
+    // La sauvegarde tourne en arrière-plan (202) : le bandeau « en cours » suit son avancement.
+    await api('POST', '/backups/snapshots', history === true ? { history: true } : {});
+    toast(t('backups.snapshot_started'), 'success');
     pages.backups();
   } catch(e) { toast(e.message, 'error'); }
 };

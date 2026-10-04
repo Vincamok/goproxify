@@ -12,7 +12,8 @@ import (
 // BackupBundle : fichiers d'état d'une passerelle, chemin relatif → contenu.
 type BackupBundle struct {
 	Files   map[string][]byte `json:"files"`
-	Skipped []string          `json:"skipped,omitempty"`
+	Skipped []string          `json:"skipped,omitempty"` // chemin (raison)
+	Sizes   map[string]int64  `json:"sizes,omitempty"`
 }
 
 // BackupResult : réponse d'une passerelle à une restauration.
