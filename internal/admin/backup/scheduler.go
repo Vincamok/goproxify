@@ -99,11 +99,11 @@ type Scheduler struct {
 	wake    chan struct{}
 	snapDir string // répertoire de persistance des snapshots sur disque
 	// secretDirs : dossiers d'état copiés dans la section secrets (étiquette → chemin).
-	secretDirs    map[string]string
-	notifier      Notifier
-	extra         func() map[string][]byte
+	secretDirs        map[string]string
+	notifier          Notifier
+	extra             func() map[string][]byte
 	restoredConfigDir string
-	staleNotified map[string]bool
+	staleNotified     map[string]bool
 }
 
 // New crée un Scheduler.

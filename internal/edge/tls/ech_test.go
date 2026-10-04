@@ -166,3 +166,44 @@ func TestValidateECHPublicName(t *testing.T) {
 		}
 	}
 }
+
+func TestECHManagerMergeAndSeal(t *testing.T) {
+	cfg, priv, err := GenerateECHKey("public.example.com", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := []ECHKey{{Config: cfg, PrivateKey: priv, SendAsRetry: true}}
+
+	a, b := NewECHManager(), NewECHManager()
+	if err := a.SetStamped(keys); err != nil {
+		t.Fatal(err)
+	}
+	v := a.Version()
+	if v == 0 {
+		t.Fatal("version non estampée")
+	}
+	if err := a.SetStamped(keys); err != nil || a.Version() != v {
+		t.Fatal("un envoi identique ne doit pas changer la version")
+	}
+
+	sealed, err := SealECHReplica(ECHReplica{Version: v, Keys: a.Keys()}, "groupe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenECHReplica(sealed, "autre"); err == nil {
+		t.Fatal("mauvaise clé de groupe acceptée")
+	}
+	r, err := OpenECHReplica(sealed, "groupe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := b.Merge(r.Keys, r.Version); err != nil || !changed || len(b.Keys()) != 1 {
+		t.Fatalf("fusion: changed=%v err=%v", changed, err)
+	}
+	if changed, _ := b.Merge(nil, v); changed {
+		t.Fatal("un jeu de version égale ne doit pas s'appliquer")
+	}
+	if changed, _ := b.Merge(nil, v+1); !changed || len(b.Keys()) != 0 {
+		t.Fatal("une désactivation plus récente doit s'appliquer")
+	}
+}

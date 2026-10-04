@@ -185,6 +185,7 @@ func (s *Server) syncPeer(ctx context.Context, p proxy.PeerInfo) {
 	s.syncThreatListsFromPeer(ctx, client, p)
 	s.syncPortalReplicaFromPeer(ctx, client, p)
 	s.syncAgentReplicaFromPeer(ctx, client, p)
+	s.syncECHReplicaFromPeer(ctx, client, p)
 	s.syncBansFromPeer(ctx, client, p)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.Endpoint+"/internal/v1/agent/containers", nil)

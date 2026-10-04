@@ -58,7 +58,7 @@ Chaque composant fonctionne seul avec ce qu'il a déjà reçu. Une coupure n'enl
 
 - **Portail Access** : la configuration poussée (réglages, thème, entrées dédiées, politique, accès temporaires, clé de groupe HA) est conservée dans `portal-config.gpx` (chiffré) et rechargée au démarrage : le portail redémarre sans l'Admin (Edge 0.23.0).
 - **Challenges ACME HTTP-01 / TLS-ALPN-01** : posés par l'Admin en RAM sur la passerelle (15 min), jamais persistés ; l'émission et le renouvellement exigent l'Admin et une passerelle connectée, comme DNS-01. Un certificat déjà poussé reste servi sans l'Admin.
-- **Clés ECH** : poussées par l'Admin et conservées dans le cache chiffré de chaque passerelle (fonctionnent sans l'Admin, après redémarrage) ; en revanche pas de réplication entre membres d'un groupe HA sans l'Admin.
+- **Clés ECH** : poussées par l'Admin et conservées dans le cache chiffré de chaque passerelle (fonctionnent sans l'Admin, après redémarrage) ; répliquées aussi entre les membres d'un groupe HA sans l'Admin (jeu chiffré par la clé du groupe, le plus récent l'emporte, Edge 0.40.0).
 - **Autres envois de l'Admin** : audit terminé. Les délégations de routes suivent la table de routes (cache `edge-cache.gpx`) ; la topologie du cluster Raft (`cluster-peers.gpx`, Edge 0.24.3) est conservée localement. Les règles automatiques (`auto-rules.gpx`), les pairs du tunnel L4 (`tunnel-config.gpx`) (Edge 0.24.1), la configuration serveur (`server-config.gpx`) et les modèles de pages du portail (`portal-templates.gpx`) (Edge 0.24.2) sont conservés dans une copie locale chiffrée et rechargés au démarrage. `edge.json` n'est jamais réécrit par la passerelle.
 
 ---

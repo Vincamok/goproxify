@@ -4,6 +4,7 @@
 package tls
 
 import (
+	"bytes"
 	"crypto/ecdh"
 	"crypto/rand"
 	"crypto/tls"
@@ -11,6 +12,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/crypto/cryptobyte"
 )
@@ -124,6 +126,8 @@ type ECHManager struct {
 	base *tls.Config
 	keys []ECHKey
 	cur  *tls.Config
+
+	version int64
 }
 
 func NewECHManager() *ECHManager { return &ECHManager{} }
@@ -148,6 +152,79 @@ func (m *ECHManager) Set(keys []ECHKey) error {
 	m.keys = append([]ECHKey(nil), keys...)
 	m.rebuildLocked()
 	return nil
+}
+
+// SetStamped applique un jeu venu de l'Admin : la version (ns) n'avance que si le contenu change,
+// pour que les membres d'un groupe HA, qui reçoivent le même envoi à des instants différents,
+// n'échangent rien de plus.
+func (m *ECHManager) SetStamped(keys []ECHKey) error {
+	m.mu.RLock()
+	same := sameECHKeys(m.keys, keys)
+	m.mu.RUnlock()
+	if err := m.Set(keys); err != nil {
+		return err
+	}
+	if !same {
+		m.mu.Lock()
+		m.version = time.Now().UnixNano()
+		m.mu.Unlock()
+	}
+	return nil
+}
+
+// Version est l'estampille du jeu de clés courant (0 : jamais reçu).
+func (m *ECHManager) Version() int64 {
+	if m == nil {
+		return 0
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.version
+}
+
+// Restore recharge le jeu et sa version depuis le cache local.
+func (m *ECHManager) Restore(keys []ECHKey, version int64) error {
+	if err := m.Set(keys); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.version = version
+	m.mu.Unlock()
+	return nil
+}
+
+// Merge applique le jeu d'un pair du groupe HA s'il est plus récent que le jeu local. Retourne vrai
+// si les clés ont changé.
+func (m *ECHManager) Merge(keys []ECHKey, version int64) (bool, error) {
+	for i, k := range keys {
+		if len(k.Config) < 4 || len(k.PrivateKey) != 32 {
+			return false, fmt.Errorf("clé ECH %d invalide", i)
+		}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if version <= m.version {
+		return false, nil
+	}
+	m.version = version
+	if sameECHKeys(m.keys, keys) {
+		return false, nil
+	}
+	m.keys = append([]ECHKey(nil), keys...)
+	m.rebuildLocked()
+	return true, nil
+}
+
+func sameECHKeys(a, b []ECHKey) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].SendAsRetry != b[i].SendAsRetry || !bytes.Equal(a[i].Config, b[i].Config) || !bytes.Equal(a[i].PrivateKey, b[i].PrivateKey) {
+			return false
+		}
+	}
+	return true
 }
 
 // Keys retourne les clés courantes (cache chiffré de la passerelle) ; nil-safe comme Config.

@@ -34,6 +34,12 @@ const BK_TABS = [
     descKey: 'backups.tab.destinations.desc',
     icon: '<path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"/>',
   },
+  {
+    id: 'key',
+    titleKey: 'backups.tab.key.title',
+    descKey: 'backups.tab.key.desc',
+    icon: '<path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.78 7.78 5.5 5.5 0 017.78-7.78zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>',
+  },
 ];
 
 function bkNewSchedule(partial = {}) {
@@ -143,6 +149,7 @@ pages.backups = async function() {
       activeTab === 'snapshots' ? api('GET', '/backups/status').catch(() => null) : Promise.resolve(null),
       activeTab === 'destinations' ? api('GET', '/backups/destinations').catch(() => []) : Promise.resolve([]),
     ]);
+    const keyStatus = activeTab === 'key' ? await api('GET', '/backups/key').catch(() => null) : null;
     window._bkDests = dests;
     const [cfg, snaps] = await Promise.all([
       needsSched
@@ -160,6 +167,7 @@ pages.backups = async function() {
     let body = '';
     if (activeTab === 'snapshots') body = statusBanner(status) + snapshotsTab(snaps, draftSchedules);
     else if (activeTab === 'destinations') body = destinationsTab(dests);
+    else if (activeTab === 'key') body = keyTab(keyStatus);
     else body = scheduleTab(draftSchedules);
 
     content.innerHTML = `${navHtml()}<div id="bk-body">${body}</div>`;
@@ -366,6 +374,110 @@ pages.backups = async function() {
   window.bkDestDelete = async function(id) {
     if (!confirm(t('backups.dest.delete_confirm'))) return;
     try { await api('DELETE', '/backups/destinations/' + id); render(); } catch (e) { toast(e.message, 'error'); }
+  };
+
+  // ── Onglet Clé de chiffrement ─────────────────────────────────────────────
+  function keyTab(st) {
+    if (!st) return '<div class="card">' + t('backups.key.unavailable') + '</div>';
+    const src = t('backups.key.source.' + st.source);
+    const fp = st.fingerprint ? '<code>' + esc(st.fingerprint) + '</code>' : '—';
+    const env = st.source === 'env';
+    const btn = (label, fn, cls) => '<button class="btn ' + (cls || 'btn-secondary') + ' btn-sm" onclick="' + fn + '">' + label + '</button>';
+    const retired = (st.retired || []).map(r => '<tr><td><code>' + esc(r.fingerprint) + '</code></td><td style="font-size:12px">' + esc(fmtDate(r.retired_at)) + '</td>' +
+      '<td style="display:flex;gap:4px;justify-content:flex-end">' + btn(t('backups.key.reveal'), "bkKeyReveal('" + esc(r.fingerprint) + "')", 'btn-ghost') +
+      btn(t('backups.key.forget'), "bkKeyForget('" + esc(r.fingerprint) + "')", 'btn-ghost') + '</td></tr>').join('');
+    return '<div class="card blueprint"><div class="card-kicker">' + t('backups.key.kicker') + '</div>' +
+      '<div class="card-title">' + t('backups.tab.key.title') + '</div>' +
+      '<p style="color:var(--text2);font-size:13px;margin:12px 0;line-height:1.6;max-width:720px">' + t('backups.key.intro') + '</p>' +
+      '<div style="display:flex;gap:24px;flex-wrap:wrap;margin:8px 0 14px;font-size:13px"><div><div style="color:var(--text2);font-size:12px">' + t('backups.key.source') + '</div><b>' + src + '</b></div>' +
+      '<div><div style="color:var(--text2);font-size:12px">' + t('backups.key.fingerprint') + '</div><b>' + fp + '</b></div></div>' +
+      (env ? '<p style="font-size:13px;color:var(--text2)">' + t('backups.key.env_note') + '</p>' : '') +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+        (!env ? btn(st.source === 'file' ? t('backups.key.rotate') : t('backups.key.generate'), 'bkKeyGenerate()', 'btn-primary') : '') +
+        (!env ? btn(t('backups.key.enter'), 'bkKeyEnter()') : '') +
+        (st.source === 'file' ? btn(t('backups.key.reveal'), "bkKeyReveal('')") : '') +
+        (st.source === 'file' ? btn(t('backups.key.deactivate'), 'bkKeyDeactivate()', 'btn-ghost') : '') +
+      '</div>' +
+      '<div class="bk-sec-t" style="margin-top:22px">' + t('backups.key.retired_title') + '</div>' +
+      '<p style="color:var(--text2);font-size:12px;margin:4px 0 8px">' + t('backups.key.retired_desc') + '</p>' +
+      '<div class="table-wrap"><table><thead><tr><th>' + t('backups.key.fingerprint') + '</th><th>' + t('backups.key.retired_at') + '</th><th></th></tr></thead><tbody>' +
+        (retired || '<tr><td colspan="3" style="color:var(--text2)">' + t('backups.key.retired_none') + '</td></tr>') + '</tbody></table></div>' +
+      '<div style="margin-top:10px">' + btn(t('backups.key.add_retired'), 'bkKeyAddRetired()', 'btn-ghost') + '</div></div>';
+  }
+
+  function keyShownModal(title, key, fp) {
+    modal(title,
+      '<p style="font-size:13px;line-height:1.6">' + t('backups.key.shown_warn') + '</p>' +
+      '<div style="display:flex;gap:8px;align-items:center;margin:10px 0"><input class="input" id="bkk-shown" readonly value="' + esc(key) + '" style="font-family:monospace">' +
+      '<button class="btn btn-secondary btn-sm" onclick="navigator.clipboard.writeText(document.getElementById(\'bkk-shown\').value);toast(t(\'backups.key.copied\'),\'success\')">' + t('backups.key.copy') + '</button></div>' +
+      '<div style="font-size:12px;color:var(--text2)">' + t('backups.key.fingerprint') + ' : <code>' + esc(fp) + '</code></div>' +
+      '<label style="display:flex;gap:8px;align-items:center;font-size:13px;margin-top:14px"><input type="checkbox" id="bkk-saved" onchange="document.getElementById(\'bkk-close\').disabled=!this.checked"> ' + t('backups.key.saved') + '</label>',
+      '<button class="btn btn-primary btn-sm" id="bkk-close" disabled onclick="closeModal();pages.backups()">' + t('common.close') + '</button>');
+  }
+
+  window.bkKeyGenerate = async function() {
+    if (!confirm(t('backups.key.rotate_confirm'))) return;
+    try {
+      const r = await api('POST', '/backups/key', { action: 'generate' });
+      keyShownModal(t('backups.key.new_title'), r.key, r.fingerprint);
+    } catch (e) { toast(e.message, 'error'); }
+  };
+
+  window.bkKeyEnter = function() {
+    modal(t('backups.key.enter'),
+      '<div class="field"><label>' + t('backups.key.key_label') + '</label><input class="input" id="bkk-new" type="password" autocomplete="off" style="font-family:monospace"></div>' +
+      '<p style="font-size:12px;color:var(--text2)">' + t('backups.key.min_len') + '</p>',
+      '<button class="btn btn-secondary btn-sm" onclick="closeModal()">' + t('common.cancel') + '</button><button class="btn btn-primary btn-sm" onclick="bkKeySave()">' + t('common.save') + '</button>');
+  };
+
+  window.bkKeySave = async function() {
+    try {
+      const r = await api('PUT', '/backups/key', { key: document.getElementById('bkk-new').value });
+      closeModal();
+      toast(r.rotated ? t('backups.key.rotated') : t('backups.key.saved_ok'), 'success');
+      render();
+    } catch (e) { toast(e.message, 'error'); }
+  };
+
+  window.bkKeyReveal = function(fp) {
+    modal(t('backups.key.reveal'),
+      '<p style="font-size:13px">' + t('backups.key.reveal_desc') + '</p>' +
+      '<div class="field"><label>' + t('backups.dest.password') + '</label><input class="input" id="bkk-pw" type="password" autocomplete="current-password"></div>' +
+      '<input type="hidden" id="bkk-fp" value="' + esc(fp) + '">',
+      '<button class="btn btn-secondary btn-sm" onclick="closeModal()">' + t('common.cancel') + '</button><button class="btn btn-primary btn-sm" onclick="bkKeyRevealDo()">' + t('backups.key.reveal') + '</button>');
+  };
+
+  window.bkKeyRevealDo = async function() {
+    try {
+      const r = await api('POST', '/backups/key/reveal', { password: document.getElementById('bkk-pw').value, fingerprint: document.getElementById('bkk-fp').value });
+      closeModal();
+      keyShownModal(t('backups.key.reveal'), r.key, r.fingerprint);
+    } catch (e) { toast(e.message, 'error'); }
+  };
+
+  window.bkKeyDeactivate = async function() {
+    if (!confirm(t('backups.key.deactivate_confirm'))) return;
+    try { await api('DELETE', '/backups/key'); render(); } catch (e) { toast(e.message, 'error'); }
+  };
+
+  window.bkKeyAddRetired = function() {
+    modal(t('backups.key.add_retired'),
+      '<p style="font-size:13px">' + t('backups.key.add_retired_desc') + '</p>' +
+      '<div class="field"><label>' + t('backups.key.key_label') + '</label><input class="input" id="bkk-old" type="password" autocomplete="off" style="font-family:monospace"></div>',
+      '<button class="btn btn-secondary btn-sm" onclick="closeModal()">' + t('common.cancel') + '</button><button class="btn btn-primary btn-sm" onclick="bkKeyAddRetiredDo()">' + t('common.save') + '</button>');
+  };
+
+  window.bkKeyAddRetiredDo = async function() {
+    try {
+      await api('POST', '/backups/key/retired', { key: document.getElementById('bkk-old').value });
+      closeModal();
+      render();
+    } catch (e) { toast(e.message, 'error'); }
+  };
+
+  window.bkKeyForget = async function(fp) {
+    if (!confirm(t('backups.key.forget_confirm'))) return;
+    try { await api('DELETE', '/backups/key/retired/' + fp); render(); } catch (e) { toast(e.message, 'error'); }
   };
 
   window.bkDownload = function(id, filename) {

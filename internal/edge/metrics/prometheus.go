@@ -136,7 +136,10 @@ var Pipeline = struct {
 // Routing expose les métriques canary et shadow.
 var Routing = struct {
 	CanaryTotal *prometheus.CounterVec
-	ShadowTotal *prometheus.CounterVec
+	ShadowTotal    *prometheus.CounterVec
+	ShadowCompared *prometheus.CounterVec
+	ShadowDiff     *prometheus.CounterVec
+	RequestSchema  *prometheus.CounterVec
 }{
 	CanaryTotal: promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "gpx",
@@ -151,6 +154,27 @@ var Routing = struct {
 		Name:      "shadow_requests_total",
 		Help:      "Requêtes dupliquées vers le backend shadow mirror.",
 	}, []string{"host"}),
+
+	ShadowCompared: promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "gpx",
+		Subsystem: "routing",
+		Name:      "shadow_compared_total",
+		Help:      "Réponses shadow comparées à celles du primaire.",
+	}, []string{"host"}),
+
+	ShadowDiff: promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "gpx",
+		Subsystem: "routing",
+		Name:      "shadow_diff_total",
+		Help:      "Différences shadow/primaire (kind : status, header, body, error).",
+	}, []string{"host", "kind"}),
+
+	RequestSchema: promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "gpx",
+		Subsystem: "routing",
+		Name:      "request_schema_total",
+		Help:      "Requêtes validées contre le JSON Schema de la route (result : valid, invalid, skipped).",
+	}, []string{"host", "result"}),
 }
 
 // latencyBuckets couvre de 1 ms à 30 s avec une résolution fine sur le bas de gamme.

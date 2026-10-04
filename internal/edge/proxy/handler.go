@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/vincamok/goproxify/internal/edge/errorpages"
@@ -47,6 +48,7 @@ type Handler struct {
 	conditionRes []*regexp.Regexp // parallèle à route.Conditions ; nil si pas regex
 	subFilterRes []*regexp.Regexp // parallèle à route.SubFilters ; nil si pas regex
 	rpByBackend  sync.Map         // backend URL -> *httputil.ReverseProxy (revue P1 #4)
+	shadowLogAt  atomic.Int64 // dernier échantillon de diff shadow journalisé (ns)
 }
 
 type proxyAttemptKey struct{}
@@ -340,16 +342,32 @@ type statusRecorder struct {
 	http.ResponseWriter
 	status int
 	size   int
+
+	tee       *shadowTee // non-nil : comparaison shadow active
+	teeHeader []string
+	teeSeen   bool
+}
+
+func (sr *statusRecorder) snapshot() {
+	if sr.tee != nil && !sr.teeSeen {
+		sr.teeSeen = true
+		sr.tee.hdr = shadowHeaderSnapshot(sr.ResponseWriter.Header(), sr.teeHeader)
+	}
 }
 
 func (sr *statusRecorder) WriteHeader(code int) {
 	sr.status = code
+	sr.snapshot()
 	sr.ResponseWriter.WriteHeader(code)
 }
 
 func (sr *statusRecorder) Write(b []byte) (int, error) {
+	sr.snapshot()
 	n, err := sr.ResponseWriter.Write(b)
 	sr.size += n
+	if sr.tee != nil {
+		sr.tee.write(b[:n])
+	}
 	return n, err
 }
 
@@ -406,11 +424,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}()
 		r.Body = io.NopCloser(pr)
 		r.GetBody = nil
+		cmp := h.route.Shadow.Compare
+		if cmp {
+			sr.tee = newShadowTee()
+			sr.teeHeader = h.route.Shadow.CompareHeaders
+		}
 		method, uri, host, hdr := r.Method, r.URL.RequestURI(), r.Host, r.Header.Clone()
 		defer func() {
 			_, _ = io.Copy(io.Discard, pr) // purge si le primaire n'a pas lu le body en entier
 			<-done
-			go h.fireShadow(method, uri, host, hdr, shadowBuf.Bytes())
+			var primary *shadowObs
+			if cmp {
+				primary = sr.tee.observe(sr.status, sr.tee.hdr)
+			}
+			go h.fireShadow(method, uri, host, hdr, shadowBuf.Bytes(), primary)
 		}()
 	}
 
@@ -694,7 +721,7 @@ func (h *Handler) doURL(w http.ResponseWriter, r *http.Request, backendURL strin
 
 // fireShadow envoie une copie de la requête au backend miroir sans bloquer.
 // method/uri/host/header/body sont déjà clonés — ne pas toucher à la requête principale.
-func (h *Handler) fireShadow(method, requestURI, host string, header http.Header, body []byte) {
+func (h *Handler) fireShadow(method, requestURI, host string, header http.Header, body []byte, primary *shadowObs) {
 	target, err := url.Parse(h.route.Shadow.Backend)
 	if err != nil {
 		return
@@ -716,9 +743,26 @@ func (h *Handler) fireShadow(method, requestURI, host string, header http.Header
 	}
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
-	if err == nil {
-		resp.Body.Close()
+	if err != nil {
+		if primary != nil {
+			metrics.Routing.ShadowDiff.WithLabelValues(h.route.Host, "error").Inc()
+		}
+		return
 	}
+	defer resp.Body.Close()
+	if primary == nil {
+		return
+	}
+	tee := newShadowTee()
+	buf := make([]byte, 32<<10)
+	for {
+		n, rerr := resp.Body.Read(buf)
+		tee.write(buf[:n])
+		if rerr != nil {
+			break
+		}
+	}
+	h.recordShadowDiff(method, requestURI, primary, tee.observe(resp.StatusCode, shadowHeaderSnapshot(resp.Header, h.route.Shadow.CompareHeaders)))
 }
 
 // do envoie la requête vers un backend. Retourne (succès, réponseÉcrite, erreurTransport).

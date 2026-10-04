@@ -21,6 +21,7 @@ import (
 	"github.com/vincamok/goproxify/internal/edge/metrics"
 	"github.com/vincamok/goproxify/internal/edge/middleware"
 	"github.com/vincamok/goproxify/internal/edge/proxy"
+	"github.com/vincamok/goproxify/internal/edge/static"
 	"github.com/vincamok/goproxify/internal/edge/router"
 	edgetls "github.com/vincamok/goproxify/internal/edge/tls"
 	"github.com/vincamok/goproxify/internal/edge/threat"
@@ -258,13 +259,19 @@ func (s *Server) handlerForRoute(route *router.Route, locPath string) http.Handl
 		}
 	}
 
-	h := http.Handler(proxy.NewHandler(route, s.health, s.metrics, s.peers, s.log.Logger()))
+	var h http.Handler
+	if route.Static != nil && route.Static.Enabled {
+		h = static.Handler(route.Static)
+	} else {
+		h = proxy.NewHandler(route, s.health, s.metrics, s.peers, s.log.Logger())
+	}
 	if route.Cache != nil && route.Cache.Enabled {
 		h = proxy.New(routeCacheDir(route)).MiddlewareWithConfig(route.Cache)(h)
 	} else if route.CachePath != "" {
 		h = proxy.New(route.CachePath).Middleware(h)
 	}
 	h = middleware.GraphQLLimits(route.GraphQL)(h)
+	h = middleware.RequestSchema(route.Host, route.RequestSchema)(h)
 	h = middleware.SSOAuth(route.SSO)(h)
 	h = middleware.JWTValidation(route.JWT)(h)
 	h = middleware.MTLSValidation(route.MTLS)(h)

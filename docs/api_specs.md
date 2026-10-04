@@ -396,6 +396,10 @@ Crée un snapshot. Corps optionnel `{"name":"…","history":true}` : `history` j
 
 **Interne (Admin → passerelle)** : `GET /internal/v1/backup/export` renvoie `{files:{chemin: contenu}, skipped:[…]}` ; `POST /internal/v1/backup/restore` réécrit ces fichiers (chemins relatifs filtrés) et répond `{written, rejected, restart_required}`.
 
+### `/api/v1/backups/key`
+
+Clé de chiffrement des sauvegardes. `GET` : `{source: env|file|none, fingerprint, can_change, retired:[{fingerprint, retired_at}]}` (jamais la clé). Superadmin uniquement pour le reste : `POST|PUT` avec `{"action":"generate"}` (clé générée, renvoyée **cette seule fois** dans `key`) ou `{"key":"…"}` (16 caractères au moins) — renvoie `{fingerprint, rotated}`, l'ancienne clé active passant parmi les retirées ; `DELETE` désactive la clé active (conservée parmi les retirées, 204) ; `POST /key/reveal` avec `{"password":"…","fingerprint":"…"}` (empreinte vide = clé active) renvoie la clé après vérification du mot de passe du superadmin ; `POST /key/retired` avec `{"key":"…"}` ajoute une ancienne clé ; `DELETE /key/retired/{fingerprint}` l'oublie. `409` si la clé active vient de `GPX_BACKUP_KEY` (ni changement, ni désactivation, ni révélation), `403` si l'appelant n'est pas superadmin ou si le mot de passe est faux. Toutes ces actions sont auditées.
+
 ### `GET /api/v1/backups/status`
 
 État des sauvegardes : `key_set` (GPX_BACKUP_KEY définie), `last_snapshot_at`, `last_verified_at`, `stale[]` (planifications dont une exécution a été manquée), `destinations[]` (`last_ok_at`, `last_error`, `copies`).
@@ -1360,6 +1364,10 @@ Réplication du magasin du portail entre passerelles d'un même groupe HA (compt
 ### `GET|POST /internal/v1/agents/replica`
 
 Réplication des secrets HMAC des Agents approuvés entre passerelles d'un même groupe HA : un Agent approuvé sur un membre est accepté par tous, il peut donc se reconnecter à un autre membre si sa passerelle tombe, sans l'Admin. L'état est **chiffré (AES-256-GCM) par une clé dérivée de la clé du groupe** (préfixe propre, distinct de celle du portail) ; une autre clé ne déchiffre rien (`400` à l'import). Chaque HMAC porte une estampille et une révocation laisse une pierre tombale : la modification la plus récente l'emporte, une révocation se propage et ferme la connexion de l'Agent sur les autres membres, une rotation horaire se propage. Envoi immédiat à chaque modification locale et tirage toutes les 15 s, entre membres du groupe seulement. Répond `204` hors groupe.
+
+### `GET|POST /internal/v1/ech/replica`
+
+Réplication du jeu de clés ECH (clés privées comprises) entre passerelles d'un même groupe HA, sans l'Admin. Corps **chiffré (AES-256-GCM) par une clé dérivée de la clé du groupe** (préfixe propre) : une autre clé ne déchiffre rien (`400` à l'import). Le jeu porte une estampille (ns) ; le plus récent l'emporte, une désactivation (jeu vide) plus récente aussi, un jeu de version égale ou plus ancienne est ignoré. Envoi après chaque push de l'Admin, tirage à chaque synchro entre pairs. Répond `204` hors groupe ou sans jeu.
 
 ### `POST /internal/v1/bans/gossip`
 

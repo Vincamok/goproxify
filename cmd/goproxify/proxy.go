@@ -257,7 +257,7 @@ Sous-commandes :
   delete  Supprime un proxy
   metrics Débit, erreurs et p95 par host (dernier relevé)
   cache-purge Vide le cache HTTP d'un proxy (tout, par tag ou par chemin)
-  option  Pose ou retire une option avancée (split, maintenance, signed_url, graphql, bandwidth, redact_json, hedge, grpc_web, rate_limit, conditions)
+  option  Pose ou retire une option avancée (split, maintenance, signed_url, graphql, bandwidth, redact_json, hedge, static, request_schema, grpc_web, rate_limit, conditions)
 
 goproxify proxy list   [-admin-url …] [-token …]
 goproxify proxy get    <id> [-admin-url …] [-token …]
@@ -293,7 +293,7 @@ func proxyHost(p map[string]any) string {
 // advancedProxyOptions : clés de configuration posées par `proxy option` (même liste que l'outil MCP update_proxy).
 var advancedProxyOptions = map[string]bool{
 	"split": true, "maintenance": true, "signed_url": true, "graphql": true, "bandwidth": true,
-	"redact_json": true, "hedge": true, "grpc_web": true, "rate_limit": true, "conditions": true,
+	"redact_json": true, "hedge": true, "static": true, "request_schema": true, "grpc_web": true, "rate_limit": true, "conditions": true,
 }
 
 func sortedKeys(m map[string]bool) []string {

@@ -35,6 +35,7 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - **Profils IP : saisie manuelle et modèles** : modification d’un profil existant ; un profil peut être une liste d’IP/CIDR saisie à la main (en plus d’un feed), le formulaire propose des modèles de feeds (Bogons, blocklist.de, CINS Army) et explique la portée globale et la priorité `allow` sur `deny` (Admin 0.81.0)
 - **Restauration sélective des snapshots** : le bouton *Restaurer* permet de choisir les entités à restaurer et le mode de conflit ; menu Sauvegardes réduit à Snapshots / Planification (Admin `0.80.0`)
 - **Sauvegardes : destinations hors serveur (S3, WebDAV, dossier), vérification d’intégrité et alertes** : chaque snapshot est copié, relu et comparé ; alerte sur échec ou exécution manquée (Admin `0.105.0`)
+- **Sauvegardes : clé de chiffrement gérée depuis l’interface** : génération, rotation sans perdre les anciens snapshots, révélation par le superadmin avec son mot de passe (Admin `0.111.0`)
 - **Sauvegardes complètes** : config HA, état de chaque passerelle et de ses Agents, et historique (journaux, audit, bans) dans des sections chiffrées, restaurables par le superadmin (Admin `0.110.0`, Edge `0.39.0`, Agent `0.8.0`)
 - **Sauvegardes : section secrets chiffrée** : avec `GPX_BACKUP_KEY`, les snapshots embarquent mots de passe, MFA, tokens, clés RGPD/ECH, CA interne et fichiers d’état pour restaurer une infrastructure complète (superadmin) (Admin `0.98.0`)
 - **Recherche de fonctionnalités (Ctrl+K)** : palette de recherche dans la barre du haut (aussi `/`) pour retrouver n’importe quelle page de l’Admin ou d’une passerelle par titre ou mot-clé (WAF, ACME, SSO, sauvegardes…), retrouve aussi proxies, certificats, domaines, passerelles, snippets et utilisateurs par leur nom, filtrée selon le rôle (Admin `0.73.0`)
@@ -51,6 +52,9 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - **Prism** : refonte « centre de commande » (carte zoomable, anomalies détectées, onglets) — livré
 - **Observabilité** : Synthèse commune à l’Admin et aux passerelles, Prism recentré (onglets Chemins / IP / Sources / Pays), carte Leaflet avec vues par ville et par région et connexions en direct, carte « Attaques en direct » dans la Synthèse sécurité, anomalies calculées côté serveur (API, MCP `get_prism_anomalies` / `get_prism_geo`, CLI `goproxify prism`) — livré
 - **Vue Proxy** : nouveau menu racine (remplace « Explorer ») — barre de recherche + période + Live, sélection cumulable de proxies (tuiles, KPI, carte, anomalies, courbe, chemins, IP) ; temps réel uniquement sur demande — livré
+- **Serveur de fichiers statiques avec fallback SPA** : option `static` d'un proxy (dossier de la passerelle, repli sur l'index, ETag, cache), sans backend — livré (Edge `0.41.0`)
+- **Diff des réponses shadow** : `shadow.compare` compare statut, en-têtes choisis et corps du miroir au primaire, avec métriques et échantillon de log — livré (Edge `0.42.0`)
+- **Validation JSON Schema des requêtes** : option `request_schema` (règles par méthode et chemin, mode `block` / `detect`, métriques) — livré (Edge `0.43.0`) ; validation OpenAPI complète (chemins, paramètres) restant à faire
 - **Compression des réponses** : zstd, Brotli et gzip négociés par proxy selon `Accept-Encoding` (Avancé › Compression des réponses) — livré
 - [x] **Sentinel — page en onglets et tiroir de réglages** : vue d'ensemble, détections, listes et exceptions ; simulation sur les logs récents avant d'enregistrer (`POST /security/threat-config/simulate`, `goproxify security threat simulate`)
 
@@ -97,7 +101,7 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - [x] **Monitoring ACME** : dashboard statut par cert (days_left, ok/warning/critical/expired), alertes automatiques `cert_expiring_soon` (≤30j warning, ≤7j critical) et `cert_deploy_failed` vers le moteur d'alertes existant
 - [x] **ACME HTTP-01 et TLS-ALPN-01** : méthodes de validation par domaine en plus de DNS-01 (`cert_method` `acme-http` / `acme-tls-alpn`), réponses posées par l'Admin sur les passerelles, renouvellement automatique inclus — livré
 - [x] **OCSP stapling** : agrafage côté passerelle, autonome (Edge `0.20.0`) — livré
-- [x] **ECH** (Encrypted Client Hello) : clés générées par l'Admin, poussées et conservées par les passerelles, rotation, page Admin, CLI, MCP (Admin `0.75.0`, Edge `0.21.0`) — livré
+- [x] **ECH** (Encrypted Client Hello) : clés générées par l'Admin, poussées et conservées par les passerelles, rotation, page Admin, CLI, MCP (Admin `0.75.0`, Edge `0.21.0`) — livré ; réplication des clés entre membres d'un groupe HA sans l'Admin (Edge `0.40.0`)
 - [x] **Conversion de formats** : package `certformat` — PEM, DER, PKCS#8, PKCS#12/PFX, fullchain, JSON
 - [x] **CA interne** : génération d'une autorité racine auto-signée et émission de certificats serveur/client internes (hors ACME) pour les services internes — API `/api/v1/internal-ca`, CLI `goproxify internal-ca`, outils MCP dédiés
 - [x] **Page « Domaines & certificats » en vue unique** : certificats publics et locaux dans une même liste (filtre, recherche, compteurs), actions en bout de ligne, assistant d'ajout Public / Local / Importer, réglages ACME, fournisseurs DNS et CA internes dans un tiroir (Admin `0.34.0`)

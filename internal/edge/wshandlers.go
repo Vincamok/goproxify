@@ -98,10 +98,11 @@ func (s *Server) handleWSAdminMessage(connID string, msg edgews.Message) error {
 		if err := json.Unmarshal(msg.Payload, &set); err != nil {
 			return err
 		}
-		if err := s.ech.Set(set.Keys); err != nil {
+		if err := s.ech.SetStamped(set.Keys); err != nil {
 			return err
 		}
 		s.saveCache()
+		go s.pushECHReplica(context.Background())
 		s.log.Info("ws/admin: clés ECH mises à jour", "count", len(set.Keys))
 
 	case edgews.TypePushDelegations:

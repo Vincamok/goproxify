@@ -29,6 +29,7 @@ type Snapshot struct {
 	Snippets      []*router.Snippet      `json:"snippets,omitempty"`
 	AuthProviders []*router.AuthProvider `json:"auth_providers,omitempty"`
 	ECHKeys       []edgetls.ECHKey       `json:"ech_keys,omitempty"`
+	ECHVersion    int64                  `json:"ech_version,omitempty"`
 }
 
 // Info est retourné par Show() pour la CLI.

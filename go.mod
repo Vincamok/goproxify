@@ -22,6 +22,8 @@ require (
 	modernc.org/sqlite v1.54.0
 )
 
+require github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
+
 require (
 	github.com/Azure/go-ntlmssp v0.1.1 // indirect
 	github.com/BurntSushi/toml v1.6.0 // indirect

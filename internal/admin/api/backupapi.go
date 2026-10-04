@@ -14,6 +14,7 @@ import (
 	"time"
 
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
+	"github.com/vincamok/goproxify/internal/admin/audit"
 	"github.com/vincamok/goproxify/internal/admin/backup"
 	"github.com/vincamok/goproxify/internal/admin/importer"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
@@ -25,6 +26,8 @@ type BackupHandler struct {
 	Log       *slog.Logger
 	Scheduler *backup.Scheduler
 	Pusher    RoutePusher
+	Keys      *backup.KeyStore // clé de chiffrement des sauvegardes gérée depuis l'interface
+	Auditor   *audit.Logger
 }
 
 func (h *BackupHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -62,6 +65,19 @@ func (h *BackupHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.restoreSnapshot(w, r, id)
 	case r.Method == http.MethodPost && sub == "snapshots" && id != "" && action == "verify":
 		h.verifySnapshot(w, r, id)
+	// Clé de chiffrement
+	case r.Method == http.MethodGet && sub == "key" && id == "":
+		h.keyStatus(w, r)
+	case (r.Method == http.MethodPost || r.Method == http.MethodPut) && sub == "key" && id == "":
+		h.setKey(w, r)
+	case r.Method == http.MethodDelete && sub == "key" && id == "":
+		h.deleteKey(w, r)
+	case r.Method == http.MethodPost && sub == "key" && id == "retired" && action == "":
+		h.addRetiredKey(w, r)
+	case r.Method == http.MethodDelete && sub == "key" && id == "retired" && action != "":
+		h.forgetRetiredKey(w, r, action)
+	case r.Method == http.MethodPost && sub == "key" && id == "reveal":
+		h.revealKey(w, r)
 	// Destinations externes et état
 	case r.Method == http.MethodGet && sub == "status":
 		jsonOK(w, h.Scheduler.Status())

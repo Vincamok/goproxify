@@ -673,8 +673,8 @@ func (s *Server) applySnapshot(snap *edgecache.Snapshot) {
 	if snap.AuthProviders != nil {
 		s.providerStore.Replace(snap.AuthProviders)
 	}
-	if len(snap.ECHKeys) > 0 {
-		if err := s.ech.Set(snap.ECHKeys); err != nil {
+	if len(snap.ECHKeys) > 0 || snap.ECHVersion > 0 {
+		if err := s.ech.Restore(snap.ECHKeys, snap.ECHVersion); err != nil {
 			s.log.Warn("edge: clés ECH du cache invalides", "err", err)
 		}
 	}

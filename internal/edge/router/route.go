@@ -4,6 +4,7 @@
 package router
 
 import (
+	"encoding/json"
 	"time"
 )
 
@@ -98,6 +99,12 @@ type Route struct {
 	SignedURL *SignedURLConfig `json:"signed_url,omitempty"`
 	// GraphQL borne la profondeur et la taille des requêtes GraphQL.
 	GraphQL *GraphQLConfig `json:"graphql,omitempty"`
+	// Static sert un dossier local de la passerelle au lieu de proxifier (aucun backend requis).
+	Static *StaticConfig `json:"static,omitempty"`
+
+	// RequestSchema valide le corps JSON des requêtes contre un JSON Schema.
+	RequestSchema *RequestSchemaConfig `json:"request_schema,omitempty"`
+
 	// Hedge double une requête GET/HEAD lente vers un autre backend ; la première réponse gagne.
 	Hedge *HedgeConfig `json:"hedge,omitempty"`
 	// GRPCWeb traduit gRPC-Web (navigateurs) en gRPC vers le backend, qui doit parler HTTP/2.
@@ -605,6 +612,13 @@ type CanaryConfig struct {
 type ShadowConfig struct {
 	Backend     string `json:"backend"`                // URL du backend miroir
 	ContainerID string `json:"container_id,omitempty"` // discovery Docker — cycle de vie
+
+	// Compare compare la réponse du miroir à celle du primaire (statut toujours, en-têtes et corps
+	// en option) : métriques gpx_routing_shadow_diff_total et échantillon journalisé. Le corps est
+	// comparé par taille et SHA-256 de ses 8 premiers Mo, sans être conservé.
+	Compare        bool     `json:"compare,omitempty"`
+	CompareHeaders []string `json:"compare_headers,omitempty"`
+	CompareBody    bool     `json:"compare_body,omitempty"`
 }
 
 // Condition représente une règle de routage conditionnel sur les attributs de la requête.
@@ -709,4 +723,32 @@ type RedactConfig struct {
 type HedgeConfig struct {
 	DelayMs  int `json:"delay_ms"`
 	MaxExtra int `json:"max_extra,omitempty"`
+}
+
+// StaticConfig fait servir un dossier de la passerelle par la route. SPAFallback renvoie l'index
+// pour les chemins de page introuvables (routage côté navigateur). CacheMaxAge (s) s'applique aux
+// fichiers autres que l'index, toujours revalidé.
+type StaticConfig struct {
+	Enabled     bool   `json:"enabled"`
+	Root        string `json:"root"`
+	Index       string `json:"index,omitempty"` // défaut "index.html"
+	SPAFallback bool   `json:"spa_fallback,omitempty"`
+	CacheMaxAge int    `json:"cache_max_age,omitempty"`
+}
+
+// RequestSchemaConfig valide le corps JSON des requêtes. Mode : "block" (défaut, 422) ou "detect"
+// (la requête passe, seule la métrique compte). MaxBody : taille max lue en octets (défaut 1 Mo).
+type RequestSchemaConfig struct {
+	Enabled bool                `json:"enabled"`
+	Mode    string              `json:"mode,omitempty"`
+	MaxBody int64               `json:"max_body,omitempty"`
+	Rules   []RequestSchemaRule `json:"rules"`
+}
+
+// RequestSchemaRule : la première règle dont la méthode (défaut POST, PUT, PATCH) et le préfixe de
+// chemin correspondent s'applique. Schema est un JSON Schema autonome (aucun $ref externe).
+type RequestSchemaRule struct {
+	Methods    []string        `json:"methods,omitempty"`
+	PathPrefix string          `json:"path_prefix,omitempty"`
+	Schema     json.RawMessage `json:"schema"`
 }

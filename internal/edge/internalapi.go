@@ -82,6 +82,8 @@ func (s *Server) startInternalAPI() error {
 	mux.HandleFunc("POST /internal/v1/portal/replica", s.handlePortalReplicaImport)
 	mux.HandleFunc("GET /internal/v1/agents/replica", s.handleAgentReplicaExport)
 	mux.HandleFunc("POST /internal/v1/agents/replica", s.handleAgentReplicaImport)
+	mux.HandleFunc("GET "+echReplicaPath, s.handleECHReplicaExport)
+	mux.HandleFunc("POST "+echReplicaPath, s.handleECHReplicaImport)
 	mux.HandleFunc("POST /internal/v1/cluster/peers", s.handlePushClusterPeers)
 	mux.HandleFunc("POST /internal/v1/gateway/peers", s.handlePushGatewayPeers)
 	mux.HandleFunc("POST /internal/v1/gateway/tunnel", s.handleGatewayTunnel)

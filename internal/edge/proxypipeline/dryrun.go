@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vincamok/goproxify/internal/edge/middleware"
 	"github.com/vincamok/goproxify/internal/edge/proxyproto"
 	"github.com/vincamok/goproxify/internal/edge/proxystore"
 	"github.com/vincamok/goproxify/internal/edge/router"
@@ -81,7 +82,14 @@ func validateRouteBasics(route *router.Route) []string {
 			}
 		}
 	}
-	if len(route.Backends) == 0 {
+	if st := route.Static; st != nil && st.Enabled {
+		if strings.TrimSpace(st.Root) == "" {
+			errs = append(errs, "static.root requis")
+		}
+		if st.CacheMaxAge < 0 {
+			errs = append(errs, "static.cache_max_age doit être positif")
+		}
+	} else if len(route.Backends) == 0 {
 		errs = append(errs, "au moins un backend requis")
 	}
 	for i, b := range route.Backends {
@@ -93,6 +101,7 @@ func validateRouteBasics(route *router.Route) []string {
 			errs = append(errs, fmt.Sprintf("backends[%d]: %v", i, err))
 		}
 	}
+	errs = append(errs, middleware.ValidateRequestSchemaConfig(route.RequestSchema)...)
 	if route.Canary != nil && route.Canary.Backend != "" {
 		if err := validateBackendURL(route.Type, route.Canary.Backend); err != nil {
 			errs = append(errs, fmt.Sprintf("canary.backend: %v", err))

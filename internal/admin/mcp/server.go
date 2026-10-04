@@ -272,7 +272,7 @@ var tools = []map[string]any{
 			opt("tls_enabled", "boolean", "Active ou désactive HTTPS"),
 			opt("lb", "string", "Load balancing: round_robin, weighted, adaptive"),
 			opt("enabled", "boolean", "Active ou désactive la route"),
-			opt("options", "object", "Options avancées à poser (valeur null = retirer) : split, maintenance, signed_url, graphql, bandwidth, redact_json, hedge, grpc_web, rate_limit, conditions"),
+			opt("options", "object", "Options avancées à poser (valeur null = retirer) : split, maintenance, signed_url, graphql, bandwidth, redact_json, hedge, static, request_schema, grpc_web, rate_limit, conditions"),
 		),
 	},
 	{
@@ -2972,5 +2972,5 @@ func (h *Handler) toolListAlertEvents(r *http.Request, args map[string]any) (any
 // advancedProxyOptions : clés de la configuration d'un proxy modifiables par update_proxy (`options`).
 var advancedProxyOptions = map[string]bool{
 	"split": true, "maintenance": true, "signed_url": true, "graphql": true, "bandwidth": true,
-	"redact_json": true, "hedge": true, "grpc_web": true, "rate_limit": true, "conditions": true,
+	"redact_json": true, "hedge": true, "static": true, "request_schema": true, "grpc_web": true, "rate_limit": true, "conditions": true,
 }

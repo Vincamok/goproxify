@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 )
 
 const secretsEncPrefix = "GPXSEC1:"
@@ -56,14 +57,100 @@ type SecretBundle struct {
 	Files map[string][]byte `json:"files,omitempty"`
 }
 
-// BackupKey dérive la clé de chiffrement (32 octets) depuis GPX_BACKUP_KEY.
+// keyRing : clé active et clés retirées enregistrées depuis l'interface (l'active ne l'emporte jamais
+// sur GPX_BACKUP_KEY ; les retirées servent seulement à relire d'anciens snapshots).
+type keyRing struct {
+	active  string
+	retired []string
+}
+
+var ring atomic.Value // keyRing
+
+func currentRing() keyRing { r, _ := ring.Load().(keyRing); return r }
+
+// SetKeyRing installe la clé active ("" = aucune) et les clés retirées.
+func SetKeyRing(active string, retired []string) {
+	r := keyRing{active: strings.TrimSpace(active)}
+	for _, k := range retired {
+		if k = strings.TrimSpace(k); k != "" {
+			r.retired = append(r.retired, k)
+		}
+	}
+	ring.Store(r)
+}
+
+// SetFileKey installe (ou retire, avec "") la seule clé active.
+func SetFileKey(raw string) { SetKeyRing(raw, nil) }
+
+// KeySource indique d'où vient la clé : "env", "file" ou "none".
+func KeySource() string {
+	if strings.TrimSpace(os.Getenv("GPX_BACKUP_KEY")) != "" {
+		return "env"
+	}
+	if currentRing().active != "" {
+		return "file"
+	}
+	return "none"
+}
+
+// BackupKey dérive la clé de chiffrement (32 octets) depuis GPX_BACKUP_KEY, à défaut depuis la clé
+// enregistrée dans l'interface.
 func BackupKey() ([]byte, bool) {
 	raw := strings.TrimSpace(os.Getenv("GPX_BACKUP_KEY"))
+	if raw == "" {
+		raw = currentRing().active
+	}
 	if raw == "" {
 		return nil, false
 	}
 	sum := sha256.Sum256([]byte(raw))
 	return sum[:], true
+}
+
+// AllBackupKeys : toutes les clés connues (environnement, active, retirées), la plus récente d'abord.
+func AllBackupKeys() [][]byte {
+	var raws []string
+	if e := strings.TrimSpace(os.Getenv("GPX_BACKUP_KEY")); e != "" {
+		raws = append(raws, e)
+	}
+	r := currentRing()
+	if r.active != "" {
+		raws = append(raws, r.active)
+	}
+	raws = append(raws, r.retired...)
+	seen := map[string]bool{}
+	var out [][]byte
+	for _, raw := range raws {
+		sum := sha256.Sum256([]byte(raw))
+		if k := string(sum[:]); !seen[k] {
+			seen[k] = true
+			out = append(out, sum[:])
+		}
+	}
+	return out
+}
+
+// DecryptAny déchiffre nonce||texte chiffré avec la première clé connue qui l'authentifie : une
+// rotation de clé ne rend donc aucun ancien snapshot illisible.
+func DecryptAny(blob []byte) ([]byte, error) {
+	keys := AllBackupKeys()
+	if len(keys) == 0 {
+		return nil, ErrNoBackupKey
+	}
+	for _, key := range keys {
+		block, err := aes.NewCipher(key)
+		if err != nil {
+			continue
+		}
+		gcm, err := cipher.NewGCM(block)
+		if err != nil || len(blob) < gcm.NonceSize() {
+			continue
+		}
+		if plain, err := gcm.Open(nil, blob[:gcm.NonceSize()], blob[gcm.NonceSize():], nil); err == nil {
+			return plain, nil
+		}
+	}
+	return nil, errors.New("déchiffrement impossible : aucune clé connue ne correspond (clé active ou retirée manquante ?)")
 }
 
 func secretsGCM() (cipher.AEAD, error) {
@@ -98,20 +185,13 @@ func openWith(prefix, sealed string) ([]byte, error) {
 	if !strings.HasPrefix(sealed, prefix) {
 		return nil, errors.New("section chiffrée : format inconnu")
 	}
-	gcm, err := secretsGCM()
-	if err != nil {
-		return nil, err
-	}
 	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(sealed, prefix))
 	if err != nil {
 		return nil, err
 	}
-	if len(raw) < gcm.NonceSize() {
-		return nil, errors.New("section secrets : données tronquées")
-	}
-	plain, err := gcm.Open(nil, raw[:gcm.NonceSize()], raw[gcm.NonceSize():], nil)
+	plain, err := DecryptAny(raw)
 	if err != nil {
-		return nil, fmt.Errorf("section secrets : déchiffrement impossible (mauvaise GPX_BACKUP_KEY ?)")
+		return nil, fmt.Errorf("section chiffrée : %w", err)
 	}
 	return plain, nil
 }

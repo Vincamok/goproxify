@@ -10,7 +10,7 @@ Ce document décrit le menu **Sauvegardes** de l'Administration : le fonctionnem
 | Déclenchement | Manuel (bouton, CLI) ou planifié (jusqu'à **5 planifications** : quotidienne, hebdomadaire, mensuelle, annuelle, ou cron libre) |
 | Stockage | Table `backup_snapshots` de la base Admin **et** copie `<storage.base_path>/backups/<id>.snap` sur disque (fallback si la base est illisible) |
 | Rétention | Par planification (`retention` = nombre max de snapshots, 0 = illimité). Les snapshots manuels ne sont jamais purgés automatiquement |
-| Chiffrement | AES-256-GCM si la variable `GPX_BACKUP_KEY` est définie (préfixe `GPXBK1:`) : snapshot entier chiffré, relisible uniquement avec la même clé. Sans clé, le snapshot est en clair, **sans secrets et sans section `secrets`** (§4) |
+| Chiffrement | AES-256-GCM avec la clé de chiffrement des sauvegardes : variable `GPX_BACKUP_KEY`, ou clé générée / saisie dans *Sauvegardes › Clé de chiffrement* (§4 quinquies). Snapshot entier chiffré (préfixe `GPXBK1:`), relisible avec la clé active ou une clé retirée. Sans clé, le snapshot est en clair, **sans secrets et sans section `secrets`** (§4) |
 | Import d'un fichier | Menu Sauvegardes → *Restaurer* : analyse (`/api/v1/import/backup/preview`), sélection des entités, application (`/api/v1/import/backup/apply`) |
 | CLI | `goproxify backup create / list / restore` (voir [cli.md](cli.md)) |
 
@@ -116,6 +116,18 @@ Si `GPX_BACKUP_KEY` est définie, le snapshot contient en plus une section `secr
 | Historique | Option *Inclure l'historique* d'une planification, ou *Créer avec l'historique* : journaux, audit, bans passés, menaces, CVE, alertes émises, événements de nœuds, exécutions, historiques de déploiement et de proxy, audit et demandes du portail. Section `history` chiffrée à part (`GPXHIS1:`), **clé obligatoire** (jamais en clair : adresses IP, actions d'administrateurs). `logs` : 100 000 lignes les plus récentes ; autres tables : 500 000. Restauration : case *Historique* (décochée par défaut, superadmin), **ajout sans écrasement** (identifiant déjà présent = ignoré). Les adresses IP des logs sont chiffrées par les clés RGPD : restaurer aussi les secrets, sinon elles restent illisibles |
 
 **Taille** : un snapshot avec historique et états de passerelles peut peser plusieurs centaines de Mo (stocké dans `admin.db` et dans `backups/`). Réserver l'historique à une planification dédiée (hebdomadaire, par exemple) avec une rétention courte.
+
+## 4 quinquies. Clé de chiffrement gérée depuis l'interface
+
+| Élément | Détail |
+|---|---|
+| Source | `GPX_BACKUP_KEY` si elle est définie (elle l'emporte toujours, l'interface la montre en lecture seule) ; sinon la clé enregistrée sur le serveur dans `<storage.base_path>/keys/backup-keys.json` (0600, hors de `admin.db`, hors des dossiers repris par les snapshots) |
+| Création | *Générer une clé* (256 bits) ou *Saisir une clé* (16 caractères au moins). Une clé générée n'est **affichée qu'une fois**, avec une case « je l'ai conservée » obligatoire |
+| Rotation | Remplacer la clé conserve l'ancienne parmi les **clés retirées** : pour relire un snapshot, l'Admin essaie la clé active puis les retirées, si bien qu'aucun ancien snapshot ne devient illisible. *Ajouter une ancienne clé* couvre un changement de `GPX_BACKUP_KEY` ; *Oublier* retire définitivement une clé retirée (les snapshots qu'elle a chiffrés deviennent illisibles) |
+| Révélation | Superadmin uniquement, avec son **mot de passe** (1 s d'attente et audit `backup_key_reveal_denied` si faux) ; jamais pour une clé venant de l'environnement. Chaque création, rotation, désactivation, révélation et oubli est audité (sévérité critique) ; l'empreinte (8 caractères du SHA-256) est la seule trace de la clé |
+| Désactiver | La clé active passe parmi les retirées ; les snapshots suivants sont sans secrets |
+
+**Limite à connaître** : la clé enregistrée sur le serveur est sur le même volume que `backups/`. Une copie de volume emporte donc les deux. La protection est celle du volume ; pour que les copies hors serveur restent illisibles à qui volerait le volume, définir `GPX_BACKUP_KEY` hors du serveur. Dans tous les cas, **conserver une copie de la clé ailleurs** : serveur perdu = clé perdue = snapshots indéchiffrables.
 
 ## 5. Restauration
 

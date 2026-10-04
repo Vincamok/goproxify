@@ -8,6 +8,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -46,25 +47,13 @@ func openSnapshot(data []byte) ([]byte, error) {
 	if !strings.HasPrefix(s, backupEncPrefix) {
 		return data, nil
 	}
-	key, ok := backupKey()
-	if !ok {
-		return nil, fmt.Errorf("snapshot chiffré — définir GPX_BACKUP_KEY")
-	}
 	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(s, backupEncPrefix))
 	if err != nil {
 		return nil, err
 	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
+	plain, err := importer.DecryptAny(raw)
+	if errors.Is(err, importer.ErrNoBackupKey) {
+		return nil, fmt.Errorf("snapshot chiffré — définir la clé de chiffrement des sauvegardes")
 	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	if len(raw) < gcm.NonceSize() {
-		return nil, fmt.Errorf("ciphertext trop court")
-	}
-	nonce, ct := raw[:gcm.NonceSize()], raw[gcm.NonceSize():]
-	return gcm.Open(nil, nonce, ct, nil)
+	return plain, err
 }

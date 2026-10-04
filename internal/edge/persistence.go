@@ -434,6 +434,7 @@ func (s *Server) saveCacheNow() {
 		Snippets:      s.snippetStore.All(),
 		AuthProviders: s.providerStore.All(),
 		ECHKeys:       s.ech.Keys(),
+		ECHVersion:    s.ech.Version(),
 	}
 	if err := s.cache.Save(snap); err != nil {
 		s.log.Warn("edge: sauvegarde cache échouée", "err", err)

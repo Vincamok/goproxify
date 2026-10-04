@@ -221,7 +221,10 @@ func (s *Server) Start(ctx context.Context) error {
 		s.alertingEngine.Emit(alerting.Event{Trigger: alerting.TriggerBackupFailed, Severity: sev, Component: "admin", Detail: detail})
 	})
 	proxiesH := &api.ProxiesHandler{DB: s.db, Log: s.log, Pusher: manager, Versioner: backupSched}
-	backupH := &api.BackupHandler{DB: s.db, Log: s.log, Scheduler: backupSched, Pusher: manager}
+	backupH := &api.BackupHandler{DB: s.db, Log: s.log, Scheduler: backupSched, Pusher: manager, Auditor: s.auditor}
+	if s.cfg.Storage.BasePath != "" {
+		backupH.Keys = backup.NewKeyStore(filepath.Join(s.cfg.Storage.BasePath, "keys"))
+	}
 	tokensH := &api.TokensHandler{
 		DB: s.db, Log: s.log, Edges: manager, Pusher: manager,
 		ArchStore: archStore,
