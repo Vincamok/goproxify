@@ -15,8 +15,10 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync/atomic"
 )
@@ -249,8 +251,10 @@ func readDirs(dirs map[string]string) map[string][]byte {
 
 // SecretsSummary décrit le contenu de la section secrets sans rien écrire.
 type SecretsSummary struct {
-	Tables map[string]int `json:"tables"`
-	Files  int            `json:"files"`
+	Tables      map[string]int `json:"tables"`
+	Files       int            `json:"files"`
+	Gateways    []string       `json:"gateways,omitempty"`     // passerelles dont l'état est dans la sauvegarde
+	ConfigFiles []string       `json:"config_files,omitempty"` // config HA, admin.json (restaurés dans restored-config/)
 }
 
 // OpenSecretsSummary déchiffre la section secrets et en résume le contenu.
@@ -259,7 +263,25 @@ func OpenSecretsSummary(b *Backup) (*SecretsSummary, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &SecretsSummary{Tables: TableCounts(sb.Tables), Files: len(sb.Files)}, nil
+	sum := &SecretsSummary{Tables: TableCounts(sb.Tables), Files: len(sb.Files)}
+	seen := map[string]bool{}
+	for name := range sb.Files {
+		label, rest, _ := strings.Cut(name, "/")
+		switch label {
+		case gatewayLabel:
+			if node, _, ok := strings.Cut(rest, "/"); ok && !seen[node] {
+				seen[node] = true
+				if n, err := url.PathUnescape(node); err == nil {
+					sum.Gateways = append(sum.Gateways, n)
+				}
+			}
+		case "config":
+			sum.ConfigFiles = append(sum.ConfigFiles, rest)
+		}
+	}
+	sort.Strings(sum.Gateways)
+	sort.Strings(sum.ConfigFiles)
+	return sum, nil
 }
 
 func openBundle(b *Backup) (*SecretBundle, error) {

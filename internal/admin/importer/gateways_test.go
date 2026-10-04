@@ -98,3 +98,31 @@ func TestGatewayUnreachableIsReportedNotSilent(t *testing.T) {
 		t.Fatalf("passerelle inconnue non signalée : %+v", res)
 	}
 }
+
+func TestSummaryExposesGatewaysAndLockedSections(t *testing.T) {
+	t.Setenv("GPX_BACKUP_KEY", "cle-resume")
+	plain, _ := json.Marshal(SecretBundle{Files: map[string][]byte{
+		"gateway/gw-paris/proxies/a.yaml": []byte("x"),
+		"gateway/gw%20lyon/edge.json":     []byte("x"),
+		"config/admin-ha.json":            []byte("{}"),
+	}})
+	sealed, _ := sealSecrets(plain)
+	raw, _ := json.Marshal(Backup{Version: "1", Secrets: sealed})
+
+	_, sum, err := SummarizeBackup(raw)
+	if err != nil || sum.SecretsDetail == nil || sum.SecretsLocked {
+		t.Fatalf("résumé : %+v %v", sum, err)
+	}
+	if got := strings.Join(sum.SecretsDetail.Gateways, ","); got != "gw lyon,gw-paris" {
+		t.Fatalf("passerelles : %q", got)
+	}
+	if len(sum.SecretsDetail.ConfigFiles) != 1 || sum.SecretsDetail.ConfigFiles[0] != "admin-ha.json" {
+		t.Fatalf("fichiers de config : %v", sum.SecretsDetail.ConfigFiles)
+	}
+
+	t.Setenv("GPX_BACKUP_KEY", "une-autre-cle")
+	_, sum, _ = SummarizeBackup(raw)
+	if !sum.SecretsLocked || sum.SecretsDetail != nil {
+		t.Fatalf("section illisible non signalée : %+v", sum)
+	}
+}

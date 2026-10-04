@@ -386,6 +386,8 @@ Contenu détaillé : [sauvegardes.md](sauvegardes.md).
 
 Résumé du contenu d'un snapshot, sans rien écrire — même format que `import/backup/preview` (`proxies[]`, `user_count`, `token_count`, `pat_count`, `snippet_count`, `channel_count`, `rule_count`, `declared_node_count`, `declared_nodes[]` (`id`, `role`, `name`, `region`, `environment`), `config_row_count`, `config_tables{table: n}`). Utilisé par la fenêtre « Restaurer » de l'Admin. 404 si le snapshot n'existe pas.
 
+Le résumé expose aussi, quand la clé de chiffrement permet de lire les sections chiffrées, `secrets_detail` (`tables`, `files`, `gateways[]` = passerelles dont l'état est sauvegardé, `config_files[]`) et `history_detail` (`tables`, `truncated`) ; `secrets_locked` / `history_locked` valent `true` si la section existe mais ne se déchiffre pas.
+
 ### `POST /api/v1/backups/snapshots/:id/restore`
 
 Restaure un snapshot. Corps optionnel `{"selection": {…}}` (mêmes champs que `import/backup/apply`) ; **sans corps**, restauration complète en mode `overwrite` (utilisateurs, tokens, PAT, snippets, canaux, règles, tables de configuration). En `overwrite`, un snapshot de sécurité `avant-restauration-<date>` est pris d'abord ; s'il échoue, la restauration est annulée (500). Réponse : `ImportResult` (dont `secret_rows`, `secret_files`, `secrets_error`). Avec `selection.import_secrets` (ou sans corps, si le snapshot a une section `secrets` et que l'appelant est superadmin), restaure la section secrets chiffrée de `GPX_BACKUP_KEY` : hash des mots de passe, MFA, clés, CA interne, fichiers `state/` et `certs/`. Superadmin seulement (`secrets_error` sinon).
@@ -402,7 +404,7 @@ Clé de chiffrement des sauvegardes. `GET` : `{source: env|file|none, fingerprin
 
 ### `GET /api/v1/backups/status`
 
-État des sauvegardes : `key_set` (GPX_BACKUP_KEY définie), `last_snapshot_at`, `last_verified_at`, `stale[]` (planifications dont une exécution a été manquée), `destinations[]` (`last_ok_at`, `last_error`, `copies`).
+État des sauvegardes : `key_set` (GPX_BACKUP_KEY définie), `last_snapshot_at`, `last_verified_at`, `stale[]` (planifications dont une exécution a été manquée), `destinations[]` (`last_ok_at`, `last_error`, `copies`), `running` (présent seulement si une sauvegarde ou une copie externe est en cours : `name`, `phase` parmi `waiting|export|secrets|history|encrypt|store|verify`, `started_at`, `delivering[]` = destinations en cours d'envoi).
 
 ### `POST /api/v1/backups/snapshots/:id/verify`
 

@@ -236,3 +236,62 @@ func TestStaleScheduleDetected(t *testing.T) {
 		t.Fatalf("alertes=%d état=%+v", alerts, s.Status().Stale)
 	}
 }
+
+func TestRunningStateReportedDuringSnapshotAndDelivery(t *testing.T) {
+	s := newTestScheduler(t)
+	if s.Running() != nil || s.Status().Running != nil {
+		t.Fatal("activité signalée alors que rien ne tourne")
+	}
+
+	// Une destination lente : la copie reste « en cours » après la fin du snapshot.
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			<-release
+		}
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	if _, err := s.SaveDestination(Destination{Name: "lente", Type: DestWebDAV, Enabled: true, Config: map[string]string{"url": srv.URL}}); err != nil {
+		t.Fatal(err)
+	}
+
+	phases := map[string]bool{}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			if r := s.Running(); r != nil && r.Phase != "" {
+				phases[r.Phase] = true
+			}
+			select {
+			case <-time.After(time.Millisecond):
+			case <-release:
+				return
+			}
+		}
+	}()
+	if err := s.TakeSnapshot("suivi", "", 0); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "copie en cours", func() bool {
+		r := s.Running()
+		return r != nil && len(r.Delivering) == 1 && r.Delivering[0] == "lente" && r.Name == ""
+	})
+	if st := s.Status(); st.Running == nil || len(st.Running.Delivering) != 1 {
+		t.Fatalf("état : %+v", st.Running)
+	}
+	close(release)
+	<-done
+	waitFor(t, "fin de copie", func() bool { return s.Running() == nil })
+	if !phases[PhaseExport] && !phases[PhaseSecrets] && !phases[PhaseVerify] {
+		t.Logf("aucune phase intermédiaire observée (snapshot trop rapide) : %v", phases)
+	}
+}

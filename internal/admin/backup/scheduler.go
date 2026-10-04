@@ -101,6 +101,7 @@ type Scheduler struct {
 	// secretDirs : dossiers d'état copiés dans la section secrets (étiquette → chemin).
 	secretDirs        map[string]string
 	notifier          Notifier
+	run               runState
 	extra             func() map[string][]byte
 	restoredConfigDir string
 	staleNotified     map[string]bool
@@ -542,14 +543,18 @@ func (s *Scheduler) TakeSnapshot(name string, scheduleID string, retention int) 
 
 // TakeSnapshotWith crée un snapshot ; history joint la section historique (journaux, audit, bans…).
 func (s *Scheduler) TakeSnapshotWith(name string, scheduleID string, retention int, history bool) error {
+	s.run.begin(name)
+	defer s.run.end()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.run.setPhase(PhaseExport)
 	bk, err := importer.ExportBackup(s.db)
 	if err != nil {
 		return fmt.Errorf("export: %w", err)
 	}
 	importer.RedactSecrets(bk)
+	s.run.setPhase(PhaseSecrets)
 	warnings, err := importer.AttachSecrets(s.db, bk, s.secretDirs, s.extraFiles())
 	for _, w := range warnings {
 		s.log.Warn("backup: " + w)
@@ -561,12 +566,14 @@ func (s *Scheduler) TakeSnapshotWith(name string, scheduleID string, retention i
 		return fmt.Errorf("secrets: %w", err)
 	}
 	if history {
+		s.run.setPhase(PhaseHistory)
 		if err := importer.AttachHistory(s.db, bk); errors.Is(err, importer.ErrNoBackupKey) {
 			s.log.Warn("backup: historique demandé mais GPX_BACKUP_KEY non définie — historique non sauvegardé")
 		} else if err != nil {
 			return fmt.Errorf("historique: %w", err)
 		}
 	}
+	s.run.setPhase(PhaseEncrypt)
 	data, err := json.Marshal(bk)
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
@@ -576,6 +583,7 @@ func (s *Scheduler) TakeSnapshotWith(name string, scheduleID string, retention i
 		return fmt.Errorf("chiffrer: %w", err)
 	}
 
+	s.run.setPhase(PhaseStore)
 	id := uuid.New().String()
 	_, err = s.db.Exec(
 		`INSERT INTO backup_snapshots (id, name, schedule_id, size, data, sha256) VALUES (?, ?, ?, ?, ?, ?)`,
@@ -584,6 +592,7 @@ func (s *Scheduler) TakeSnapshotWith(name string, scheduleID string, retention i
 		return fmt.Errorf("insert: %w", err)
 	}
 	// Un snapshot qui ne se relit pas ne doit pas passer pour une sauvegarde valide.
+	s.run.setPhase(PhaseVerify)
 	if err := s.VerifySnapshot(id); err != nil {
 		s.db.Exec(`DELETE FROM backup_snapshots WHERE id=?`, id) //nolint:errcheck
 		return fmt.Errorf("vérification: %w", err)

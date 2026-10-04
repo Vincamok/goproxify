@@ -252,7 +252,9 @@ func (s *Scheduler) deliver(id, name string, data []byte) {
 	sum := sha256Hex(data)
 	obj := remoteName(id, name, time.Now())
 	for _, d := range dests {
+		s.run.startDelivery(d.Name)
 		derr := s.deliverOne(d, id, obj, sum, data)
+		s.run.endDelivery(d.Name)
 		msg := ""
 		if derr != nil {
 			msg = derr.Error()
@@ -345,6 +347,7 @@ type Status struct {
 	LastVerifiedAt *time.Time   `json:"last_verified_at,omitempty"`
 	Stale          []string     `json:"stale"` // planifications dont une exécution a été manquée
 	Destinations   []DestStatus `json:"destinations"`
+	Running        *RunInfo     `json:"running,omitempty"` // sauvegarde ou copie externe en cours
 }
 
 func parseTS(s string) *time.Time {
@@ -362,6 +365,7 @@ func parseTS(s string) *time.Time {
 func (s *Scheduler) Status() Status {
 	st := Status{Stale: []string{}, Destinations: []DestStatus{}}
 	_, st.KeySet = importer.BackupKey()
+	st.Running = s.Running()
 	var last, ver sql.NullString
 	s.db.QueryRow(`SELECT MAX(created_at), MAX(verified_at) FROM backup_snapshots`).Scan(&last, &ver) //nolint:errcheck
 	st.LastSnapshotAt, st.LastVerifiedAt = parseTS(last.String), parseTS(ver.String)

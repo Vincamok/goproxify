@@ -165,12 +165,20 @@ pages.backups = async function() {
     }
 
     let body = '';
-    if (activeTab === 'snapshots') body = statusBanner(status) + snapshotsTab(snaps, draftSchedules);
+    if (activeTab === 'snapshots') body = runningBanner(status && status.running) + statusBanner(status) + snapshotsTab(snaps, draftSchedules);
     else if (activeTab === 'destinations') body = destinationsTab(dests);
     else if (activeTab === 'key') body = keyTab(keyStatus);
     else body = scheduleTab(draftSchedules);
 
     content.innerHTML = `${navHtml()}<div id="bk-body">${body}</div>`;
+
+    // Sauvegarde en cours : bouton neutralisé et rafraîchissement automatique tant qu'elle tourne.
+    clearTimeout(window._bkPollTimer);
+    const run = status && status.running;
+    document.querySelectorAll('#topbar-actions button').forEach(b => { b.disabled = !!(run && run.name); });
+    if (activeTab === 'snapshots' && run) {
+      window._bkPollTimer = setTimeout(() => { if (document.getElementById('bk-body')) render(); }, 2000);
+    }
   }
 
   window._bkTab = function(tab) {
@@ -281,6 +289,19 @@ pages.backups = async function() {
       ? '<span style="color:var(--success,#2a8)" title="' + esc(d.at) + '">☁ ' + esc(d.destination) + '</span>'
       : '<span style="color:var(--danger,#c44)" title="' + esc(d.error) + '">☁ ' + esc(d.destination) + ' ✗</span>').join('<br>');
     return ok + (copies ? '<br>' + copies : '');
+  }
+
+  function runningBanner(run) {
+    if (!run) return '';
+    const spin = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="flex:none"><path d="M12 2a10 10 0 0110 10"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.9s" repeatCount="indefinite"/></path></svg>';
+    const lines = [];
+    if (run.name) {
+      const secs = run.started_at ? Math.max(0, Math.round((Date.now() - new Date(run.started_at).getTime()) / 1000)) : 0;
+      lines.push(t('backups.run.snapshot', { name: esc(run.name), phase: t('backups.run.phase.' + run.phase), secs }));
+    }
+    if ((run.delivering || []).length) lines.push(t('backups.run.delivering', { names: run.delivering.map(esc).join(', ') }));
+    return '<div class="card" role="status" style="margin-bottom:12px;display:flex;gap:10px;align-items:flex-start;border-left:3px solid var(--accent);font-size:13px">' + spin +
+      '<div style="line-height:1.6">' + lines.join('<br>') + '</div></div>';
   }
 
   function statusBanner(st) {
@@ -673,7 +694,10 @@ pages.backups = async function() {
 
 window.createSnapshot = async function(history) {
   try {
-    await api('POST', '/backups/snapshots', history === true ? { history: true } : {});
+    const req = api('POST', '/backups/snapshots', history === true ? { history: true } : {});
+    // La requête dure le temps de la sauvegarde : on affiche l'état en cours sans attendre sa fin.
+    setTimeout(() => { if (document.getElementById('bk-body')) pages.backups(); }, 700);
+    await req;
     toast(t('backups.snapshot_created'), 'success');
     pages.backups();
   } catch(e) { toast(e.message, 'error'); }
@@ -767,6 +791,84 @@ function bkTopoCol(items, proxies, side) {
   return `<div class="bk-col" data-side="${side}">${lanes}${lane(t('trafic.proxies'), proxies)}</div>`;
 }
 
+// Ce que la restauration implique pour l'infrastructure, selon les cases cochées. Chaque élément :
+// niveau (danger | warn | info), titre, explication. Rien n'est supprimé par une restauration :
+// ce qui existe maintenant et n'est pas dans le snapshot reste en place.
+function bkImplications(c, sel) {
+  const s = c.summary || {};
+  const out = [];
+  const add = (level, key, vars) => out.push({ level, title: t('backups.impl.' + key + '.t', vars), text: t('backups.impl.' + key + '.d', vars) });
+  const overwrite = sel.mode === 'overwrite';
+
+  if (sel.proxies) {
+    const picked = bkPickedProxies();
+    const snap = c.snapProxies.filter(p => !picked || picked.has(p.key));
+    const cur = new Set(c.curProxies.map(p => p.key));
+    const created = snap.filter(p => !cur.has(p.key)).length;
+    const over = snap.filter(p => cur.has(p.key)).length;
+    const snapKeys = new Set(c.snapProxies.map(p => p.key));
+    const extra = c.curProxies.filter(p => !snapKeys.has(p.key)).length;
+    if (created) add('info', 'px_create', { n: created });
+    if (over && overwrite) add('warn', 'px_over', { n: over });
+    if (over && !overwrite) add('info', 'px_skip', { n: over });
+    if (extra) add('info', 'px_extra', { n: extra });
+  }
+
+  if (sel.nodes) {
+    const cur = new Set(c.curNodes.map(n => n.key));
+    const created = c.snapNodes.filter(n => !cur.has(n.key));
+    const over = c.snapNodes.filter(n => cur.has(n.key)).length;
+    if (created.length) add('warn', 'nodes_create', { n: created.length, names: created.slice(0, 6).map(n => n.name || n.key).join(', ') + (created.length > 6 ? '…' : '') });
+    if (over && overwrite) add('info', 'nodes_over', { n: over });
+    const snapKeys = new Set(c.snapNodes.map(n => n.key));
+    const extra = c.curNodes.filter(n => !snapKeys.has(n.key)).length;
+    if (extra) add('info', 'nodes_extra', { n: extra });
+  }
+
+  if (sel.config && s.config_row_count) {
+    add(overwrite ? 'warn' : 'info', overwrite ? 'config_over' : 'config_skip', { n: s.config_row_count });
+  }
+  if (sel.users) add('info', sel.secrets ? 'users_secrets' : 'users', { n: s.user_count || 0 });
+  if (sel.tokens && !sel.secrets && s.token_count) add('warn', 'tokens', { n: s.token_count });
+
+  if (sel.secrets) {
+    const d = s.secrets_detail;
+    if (s.secrets_locked) {
+      add('danger', 'secrets_locked', {});
+    } else {
+      add('danger', 'secrets', {});
+      if (d && d.gateways && d.gateways.length) add('danger', 'gateways', { n: d.gateways.length, names: d.gateways.join(', ') });
+      if (d && d.config_files && d.config_files.length) add('info', 'ha_config', { files: d.config_files.join(', ') });
+      add('warn', 'restart_admin', {});
+    }
+  }
+  if (sel.history) add(s.history_locked ? 'danger' : 'info', s.history_locked ? 'history_locked' : 'history', {});
+  if (out.length && overwrite) add('info', 'safety', {});
+  const rank = { danger: 0, warn: 1, info: 2 };
+  return out.sort((a, b) => rank[a.level] - rank[b.level]);
+}
+
+function bkImplicationsHtml(c) {
+  const checked = id => document.getElementById('bk-rs-' + id)?.checked ?? false;
+  const sel = {
+    proxies: checked('proxies'), nodes: checked('nodes'), config: checked('config'), users: checked('users'),
+    tokens: checked('tokens'), secrets: checked('secrets'), history: checked('history'),
+    mode: document.getElementById('bk-rs-conflict')?.value || 'overwrite',
+  };
+  const items = bkImplications(c, sel);
+  if (!items.length) return '';
+  const color = { danger: 'var(--danger,#c44)', warn: 'var(--warning,#c80)', info: 'var(--text2)' };
+  return `
+    <div class="bk-sec-t" style="margin-top:14px">${t('backups.impl.title')}</div>
+    <p style="color:var(--text2);font-size:12px;margin:2px 0 8px">${t('backups.impl.intro')}</p>
+    <div style="display:flex;flex-direction:column;gap:6px">
+      ${items.map(i => `
+        <div style="border-left:3px solid ${color[i.level]};padding:4px 10px;font-size:13px;line-height:1.5">
+          <b>${esc(i.title)}</b><div style="color:var(--text2);font-size:12px">${esc(i.text)}</div>
+        </div>`).join('')}
+    </div>`;
+}
+
 function bkRenderTopology() {
   const c = _bkRestoreCtx;
   const el = document.getElementById('bk-topo');
@@ -790,6 +892,8 @@ function bkRenderTopology() {
       <div class="bk-arrow" aria-hidden="true"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
       <div class="bk-side"><div class="bk-side-h">${t('backups.restore_modal.after')}</div>${bkTopoCol(nodes.after, prox.after, 'after')}</div>
     </div>`;
+  const impl = document.getElementById('bk-impl');
+  if (impl) impl.innerHTML = bkImplicationsHtml(c);
 }
 
 window.bkRestoreRefresh = bkRenderTopology;
@@ -826,6 +930,7 @@ window.restoreSnapshot = async function(id, name) {
     snapNodes: (s.declared_nodes || []).map(nodeOf),
     curProxies: (curProxies || []).map(proxyOf),
     snapProxies: (s.proxies || []).map(proxyOf),
+    summary: s,
   };
   const when = s.created_at ? new Date(s.created_at).toLocaleString() : '';
 
@@ -836,6 +941,7 @@ window.restoreSnapshot = async function(id, name) {
     </div>
     <div class="bk-sec-t">${t('backups.restore_modal.topo_title')}</div>
     <div id="bk-topo"></div>
+    <div id="bk-impl"></div>
     <div class="bk-sec-t">${t('backups.restore_modal.what')}</div>
     <div class="bk-chips">
       ${entities.map(([eid, label, n]) => `

@@ -105,6 +105,11 @@ type BackupSummary struct {
 	DeclaredNodes     []NodeSummary  `json:"declared_nodes"`
 	ConfigRowCount    int            `json:"config_row_count"`
 	ConfigTables      map[string]int `json:"config_tables,omitempty"`
+	// Contenu des sections chiffrées, lisible seulement avec la clé : *Locked signale une clé absente ou fausse.
+	SecretsDetail *SecretsSummary `json:"secrets_detail,omitempty"`
+	SecretsLocked bool            `json:"secrets_locked,omitempty"`
+	HistoryDetail *HistorySummary `json:"history_detail,omitempty"`
+	HistoryLocked bool            `json:"history_locked,omitempty"`
 	HasConfigs        bool           `json:"has_configs"`
 	HasSecrets        bool           `json:"has_secrets"`
 	HasHistory        bool           `json:"has_history"`
@@ -196,6 +201,20 @@ func SummarizeBackup(data []byte) (*Backup, *BackupSummary, error) {
 		HasConfigs:        len(b.Configs) > 0,
 		HasSecrets:        b.Secrets != "",
 		HasHistory:        b.History != "",
+	}
+	if b.Secrets != "" {
+		if d, err := OpenSecretsSummary(&b); err == nil {
+			sum.SecretsDetail = d
+		} else {
+			sum.SecretsLocked = true
+		}
+	}
+	if b.History != "" {
+		if d, err := OpenHistorySummary(&b); err == nil {
+			sum.HistoryDetail = d
+		} else {
+			sum.HistoryLocked = true
+		}
 	}
 	sum.DeclaredNodes = []NodeSummary{}
 	for _, n := range b.DeclaredNodes {
