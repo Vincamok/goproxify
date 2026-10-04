@@ -685,6 +685,24 @@ networks:
 
 ---
 
+## Fond de carte vectoriel (optionnel)
+
+Par défaut, les cartes de l'Admin (Prism, Sécurité, Vue Proxy) utilisent des contours de pays et de régions embarqués : aucune requête vers un tiers, mais un zoom limité à l'échelle régionale. Pour zoomer jusqu'à la rue **sans service de tuiles externe**, posez sur le serveur de l'Admin un fond vectoriel au format [PMTiles](https://docs.protomaps.com/pmtiles/) (données © contributeurs OpenStreetMap, découpées par Protomaps).
+
+1. Installer l'outil `pmtiles` ([releases go-pmtiles](https://github.com/protomaps/go-pmtiles/releases)).
+2. Découper la zone voulue dans une version quotidienne de la carte du monde (la planète entière pèse plus de 100 Go ; une région ou un pays suffit presque toujours) :
+
+   ```bash
+   # la France métropolitaine jusqu'au zoom 14 (plusieurs Go ; adapter --bbox=ouest,sud,est,nord)
+   pmtiles extract https://build.protomaps.com/20261001.pmtiles basemap.pmtiles \n     --bbox=-5.5,41.2,9.8,51.3 --maxzoom=14
+   ```
+
+   Le nom du fichier source est une date de version au format AAAAMMJJ (`20261001.pmtiles` existait au moment de l'écriture ; en cas d'erreur 404, essayer une date plus récente). Un quartier (`--bbox=2.20,48.82,2.46,48.90 --maxzoom=14`) pèse une dizaine de Mo. Au-delà du zoom 14 les tuiles sont agrandies (surzoom).
+3. Copier le fichier sur le serveur de l'Admin, à l'emplacement `<stockage>/basemap/basemap.pmtiles` (`/etc/goproxify/basemap/basemap.pmtiles` par défaut), ou ailleurs en renseignant la variable `GPX_BASEMAP_PATH`. Le fichier est relu à chaque requête : ni redémarrage ni reconstruction de l'image.
+4. Recharger l'interface : la carte affiche le fond sous les pays et zoome jusqu'à 2 niveaux au-delà de la dernière tuile.
+
+Le fond n'est dessiné que dans la zone qu'il couvre : à l'extérieur, la carte garde ses contours de pays. Le fichier est servi tel quel (`GET /map/basemap.pmtiles`, requêtes partielles `Range`, sans authentification : ce sont des données cartographiques publiques) ; le navigateur ne lit que les tuiles visibles. Le thème clair ou sombre de l'interface est suivi. Le fichier n'est pas inclus dans les sauvegardes de l'Admin : il se retélécharge.
+
 ## Références
 
 - [Architecture](architecture.md) — détail des composants et flux internes

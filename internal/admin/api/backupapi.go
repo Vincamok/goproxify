@@ -188,12 +188,15 @@ func (h *BackupHandler) restoreSnapshot(w http.ResponseWriter, r *http.Request, 
 		ImportConfig:   true,
 		OnConflict:     "overwrite",
 	}
+	superadmin := rbac.IsSuperAdmin(r.Context(), h.DB, adminauth.UserIDFromContext(r.Context()))
+	sel.ImportSecrets = bk.Secrets != "" && superadmin
 	var body struct {
 		Selection *importer.ImportSelection `json:"selection"`
 	}
 	if json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body) == nil && body.Selection != nil {
 		sel = *body.Selection
 	}
+	sel.SecretDirs = h.Scheduler.SecretDirs()
 	// Filet de sécurité : état courant sauvegardé avant d'écraser quoi que ce soit.
 	if sel.OnConflict == "overwrite" {
 		if err := h.Scheduler.TakeSnapshot("avant-restauration-"+time.Now().Format("20060102-150405"), "", 0); err != nil {
@@ -201,7 +204,7 @@ func (h *BackupHandler) restoreSnapshot(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 	}
-	sel.AllowPrivileged = rbac.IsSuperAdmin(r.Context(), h.DB, adminauth.UserIDFromContext(r.Context()))
+	sel.AllowPrivileged = superadmin
 	result := importer.Apply(h.DB, bk, sel)
 	if sel.ImportConfig {
 		h.Scheduler.Reload()

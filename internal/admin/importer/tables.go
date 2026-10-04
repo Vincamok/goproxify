@@ -100,8 +100,13 @@ func redactTableValue(table, col string, val any) any {
 }
 
 func exportTables(db *sql.DB) map[string][]map[string]any {
+	return exportRawTables(db, backupTables)
+}
+
+// exportRawTables lit les lignes de tables sans rien rédiger : réservé à la section secrets chiffrée.
+func exportRawTables(db *sql.DB, tables []string) map[string][]map[string]any {
 	out := map[string][]map[string]any{}
-	for _, table := range backupTables {
+	for _, table := range tables {
 		rows, err := db.Query(`SELECT * FROM ` + table)
 		if err != nil {
 			continue // table absente sur une base ancienne
@@ -184,11 +189,15 @@ func teamHasPermission(db *sql.DB, teamID any) bool {
 
 // applyTables restaure les tables de configuration ; retourne le nombre de lignes écrites.
 func applyTables(db *sql.DB, tables map[string][]map[string]any, overwrite, allowPrivileged bool) (written, skipped int) {
+	return applyTablesOrdered(db, tables, backupTables, overwrite, allowPrivileged)
+}
+
+func applyTablesOrdered(db *sql.DB, tables map[string][]map[string]any, order []string, overwrite, allowPrivileged bool) (written, skipped int) {
 	verb := `INSERT OR IGNORE`
 	if overwrite {
 		verb = `INSERT OR REPLACE`
 	}
-	for _, table := range backupTables {
+	for _, table := range order {
 		rows := tables[table]
 		if len(rows) == 0 {
 			continue

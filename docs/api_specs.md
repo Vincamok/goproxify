@@ -382,7 +382,7 @@ Résumé du contenu d'un snapshot, sans rien écrire — même format que `impor
 
 ### `POST /api/v1/backups/snapshots/:id/restore`
 
-Restaure un snapshot. Corps optionnel `{"selection": {…}}` (mêmes champs que `import/backup/apply`) ; **sans corps**, restauration complète en mode `overwrite` (utilisateurs, tokens, PAT, snippets, canaux, règles, tables de configuration). En `overwrite`, un snapshot de sécurité `avant-restauration-<date>` est pris d'abord ; s'il échoue, la restauration est annulée (500). Réponse : `ImportResult`.
+Restaure un snapshot. Corps optionnel `{"selection": {…}}` (mêmes champs que `import/backup/apply`) ; **sans corps**, restauration complète en mode `overwrite` (utilisateurs, tokens, PAT, snippets, canaux, règles, tables de configuration). En `overwrite`, un snapshot de sécurité `avant-restauration-<date>` est pris d'abord ; s'il échoue, la restauration est annulée (500). Réponse : `ImportResult` (dont `secret_rows`, `secret_files`, `secrets_error`). Avec `selection.import_secrets` (ou sans corps, si le snapshot a une section `secrets` et que l'appelant est superadmin), restaure la section secrets chiffrée de `GPX_BACKUP_KEY` : hash des mots de passe, MFA, clés, CA interne, fichiers `state/` et `certs/`. Superadmin seulement (`secrets_error` sinon).
 
 ### `POST /api/v1/import/backup/preview`
 

@@ -37,6 +37,7 @@ type Backup struct {
 	DeclaredNodes []map[string]any            `json:"declared_nodes,omitempty"`
 	Configs       map[string]json.RawMessage  `json:"configs,omitempty"` // "admin" | "edge" | "agent:<name>"
 	Tables        map[string][]map[string]any `json:"tables,omitempty"`  // tables de configuration (settings, règles auto, équipes, domaines…)
+	Secrets       string                      `json:"secrets,omitempty"` // section chiffrée (GPXSEC1:) : secrets, MFA, clés et fichiers d'état
 }
 
 type BackupProxy struct {
@@ -104,6 +105,7 @@ type BackupSummary struct {
 	ConfigRowCount    int            `json:"config_row_count"`
 	ConfigTables      map[string]int `json:"config_tables,omitempty"`
 	HasConfigs        bool           `json:"has_configs"`
+	HasSecrets        bool           `json:"has_secrets"`
 }
 
 type NodeSummary struct {
@@ -133,11 +135,14 @@ type ImportSelection struct {
 	ImportRules    bool     `json:"import_alert_rules"`
 	OnConflict     string   `json:"on_conflict"`     // skip | overwrite
 	RestoreConfigs bool     `json:"restore_configs"` // écrire les fichiers config sur disque
+	ImportSecrets  bool     `json:"import_secrets"`  // restaurer la section secrets chiffrée (superadmin, GPX_BACKUP_KEY requise)
 	ImportConfig   bool     `json:"import_config"`   // restaurer les tables de configuration (règles auto, équipes, domaines, settings…)
 	// AllowPrivileged : import lancé par le superadmin. Sinon, ni le rôle dpo ni la composition
 	// d'une équipe portant une permission ne sont importés (attribution réservée au superadmin),
 	// et le rôle superadmin ne l'est jamais. Positionné par l'API, jamais lu depuis le JSON.
 	AllowPrivileged bool `json:"-"`
+	// SecretDirs : étiquette → dossier où réécrire les fichiers d'état de la section secrets.
+	SecretDirs map[string]string `json:"-"`
 }
 
 // ImportResult décrit ce qui a été importé.
@@ -150,6 +155,10 @@ type ImportResult struct {
 	Channels      int `json:"channels"`
 	Rules         int `json:"rules"`
 	Config        int `json:"config"`
+	SecretRows    int `json:"secret_rows"`
+	SecretFiles   int `json:"secret_files"`
+	// SecretsError : motif lorsque la section secrets demandée n'a pas été restaurée.
+	SecretsError  string `json:"secrets_error,omitempty"`
 	DeclaredNodes int `json:"declared_nodes"`
 	Skipped       int `json:"skipped"`
 	Errors        int `json:"errors"`
@@ -178,6 +187,7 @@ func SummarizeBackup(data []byte) (*Backup, *BackupSummary, error) {
 		ConfigRowCount:    TableRowCount(b.Tables),
 		ConfigTables:      TableCounts(b.Tables),
 		HasConfigs:        len(b.Configs) > 0,
+		HasSecrets:        b.Secrets != "",
 	}
 	sum.DeclaredNodes = []NodeSummary{}
 	for _, n := range b.DeclaredNodes {
@@ -469,6 +479,21 @@ func Apply(db *sql.DB, b *Backup, sel ImportSelection) ImportResult {
 		w, sk := applyTables(db, b.Tables, overwrite, sel.AllowPrivileged)
 		res.Config += w
 		res.Skipped += sk
+	}
+
+	if sel.ImportSecrets {
+		if !sel.AllowPrivileged {
+			res.SecretsError = "restauration des secrets réservée au superadmin"
+		} else {
+			rows, files, err := restoreSecrets(db, b, sel.SecretDirs)
+			if err != nil {
+				res.SecretsError = err.Error()
+			}
+			res.SecretRows, res.SecretFiles = rows, files
+		}
+		if res.SecretsError != "" {
+			res.Errors++
+		}
 	}
 
 	return res

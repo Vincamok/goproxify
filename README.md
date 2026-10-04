@@ -305,7 +305,7 @@ See `.env.example` for the full list.
 | `GPX_CONTROL_PLANE_EDGE_ENDPOINT` | Agent | Edge URL as seen by Agent (`http://<edge>:8000`) |
 | `GPX_ENGINE_LOG_LEVEL` | All | Log level (`debug`/`info`/`warn`/`error`) |
 | `GPX_VULNSCAN_ALLOW_PRIVATE` | Admin | `true`/`1`/`yes`: allow CVE scanner on private backends (RFC1918/ULA). Default: denied (anti-SSRF). Localhost and cloud metadata remain blocked. |
-| `GPX_BACKUP_KEY` | Admin | (optional) Encrypts Admin snapshots (AES-GCM). Without key: JSON redacted of secrets, unencrypted. |
+| `GPX_BACKUP_KEY` | Admin | (optional) Encrypts Admin snapshots (AES-GCM). Without key: JSON redacted of secrets, unencrypted. With key: snapshots also embed an encrypted `secrets` section for a full restore (keep the key off the server). |
 | `GPX_NODE_TOKEN_KEY` | Admin | (optional) Encrypts node tokens at rest. Otherwise derived from JWT secret. |
 
 ---

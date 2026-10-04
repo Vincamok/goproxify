@@ -10,7 +10,7 @@ Ce document décrit le menu **Sauvegardes** de l'Administration : le fonctionnem
 | Déclenchement | Manuel (bouton, CLI) ou planifié (jusqu'à **5 planifications** : quotidienne, hebdomadaire, mensuelle, annuelle, ou cron libre) |
 | Stockage | Table `backup_snapshots` de la base Admin **et** copie `<storage.base_path>/backups/<id>.snap` sur disque (fallback si la base est illisible) |
 | Rétention | Par planification (`retention` = nombre max de snapshots, 0 = illimité). Les snapshots manuels ne sont jamais purgés automatiquement |
-| Chiffrement | AES-256-GCM si la variable `GPX_BACKUP_KEY` est définie (préfixe `GPXBK1:`). Sans clé, le snapshot est en clair (mais sans secrets, voir §4). Un snapshot chiffré ne peut être relu que si la même clé est définie |
+| Chiffrement | AES-256-GCM si la variable `GPX_BACKUP_KEY` est définie (préfixe `GPXBK1:`) : snapshot entier chiffré, relisible uniquement avec la même clé. Sans clé, le snapshot est en clair, **sans secrets et sans section `secrets`** (§4) |
 | Import d'un fichier | Menu Sauvegardes → *Restaurer* : analyse (`/api/v1/import/backup/preview`), sélection des entités, application (`/api/v1/import/backup/apply`) |
 | CLI | `goproxify backup create / list / restore` (voir [cli.md](cli.md)) |
 
@@ -56,17 +56,15 @@ Les paramètres de Haute Disponibilité (`NodeID`, `Peers`, `RaftPort`, voir [in
 
 | Donnée | Raison |
 |---|---|
-| Mots de passe utilisateurs (hash) | À ne pas diffuser ; les comptes restaurés reçoivent un mot de passe aléatoire → réinitialisation nécessaire |
-| MFA (`user_mfa`, codes de secours, appareils de confiance) | Secrets d'authentification ; à ré-enrôler |
+| Mots de passe (hash), MFA, clés RGPD/ECH, CA interne | Hors section standard ; **inclus dans la section `secrets` chiffrée** (§4 bis) quand `GPX_BACKUP_KEY` est définie |
 | Secrets en clair (voir §4) | Snapshot potentiellement téléchargeable |
-| Clés RGPD (`gdpr_keys`) | Clés de chiffrement : à sauvegarder séparément, hors snapshot |
 | Logs, journal d'audit, historique de bans, menaces, CVE, alertes émises, événements de nœuds | Données d'état volumineuses, reconstituables |
 | Historique d'exécution des règles automatiques, historique de déploiement de certificats | Historique |
-| Certificats TLS et clés privées | Non inclus dans le snapshot Admin (voir cache chiffré de la passerelle : `edge-cache.gpx`) |
+| Certificats TLS et clés privées de la passerelle | Non inclus (cache chiffré `edge-cache.gpx`) ; ceux de l'Admin (`certs/`, CA interne) sont dans la section `secrets` |
 | Autres snapshots (`backup_snapshots`) et historique des proxies (`proxy_history`) | Éviter la récursivité ; l'historique a son propre mécanisme de restauration |
 | Nœuds actifs / agents enregistrés (`nodes`, `pending_nodes`) | État dynamique ; les nœuds se ré-enregistrent |
 
-> Les fichiers de configuration (`admin`, `edge`, `agent:<nom>`) — dont la configuration HA de l'Admin (`NodeID`, `Peers`, `RaftPort`) — ne sont inclus que si la sauvegarde est générée avec `ExportConfigs` (section `configs`).
+> La section `configs` (`admin`, `edge`, `agent:<nom>`) n'est pas produite par les snapshots actuels (`ExportConfigs` n'est appelée nulle part) : la configuration HA (`NodeID`, `Peers`, `RaftPort`) reste à sauvegarder à part. Écart connu.
 
 ## 4. Gestion des secrets
 
@@ -77,7 +75,21 @@ Les paramètres de Haute Disponibilité (`NodeID`, `Peers`, `RaftPort`, voir [in
 - dans `settings`, `fail2ban_config`, `crowdsec_config` : la valeur de toute clé dont le nom correspond à ces motifs ;
 - `portal_users.invite_token_hash`.
 
-**Conséquence** : après une restauration sur une instance vierge, il faut ressaisir ces secrets (tokens de nœuds à ré-émettre, secrets OIDC, identifiants DNS, webhooks…). À la restauration, un secret vidé **n'écrase jamais** une valeur déjà présente.
+**Conséquence** (snapshot sans clé `GPX_BACKUP_KEY`, donc sans section `secrets`) : après une restauration sur une instance vierge, il faut ressaisir ces secrets (tokens de nœuds à ré-émettre, secrets OIDC, identifiants DNS, webhooks…). À la restauration, un secret vidé **n'écrase jamais** une valeur déjà présente.
+
+## 4 bis. Section `secrets` (restauration d'une infrastructure complète)
+
+Si `GPX_BACKUP_KEY` est définie, le snapshot contient en plus une section `secrets` chiffrée à part (AES-256-GCM, préfixe `GPXSEC1:`), même si le reste du fichier est lisible. Elle n'est **jamais** écrite sans clé (journal : avertissement).
+
+| Contenu | Détail |
+|---|---|
+| Tables sensibles, lignes brutes | `users` (hash des mots de passe), `tokens` (secrets des nœuds), `user_api_tokens`, `user_mfa`, `user_backup_codes`, `user_trusted_devices`, `gdpr_keys`, `ech_keys`, `internal_ca`, `internal_ca_certs`, `cert_pull_tokens`, `alert_channels` |
+| Tables de configuration, non rédigées | Les tables du §2.2 avec leurs secrets (secrets OIDC/SAML/LDAP, identifiants DNS, webhooks…) |
+| Fichiers | Copie du dossier `<storage.base_path>/state/` (`architecture.json`, magasins utilisateurs et configuration) et de `<storage.base_path>/certs/` (CA interne, certificats) ; fichiers de plus de 8 Mo ignorés |
+
+**Restauration** : case *Secrets* (décochée par défaut) de la fenêtre *Restaurer*, ou `import_secrets` dans la sélection. Réservée au **superadmin**. Les lignes sont remplacées (ordre : utilisateurs d'abord) et les fichiers réécrits ; redémarrer l'Admin ensuite pour qu'il relise `state/`. Une restauration de snapshot sans corps, ou par la CLI, l'active d'office si le snapshot la contient. Une mauvaise clé fait échouer cette partie seule (`secrets_error`).
+
+**Responsabilités** : un snapshot avec section `secrets` est sensible. La perte de `GPX_BACKUP_KEY` rend ces secrets irrécupérables : la conserver **hors du serveur**, séparément des snapshots. Les fichiers de la passerelle et de l'Agent ne sont pas inclus (voir [volumes.md](volumes.md)).
 
 ## 5. Restauration
 
@@ -96,9 +108,9 @@ Les paramètres de Haute Disponibilité (`NodeID`, `Peers`, `RaftPort`, voir [in
 
 ## 6. Recommandations
 
-1. Définir `GPX_BACKUP_KEY` et la conserver **hors** du serveur.
+1. Définir `GPX_BACKUP_KEY` (**obligatoire** pour une restauration complète) et la conserver **hors** du serveur, séparément des snapshots.
 2. Planifier au moins une sauvegarde quotidienne avec rétention ≥ 7.
 3. Copier régulièrement `<storage.base_path>/backups/` hors de l'hôte.
 4. Activer `ExportConfigs` (ou sauvegarder à part) si le cluster utilise la HA : sans cette section, `NodeID`/`Peers`/`RaftPort` ne sont pas dans le snapshot et une restauration sur une instance vierge perd la topologie du cluster.
-5. Sauvegarder à part : clés RGPD, certificats/clés privées, et fichiers de configuration (si `ExportConfigs` n'est pas utilisé).
+5. Sauvegarder à part : fichiers de la passerelle et de l'Agent, et fichiers de configuration (si `ExportConfigs` n'est pas utilisé).
 6. Tester une restauration sur une instance de test après tout changement majeur.

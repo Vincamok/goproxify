@@ -202,6 +202,10 @@ func (s *Server) Start(ctx context.Context) error {
 	backupSched := backup.New(s.db, s.log)
 	if s.cfg.Storage.BasePath != "" {
 		backupSched.SetSnapDir(filepath.Join(s.cfg.Storage.BasePath, "backups"))
+		backupSched.SetSecretDirs(map[string]string{
+			"state": filepath.Join(s.cfg.Storage.BasePath, "state"),
+			"certs": filepath.Join(s.cfg.Storage.BasePath, "certs"),
+		})
 	}
 	proxiesH := &api.ProxiesHandler{DB: s.db, Log: s.log, Pusher: manager, Versioner: backupSched}
 	backupH := &api.BackupHandler{DB: s.db, Log: s.log, Scheduler: backupSched, Pusher: manager}
@@ -630,6 +634,9 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 		mux.HandleFunc("GET /ha/status", s.haManager.HandleStatus)
 	}
+
+	// Fond de carte vectoriel auto-hébergé (PMTiles), avant la SPA qui répond à toute route.
+	mux.Handle("GET "+basemapRoute, basemapHandler(basemapPath(s.cfg.Storage.BasePath)))
 
 	// Interface web d'administration (SPA)
 	mux.Handle("/", ui.Handler())

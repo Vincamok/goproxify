@@ -2,6 +2,8 @@
 // Fond = contours de pays embarqués (vendor/world/countries.geojson) : aucune tuile
 // ni requête vers un tiers. Trois couches : pays (choroplèthe), villes (bulles) et
 // pulsations live. Leaflet est chargé à la demande, à la première carte affichée.
+// Si l'administrateur a posé un fond vectoriel PMTiles (voir docs/fonctionnalites.md), il est dessiné
+// sous les pays et la carte zoome jusqu'à la rue dans la zone qu'il couvre.
 
 const GEO_PALETTES = {
   requests:   [89, 128, 166],
@@ -36,6 +38,42 @@ function gpxGeoLoad() {
     return { L: window.L, countries };
   })().catch(e => { _gpxGeoLoading = null; throw e; });
   return _gpxGeoLoading;
+}
+
+let _gpxBasemapProbe = null;
+
+// Le fond vectoriel auto-hébergé : null s'il n'est pas installé, sinon sa zone et ses zooms (lus dans
+// l'en-tête PMTiles v3 : 127 octets, zoom mini/maxi en 100-101, boîte en degrés ×1e7 en 102-117).
+function gpxBasemapInfo() {
+  if (_gpxBasemapProbe) return _gpxBasemapProbe;
+  _gpxBasemapProbe = (async () => {
+    try {
+      const r = await fetch('/map/basemap.pmtiles', { headers: { Range: 'bytes=0-126' } });
+      if (!r.ok) return null;
+      const buf = await r.arrayBuffer();
+      if (buf.byteLength < 127) return null;
+      const v = new DataView(buf);
+      if (new TextDecoder().decode(buf.slice(0, 7)) !== 'PMTiles' || v.getUint8(7) !== 3) return null;
+      const deg = o => v.getInt32(o, true) / 1e7;
+      return { minZoom: v.getUint8(100), maxZoom: v.getUint8(101), bounds: [[deg(106), deg(102)], [deg(114), deg(110)]] };
+    } catch { return null; }
+  })();
+  return _gpxBasemapProbe;
+}
+
+let _gpxBasemapLib = null;
+
+function gpxBasemapLoad() {
+  if (!_gpxBasemapLib) {
+    _gpxBasemapLib = new Promise((ok, ko) => {
+      const s = document.createElement('script');
+      s.src = '/lib/basemap/protomaps-leaflet.js';
+      s.onload = () => ok(window.protomapsL);
+      s.onerror = () => ko(new Error('protomaps-leaflet'));
+      document.head.appendChild(s);
+    }).catch(e => { _gpxBasemapLib = null; throw e; });
+  }
+  return _gpxBasemapLib;
 }
 
 let _gpxRegionsLoading = null;
@@ -143,13 +181,43 @@ function mainlandCenter(L, geom) {
  */
 async function gpxGeoMap(el, opts = {}) {
   const { L, countries } = await gpxGeoLoad();
+  let basemap = null, protomapsL = null;
+  const info = await gpxBasemapInfo();
+  if (info) {
+    try { protomapsL = await gpxBasemapLoad(); basemap = info; } catch { basemap = null; }
+  }
   el.innerHTML = '';
   const map = L.map(el, {
-    minZoom: 1, maxZoom: 8, zoomSnap: 0.5, worldCopyJump: false,
+    // Avec le fond vectoriel, on zoome 2 niveaux au-delà de ses dernières tuiles (surzoom net).
+    minZoom: 1, maxZoom: basemap ? Math.min(19, basemap.maxZoom + 2) : 8, zoomSnap: 0.5, worldCopyJump: false,
     maxBounds: [[-85, -190], [85, 190]], maxBoundsViscosity: 0.8, attributionControl: false,
   });
-  L.control.attribution({ prefix: false }).addAttribution('Natural Earth · Leaflet').addTo(map);
+  L.control.attribution({ prefix: false }).addAttribution(basemap ? 'Natural Earth · © OpenStreetMap · Protomaps · Leaflet' : 'Natural Earth · Leaflet').addTo(map);
   map.fitBounds([[-58, -170], [80, 170]]);
+
+  // Opacité du remplissage des pays : pleine à l'échelle des pays, estompée dans la zone couverte par le
+  // fond vectoriel pour laisser voir les rues. Hors de cette zone le fond est vide : le remplissage reste.
+  let fade = 1;
+  const updateFade = () => {
+    if (!basemap) return;
+    const inside = L.latLngBounds(basemap.bounds).contains(map.getCenter());
+    const z = map.getZoom();
+    const next = inside ? Math.max(0.15, Math.min(1, 1 - (z - 5) * 0.3)) : 1;
+    if (next !== fade) { fade = next; restyle(); }
+  };
+  let basemapLayer = null;
+  const drawBasemap = () => {
+    if (!basemap) return;
+    if (basemapLayer) map.removeLayer(basemapLayer);
+    const light = document.documentElement.dataset.theme === 'light';
+    basemapLayer = protomapsL.leafletLayer({
+      url: '/map/basemap.pmtiles', flavor: light ? 'light' : 'dark', maxDataZoom: basemap.maxZoom, attribution: '',
+    }).addTo(map);
+    basemapLayer.bringToBack?.();
+  };
+  drawBasemap();
+  const themeObs = basemap ? new MutationObserver(drawBasemap) : null;
+  if (themeObs) themeObs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
   let state = { countries: [], points: [], mode: 'requests', style: 'zones', selected: '' };
   let byCC = {};
@@ -213,7 +281,7 @@ async function gpxGeoMap(el, opts = {}) {
       }
       const sel = cc === state.selected;
       layer.setStyle({
-        fillColor: fill, fillOpacity: 1,
+        fillColor: fill, fillOpacity: fade,
         color: sel ? 'var(--text)' : e ? 'var(--bg)' : 'var(--border)',
         weight: sel ? 1.8 : e ? 0.6 : 0.4,
       });
@@ -310,6 +378,7 @@ async function gpxGeoMap(el, opts = {}) {
 
   // Le regroupement des villes dépend du zoom/de la position à l'écran : redessiner à chaque déplacement.
   map.on('zoomend moveend', drawPoints);
+  map.on('zoomend moveend', updateFade);
 
   const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => map.invalidateSize()) : null;
   if (ro) ro.observe(el);
@@ -368,7 +437,7 @@ async function gpxGeoMap(el, opts = {}) {
     },
     clearLive() { liveLayer.clearLayers(); },
     resize() { map.invalidateSize(); },
-    destroy() { if (ro) ro.disconnect(); map.remove(); },
+    destroy() { if (ro) ro.disconnect(); if (themeObs) themeObs.disconnect(); map.remove(); },
   };
   return ctl;
 }

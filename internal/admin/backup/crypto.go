@@ -7,25 +7,18 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"io"
-	"os"
 	"strings"
+
+	"github.com/vincamok/goproxify/internal/admin/importer"
 )
 
 const backupEncPrefix = "GPXBK1:"
 
 // backupKey dérive une clé 32 octets depuis GPX_BACKUP_KEY (optionnel).
-func backupKey() ([]byte, bool) {
-	raw := strings.TrimSpace(os.Getenv("GPX_BACKUP_KEY"))
-	if raw == "" {
-		return nil, false
-	}
-	sum := sha256.Sum256([]byte(raw))
-	return sum[:], true
-}
+func backupKey() ([]byte, bool) { return importer.BackupKey() }
 
 func sealSnapshot(plain []byte) ([]byte, error) {
 	key, ok := backupKey()

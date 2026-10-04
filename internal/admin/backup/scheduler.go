@@ -5,6 +5,7 @@
 package backup
 
 import (
+	"errors"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -92,6 +93,8 @@ type Scheduler struct {
 	mu      sync.Mutex
 	wake    chan struct{}
 	snapDir string // répertoire de persistance des snapshots sur disque
+	// secretDirs : dossiers d'état copiés dans la section secrets (étiquette → chemin).
+	secretDirs map[string]string
 }
 
 // New crée un Scheduler.
@@ -106,6 +109,17 @@ func New(db *sql.DB, log *slog.Logger) *Scheduler {
 // SetSnapDir configure le répertoire de persistance des snapshots sur disque.
 func (s *Scheduler) SetSnapDir(dir string) {
 	s.snapDir = dir
+}
+
+// SetSecretDirs configure les dossiers d'état (architecture.json, CA interne…) inclus dans la
+// section secrets chiffrée des snapshots.
+func (s *Scheduler) SetSecretDirs(dirs map[string]string) {
+	s.secretDirs = dirs
+}
+
+// SecretDirs retourne ces dossiers, pour la restauration.
+func (s *Scheduler) SecretDirs() map[string]string {
+	return s.secretDirs
 }
 
 // Start lance la boucle de planification en arrière-plan.
@@ -497,6 +511,11 @@ func (s *Scheduler) TakeSnapshot(name string, scheduleID string, retention int) 
 		return fmt.Errorf("export: %w", err)
 	}
 	importer.RedactSecrets(bk)
+	if err := importer.AttachSecrets(s.db, bk, s.secretDirs); errors.Is(err, importer.ErrNoBackupKey) {
+		s.log.Warn("backup: GPX_BACKUP_KEY non définie — snapshot sans secrets, restauration incomplète (mots de passe, MFA, clés, CA interne)")
+	} else if err != nil {
+		return fmt.Errorf("secrets: %w", err)
+	}
 	data, err := json.Marshal(bk)
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)

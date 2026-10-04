@@ -4,6 +4,7 @@
 package api
 
 import (
+	"errors"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -89,6 +90,9 @@ func (h *ImportHandler) backupApply(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	body.Selection.AllowPrivileged = rbac.IsSuperAdmin(r.Context(), h.DB, adminauth.UserIDFromContext(r.Context()))
+	if h.Scheduler != nil {
+		body.Selection.SecretDirs = h.Scheduler.SecretDirs()
+	}
 	result := importer.Apply(h.DB, b, body.Selection)
 	if h.Scheduler != nil && body.Selection.ImportConfig {
 		h.Scheduler.Reload()
@@ -228,6 +232,13 @@ func (h *ImportHandler) exportBackup(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		importJSONErr(w, err, http.StatusInternalServerError)
 		return
+	}
+	importer.RedactSecrets(b)
+	if h.Scheduler != nil && rbac.IsSuperAdmin(r.Context(), h.DB, adminauth.UserIDFromContext(r.Context())) {
+		if err := importer.AttachSecrets(h.DB, b, h.Scheduler.SecretDirs()); err != nil && !errors.Is(err, importer.ErrNoBackupKey) {
+			importJSONErr(w, err, http.StatusInternalServerError)
+			return
+		}
 	}
 	data, err := json.MarshalIndent(b, "", "  ")
 	if err != nil {

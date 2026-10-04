@@ -225,6 +225,7 @@ func backupRestoreFile(client *adminClient, file string, yes bool) error {
 			"import_snippets":        true,
 			"import_alert_channels":  true,
 			"import_alert_rules":     true,
+			"import_secrets":         sum["has_secrets"] == true,
 			"on_conflict":            "overwrite",
 		},
 	}

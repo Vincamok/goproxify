@@ -144,6 +144,8 @@ goproxify backup restore -file <chemin> [-yes]
 goproxify backup restore -id <snapshot-id>  [-yes]
 ```
 
+Si le snapshot ou le fichier contient une section `secrets` (créée quand `GPX_BACKUP_KEY` est définie sur l'Admin), la restauration la rejoue aussi — mots de passe, MFA, clés, CA interne, fichiers d'état — à condition que l'Admin ait la même clé et que le token CLI soit celui d'un superadmin ; sinon `secrets_error` est renvoyé et le reste est restauré. Redémarrer l'Admin ensuite. Voir [sauvegardes.md](sauvegardes.md).
+
 Exemples :
 
 ```bash

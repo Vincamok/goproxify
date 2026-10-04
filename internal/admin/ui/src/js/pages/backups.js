@@ -518,7 +518,8 @@ window.restoreSnapshot = async function(id, name) {
     ['channels', t('import.entity.channels'), s.channel_count|| 0],
     ['rules',    t('import.entity.rules'),    s.rule_count   || 0],
     ['config',   t('import.entity.config'),   s.config_row_count || 0],
-  ].filter(([,, n]) => n > 0);
+    ['secrets',  t('import.entity.secrets'),  s.has_secrets ? '🔒' : 0],
+  ].filter(([,, n]) => n);
 
   const nodeOf = n => ({ key: bkNodeKey(n), role: n.role || '?', name: n.name, sub: [n.region, n.environment].filter(Boolean).join(' · ') });
   const proxyOf = p => ({ key: p.id, role: 'proxy', name: p.name || p.host || p.id, sub: p.host || '' });
@@ -542,7 +543,7 @@ window.restoreSnapshot = async function(id, name) {
     <div class="bk-chips">
       ${entities.map(([eid, label, n]) => `
         <label class="bk-chip">
-          <input type="checkbox" id="bk-rs-${eid}" checked onchange="bkRestoreRefresh()">
+          <input type="checkbox" id="bk-rs-${eid}" ${eid === 'secrets' ? '' : 'checked'} onchange="bkRestoreRefresh()">
           <span>${esc(label)}</span><b>${n}</b>
         </label>`).join('')}
     </div>
@@ -579,6 +580,7 @@ window.applySnapshotRestore = async function() {
     import_alert_channels: checked('channels'),
     import_alert_rules:    checked('rules'),
     import_config:         checked('config'),
+    import_secrets:        checked('secrets'),
     on_conflict:           document.getElementById('bk-rs-conflict')?.value || 'overwrite',
   };
   if (btn) btn.disabled = true;

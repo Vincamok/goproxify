@@ -1,0 +1,214 @@
+// Copyright 2024-2026 Vincamok / GoProxify contributors
+// SPDX-License-Identifier: Apache-2.0
+
+package importer
+
+import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+const secretsEncPrefix = "GPXSEC1:"
+
+// ErrNoBackupKey : la section secrets n'est jamais écrite ni lue sans GPX_BACKUP_KEY.
+var ErrNoBackupKey = errors.New("GPX_BACKUP_KEY non définie")
+
+// maxSecretFileBytes borne la taille d'un fichier copié dans la section secrets.
+const maxSecretFileBytes = 8 << 20
+
+// secretTables : tables d'état sensibles, restaurées avant les tables de configuration
+// (les utilisateurs d'abord : équipes, MFA et jetons y font référence).
+var secretTables = []string{
+	"users",
+	"tokens",
+	"user_api_tokens",
+	"user_api_token_scopes",
+	"user_mfa",
+	"user_backup_codes",
+	"user_trusted_devices",
+	"gdpr_keys",
+	"ech_keys",
+	"internal_ca",
+	"internal_ca_certs",
+	"cert_pull_tokens",
+	"alert_channels",
+}
+
+// SecretBundle regroupe tout ce que le snapshot standard vide ou exclut : lignes brutes
+// (secrets en clair) et fichiers d'état de l'Admin (architecture.json, CA interne…).
+type SecretBundle struct {
+	Tables map[string][]map[string]any `json:"tables"`
+	// Files : clé "<étiquette>/<chemin relatif>" → contenu.
+	Files map[string][]byte `json:"files,omitempty"`
+}
+
+// BackupKey dérive la clé de chiffrement (32 octets) depuis GPX_BACKUP_KEY.
+func BackupKey() ([]byte, bool) {
+	raw := strings.TrimSpace(os.Getenv("GPX_BACKUP_KEY"))
+	if raw == "" {
+		return nil, false
+	}
+	sum := sha256.Sum256([]byte(raw))
+	return sum[:], true
+}
+
+func secretsGCM() (cipher.AEAD, error) {
+	key, ok := BackupKey()
+	if !ok {
+		return nil, ErrNoBackupKey
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	return cipher.NewGCM(block)
+}
+
+func sealSecrets(plain []byte) (string, error) {
+	gcm, err := secretsGCM()
+	if err != nil {
+		return "", err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", err
+	}
+	return secretsEncPrefix + base64.StdEncoding.EncodeToString(gcm.Seal(nonce, nonce, plain, nil)), nil
+}
+
+func openSecrets(sealed string) ([]byte, error) {
+	if !strings.HasPrefix(sealed, secretsEncPrefix) {
+		return nil, errors.New("section secrets : format inconnu")
+	}
+	gcm, err := secretsGCM()
+	if err != nil {
+		return nil, err
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(sealed, secretsEncPrefix))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) < gcm.NonceSize() {
+		return nil, errors.New("section secrets : données tronquées")
+	}
+	plain, err := gcm.Open(nil, raw[:gcm.NonceSize()], raw[gcm.NonceSize():], nil)
+	if err != nil {
+		return nil, fmt.Errorf("section secrets : déchiffrement impossible (mauvaise GPX_BACKUP_KEY ?)")
+	}
+	return plain, nil
+}
+
+// AttachSecrets construit la section secrets et la joint à b, chiffrée. dirs : étiquette →
+// dossier à copier tel quel. Sans GPX_BACKUP_KEY, ne fait rien et renvoie ErrNoBackupKey.
+func AttachSecrets(db *sql.DB, b *Backup, dirs map[string]string) error {
+	if _, ok := BackupKey(); !ok {
+		return ErrNoBackupKey
+	}
+	sb := SecretBundle{Tables: exportRawTables(db, append(append([]string{}, secretTables...), backupTables...))}
+	sb.Files = readDirs(dirs)
+	plain, err := json.Marshal(sb)
+	if err != nil {
+		return err
+	}
+	b.Secrets, err = sealSecrets(plain)
+	return err
+}
+
+func readDirs(dirs map[string]string) map[string][]byte {
+	out := map[string][]byte{}
+	for label, root := range dirs {
+		if root == "" {
+			continue
+		}
+		filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error { //nolint:errcheck
+			if err != nil || d.IsDir() || strings.HasSuffix(p, ".tmp") {
+				return nil
+			}
+			if info, err := d.Info(); err != nil || info.Size() > maxSecretFileBytes {
+				return nil
+			}
+			data, err := os.ReadFile(p)
+			if err != nil {
+				return nil
+			}
+			rel, err := filepath.Rel(root, p)
+			if err != nil {
+				return nil
+			}
+			out[label+"/"+filepath.ToSlash(rel)] = data
+			return nil
+		})
+	}
+	return out
+}
+
+// SecretsSummary décrit le contenu de la section secrets sans rien écrire.
+type SecretsSummary struct {
+	Tables map[string]int `json:"tables"`
+	Files  int            `json:"files"`
+}
+
+// OpenSecretsSummary déchiffre la section secrets et en résume le contenu.
+func OpenSecretsSummary(b *Backup) (*SecretsSummary, error) {
+	sb, err := openBundle(b)
+	if err != nil {
+		return nil, err
+	}
+	return &SecretsSummary{Tables: TableCounts(sb.Tables), Files: len(sb.Files)}, nil
+}
+
+func openBundle(b *Backup) (*SecretBundle, error) {
+	if b.Secrets == "" {
+		return nil, errors.New("cette sauvegarde ne contient pas de section secrets")
+	}
+	plain, err := openSecrets(b.Secrets)
+	if err != nil {
+		return nil, err
+	}
+	var sb SecretBundle
+	if err := json.Unmarshal(plain, &sb); err != nil {
+		return nil, err
+	}
+	return &sb, nil
+}
+
+// restoreSecrets remplace les lignes sensibles (écrasement systématique : ce sont les
+// valeurs vidées par l'import standard) et réécrit les fichiers d'état.
+func restoreSecrets(db *sql.DB, b *Backup, dirs map[string]string) (rows, files int, err error) {
+	sb, err := openBundle(b)
+	if err != nil {
+		return 0, 0, err
+	}
+	order := append(append([]string{}, secretTables...), backupTables...)
+	rows, _ = applyTablesOrdered(db, sb.Tables, order, true, true)
+	for name, data := range sb.Files {
+		label, rel, ok := strings.Cut(name, "/")
+		root := dirs[label]
+		if !ok || root == "" {
+			continue
+		}
+		dst := filepath.Join(root, filepath.FromSlash(rel))
+		if r, rerr := filepath.Rel(root, dst); rerr != nil || strings.HasPrefix(r, "..") {
+			continue // chemin hors du dossier cible
+		}
+		if os.MkdirAll(filepath.Dir(dst), 0o700) != nil {
+			continue
+		}
+		if atomicWriteFile(dst, data) == nil {
+			files++
+		}
+	}
+	return rows, files, nil
+}
