@@ -22,11 +22,12 @@ func TestSecretsRoundTrip(t *testing.T) {
 	db.Exec(`INSERT INTO auth_providers (id, name, provider, config) VALUES ('p1','oidc','oidc','{"client_secret":"s3cr3t"}')`)
 
 	state := t.TempDir()
+	cfgDir := t.TempDir()
 	os.WriteFile(filepath.Join(state, "architecture.json"), []byte(`{"nodes":[]}`), 0o600)
 
 	bk := &Backup{Tables: exportTables(db)}
 	RedactSecrets(bk)
-	if err := AttachSecrets(db, bk, map[string]string{"state": state}); err != nil {
+	if _, err := AttachSecrets(db, bk, map[string]string{"state": state}, map[string][]byte{"admin-ha.json": []byte(`{"node_id":"a1"}`)}); err != nil {
 		t.Fatal(err)
 	}
 	raw, _ := json.Marshal(bk)
@@ -40,8 +41,8 @@ func TestSecretsRoundTrip(t *testing.T) {
 	db.Exec(`DELETE FROM auth_providers`)
 	os.Remove(filepath.Join(state, "architecture.json"))
 
-	res := Apply(db, bk, ImportSelection{ImportSecrets: true, AllowPrivileged: true, SecretDirs: map[string]string{"state": state}})
-	if res.SecretsError != "" || res.SecretFiles != 1 {
+	res := Apply(db, bk, ImportSelection{ImportSecrets: true, AllowPrivileged: true, SecretDirs: map[string]string{"state": state, "config": cfgDir}})
+	if res.SecretsError != "" || res.SecretFiles != 2 {
 		t.Fatalf("restauration: %+v", res)
 	}
 	var hash, cfg string
@@ -49,6 +50,9 @@ func TestSecretsRoundTrip(t *testing.T) {
 	db.QueryRow(`SELECT config FROM auth_providers WHERE id='p1'`).Scan(&cfg)
 	if hash != "HASH-U1" || !strings.Contains(cfg, "s3cr3t") {
 		t.Fatalf("secrets non restaurés: %q %q", hash, cfg)
+	}
+	if b, _ := os.ReadFile(filepath.Join(cfgDir, "admin-ha.json")); string(b) != `{"node_id":"a1"}` {
+		t.Fatalf("config HA non restaurée dans le dossier dédié : %q", b)
 	}
 	if b, _ := os.ReadFile(filepath.Join(state, "architecture.json")); string(b) != `{"nodes":[]}` {
 		t.Fatalf("fichier non restauré: %q", b)
@@ -63,12 +67,12 @@ func TestSecretsRequireKeyAndSuperadmin(t *testing.T) {
 	defer db.Close()
 	t.Setenv("GPX_BACKUP_KEY", "")
 	bk := &Backup{}
-	if err := AttachSecrets(db, bk, nil); !errors.Is(err, ErrNoBackupKey) || bk.Secrets != "" {
+	if _, err := AttachSecrets(db, bk, nil, nil); !errors.Is(err, ErrNoBackupKey) || bk.Secrets != "" {
 		t.Fatalf("section écrite sans clé: %v", err)
 	}
 
 	t.Setenv("GPX_BACKUP_KEY", "k1")
-	if err := AttachSecrets(db, bk, nil); err != nil {
+	if _, err := AttachSecrets(db, bk, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if res := Apply(db, bk, ImportSelection{ImportSecrets: true}); res.SecretsError == "" {
@@ -89,7 +93,7 @@ func TestSecretsRestoreRejectsPathTraversal(t *testing.T) {
 	root := t.TempDir()
 	state := filepath.Join(root, "state")
 	os.MkdirAll(state, 0o700)
-	if _, files, err := restoreSecrets(db, &Backup{Secrets: sealed}, map[string]string{"state": state}); err != nil || files != 0 {
+	if _, files, _, err := restoreSecrets(db, &Backup{Secrets: sealed}, map[string]string{"state": state}); err != nil || files != 0 {
 		t.Fatalf("files=%d err=%v", files, err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "evil.txt")); err == nil {

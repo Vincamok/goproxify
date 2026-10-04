@@ -203,6 +203,7 @@ func (s *Server) Start(ctx context.Context) error {
 	backupSched := backup.New(s.db, s.log)
 	if s.cfg.Storage.BasePath != "" {
 		backupSched.SetSnapDir(filepath.Join(s.cfg.Storage.BasePath, "backups"))
+		backupSched.SetExtraFiles(s.backupConfigFiles, filepath.Join(s.cfg.Storage.BasePath, "restored-config"))
 		backupSched.SetSecretDirs(map[string]string{
 			"state": filepath.Join(s.cfg.Storage.BasePath, "state"),
 			"certs": filepath.Join(s.cfg.Storage.BasePath, "certs"),

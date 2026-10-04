@@ -60,6 +60,8 @@ func (s *Server) startInternalAPI() error {
 	mux.HandleFunc("POST /internal/v1/bans", s.handlePushBans)
 	mux.HandleFunc("POST /internal/v1/bans/gossip", s.handleBansGossip)
 	mux.HandleFunc("GET /internal/v1/bans", s.handleListBans)
+	mux.HandleFunc("GET /internal/v1/backup/export", s.handleBackupExport)
+	mux.HandleFunc("POST /internal/v1/backup/restore", s.handleBackupRestore)
 	mux.HandleFunc("GET /internal/v1/bans/history", s.handleListBanHistory)
 	mux.HandleFunc("DELETE /internal/v1/bans/{id}", s.handleDeleteBan)
 	mux.HandleFunc("POST /internal/v1/threat-config", s.handlePushThreatConfig)

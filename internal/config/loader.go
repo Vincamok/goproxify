@@ -94,8 +94,15 @@ func bindIfMissing(v *viper.Viper, key string) {
 
 // LoadAdmin charge admin.json → AdminConfig.
 func LoadAdmin(path string) (*AdminConfig, error) {
+	adminConfigPath = path
 	return Load[AdminConfig](path)
 }
+
+// adminConfigPath : fichier admin.json chargé au démarrage (sauvegardé avec la section secrets).
+var adminConfigPath string
+
+// AdminConfigPath renvoie le chemin du fichier de config Admin chargé, ou "".
+func AdminConfigPath() string { return adminConfigPath }
 
 // LoadEdge charge edge.json → EdgeConfig.
 func LoadEdge(path string) (*EdgeConfig, error) {

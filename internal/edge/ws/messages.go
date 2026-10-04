@@ -56,12 +56,14 @@ const (
 	TypeAgentMetrics    = "metrics"
 	TypeAgentEvent      = "event"
 	TypeAgentLog        = "log"
+	TypeAgentState      = "agent_state" // fichiers d'état locaux de l'Agent, conservés par sa passerelle
 )
 
 // Types de messages passerelle → Agent
 const (
 	TypeApprove    = "approve"
 	TypeRotateHMAC = "rotate_hmac"
+	TypeRestoreState = "restore_state" // Passerelle → Agent revenu sans état local : lui rend ses fichiers
 	TypeCommand    = "command"
 	TypeRescan     = "rescan"
 	TypePing       = "ping"
@@ -220,6 +222,11 @@ type RevokeAgentPayload struct {
 type ApprovePayload struct {
 	AgentID   string `json:"agent_id"`
 	AgentHMAC string `json:"agent_hmac"`
+}
+
+// AgentStatePayload : fichiers d'état d'un Agent (nom → contenu).
+type AgentStatePayload struct {
+	Files map[string][]byte `json:"files"`
 }
 
 // RotateHMACPayload est envoyé par passerelle → Agent pour rotation horaire du secret HMAC.

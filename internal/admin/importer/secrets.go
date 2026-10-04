@@ -78,7 +78,9 @@ func secretsGCM() (cipher.AEAD, error) {
 	return cipher.NewGCM(block)
 }
 
-func sealSecrets(plain []byte) (string, error) {
+func sealSecrets(plain []byte) (string, error) { return sealWith(secretsEncPrefix, plain) }
+
+func sealWith(prefix string, plain []byte) (string, error) {
 	gcm, err := secretsGCM()
 	if err != nil {
 		return "", err
@@ -87,18 +89,20 @@ func sealSecrets(plain []byte) (string, error) {
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return "", err
 	}
-	return secretsEncPrefix + base64.StdEncoding.EncodeToString(gcm.Seal(nonce, nonce, plain, nil)), nil
+	return prefix + base64.StdEncoding.EncodeToString(gcm.Seal(nonce, nonce, plain, nil)), nil
 }
 
-func openSecrets(sealed string) ([]byte, error) {
-	if !strings.HasPrefix(sealed, secretsEncPrefix) {
-		return nil, errors.New("section secrets : format inconnu")
+func openSecrets(sealed string) ([]byte, error) { return openWith(secretsEncPrefix, sealed) }
+
+func openWith(prefix, sealed string) ([]byte, error) {
+	if !strings.HasPrefix(sealed, prefix) {
+		return nil, errors.New("section chiffrée : format inconnu")
 	}
 	gcm, err := secretsGCM()
 	if err != nil {
 		return nil, err
 	}
-	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(sealed, secretsEncPrefix))
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(sealed, prefix))
 	if err != nil {
 		return nil, err
 	}
@@ -114,18 +118,25 @@ func openSecrets(sealed string) ([]byte, error) {
 
 // AttachSecrets construit la section secrets et la joint à b, chiffrée. dirs : étiquette →
 // dossier à copier tel quel. Sans GPX_BACKUP_KEY, ne fait rien et renvoie ErrNoBackupKey.
-func AttachSecrets(db *sql.DB, b *Backup, dirs map[string]string) error {
+func AttachSecrets(db *sql.DB, b *Backup, dirs map[string]string, extra map[string][]byte) ([]string, error) {
 	if _, ok := BackupKey(); !ok {
-		return ErrNoBackupKey
+		return nil, ErrNoBackupKey
 	}
 	sb := SecretBundle{Tables: exportRawTables(db, append(append([]string{}, secretTables...), backupTables...))}
 	sb.Files = readDirs(dirs)
+	for name, data := range extra {
+		sb.Files["config/"+name] = data
+	}
+	gw, warnings := collectGateways(db)
+	for name, data := range gw {
+		sb.Files[name] = data
+	}
 	plain, err := json.Marshal(sb)
 	if err != nil {
-		return err
+		return warnings, err
 	}
 	b.Secrets, err = sealSecrets(plain)
-	return err
+	return warnings, err
 }
 
 func readDirs(dirs map[string]string) map[string][]byte {
@@ -188,15 +199,20 @@ func openBundle(b *Backup) (*SecretBundle, error) {
 
 // restoreSecrets remplace les lignes sensibles (écrasement systématique : ce sont les
 // valeurs vidées par l'import standard) et réécrit les fichiers d'état.
-func restoreSecrets(db *sql.DB, b *Backup, dirs map[string]string) (rows, files int, err error) {
+func restoreSecrets(db *sql.DB, b *Backup, dirs map[string]string) (rows, files int, gateways []GatewayRestore, err error) {
 	sb, err := openBundle(b)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, nil, err
 	}
+	gwFiles := map[string][]byte{}
 	order := append(append([]string{}, secretTables...), backupTables...)
 	rows, _ = applyTablesOrdered(db, sb.Tables, order, true, true)
 	for name, data := range sb.Files {
 		label, rel, ok := strings.Cut(name, "/")
+		if label == gatewayLabel {
+			gwFiles[name] = data
+			continue
+		}
 		root := dirs[label]
 		if !ok || root == "" {
 			continue
@@ -212,5 +228,8 @@ func restoreSecrets(db *sql.DB, b *Backup, dirs map[string]string) (rows, files 
 			files++
 		}
 	}
-	return rows, files, nil
+	if len(gwFiles) > 0 {
+		gateways = restoreGateways(db, gwFiles)
+	}
+	return rows, files, gateways, nil
 }

@@ -132,14 +132,15 @@ func (h *BackupHandler) listSnapshots(w http.ResponseWriter, _ *http.Request) {
 
 func (h *BackupHandler) createSnapshot(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name string `json:"name"`
+		Name    string `json:"name"`
+		History bool   `json:"history"`
 	}
 	json.NewDecoder(r.Body).Decode(&body) //nolint:errcheck
 	name := strings.TrimSpace(body.Name)
 	if name == "" {
 		name = "manuel-" + time.Now().Format("20060102-150405")
 	}
-	if err := h.Scheduler.TakeSnapshot(name, "", 0); err != nil {
+	if err := h.Scheduler.TakeSnapshotWith(name, "", 0, body.History); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -205,6 +206,7 @@ func (h *BackupHandler) restoreSnapshot(w http.ResponseWriter, r *http.Request, 
 	}
 	superadmin := rbac.IsSuperAdmin(r.Context(), h.DB, adminauth.UserIDFromContext(r.Context()))
 	sel.ImportSecrets = bk.Secrets != "" && superadmin
+	sel.ImportHistory = bk.History != "" && superadmin
 	var body struct {
 		Selection *importer.ImportSelection `json:"selection"`
 	}

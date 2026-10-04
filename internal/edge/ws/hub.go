@@ -205,6 +205,7 @@ func (h *Hub) ServeAgent(w http.ResponseWriter, r *http.Request) {
 		AgentID  string `json:"agent_id"`
 		Name     string `json:"name"`
 		Version  string `json:"version"`
+		Fresh    string `json:"fresh"` // "1" : l'Agent n'a plus d'état local (volume perdu)
 	}
 	if err := json.Unmarshal(regMsg.Payload, &regPayload); err != nil {
 		conn.Close(websocket.StatusPolicyViolation, "payload register invalide")
@@ -330,6 +331,9 @@ func (h *Hub) ServeAgent(w http.ResponseWriter, r *http.Request) {
 		}
 		go h.hmacRotateLoop(r.Context(), ac)
 		h.sendEdgeEndpoints(ac)
+		if regPayload.Fresh == "1" {
+			h.restoreAgentState(ac)
+		}
 	}
 
 	h.readAgentLoop(r.Context(), ac)
@@ -703,6 +707,15 @@ func (h *Hub) readAgentLoop(ctx context.Context, ac *agentConn) {
 		case msg := <-msgCh:
 			ac.lastSeen = time.Now()
 			if msg.Type == TypePong {
+				continue
+			}
+			if msg.Type == TypeAgentState {
+				ac.mu.Lock()
+				approved := ac.approved
+				ac.mu.Unlock()
+				if approved {
+					h.saveAgentState(ac.id, msg.Payload)
+				}
 				continue
 			}
 			if h.onAgentMsg != nil {

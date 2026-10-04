@@ -37,6 +37,7 @@ type Backup struct {
 	DeclaredNodes []map[string]any            `json:"declared_nodes,omitempty"`
 	Configs       map[string]json.RawMessage  `json:"configs,omitempty"` // "admin" | "edge" | "agent:<name>"
 	Tables        map[string][]map[string]any `json:"tables,omitempty"`  // tables de configuration (settings, règles auto, équipes, domaines…)
+	History       string                      `json:"history,omitempty"` // section chiffrée (GPXHIS1:) : journaux, audit, bans et alertes passés
 	Secrets       string                      `json:"secrets,omitempty"` // section chiffrée (GPXSEC1:) : secrets, MFA, clés et fichiers d'état
 }
 
@@ -106,6 +107,7 @@ type BackupSummary struct {
 	ConfigTables      map[string]int `json:"config_tables,omitempty"`
 	HasConfigs        bool           `json:"has_configs"`
 	HasSecrets        bool           `json:"has_secrets"`
+	HasHistory        bool           `json:"has_history"`
 }
 
 type NodeSummary struct {
@@ -135,6 +137,7 @@ type ImportSelection struct {
 	ImportRules    bool     `json:"import_alert_rules"`
 	OnConflict     string   `json:"on_conflict"`     // skip | overwrite
 	RestoreConfigs bool     `json:"restore_configs"` // écrire les fichiers config sur disque
+	ImportHistory  bool     `json:"import_history"` // restaurer l'historique (superadmin, GPX_BACKUP_KEY requise) : ajout, sans écrasement
 	SkipNodes      bool     `json:"skip_nodes"`      // ne pas recréer la topologie déclarée (restaurée par défaut)
 	ImportSecrets  bool     `json:"import_secrets"`  // restaurer la section secrets chiffrée (superadmin, GPX_BACKUP_KEY requise)
 	ImportConfig   bool     `json:"import_config"`   // restaurer les tables de configuration (règles auto, équipes, domaines, settings…)
@@ -156,7 +159,10 @@ type ImportResult struct {
 	Channels      int `json:"channels"`
 	Rules         int `json:"rules"`
 	Config        int `json:"config"`
+	HistoryRows   int `json:"history_rows"`
+	HistoryError  string `json:"history_error,omitempty"`
 	SecretRows    int `json:"secret_rows"`
+	Gateways      []GatewayRestore `json:"gateways,omitempty"`
 	SecretFiles   int `json:"secret_files"`
 	// SecretsError : motif lorsque la section secrets demandée n'a pas été restaurée.
 	SecretsError  string `json:"secrets_error,omitempty"`
@@ -189,6 +195,7 @@ func SummarizeBackup(data []byte) (*Backup, *BackupSummary, error) {
 		ConfigTables:      TableCounts(b.Tables),
 		HasConfigs:        len(b.Configs) > 0,
 		HasSecrets:        b.Secrets != "",
+		HasHistory:        b.History != "",
 	}
 	sum.DeclaredNodes = []NodeSummary{}
 	for _, n := range b.DeclaredNodes {
@@ -485,15 +492,33 @@ func Apply(db *sql.DB, b *Backup, sel ImportSelection) ImportResult {
 		res.Skipped += sk
 	}
 
+	if sel.ImportHistory {
+		if !sel.AllowPrivileged {
+			res.HistoryError = "restauration de l'historique réservée au superadmin"
+		} else if n, err := restoreHistory(db, b); err != nil {
+			res.HistoryError = err.Error()
+		} else {
+			res.HistoryRows = n
+		}
+		if res.HistoryError != "" {
+			res.Errors++
+		}
+	}
+
 	if sel.ImportSecrets {
 		if !sel.AllowPrivileged {
 			res.SecretsError = "restauration des secrets réservée au superadmin"
 		} else {
-			rows, files, err := restoreSecrets(db, b, sel.SecretDirs)
+			rows, files, gws, err := restoreSecrets(db, b, sel.SecretDirs)
 			if err != nil {
 				res.SecretsError = err.Error()
 			}
-			res.SecretRows, res.SecretFiles = rows, files
+			res.SecretRows, res.SecretFiles, res.Gateways = rows, files, gws
+			for _, g := range gws {
+				if g.Error != "" {
+					res.Errors++
+				}
+			}
 		}
 		if res.SecretsError != "" {
 			res.Errors++

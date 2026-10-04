@@ -58,13 +58,13 @@ Les paramètres de Haute Disponibilité (`NodeID`, `Peers`, `RaftPort`, voir [in
 |---|---|
 | Mots de passe (hash), MFA, clés RGPD/ECH, CA interne | Hors section standard ; **inclus dans la section `secrets` chiffrée** (§4 bis) quand `GPX_BACKUP_KEY` est définie |
 | Secrets en clair (voir §4) | Snapshot potentiellement téléchargeable |
-| Logs, journal d'audit, historique de bans, menaces, CVE, alertes émises, événements de nœuds | Données d'état volumineuses, reconstituables |
-| Historique d'exécution des règles automatiques, historique de déploiement de certificats | Historique |
-| Certificats TLS et clés privées de la passerelle | Non inclus (cache chiffré `edge-cache.gpx`) ; ceux de l'Admin (`certs/`, CA interne) sont dans la section `secrets` |
+| Logs, journal d'audit, historique de bans, menaces, CVE, alertes émises, événements de nœuds, exécutions de règles et de tâches, déploiements de certificats | Volumineux : **hors snapshot par défaut**, sauvegardés à la demande dans la section `history` chiffrée (§4 quater) |
+| Enregistrements de sessions du portail (`*.cast.gpx`), bases GeoIP, listes de menaces téléchargées, logs d'accès de la passerelle | Volumineux ou re-téléchargeables |
+| Certificats TLS et clés privées de la passerelle | Repris avec l'état de la passerelle (`edge-cache.gpx`, §4 quater) ; ceux de l'Admin (`certs/`, CA interne) sont dans la section `secrets` |
 | Autres snapshots (`backup_snapshots`) et historique des proxies (`proxy_history`) | Éviter la récursivité ; l'historique a son propre mécanisme de restauration |
 | Nœuds actifs / agents enregistrés (`nodes`, `pending_nodes`) | État dynamique ; les nœuds se ré-enregistrent |
 
-> La section `configs` (`admin`, `edge`, `agent:<nom>`) n'est pas produite par les snapshots actuels (`ExportConfigs` n'est appelée nulle part) : la configuration HA (`NodeID`, `Peers`, `RaftPort`) reste à sauvegarder à part. Écart connu.
+> La config HA effective (`NodeID`, `Peers`, `RaftPort`, lue du fichier **et** des variables `GPX_*`) et `admin.json` sont jointes à la section `secrets` (§4 bis) sous `config/admin-ha.json` et `config/admin.json`. À la restauration elles sont écrites dans `<storage.base_path>/restored-config/` : la configuration vivante n'est jamais écrasée, à vous de la reprendre. Les fichiers `edge.json` et `agent.json` ne sont pas lus par l'Admin ; `edge.json` est repris avec l'état de la passerelle (§4 quater).
 
 ## 4. Gestion des secrets
 
@@ -103,7 +103,19 @@ Si `GPX_BACKUP_KEY` est définie, le snapshot contient en plus une section `secr
 | Alertes | Déclencheur `backup_failed` : sauvegarde planifiée échouée, copie vers une destination échouée, planification manquée (contrôle toutes les 30 min, tolérance 1 h). À brancher sur un canal via une règle d'alerte |
 | État | Bandeau de la page Sauvegardes et `GET /backups/status` : clé absente, aucune destination, destination en échec, exécution manquée |
 
-**Limites** : pas de SFTP ; pas de restauration directe depuis une destination (télécharger la copie, puis *Restaurer › fichier*) ; les envois ne sont pas relancés automatiquement (le prochain snapshot réessaie) ; les fichiers de la passerelle et de l'Agent ne sont pas concernés.
+**Limites** : pas de SFTP ; pas de restauration directe depuis une destination (télécharger la copie, puis *Restaurer › fichier*) ; les envois ne sont pas relancés automatiquement (le prochain snapshot réessaie).
+
+## 4 quater. Passerelles, Agents et historique
+
+| Élément | Détail |
+|---|---|
+| État des passerelles | À chaque snapshot avec `GPX_BACKUP_KEY`, l'Admin interroge chaque passerelle enregistrée (`GET /internal/v1/backup/export`) et joint son état à la section `secrets` (clé `gateway/<nom>/<fichier>`) : `proxies/` et `proxies-revisions/`, les copies chiffrées `*.gpx` (portail, pairs, tunnels, Sentinel, réglages…), `edge.json`, `edge-node-id`, `edge-tokens.db`, `bans.db` (copie cohérente à chaud par `VACUUM INTO`), `waf-behavior.json`, `agent-hmacs.json`, `join-tokens-used.json` et les états d'Agents. Exclus : `geoip/`, `logs/`, `threat-lists/`, `*.mmdb`, enregistrements `*.cast.gpx` ; fichier > 64 Mo ignoré, 256 Mo au total |
+| Passerelle injoignable | Le snapshot est créé quand même, l'incident est journalisé et une alerte `backup_failed` est émise (« Sauvegarde incomplète ») : une sauvegarde de passerelle silencieusement absente est un faux sentiment de sécurité |
+| Restauration d'une passerelle | Avec les secrets, l'Admin renvoie à chaque passerelle de même **nom** son état (`POST /internal/v1/backup/restore`, chemins filtrés). Une passerelle absente de l'instance est signalée en erreur (l'enregistrer puis relancer). **Redémarrer la passerelle** ensuite : elle relit ses fichiers au démarrage. Les bases `.db` sont remplacées, leurs fichiers `-wal` / `-shm` supprimés |
+| Agents | Chaque Agent approuvé copie ses fichiers d'état (`agent.token`, `agent.hmac`, `agent-node-id`, `agent-edges.json`) chez sa passerelle (message `agent_state`, à chaque connexion et après rotation du HMAC) ; ils font partie de l'état de la passerelle sauvegardé. Un Agent qui revient **sans** token ni HMAC (volume perdu) reçoit ses fichiers de sa passerelle (`restore_state`) ; le HMAC courant de la passerelle fait foi. Redémarrer l'Agent pour l'identité. Sans `GPX_IDENTITY_NODE_NAME`, un Agent au volume perdu reçoit un nouvel identifiant : il est alors un nouvel Agent à approuver |
+| Historique | Option *Inclure l'historique* d'une planification, ou *Créer avec l'historique* : journaux, audit, bans passés, menaces, CVE, alertes émises, événements de nœuds, exécutions, historiques de déploiement et de proxy, audit et demandes du portail. Section `history` chiffrée à part (`GPXHIS1:`), **clé obligatoire** (jamais en clair : adresses IP, actions d'administrateurs). `logs` : 100 000 lignes les plus récentes ; autres tables : 500 000. Restauration : case *Historique* (décochée par défaut, superadmin), **ajout sans écrasement** (identifiant déjà présent = ignoré). Les adresses IP des logs sont chiffrées par les clés RGPD : restaurer aussi les secrets, sinon elles restent illisibles |
+
+**Taille** : un snapshot avec historique et états de passerelles peut peser plusieurs centaines de Mo (stocké dans `admin.db` et dans `backups/`). Réserver l'historique à une planification dédiée (hebdomadaire, par exemple) avec une rétention courte.
 
 ## 5. Restauration
 
@@ -126,6 +138,6 @@ Si `GPX_BACKUP_KEY` est définie, le snapshot contient en plus une section `secr
 1. Définir `GPX_BACKUP_KEY` (**obligatoire** pour une restauration complète) et la conserver **hors** du serveur, séparément des snapshots.
 2. Planifier au moins une sauvegarde quotidienne avec rétention ≥ 7.
 3. Configurer au moins une **destination hors serveur** (§4 ter) ; à défaut, copier régulièrement `<storage.base_path>/backups/` hors de l'hôte.
-4. Activer `ExportConfigs` (ou sauvegarder à part) si le cluster utilise la HA : sans cette section, `NodeID`/`Peers`/`RaftPort` ne sont pas dans le snapshot et une restauration sur une instance vierge perd la topologie du cluster.
-5. Sauvegarder à part : fichiers de la passerelle et de l'Agent, et fichiers de configuration (si `ExportConfigs` n'est pas utilisé).
+4. Pour un cluster HA, définir `GPX_BACKUP_KEY` : la config HA effective est dans la section `secrets`, restaurée dans `restored-config/` (§2.3).
+5. Pour les passerelles, vérifier dans la page Sauvegardes (ou les journaux de l'Admin) qu'aucune n'était injoignable lors du snapshot : une passerelle absente est signalée par une alerte `backup_failed`.
 6. Tester une restauration sur une instance de test après tout changement majeur.

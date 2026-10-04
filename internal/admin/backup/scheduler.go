@@ -48,6 +48,8 @@ type Schedule struct {
 	Month     int    `json:"month"`     // 1–12 (yearly)
 	Cron      string `json:"cron"`      // utilisé si frequency=custom
 	Retention int    `json:"retention"` // max snapshots pour CETTE planification (0 = illimité)
+	// IncludeHistory : joint journaux, audit et bans passés (section chiffrée, volumineuse ; clé requise).
+	IncludeHistory bool `json:"include_history"`
 }
 
 // ScheduleConfig regroupe jusqu'à MaxSchedules planifications.
@@ -99,6 +101,8 @@ type Scheduler struct {
 	// secretDirs : dossiers d'état copiés dans la section secrets (étiquette → chemin).
 	secretDirs    map[string]string
 	notifier      Notifier
+	extra         func() map[string][]byte
+	restoredConfigDir string
 	staleNotified map[string]bool
 }
 
@@ -122,9 +126,32 @@ func (s *Scheduler) SetSecretDirs(dirs map[string]string) {
 	s.secretDirs = dirs
 }
 
-// SecretDirs retourne ces dossiers, pour la restauration.
+// SetExtraFiles fournit des fichiers hors dossiers (config HA effective, admin.json) ajoutés à la
+// section secrets ; restoredConfigDir reçoit leur copie à la restauration, sans toucher la config vivante.
+func (s *Scheduler) SetExtraFiles(fn func() map[string][]byte, restoredConfigDir string) {
+	s.extra, s.restoredConfigDir = fn, restoredConfigDir
+}
+
+// ExtraFiles expose les fichiers hors dossiers pour l'export d'un fichier de sauvegarde.
+func (s *Scheduler) ExtraFiles() map[string][]byte { return s.extraFiles() }
+
+func (s *Scheduler) extraFiles() map[string][]byte {
+	if s.extra == nil {
+		return nil
+	}
+	return s.extra()
+}
+
+// SecretDirs retourne les dossiers de restauration de la section secrets.
 func (s *Scheduler) SecretDirs() map[string]string {
-	return s.secretDirs
+	out := make(map[string]string, len(s.secretDirs)+1)
+	for k, v := range s.secretDirs {
+		out[k] = v
+	}
+	if s.restoredConfigDir != "" {
+		out["config"] = s.restoredConfigDir
+	}
+	return out
 }
 
 // Start lance la boucle de planification en arrière-plan.
@@ -228,7 +255,7 @@ func (s *Scheduler) loop(ctx context.Context) {
 				continue
 			}
 			name := snapshotName(sch, fireAt)
-			if err := s.TakeSnapshot(name, sch.ID, sch.Retention); err != nil {
+			if err := s.TakeSnapshotWith(name, sch.ID, sch.Retention, sch.IncludeHistory); err != nil {
 				s.log.Error("backup: snapshot planifié échoué", "schedule", sch.Name, "err", err)
 				s.alert("critical", fmt.Sprintf("Sauvegarde « %s » échouée", sch.Name), map[string]any{"schedule": sch.Name, "message": err.Error()})
 			} else {
@@ -510,6 +537,11 @@ func (s *Scheduler) SaveSchedule(sched Schedule) error {
 
 // TakeSnapshot crée un snapshot immédiat. scheduleID/retention optionnels (manuel = "", 0).
 func (s *Scheduler) TakeSnapshot(name string, scheduleID string, retention int) error {
+	return s.TakeSnapshotWith(name, scheduleID, retention, false)
+}
+
+// TakeSnapshotWith crée un snapshot ; history joint la section historique (journaux, audit, bans…).
+func (s *Scheduler) TakeSnapshotWith(name string, scheduleID string, retention int, history bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -518,10 +550,22 @@ func (s *Scheduler) TakeSnapshot(name string, scheduleID string, retention int) 
 		return fmt.Errorf("export: %w", err)
 	}
 	importer.RedactSecrets(bk)
-	if err := importer.AttachSecrets(s.db, bk, s.secretDirs); errors.Is(err, importer.ErrNoBackupKey) {
+	warnings, err := importer.AttachSecrets(s.db, bk, s.secretDirs, s.extraFiles())
+	for _, w := range warnings {
+		s.log.Warn("backup: " + w)
+		s.alert("warning", "Sauvegarde incomplète : "+w, map[string]any{"message": w})
+	}
+	if errors.Is(err, importer.ErrNoBackupKey) {
 		s.log.Warn("backup: GPX_BACKUP_KEY non définie — snapshot sans secrets, restauration incomplète (mots de passe, MFA, clés, CA interne)")
 	} else if err != nil {
 		return fmt.Errorf("secrets: %w", err)
+	}
+	if history {
+		if err := importer.AttachHistory(s.db, bk); errors.Is(err, importer.ErrNoBackupKey) {
+			s.log.Warn("backup: historique demandé mais GPX_BACKUP_KEY non définie — historique non sauvegardé")
+		} else if err != nil {
+			return fmt.Errorf("historique: %w", err)
+		}
 	}
 	data, err := json.Marshal(bk)
 	if err != nil {

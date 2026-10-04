@@ -49,6 +49,7 @@ function bkNewSchedule(partial = {}) {
     month: partial.month ?? 1,
     cron: partial.cron || '',
     retention: partial.retention ?? 7,
+    include_history: !!partial.include_history,
   };
 }
 
@@ -96,7 +97,8 @@ pages.backups = async function() {
         <button class="btn btn-primary btn-sm" onclick="createSnapshot()">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:5px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
           ${t('backups.create_snapshot')}
-        </button>`;
+        </button>
+        <button class="btn btn-secondary btn-sm" onclick="createSnapshot(true)" title="${t('backups.schedule.history_hint')}">${t('backups.create_with_history')}</button>`;
     } else {
       actions.innerHTML = '';
     }
@@ -189,6 +191,7 @@ pages.backups = async function() {
         month: parseInt(card.querySelector('.bk-month')?.value, 10) || 1,
         cron: card.querySelector('.bk-cron')?.value.trim() || '',
         retention: parseInt(card.querySelector('.bk-retention')?.value, 10) || 0,
+        include_history: card.querySelector('.bk-history')?.checked || false,
       });
     });
   }
@@ -474,6 +477,10 @@ pages.backups = async function() {
           </div>
         </div>
 
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:12px 0 0;cursor:pointer" title="${t('backups.schedule.history_hint')}">
+          <input type="checkbox" class="bk-history" ${sch.include_history ? 'checked' : ''}> ${t('backups.schedule.history')}
+        </label>
+
         <p class="bk-hint" style="color:var(--text2);font-size:12px;margin:10px 0 0">
           ${esc(bkRetentionHint(sch))}
         </p>
@@ -541,6 +548,7 @@ pages.backups = async function() {
       month: Number(s.month) || 1,
       cron: s.cron || '',
       retention: Number(s.retention) || 0,
+      include_history: !!s.include_history,
     }));
     try {
       await api('PUT', '/backups/schedule', {schedules});
@@ -551,9 +559,9 @@ pages.backups = async function() {
   };
 };
 
-window.createSnapshot = async function() {
+window.createSnapshot = async function(history) {
   try {
-    await api('POST', '/backups/snapshots', {});
+    await api('POST', '/backups/snapshots', history === true ? { history: true } : {});
     toast(t('backups.snapshot_created'), 'success');
     pages.backups();
   } catch(e) { toast(e.message, 'error'); }
@@ -695,6 +703,7 @@ window.restoreSnapshot = async function(id, name) {
     ['rules',    t('import.entity.rules'),    s.rule_count   || 0],
     ['config',   t('import.entity.config'),   s.config_row_count || 0],
     ['secrets',  t('import.entity.secrets'),  s.has_secrets ? '🔒' : 0],
+    ['history',  t('import.entity.history'),  s.has_history ? '🔒' : 0],
   ].filter(([,, n]) => n);
 
   const nodeOf = n => ({ key: bkNodeKey(n), role: n.role || '?', name: n.name, sub: [n.region, n.environment].filter(Boolean).join(' · ') });
@@ -719,7 +728,7 @@ window.restoreSnapshot = async function(id, name) {
     <div class="bk-chips">
       ${entities.map(([eid, label, n]) => `
         <label class="bk-chip">
-          <input type="checkbox" id="bk-rs-${eid}" ${eid === 'secrets' ? '' : 'checked'} onchange="bkRestoreRefresh()">
+          <input type="checkbox" id="bk-rs-${eid}" ${eid === 'secrets' || eid === 'history' ? '' : 'checked'} onchange="bkRestoreRefresh()">
           <span>${esc(label)}</span><b>${n}</b>
         </label>`).join('')}
     </div>
@@ -759,6 +768,7 @@ window.applySnapshotRestore = async function() {
     import_alert_rules:    checked('rules'),
     import_config:         checked('config'),
     import_secrets:        checked('secrets'),
+    import_history:        checked('history'),
     on_conflict:           document.getElementById('bk-rs-conflict')?.value || 'overwrite',
   };
   if (btn) btn.disabled = true;
@@ -766,6 +776,13 @@ window.applySnapshotRestore = async function() {
     const res = await api('POST', `/backups/snapshots/${_bkRestoreId}/restore`, { selection });
     closeModal();
     toast(t('backups.restore_result', { proxies: res.proxies||0, users: res.users||0, config: res.config||0 }), 'success');
+    const gws = res.gateways || [];
+    gws.filter(g => g.error).forEach(g => toast(t('backups.gateway_failed', { name: g.gateway, msg: g.error }), 'error'));
+    const need = gws.filter(g => !g.error && g.restart_required).map(g => g.gateway);
+    if (need.length) toast(t('backups.gateway_restart', { names: need.join(', ') }), 'info');
+    if (res.secrets_error) toast(t('backups.secrets_failed', { msg: res.secrets_error }), 'error');
+    if (res.history_error) toast(t('backups.history_failed', { msg: res.history_error }), 'error');
+    if (res.secret_files > 0) toast(t('backups.restart_admin'), 'info');
     pages.backups();
   } catch(e) {
     toast(e.message, 'error');

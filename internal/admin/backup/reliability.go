@@ -213,6 +213,11 @@ func verifyData(stored []byte, wantSHA string) error {
 			return err
 		}
 	}
+	if b.History != "" {
+		if _, err := importer.OpenHistorySummary(b); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

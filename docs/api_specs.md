@@ -390,6 +390,12 @@ Résumé du contenu d'un snapshot, sans rien écrire — même format que `impor
 
 Restaure un snapshot. Corps optionnel `{"selection": {…}}` (mêmes champs que `import/backup/apply`) ; **sans corps**, restauration complète en mode `overwrite` (utilisateurs, tokens, PAT, snippets, canaux, règles, tables de configuration). En `overwrite`, un snapshot de sécurité `avant-restauration-<date>` est pris d'abord ; s'il échoue, la restauration est annulée (500). Réponse : `ImportResult` (dont `secret_rows`, `secret_files`, `secrets_error`). Avec `selection.import_secrets` (ou sans corps, si le snapshot a une section `secrets` et que l'appelant est superadmin), restaure la section secrets chiffrée de `GPX_BACKUP_KEY` : hash des mots de passe, MFA, clés, CA interne, fichiers `state/` et `certs/`. Superadmin seulement (`secrets_error` sinon).
 
+### `POST /api/v1/backups/snapshots`
+
+Crée un snapshot. Corps optionnel `{"name":"…","history":true}` : `history` joint la section historique chiffrée (journaux, audit, bans passés…, `GPX_BACKUP_KEY` requise). Les planifications portent `include_history`. Restauration (`selection`) : `import_secrets` (hash des mots de passe, MFA, clés, CA interne, fichiers `state/` et `certs/`, config HA dans `restored-config/`, **état des passerelles** renvoyé à chacune), `import_history` (ajout sans écrasement). Les deux sont réservés au superadmin ; la réponse ajoute `secret_rows`, `secret_files`, `gateways[]` (`gateway`, `written`, `rejected`, `error`, `restart_required`), `history_rows`, `secrets_error`, `history_error`.
+
+**Interne (Admin → passerelle)** : `GET /internal/v1/backup/export` renvoie `{files:{chemin: contenu}, skipped:[…]}` ; `POST /internal/v1/backup/restore` réécrit ces fichiers (chemins relatifs filtrés) et répond `{written, rejected, restart_required}`.
+
 ### `GET /api/v1/backups/status`
 
 État des sauvegardes : `key_set` (GPX_BACKUP_KEY définie), `last_snapshot_at`, `last_verified_at`, `stale[]` (planifications dont une exécution a été manquée), `destinations[]` (`last_ok_at`, `last_error`, `copies`).

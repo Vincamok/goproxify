@@ -235,7 +235,7 @@ func (h *ImportHandler) exportBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	importer.RedactSecrets(b)
 	if h.Scheduler != nil && rbac.IsSuperAdmin(r.Context(), h.DB, adminauth.UserIDFromContext(r.Context())) {
-		if err := importer.AttachSecrets(h.DB, b, h.Scheduler.SecretDirs()); err != nil && !errors.Is(err, importer.ErrNoBackupKey) {
+		if _, err := importer.AttachSecrets(h.DB, b, h.Scheduler.SecretDirs(), h.Scheduler.ExtraFiles()); err != nil && !errors.Is(err, importer.ErrNoBackupKey) {
 			importJSONErr(w, err, http.StatusInternalServerError)
 			return
 		}

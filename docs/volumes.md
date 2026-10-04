@@ -26,6 +26,7 @@ Chaque service persiste ses données dans `/etc/goproxify` via un volume Docker 
 | `proxies-revisions/` | Historique des révisions pipeline (`<id>--<rev>.yaml`) |
 | `edge-cache.gpx` | Cache interne de la passerelle (état runtime, reconnexion rapide) |
 | `edge-tokens.db` | Base SQLite des tokens d'authentification des nœuds (Admin → passerelle) |
+| `agent-states/` | Fichiers d'état des Agents approuvés, copiés par chaque Agent (rendus à un Agent au volume perdu) |
 | `edge-node-id` | Identité stable du nœud passerelle |
 | `geoip/GeoLite2-Country.mmdb` | Base GeoIP téléchargée automatiquement (si `GPX_GEOIP_AUTO_DOWNLOAD=true`) |
 | `geoip/GeoLite2-City.mmdb` | Base GeoIP ville de l'Admin (carte Prism), téléchargée automatiquement (si `GPX_GEOIP_AUTO_DOWNLOAD=true`) ; sans elle, repli sur ip-api.com |
@@ -38,6 +39,8 @@ Chaque service persiste ses données dans `/etc/goproxify` via un volume Docker 
 > **Note :** `proxies/` et `proxies-revisions/` sont la source de vérité de la passerelle. La passerelle reçoit sa configuration depuis l'Admin via WebSocket au démarrage — ces fichiers sont ensuite mis à jour à chaque changement de configuration.
 
 ---
+
+> **Sauvegarde :** l'Admin interroge chaque passerelle et joint son état (hors `geoip/`, `logs/`, `threat-lists/`) à la section `secrets` chiffrée de ses snapshots, avec `GPX_BACKUP_KEY` — voir [sauvegardes.md](sauvegardes.md) §4 quater. Le tar de volume ci-dessous reste valable.
 
 ## `goproxify_agent_data` → `/etc/goproxify` (Agent)
 

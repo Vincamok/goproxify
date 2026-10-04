@@ -330,11 +330,15 @@ func (c *Client) connect() error {
 	}
 
 	// Envoyer le message register
-	regMsg, _ := edgeWS.NewMessage(c.seq.Add(1), edgeWS.TypeAgentRegister, map[string]string{
+	reg := map[string]string{
 		"agent_id": c.agentID,
 		"name":     c.agentName,
 		"version":  c.version,
-	})
+	}
+	if stateIsFresh() {
+		reg["fresh"] = "1"
+	}
+	regMsg, _ := edgeWS.NewMessage(c.seq.Add(1), edgeWS.TypeAgentRegister, reg)
 	ctx10s, cancel := context.WithTimeout(c.ctx, 10*time.Second)
 	err = wsjson.Write(ctx10s, conn, regMsg)
 	cancel()
@@ -355,6 +359,7 @@ func (c *Client) connect() error {
 	if onConnect != nil {
 		go onConnect()
 	}
+	go c.pushState()
 
 	// Lecture des messages entrants (Passerelle → Agent)
 	for {
@@ -390,6 +395,7 @@ func (c *Client) handleIncoming(msg edgeWS.Message) {
 			c.hmacSecret = p.AgentHMAC
 			saveHMAC(p.AgentHMAC)
 			c.log.Debug("wsclient: HMAC rotatif adopté et persisté")
+			go c.pushState()
 		}
 	case edgeWS.TypeEdgeEndpoints:
 		var p edgeWS.EdgeEndpointsPayload
@@ -399,6 +405,14 @@ func (c *Client) handleIncoming(msg edgeWS.Message) {
 		if set != nil && json.Unmarshal(msg.Payload, &p) == nil {
 			set.Update(p.Endpoints)
 			c.log.Debug("wsclient: membres du groupe HA reçus", "count", len(p.Endpoints))
+		}
+	case edgeWS.TypeRestoreState:
+		var p edgeWS.AgentStatePayload
+		if json.Unmarshal(msg.Payload, &p) == nil {
+			if hm := applyRestoredState(p.Files); hm != "" {
+				c.hmacSecret = hm
+			}
+			c.log.Info("wsclient: état local restauré depuis la passerelle (redémarrer l'Agent pour appliquer l'identité)", "files", len(p.Files))
 		}
 	case edgeWS.TypePing:
 		c.sendJSON(edgeWS.TypePong, nil)
