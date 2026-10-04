@@ -48,7 +48,7 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - **Prism** : taux d’erreurs et IPs bannies par pays ; bouton accès rapide depuis la table des bans
 - **Prism** : refonte « centre de commande » (carte zoomable, anomalies détectées, onglets) — livré
 - **Observabilité** : Synthèse commune à l’Admin et aux passerelles, Prism recentré (onglets Chemins / IP / Sources / Pays), carte Leaflet avec vues par ville et par région et connexions en direct, carte « Attaques en direct » dans la Synthèse sécurité, anomalies calculées côté serveur (API, MCP `get_prism_anomalies` / `get_prism_geo`, CLI `goproxify prism`) — livré
-- **Vue Proxy** : nouveau menu racine (remplace « Explorer ») — sélection d'un proxy dans une liste puis poste de contrôle temps réel (carte, flux de requêtes en direct, KPI, anomalies) — livré
+- **Vue Proxy** : nouveau menu racine (remplace « Explorer ») — barre de recherche + période + Live, sélection cumulable de proxies (tuiles, KPI, carte, anomalies, courbe, chemins, IP) ; temps réel uniquement sur demande — livré
 - [x] **Sentinel — page en onglets et tiroir de réglages** : vue d'ensemble, détections, listes et exceptions ; simulation sur les logs récents avant d'enregistrer (`POST /security/threat-config/simulate`, `goproxify security threat simulate`)
 
 ### v0.2 — Architecture distribuée _(juillet – août 2026)_

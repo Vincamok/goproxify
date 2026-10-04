@@ -8,6 +8,7 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 ## [Unreleased]
 
 ### Ajouté
+- **Admin 0.101.0 — Vue Proxy refondue** : plus de liste ni de live au chargement. Une barre façon Logs (période 15m→90d, recherche, bouton **Live**, masquage du trafic interne) ajoute des proxies à la sélection au fil de la frappe (domaine, nom ou cible ; « Ajouter les N résultats », Entrée / Maj+Entrée) ; la sélection est **cumulable**. La page agrège les proxies choisis : une tuile par proxy (état, cible, req/s, p95, erreurs, courbe de débit, logs, Prism, purge du cache, maintenance, bans), KPI, carte par pays (mêmes modes et styles que Prism), anomalies, top pays, courbe, statuts HTTP, top chemins et top IP. Le flux temps réel (connexions, pulsations sur la carte, rafraîchissement ~20 s) ne démarre que par le bouton Live. API : `proxy` accepte plusieurs domaines séparés par des virgules sur `/prism/*` (kpis, timeline, status, paths, ips, geo, geo/points, anomalies, live-ips).
 
 - **Admin — Traçage IP : bandeau de filtres** : même présentation que les logs. Pastilles de passerelle, période en boutons (24h à tout, ou dates libres) ; les filtres relancent le parcours. API : `node` sur `GET /security/ip-trace` (appliqué aux requêtes, pas aux bans ni aux détections).
 
@@ -38,6 +39,10 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 - **Edge 0.23.1 — Portail Access : onglet « Terminal » dédié** : le terminal web n'est plus au bas de l'onglet Sessions mais dans son propre onglet, qui s'ouvre automatiquement au lancement d'une session Web.
 
 ### Corrigé
+
+- **Admin — Sécurité : « Ouvrir dans Prism » en bouton-icône** sur la carte Attaques en direct (le libellé reste en infobulle).
+
+- **Admin — Cartes : styles Zones / Villes / Régions en icônes** : les trois boutons (Prism, Sécurité, Vue Proxy) sont remplacés par des icônes (pays colorés, épingle, subdivisions) ; le nom reste en infobulle.
 
 - **Admin — Dashboard : onglet Carte aligné sur les autres cartes** : il utilise désormais la même carte que Prism et Sécurité (zoom, fond de carte vectoriel, couleurs du thème clair/sombre, légende) au lieu d'un dessin SVG à part.
 

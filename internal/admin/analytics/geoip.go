@@ -499,9 +499,9 @@ func GetLiveIPs(db *sql.DB, since time.Time, proxy, nodeName string, limit int) 
 	conds = append(conds, "l.ts >= ?")
 	args = append(args, sinceStr)
 	conds = append(conds, "l.status > 0")
-	if proxy != "" {
-		conds = append(conds, "l.domain = ?")
-		args = append(args, proxy)
+	if c, a := domainCond("l.domain", proxy); c != "" {
+		conds = append(conds, c)
+		args = append(args, a...)
 	}
 	if nodeName != "" {
 		conds = append(conds, "l.node_name = ?")

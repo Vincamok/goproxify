@@ -661,9 +661,9 @@ async function renderPrismPage() {
             <button type="button" class="btn btn-xs geo-mode-btn ${geoViewMode==='banned_ips'?'active':''}" data-prism="geo-mode" data-mode="banned_ips">${esc(t('pz.banned_ips'))}</button>
           </div>
           <div class="btn-group" role="group" aria-label="Style">
-            <button type="button" class="btn btn-xs geo-style-btn ${geoStyle==='zones'?'active':''}" data-prism="geo-style" data-style="zones">${esc(t('sy.atk_zones'))}</button>
-            <button type="button" class="btn btn-xs geo-style-btn ${geoStyle==='cities'?'active':''}" data-prism="geo-style" data-style="cities">${esc(t('sy.atk_cities'))}</button>
-            <button type="button" class="btn btn-xs geo-style-btn ${geoStyle==='regions'?'active':''}" data-prism="geo-style" data-style="regions">${esc(t('sy.atk_regions'))}</button>
+            <button type="button" class="btn btn-xs geo-style-btn ${geoStyle==='zones'?'active':''}" data-prism="geo-style" data-style="zones" title="${esc(t('sy.atk_zones'))}" aria-label="${esc(t('sy.atk_zones'))}">${gmStyleIcon('zones')}</button>
+            <button type="button" class="btn btn-xs geo-style-btn ${geoStyle==='cities'?'active':''}" data-prism="geo-style" data-style="cities" title="${esc(t('sy.atk_cities'))}" aria-label="${esc(t('sy.atk_cities'))}">${gmStyleIcon('cities')}</button>
+            <button type="button" class="btn btn-xs geo-style-btn ${geoStyle==='regions'?'active':''}" data-prism="geo-style" data-style="regions" title="${esc(t('sy.atk_regions'))}" aria-label="${esc(t('sy.atk_regions'))}">${gmStyleIcon('regions')}</button>
           </div>
         </div>
       </div>

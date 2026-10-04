@@ -98,6 +98,24 @@ type ProxyOption struct {
 	Name   string `json:"name"`
 }
 
+// domainCond construit la condition sur une colonne de domaine ; `proxy` peut lister
+// plusieurs domaines séparés par des virgules (sélection multiple de la Vue Proxy).
+func domainCond(col, proxy string) (string, []any) {
+	var args []any
+	for _, d := range strings.Split(proxy, ",") {
+		if d = strings.TrimSpace(d); d != "" {
+			args = append(args, d)
+		}
+	}
+	switch len(args) {
+	case 0:
+		return "", nil
+	case 1:
+		return col + " = ?", args
+	}
+	return col + " IN (?" + strings.Repeat(",?", len(args)-1) + ")", args
+}
+
 func where(p Params) (string, []any) {
 	var conds []string
 	var args []any
@@ -109,9 +127,9 @@ func where(p Params) (string, []any) {
 		conds = append(conds, "ts <= ?")
 		args = append(args, p.To.UTC().Format(time.RFC3339))
 	}
-	if p.Proxy != "" {
-		conds = append(conds, "domain = ?")
-		args = append(args, p.Proxy)
+	if c, a := domainCond("domain", p.Proxy); c != "" {
+		conds = append(conds, c)
+		args = append(args, a...)
 	}
 	if p.NodeName != "" {
 		conds = append(conds, "node_name = ?")

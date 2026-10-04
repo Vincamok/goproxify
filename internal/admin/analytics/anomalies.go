@@ -32,9 +32,9 @@ func GetBackendErrors(ctx context.Context, db *sql.DB, p Params) ([]BackendError
 		args = append(args, p.NodeName)
 	}
 	proxyFilter := ""
-	if p.Proxy != "" {
-		proxyFilter = " AND json_extract(p.config,'$.host') = ?"
-		args = append(args, p.Proxy)
+	if c, a := domainCond("json_extract(p.config,'$.host')", p.Proxy); c != "" {
+		proxyFilter = " AND " + c
+		args = append(args, a...)
 	}
 	rows, err := db.QueryContext(ctx,
 		`SELECT

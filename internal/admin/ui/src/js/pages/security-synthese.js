@@ -322,11 +322,11 @@ async function renderSecuritySynthese(ctx) {
             <button type="button" class="btn btn-xs sy-atk-mode${_syn.atkMode === 'banned_ips' ? ' active' : ''}" data-mode="banned_ips" onclick="synAtkMode('banned_ips')">${esc(t('sy.atk_mode_ban'))}</button>
           </span>
           <span class="btn-group" role="group" aria-label="Style">
-            <button type="button" class="btn btn-xs sy-atk-style${_syn.atkStyle === 'zones' ? ' active' : ''}" data-style="zones" onclick="synAtkStyle('zones')">${esc(t('sy.atk_zones'))}</button>
-            <button type="button" class="btn btn-xs sy-atk-style${_syn.atkStyle === 'cities' ? ' active' : ''}" data-style="cities" onclick="synAtkStyle('cities')">${esc(t('sy.atk_cities'))}</button>
-            <button type="button" class="btn btn-xs sy-atk-style${_syn.atkStyle === 'regions' ? ' active' : ''}" data-style="regions" onclick="synAtkStyle('regions')">${esc(t('sy.atk_regions'))}</button>
+            <button type="button" class="btn btn-xs sy-atk-style${_syn.atkStyle === 'zones' ? ' active' : ''}" data-style="zones" onclick="synAtkStyle('zones')" title="${esc(t('sy.atk_zones'))}" aria-label="${esc(t('sy.atk_zones'))}">${gmStyleIcon('zones')}</button>
+            <button type="button" class="btn btn-xs sy-atk-style${_syn.atkStyle === 'cities' ? ' active' : ''}" data-style="cities" onclick="synAtkStyle('cities')" title="${esc(t('sy.atk_cities'))}" aria-label="${esc(t('sy.atk_cities'))}">${gmStyleIcon('cities')}</button>
+            <button type="button" class="btn btn-xs sy-atk-style${_syn.atkStyle === 'regions' ? ' active' : ''}" data-style="regions" onclick="synAtkStyle('regions')" title="${esc(t('sy.atk_regions'))}" aria-label="${esc(t('sy.atk_regions'))}">${gmStyleIcon('regions')}</button>
           </span>
-          <a onclick="navigate('${isAdmin ? 'prism' : 'edge-prism'}')">${esc(t('sy.atk_prism'))}</a>
+          <button type="button" class="btn btn-ghost btn-sm btn-icon" onclick="navigate('${isAdmin ? 'prism' : 'edge-prism'}')" title="${esc(t('sy.atk_prism'))}" aria-label="${esc(t('sy.atk_prism'))}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></button>
         </span></div>
         <div class="prism-hero" style="margin-top:8px">
           <div class="prism-panel prism-mapcard" style="padding:0"><div id="sy-atk-map" class="prism-mapbox gm-box" style="height:340px"><div class="spinner" style="margin:120px auto"></div></div></div>

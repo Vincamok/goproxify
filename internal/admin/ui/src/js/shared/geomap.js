@@ -8,6 +8,14 @@
 // Leaflet pose fill/stroke en attributs SVG, où var(--x) n'est pas résolu : on lit la valeur calculée.
 const gmVar = n => getComputedStyle(document.querySelector('.gm-box') || document.documentElement).getPropertyValue(n).trim() || '#888';
 
+// Icônes des styles de carte : zones (pays colorés), villes (épingle), régions (subdivisions).
+const GM_STYLE_ICONS = {
+  zones: '<path d="M3 7l5-2 4 2 5-2 4 2v10l-5 2-4-2-5 2-4-2z" fill="currentColor" fill-opacity=".25"/><path d="M8 5v12M12 7v12M17 5v12"/>',
+  cities: '<path d="M12 21s-6-5.2-6-10a6 6 0 0 1 12 0c0 4.8-6 10-6 10z"/><circle cx="12" cy="11" r="2.2" fill="currentColor"/>',
+  regions: '<path d="M4 5h16v14H4z"/><path d="M4 12h16M10 5v14M15 12v7" /><path d="M4 5h6v7H4z" fill="currentColor" fill-opacity=".3" stroke="none"/>',
+};
+const gmStyleIcon = s => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:block">${GM_STYLE_ICONS[s] || ''}</svg>`;
+
 const GEO_PALETTES = {
   requests:   [89, 128, 166],
   error_rate: [220, 53, 69],
