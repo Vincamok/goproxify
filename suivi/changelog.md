@@ -39,6 +39,8 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ### Corrigé
 
+- **Admin — Sécurité : « Top pays attaquants » restait vide** : la liste appelait une fonction de mise en forme des nombres (`fmtNum`) qui n'existe pas dans cette page, ce qui interrompait aussi l'affichage de la carte Attaques en direct.
+
 - **Admin — Cartes : pays blancs au lieu de la couleur du thème** : le remplissage et les contours des pays utilisaient `var(--…)` dans des attributs SVG, où la variable n'est pas résolue (rendu blanc). Les couleurs sont lues sur le thème et rafraîchies au changement clair/sombre.
 
 - **Agent 0.6.2 — l'Agent réannonce tous ses conteneurs après une coupure de sa passerelle** : un conteneur démarré ou arrêté pendant que la passerelle était injoignable n'était jamais signalé (envoi HTTP unique, sans reprise) jusqu'au prochain rescan manuel. L'Agent republie désormais tout son état à chaque (re)connexion WebSocket à la passerelle, et dès qu'un envoi a échoué (vérification toutes les 20 s). Un conteneur disparu entre-temps est signalé arrêté, et sa route retirée. Les envois sont idempotents. Reste à faire : bascule vers un autre membre du groupe HA.

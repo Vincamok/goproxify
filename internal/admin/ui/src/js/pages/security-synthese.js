@@ -36,7 +36,7 @@ async function synAttackMap(mode) {
     const maxVal = Math.max(...top.map(atkVal), 1);
     topEl.innerHTML = top.length ? top.map(e => `<button type="button" class="prism-toprow${e.country_code === selCc ? ' sel' : ''}" data-cc="${esc(e.country_code)}" onclick="synAtkOpenCountry('${esc(e.country_code)}')">
       <span class="prism-toprow-flag">${flagOf(e.country_code)}</span>
-      <span class="prism-toprow-main"><span class="prism-toprow-head"><span>${esc(e.country_name)}</span><b>${fmtNum(atkVal(e))}</b></span>
+      <span class="prism-toprow-main"><span class="prism-toprow-head"><span>${esc(e.country_name)}</span><b>${gmNum(atkVal(e))}</b></span>
       <span class="prism-bar-bg"><span class="prism-bar-fill" style="width:${(atkVal(e) / maxVal * 100).toFixed(1)}%"></span></span></span>
     </button>`).join('') : `<p class="prism-muted">${esc(t('sy.atk_wait'))}</p>`;
   }
@@ -63,11 +63,11 @@ async function synAttackMap(mode) {
       </div>
       <div style="font-size:36px;line-height:1">${flagOf}</div>
       <div style="font-size:22px;font-weight:700;letter-spacing:-.02em;margin:4px 0">${esc(e.country_name)} <span style="font-size:12px;color:var(--text3);font-weight:500">${esc(cc)}</span></div>
-      <div style="color:var(--text3);margin-bottom:14px">${t('pz.req_share', { n: fmtNum(e.requests), pct: (e.pct || 0).toFixed(1) })}</div>
+      <div style="color:var(--text3);margin-bottom:14px">${t('pz.req_share', { n: gmNum(e.requests), pct: (e.pct || 0).toFixed(1) })}</div>
       <div class="prism-dstats">
-        ${stat(t('prism.errors'), fmtNum(e.errors || 0))}
+        ${stat(t('prism.errors'), gmNum(e.errors || 0))}
         ${stat(t('prism.error_rate'), (e.error_rate || 0).toFixed(1) + '%', (e.error_rate || 0) >= 10)}
-        ${stat(t('pz.banned_ips'), fmtNum(e.banned_ips || 0), (e.banned_ips || 0) > 0)}
+        ${stat(t('pz.banned_ips'), gmNum(e.banned_ips || 0), (e.banned_ips || 0) > 0)}
       </div>`;
     dr.classList.add('open');
   }
@@ -83,11 +83,11 @@ async function synAttackMap(mode) {
         <button type="button" class="btn btn-ghost btn-sm" onclick="synAtkCloseDrawer()">✕</button>
       </div>
       <div style="font-size:22px;font-weight:700;letter-spacing:-.02em;margin:4px 0">${esc(place)} <span style="font-size:12px;color:var(--text3);font-weight:500">${esc(pt.country_code)}</span></div>
-      <div style="color:var(--text3);margin-bottom:14px">${t('pz.req_ips', { n: fmtNum(pt.requests), ips: fmtNum(pt.ips) })}</div>
+      <div style="color:var(--text3);margin-bottom:14px">${t('pz.req_ips', { n: gmNum(pt.requests), ips: gmNum(pt.ips) })}</div>
       <div class="prism-dstats">
-        ${stat(t('prism.errors'), fmtNum(pt.errors || 0))}
+        ${stat(t('prism.errors'), gmNum(pt.errors || 0))}
         ${stat(t('prism.error_rate'), (pt.error_rate || 0).toFixed(1) + '%', (pt.error_rate || 0) >= 10)}
-        ${stat(t('pz.banned_ips'), fmtNum(pt.banned_ips || 0), (pt.banned_ips || 0) > 0)}
+        ${stat(t('pz.banned_ips'), gmNum(pt.banned_ips || 0), (pt.banned_ips || 0) > 0)}
       </div>
       <p class="prism-muted" style="margin-top:14px">${t('pz.approx_pos')}</p>`;
     dr.classList.add('open');

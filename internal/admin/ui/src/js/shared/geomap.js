@@ -212,7 +212,7 @@ async function gpxGeoMap(el, opts = {}) {
   const drawBasemap = () => {
     if (!basemap) return;
     if (basemapLayer) map.removeLayer(basemapLayer);
-    const light = document.documentElement.dataset.theme === 'light';
+    const light = document.documentElement.dataset.theme !== 'dark';
     basemapLayer = protomapsL.leafletLayer({
       url: '/map/basemap.pmtiles', flavor: light ? 'light' : 'dark', maxDataZoom: basemap.maxZoom, attribution: '',
     }).addTo(map);
