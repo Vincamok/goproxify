@@ -120,7 +120,7 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - [x] **Options de routage avancé dans l'interface graphique** : modale de proxy › Avancé › Routage avancé (split, URLs signées, maintenance, masquage, GraphQL, hedge, gRPC-Web, débit, statique, schéma de requête) et quotas dans Protection › Rate limiting — livré (Admin `0.115.0`)
 - [x] **Cache HTTP complet** : `stale-while-revalidate`, `stale-if-error`, coalescing des requêtes, purge par tag (`Cache-Tag`) ou URL — livré
 - [x] **PROXY protocol v1/v2** : en entrée (derrière un load balancer L4) et en sortie vers les backends HTTP et le passthrough TLS — livré
-- [ ] **PROXY protocol : sondes de santé** : envoyer l'en-tête aussi aux sondes des backends qui l'exigent
+- [x] **PROXY protocol : sondes de santé** : l'en-tête est aussi envoyé aux sondes des backends qui l'exigent (`LOCAL` / `UNKNOWN`, sans adresse de client) — livré (Edge `0.45.0`)
 - [x] **Challenge anti-bot par preuve de travail** : page de validation navigateur (type Anubis), Turnstile / hCaptcha en option — livré
 - [x] **Challenge anti-bot : réglages dans l'interface** : fournisseur, difficulté, durée, clés et chemins exemptés dans Protection › Protection bot — livré (Admin `0.115.0`)
 - [x] **Empreinte TLS JA3/JA4** : calculée au ClientHello et branchée sur Sentinel pour bannir sur signature — livré

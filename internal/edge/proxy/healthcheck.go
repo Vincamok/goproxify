@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/vincamok/goproxify/internal/edge/metrics"
+	"github.com/vincamok/goproxify/internal/edge/proxyproto"
 	"github.com/vincamok/goproxify/internal/edge/router"
 )
 
@@ -27,6 +29,8 @@ type probeConfig struct {
 	timeout            time.Duration
 	healthyThreshold   int
 	unhealthyThreshold int
+	// proxyProtocol : "v1" / "v2" si le backend exige l'en-tête PROXY ; la sonde l'écrit sans client (LOCAL / UNKNOWN).
+	proxyProtocol string
 }
 
 func defaultProbeConfig() probeConfig {
@@ -299,6 +303,9 @@ func (h *BackendHealth) Sync(routes []*router.Route) {
 			continue
 		}
 		pc := probeConfigFrom(r.HealthCheck)
+		if v := r.ProxyProtocol; v == "v1" || v == "v2" {
+			pc.proxyProtocol = v
+		}
 		for _, b := range r.Backends {
 			if b.URL != "" {
 				desired[probeKey{r.ID, b.URL}] = pc
@@ -417,16 +424,20 @@ const probeTimeout = 5 * time.Second
 func probeWithConfig(target string, cfg probeConfig) bool {
 	u, err := url.Parse(target)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
-		return tcpReachable(target, cfg.timeout)
+		return tcpReachable(target, cfg.timeout, cfg.proxyProtocol)
 	}
 	client := probeClient
-	if cfg.timeout != probeTimeout {
+	if cfg.timeout != probeTimeout || cfg.proxyProtocol != "" {
+		t := &http.Transport{
+			TLSClientConfig:   &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+			DisableKeepAlives: true,
+		}
+		if cfg.proxyProtocol != "" {
+			t.DialContext = proxyProtocolDial((&net.Dialer{Timeout: cfg.timeout}).DialContext, cfg.proxyProtocol)
+		}
 		client = &http.Client{
-			Timeout: cfg.timeout,
-			Transport: &http.Transport{
-				TLSClientConfig:   &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-				DisableKeepAlives: true,
-			},
+			Timeout:       cfg.timeout,
+			Transport:     t,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		}
 	}
@@ -436,7 +447,7 @@ func probeWithConfig(target string, cfg probeConfig) bool {
 	}
 	resp, err := client.Get(strings.TrimSuffix(target, "/") + path)
 	if err != nil {
-		return tcpReachable(hostPort(u), cfg.timeout)
+		return tcpReachable(hostPort(u), cfg.timeout, cfg.proxyProtocol)
 	}
 	io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10)) //nolint:errcheck
 	resp.Body.Close()
@@ -452,18 +463,23 @@ func probe(target string) bool {
 	return probeWithConfig(target, defaultProbeConfig())
 }
 
-func tcpReachable(addr string, timeout time.Duration) bool {
+func tcpReachable(addr string, timeout time.Duration, proxyProtocol string) bool {
 	if addr == "" {
 		return false
 	}
 	if timeout <= 0 {
 		timeout = probeTimeout
 	}
-	conn, err := net.DialTimeout("tcp", addr, timeout)
+	conn, err := (&net.Dialer{Timeout: timeout}).Dial("tcp", addr)
 	if err != nil {
 		return false
 	}
-	conn.Close()
+	defer conn.Close()
+	if proxyProtocol != "" {
+		conn.SetWriteDeadline(time.Now().Add(timeout)) //nolint:errcheck
+		_, err = conn.Write(proxyproto.Header(proxyProtocol, netip.AddrPort{}, proxyproto.AddrPort(conn.RemoteAddr())))
+		return err == nil
+	}
 	return true
 }
 
