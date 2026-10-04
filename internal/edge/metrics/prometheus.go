@@ -140,6 +140,8 @@ var Routing = struct {
 	ShadowCompared *prometheus.CounterVec
 	ShadowDiff     *prometheus.CounterVec
 	RequestSchema  *prometheus.CounterVec
+	OpenAPI        *prometheus.CounterVec
+	GRPCTranscode  *prometheus.CounterVec
 }{
 	CanaryTotal: promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "gpx",
@@ -174,6 +176,20 @@ var Routing = struct {
 		Subsystem: "routing",
 		Name:      "request_schema_total",
 		Help:      "Requêtes validées contre le JSON Schema de la route (result : valid, invalid, skipped).",
+	}, []string{"host", "result"}),
+
+	OpenAPI: promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "gpx",
+		Subsystem: "routing",
+		Name:      "openapi_total",
+		Help:      "Requêtes validées contre la spécification OpenAPI de la route (result : valid, invalid, unknown_path, unknown_method, skipped).",
+	}, []string{"host", "result"}),
+
+	GRPCTranscode: promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "gpx",
+		Subsystem: "routing",
+		Name:      "grpc_transcode_total",
+		Help:      "Requêtes REST transcodées vers gRPC (result : ok, grpc_error, bad_request, not_found, method_not_allowed, upstream_error).",
 	}, []string{"host", "result"}),
 }
 

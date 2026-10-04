@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vincamok/goproxify/internal/edge/grpctrans"
 	"github.com/vincamok/goproxify/internal/edge/middleware"
 	"github.com/vincamok/goproxify/internal/edge/proxyproto"
 	"github.com/vincamok/goproxify/internal/edge/proxystore"
@@ -102,6 +103,10 @@ func validateRouteBasics(route *router.Route) []string {
 		}
 	}
 	errs = append(errs, middleware.ValidateRequestSchemaConfig(route.RequestSchema)...)
+	errs = append(errs, middleware.ValidateOpenAPIConfig(route.OpenAPI)...)
+	if gerrs, _ := grpctrans.Validate(route.GRPCTranscode); len(gerrs) > 0 {
+		errs = append(errs, gerrs...)
+	}
 	if route.Canary != nil && route.Canary.Backend != "" {
 		if err := validateBackendURL(route.Type, route.Canary.Backend); err != nil {
 			errs = append(errs, fmt.Sprintf("canary.backend: %v", err))

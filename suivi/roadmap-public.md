@@ -54,7 +54,7 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - **Vue Proxy** : nouveau menu racine (remplace « Explorer ») — barre de recherche + période + Live, sélection cumulable de proxies (tuiles, KPI, carte, anomalies, courbe, chemins, IP) ; temps réel uniquement sur demande — livré
 - **Serveur de fichiers statiques avec fallback SPA** : option `static` d'un proxy (dossier de la passerelle, repli sur l'index, ETag, cache), sans backend — livré (Edge `0.41.0`)
 - **Diff des réponses shadow** : `shadow.compare` compare statut, en-têtes choisis et corps du miroir au primaire, avec métriques et échantillon de log — livré (Edge `0.42.0`)
-- **Validation JSON Schema des requêtes** : option `request_schema` (règles par méthode et chemin, mode `block` / `detect`, métriques) — livré (Edge `0.43.0`) ; validation OpenAPI complète (chemins, paramètres) restant à faire
+- **Validation JSON Schema des requêtes** : option `request_schema` (règles par méthode et chemin, mode `block` / `detect`, métriques) — livré (Edge `0.43.0`) ; validation OpenAPI complète (chemins, méthodes, paramètres, corps) — livré (Edge `0.46.0`, option `openapi`)
 - **Compression des réponses** : zstd, Brotli et gzip négociés par proxy selon `Accept-Encoding` (Avancé › Compression des réponses) — livré
 - [x] **Sentinel — page en onglets et tiroir de réglages** : vue d'ensemble, détections, listes et exceptions ; simulation sur les logs récents avant d'enregistrer (`POST /security/threat-config/simulate`, `goproxify security threat simulate`)
 
@@ -114,7 +114,7 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - [x] **Mode maintenance par route**, **masquage de champs JSON**, **limites de profondeur et d'introspection GraphQL** — livré
 - [x] **Requêtes « hedged »** : GET/HEAD doublé vers un second backend après un délai, première réponse gardée — livré
 - [x] **gRPC-Web** vers un backend gRPC — livré
-- [ ] **Transcodage REST↔gRPC** (demande des descripteurs protobuf)
+- [x] **Transcodage REST↔gRPC** : option `grpc_transcode` — un backend gRPC unaire exposé en REST/JSON d'après ses annotations `google.api.http`, à partir d'un `.proto` ou d'un `FileDescriptorSet` ; réglable dans l'interface — livré (Edge `0.47.0`, Admin `0.119.0`) ; méthodes à flux restant à faire
 - [x] **Quotas partagés entre les passerelles d'un groupe HA** (`rate_limit.shared`) — livré ; le débit instantané reste local
 - [x] **Options de routage avancé en CLI et MCP** (`proxy option`, `update_proxy` `options`) — livré
 - [x] **Options de routage avancé dans l'interface graphique** : modale de proxy › Avancé › Routage avancé (split, URLs signées, maintenance, masquage, GraphQL, hedge, gRPC-Web, débit, statique, schéma de requête) et quotas dans Protection › Rate limiting — livré (Admin `0.115.0`)

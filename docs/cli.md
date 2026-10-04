@@ -195,7 +195,7 @@ goproxify proxy metrics [-admin-url …] [-token …]
 goproxify proxy cache-purge <id> [-tag a,b] [-path /x,/y*] [-admin-url …] [-token …]
   Sans -tag ni -path, tout le cache du proxy est vidé
 goproxify proxy option <id> <option> <json|@fichier|off> [-admin-url …] [-token …]
-  Pose ou retire une option avancée du proxy : split, maintenance, signed_url, graphql, bandwidth, redact_json, hedge, static, request_schema, grpc_web, rate_limit, conditions (`off` la retire)
+  Pose ou retire une option avancée du proxy : split, maintenance, signed_url, graphql, bandwidth, redact_json, hedge, static, request_schema, openapi, grpc_transcode, grpc_web, rate_limit, conditions (`off` la retire)
 goproxify proxy delete  <id> [-y] [-admin-url …] [-token …]
   -y  Confirmation automatique
   -method  Validation ACME par la passerelle (sans fournisseur DNS) : `http-01` (port 80) ou `tls-alpn-01` (port 443), sans wildcard ; `renew` réutilise la méthode du domaine

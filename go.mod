@@ -22,7 +22,12 @@ require (
 	modernc.org/sqlite v1.54.0
 )
 
-require github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
+require (
+	github.com/bufbuild/protocompile v0.14.1
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
+)
+
+require golang.org/x/sync v0.22.0 // indirect
 
 require (
 	github.com/Azure/go-ntlmssp v0.1.1 // indirect
@@ -75,10 +80,10 @@ require (
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa
 	google.golang.org/grpc v1.81.1 // indirect
-	google.golang.org/protobuf v1.36.11 // indirect
+	google.golang.org/protobuf v1.36.11
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	modernc.org/libc v1.74.1 // indirect

@@ -41,6 +41,13 @@
     tag.className = 'tag ' + (first.checked ? 'tag-accent' : 'tag-neutral');
   };
 
+  window._proutGtSrc = function () {
+    const set = document.getElementById('prout-gt-src')?.value === 'set';
+    const p = document.getElementById('prout-gt-proto'), s = document.getElementById('prout-gt-set');
+    if (p) p.style.display = set ? 'none' : 'block';
+    if (s) s.style.display = set ? 'block' : 'none';
+  };
+
   window._proutAddVariant = function (v = {}) {
     const list = document.getElementById('prout-split-list');
     if (!list) return;
@@ -58,7 +65,8 @@
   window._proutRender = function (cfg) {
     cfg = cfg || {};
     const sp = cfg.split, mt = cfg.maintenance, su = cfg.signed_url, gq = cfg.graphql, hg = cfg.hedge;
-    const bw = cfg.bandwidth, rj = cfg.redact_json, st = cfg.static, rs = cfg.request_schema;
+    const bw = cfg.bandwidth, rj = cfg.redact_json, st = cfg.static, rs = cfg.request_schema, oa = cfg.openapi, gt = cfg.grpc_transcode;
+    const gtFiles = Object.keys(gt?.proto || {});
     const variants = sp?.variants?.length ? sp.variants : [{}, {}];
     setTimeout(() => { variants.forEach(v => window._proutAddVariant(v)); }, 0);
     return `
@@ -100,7 +108,24 @@
         toggle('prout-rs-on', 'Activer', rs?.enabled) +
         row(`<div class="field" style="flex:1;min-width:140px;margin:0;"><label class="field-label" style="font-size:11px">Mode</label><select id="prout-rs-mode" class="input"><option value="block" ${rs?.mode !== 'detect' ? 'selected' : ''}>Bloquer (422)</option><option value="detect" ${rs?.mode === 'detect' ? 'selected' : ''}>Détecter (métrique seule)</option></select></div>` +
           field('prout-rs-max', 'Corps max lu (octets)', rs?.max_body || '', 'type="number" min="0" placeholder="1048576"')) +
-        area('prout-rs-rules', 'Règles (JSON)', rs?.rules ? JSON.stringify(rs.rules, null, 2) : '[]', 'spellcheck="false"', 8))}`;
+        area('prout-rs-rules', 'Règles (JSON)', rs?.rules ? JSON.stringify(rs.rules, null, 2) : '[]', 'spellcheck="false"', 8))}
+      ${card('openapi', 'Validation OpenAPI', 'Valide chemins, méthodes, paramètres (chemin, requête, en-tête, cookie) et corps JSON contre une spécification OpenAPI 3.0 ou 3.1 (YAML ou JSON, références « #/… » uniquement). Commencer en mode « détecter » pour roder la spécification avant de refuser.', !!oa?.enabled,
+        toggle('prout-oa-on', 'Activer', oa?.enabled) +
+        row(`<div class="field" style="flex:1;min-width:140px;margin:0;"><label class="field-label" style="font-size:11px">Mode</label><select id="prout-oa-mode" class="input"><option value="block" ${oa?.mode !== 'detect' ? 'selected' : ''}>Bloquer (400 / 422)</option><option value="detect" ${oa?.mode === 'detect' ? 'selected' : ''}>Détecter (métrique seule)</option></select></div>` +
+          `<div class="field" style="flex:1;min-width:140px;margin:0;"><label class="field-label" style="font-size:11px">Chemins absents de la spécification</label><select id="prout-oa-unknown" class="input"><option value="allow" ${oa?.unknown_paths !== 'block' ? 'selected' : ''}>Laisser passer</option><option value="block" ${oa?.unknown_paths === 'block' ? 'selected' : ''}>Refuser (404 / 405)</option></select></div>`) +
+        `<div style="margin-top:10px;">${row(field('prout-oa-prefix', 'Préfixe retiré avant la recherche', oa?.strip_prefix, 'placeholder="/api/v1"') + field('prout-oa-max', 'Corps max lu (octets)', oa?.max_body || '', 'type="number" min="0" placeholder="1048576"', false))}</div>` +
+        `<div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:12px;"><span style="color:var(--text3);">Ne pas contrôler :</span>${[['path', 'chemin'], ['query', 'requête'], ['header', 'en-têtes'], ['cookie', 'cookies'], ['body', 'corps']].map(([k, l]) => `<label style="display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" class="prout-oa-skip" value="${k}" ${(oa?.skip || []).includes(k) ? 'checked' : ''}> ${l}</label>`).join('')}</div>` +
+        area('prout-oa-spec', 'Spécification (YAML ou JSON)', typeof oa?.spec === 'string' ? oa.spec : (oa?.spec ? JSON.stringify(oa.spec, null, 2) : ''), 'spellcheck="false" placeholder="openapi: 3.0.3&#10;paths:&#10;  /users/{id}: …"', 14))}
+      ${card('grpc_transcode', 'Transcodage REST ↔ gRPC', 'Expose un backend gRPC unaire en REST/JSON : chaque méthode est publiée selon ses annotations google.api.http (get, post, body, response_body…). Le backend doit parler gRPC en HTTP/2 (h2c accepté en http://). Les méthodes à flux sont ignorées.', !!gt?.enabled,
+        toggle('prout-gt-on', 'Activer', gt?.enabled) +
+        (gtFiles.length > 1
+          ? `<div style="font-size:12px;color:var(--text3);margin-bottom:8px;">${gtFiles.length} fichiers .proto enregistrés (${esc(gtFiles.join(', '))}) : à modifier par la CLI ou l'éditeur YAML — ils sont conservés tels quels.</div>`
+          : row(`<div class="field" style="flex:1;min-width:160px;margin:0;"><label class="field-label" style="font-size:11px">Source des descripteurs</label><select id="prout-gt-src" class="input" onchange="_proutGtSrc()"><option value="proto" ${!gt?.descriptor_set ? 'selected' : ''}>Fichier .proto</option><option value="set" ${gt?.descriptor_set ? 'selected' : ''}>FileDescriptorSet (base64)</option></select></div>`)) +
+        (gtFiles.length > 1 ? '' :
+          `<div id="prout-gt-proto" style="display:${gt?.descriptor_set ? 'none' : 'block'}">${area('prout-gt-protosrc', 'Contenu du .proto (imports google/api/*, google/protobuf/* fournis)', gtFiles.length ? gt.proto[gtFiles[0]] : '', 'spellcheck="false" placeholder="syntax = &quot;proto3&quot;;&#10;import &quot;google/api/annotations.proto&quot;;&#10;service Users { rpc Get(Req) returns (Res) { option (google.api.http) = { get: &quot;/v1/users/{id}&quot; }; } }"', 12)}</div>` +
+          `<div id="prout-gt-set" style="display:${gt?.descriptor_set ? 'block' : 'none'}">${area('prout-gt-setsrc', 'FileDescriptorSet en base64 (protoc --include_imports --descriptor_set_out=…)', gt?.descriptor_set || '', 'spellcheck="false"', 6)}</div>`) +
+        `<div style="margin-top:10px;">${field('prout-gt-services', 'Services publiés (noms complets, virgules ; vide = tous)', (gt?.services || []).join(', '), 'placeholder="demo.v1.Users"')}</div>` +
+        `<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:12px;">${[['prout-gt-auto', 'Publier aussi les méthodes sans annotation en POST /paquet.Service/Méthode', gt?.auto_mapping], ['prout-gt-defaults', 'Écrire les champs à valeur par défaut', gt?.emit_defaults], ['prout-gt-names', 'Garder les noms de champs du .proto', gt?.proto_field_names]].map(([id, l, c]) => `<label style="display:flex;align-items:center;gap:5px;cursor:pointer;"><input type="checkbox" id="${id}" ${c ? 'checked' : ''}> ${l}</label>`).join('')}</div>`)}`;
   };
 
   // Lit les cartes et renvoie les options à poser. Une option sans interrupteur actif est retirée,
@@ -109,7 +134,7 @@
     prev = prev || {};
     if (!document.getElementById('prout-split-on')) {
       const keep = {};
-      for (const k of ['split', 'maintenance', 'signed_url', 'graphql', 'hedge', 'grpc_web', 'bandwidth', 'redact_json', 'static', 'request_schema'])
+      for (const k of ['split', 'maintenance', 'signed_url', 'graphql', 'hedge', 'grpc_web', 'bandwidth', 'redact_json', 'static', 'request_schema', 'openapi', 'grpc_transcode'])
         if (prev[k] !== undefined) keep[k] = prev[k];
       return keep;
     }
@@ -186,6 +211,38 @@
         ...(num('prout-rs-max') > 0 ? { max_body: num('prout-rs-max') } : {}),
         rules,
       };
+    }
+    if (checked('prout-oa-on') || prev.openapi) {
+      const spec = document.getElementById('prout-oa-spec')?.value || '';
+      if (checked('prout-oa-on') && !spec.trim()) throw new Error('OpenAPI : la spécification est obligatoire');
+      const skip = [...document.querySelectorAll('.prout-oa-skip:checked')].map(c => c.value);
+      out.openapi = {
+        enabled: checked('prout-oa-on'),
+        spec,
+        mode: val('prout-oa-mode') === 'detect' ? 'detect' : 'block',
+        ...(val('prout-oa-unknown') === 'block' ? { unknown_paths: 'block' } : {}),
+        ...(val('prout-oa-prefix') ? { strip_prefix: val('prout-oa-prefix') } : {}),
+        ...(num('prout-oa-max') > 0 ? { max_body: num('prout-oa-max') } : {}),
+        ...(skip.length ? { skip } : {}),
+      };
+    }
+    if (checked('prout-gt-on') || prev.grpc_transcode) {
+      const prevGt = prev.grpc_transcode || {};
+      const multi = Object.keys(prevGt.proto || {}).length > 1;
+      const useSet = !multi && val('prout-gt-src') === 'set';
+      const protoText = document.getElementById('prout-gt-protosrc')?.value || '';
+      const setText = val('prout-gt-setsrc');
+      const gt = { enabled: checked('prout-gt-on') };
+      if (multi) gt.proto = prevGt.proto;
+      else if (useSet) gt.descriptor_set = setText;
+      else if (protoText.trim()) gt.proto = { [Object.keys(prevGt.proto || {})[0] || 'service.proto']: protoText };
+      if (checked('prout-gt-on') && !gt.proto && !gt.descriptor_set) throw new Error('Transcodage gRPC : renseigner un fichier .proto ou un FileDescriptorSet');
+      if (csv(val('prout-gt-services')).length) gt.services = csv(val('prout-gt-services'));
+      if (checked('prout-gt-auto')) gt.auto_mapping = true;
+      if (checked('prout-gt-defaults')) gt.emit_defaults = true;
+      if (checked('prout-gt-names')) gt.proto_field_names = true;
+      for (const k of ['max_request_body', 'max_response_body']) if (prevGt[k]) gt[k] = prevGt[k];
+      out.grpc_transcode = gt;
     }
     return out;
   };

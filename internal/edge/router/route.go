@@ -104,6 +104,10 @@ type Route struct {
 
 	// RequestSchema valide le corps JSON des requêtes contre un JSON Schema.
 	RequestSchema *RequestSchemaConfig `json:"request_schema,omitempty"`
+	// OpenAPI valide chemins, méthodes, paramètres et corps JSON des requêtes contre une spécification OpenAPI 3.0/3.1.
+	OpenAPI *OpenAPIConfig `json:"openapi,omitempty"`
+	// GRPCTranscode expose un backend gRPC en REST/JSON (annotations google.api.http), la passerelle traduisant requêtes et réponses.
+	GRPCTranscode *GRPCTranscodeConfig `json:"grpc_transcode,omitempty"`
 
 	// Hedge double une requête GET/HEAD lente vers un autre backend ; la première réponse gagne.
 	Hedge *HedgeConfig `json:"hedge,omitempty"`
@@ -751,4 +755,43 @@ type RequestSchemaRule struct {
 	Methods    []string        `json:"methods,omitempty"`
 	PathPrefix string          `json:"path_prefix,omitempty"`
 	Schema     json.RawMessage `json:"schema"`
+}
+
+// OpenAPIConfig valide les requêtes contre une spécification OpenAPI 3.0 ou 3.1 (chemins, méthodes,
+// paramètres de chemin, de requête, d'en-tête et de cookie, corps JSON). Spec est le document en YAML
+// ou JSON (une chaîne, ou directement l'objet JSON) ; seules les références locales ("#/…") sont
+// admises. Mode : "block" (défaut) refuse la requête non conforme, "detect" la laisse passer et ne
+// fait que compter. UnknownPaths : "allow" (défaut, la spécification peut être partielle) ou "block"
+// (404 pour un chemin absent de la spécification, 405 pour une méthode absente). StripPrefix est
+// retiré du chemin avant la recherche (préfixe de l'URL de serveur). Skip exclut des familles de
+// contrôles : "path", "query", "header", "cookie", "body".
+type OpenAPIConfig struct {
+	Enabled      bool            `json:"enabled"`
+	Spec         json.RawMessage `json:"spec"`
+	Mode         string          `json:"mode,omitempty"`
+	UnknownPaths string          `json:"unknown_paths,omitempty"`
+	StripPrefix  string          `json:"strip_prefix,omitempty"`
+	MaxBody      int64           `json:"max_body,omitempty"`
+	Skip         []string        `json:"skip,omitempty"`
+}
+
+// GRPCTranscodeConfig expose un backend gRPC (unaire) en REST/JSON. Les descripteurs viennent soit de
+// fichiers .proto (Proto : nom → contenu, imports google/api/* et google/protobuf/* fournis), soit
+// d'un FileDescriptorSet binaire encodé en base64 (DescriptorSet, produit par
+// `protoc --include_imports --descriptor_set_out`) ; l'un des deux, pas les deux. Chaque méthode est
+// publiée selon ses annotations google.api.http ; avec AutoMapping, une méthode sans annotation est
+// aussi publiée en `POST /<paquet.Service>/<Méthode>` (corps = message), comme le transcodeur d'Envoy.
+// Services restreint aux services nommés (nom complet). Les méthodes à flux sont ignorées.
+// EmitDefaults écrit les champs à valeur par défaut, ProtoFieldNames garde les noms de champs du
+// .proto (au lieu de lowerCamelCase). Le backend doit parler gRPC en HTTP/2 (h2c accepté en http://).
+type GRPCTranscodeConfig struct {
+	Enabled         bool              `json:"enabled"`
+	Proto           map[string]string `json:"proto,omitempty"`
+	DescriptorSet   string            `json:"descriptor_set,omitempty"`
+	Services        []string          `json:"services,omitempty"`
+	AutoMapping     bool              `json:"auto_mapping,omitempty"`
+	EmitDefaults    bool              `json:"emit_defaults,omitempty"`
+	ProtoFieldNames bool              `json:"proto_field_names,omitempty"`
+	MaxRequestBody  int64             `json:"max_request_body,omitempty"`
+	MaxResponseBody int64             `json:"max_response_body,omitempty"`
 }

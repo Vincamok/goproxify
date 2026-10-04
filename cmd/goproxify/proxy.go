@@ -293,7 +293,7 @@ func proxyHost(p map[string]any) string {
 // advancedProxyOptions : clés de configuration posées par `proxy option` (même liste que l'outil MCP update_proxy).
 var advancedProxyOptions = map[string]bool{
 	"split": true, "maintenance": true, "signed_url": true, "graphql": true, "bandwidth": true,
-	"redact_json": true, "hedge": true, "static": true, "request_schema": true, "grpc_web": true, "rate_limit": true, "conditions": true,
+	"redact_json": true, "hedge": true, "static": true, "request_schema": true, "openapi": true, "grpc_transcode": true, "grpc_web": true, "rate_limit": true, "conditions": true,
 }
 
 func sortedKeys(m map[string]bool) []string {

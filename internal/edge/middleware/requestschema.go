@@ -188,20 +188,20 @@ func validateAgainst(s *jsonschema.Schema, raw []byte) []schemaDetail {
 	if !errors.As(err, &ve) {
 		return []schemaDetail{{Message: "validation impossible"}}
 	}
+	// Les lignes « - at '<chemin>': <message> » de l'erreur portent les messages complets, y compris
+	// derrière un $ref (la sortie « basic » de la bibliothèque les réduit alors à « validation failed »).
 	var out []schemaDetail
-	var walk func(u jsonschema.OutputUnit)
-	walk = func(u jsonschema.OutputUnit) {
-		if len(out) >= requestSchemaMaxDetails {
-			return
+	for _, line := range strings.Split(ve.Error(), "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "- at '")
+		if !ok || len(out) >= requestSchemaMaxDetails {
+			continue
 		}
-		if u.Error != nil {
-			out = append(out, schemaDetail{Path: u.InstanceLocation, Message: u.Error.String()})
+		loc, msg, ok := strings.Cut(rest, "': ")
+		if !ok {
+			continue
 		}
-		for _, c := range u.Errors {
-			walk(c)
-		}
+		out = append(out, schemaDetail{Path: loc, Message: msg})
 	}
-	walk(*ve.BasicOutput())
 	if len(out) == 0 {
 		out = []schemaDetail{{Message: "corps non conforme"}}
 	}

@@ -693,6 +693,8 @@ window.openProxyModal = async function(id, initialTab, secTab, opts = {}) {
     ['gRPC-Web', '#60a5fa', 'avance', cfg.grpc_web],
     ['Statique', '#94a3b8', 'avance', cfg.static?.enabled],
     ['Schéma requête', '#fb923c', 'avance', cfg.request_schema?.enabled],
+    ['OpenAPI', '#fb923c', 'avance', cfg.openapi?.enabled],
+    ['gRPC REST', '#60a5fa', 'avance', cfg.grpc_transcode?.enabled],
   ].filter(f => on(f[3]));
   const tabCount = tab => active.filter(f => f[2] === tab).length;
   const score = typeof computeProxyHeaderScore === 'function' && id ? computeProxyHeaderScore(cfg) : null;

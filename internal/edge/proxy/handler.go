@@ -147,6 +147,14 @@ func buildTransport(route *router.Route) http.RoundTripper {
 		},
 	}
 	applyHTTPVersion(t, route.HttpVersion)
+	if route.GRPCTranscode != nil && route.GRPCTranscode.Enabled {
+		// gRPC exige HTTP/2 : TLS négocie h2 par ALPN, un backend http:// est joint en h2c (prior knowledge).
+		var p http.Protocols
+		p.SetHTTP2(true)
+		p.SetUnencryptedHTTP2(true)
+		t.Protocols = &p
+		t.ForceAttemptHTTP2 = true
+	}
 	if v := route.ProxyProtocol; v == "v1" || v == "v2" {
 		// L'en-tête PROXY décrit un seul client : une connexion n'est jamais réutilisée.
 		t.DisableKeepAlives = true

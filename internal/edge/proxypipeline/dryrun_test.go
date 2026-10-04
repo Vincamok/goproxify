@@ -127,3 +127,22 @@ func TestValidateRouteBasicsBotChallengeAndProxyProtocol(t *testing.T) {
 		t.Errorf("config valide refusée : %v", errs)
 	}
 }
+
+func TestValidateRouteBasicsRejectsInvalidOpenAPIAndGRPCTranscode(t *testing.T) {
+	base := func() *router.Route {
+		return &router.Route{ID: "r", Type: router.RouteHTTP, Host: "api.example.fr", Backends: []router.Backend{{URL: "http://10.0.0.1:8080", Weight: 1}}}
+	}
+	ok := base()
+	ok.OpenAPI = &router.OpenAPIConfig{Enabled: true, Spec: json.RawMessage(`"openapi: 3.0.0\npaths:\n  /a:\n    get: {}"`)}
+	ok.GRPCTranscode = &router.GRPCTranscodeConfig{Enabled: true, AutoMapping: true, Proto: map[string]string{"a.proto": `syntax = "proto3"; package p; message M {} service S { rpc F(M) returns (M); }`}}
+	if errs := validateRouteBasics(ok); len(errs) != 0 {
+		t.Fatalf("configuration valide refusée : %v", errs)
+	}
+
+	bad := base()
+	bad.OpenAPI = &router.OpenAPIConfig{Enabled: true, Spec: json.RawMessage(`"swagger: '2.0'"`)}
+	bad.GRPCTranscode = &router.GRPCTranscodeConfig{Enabled: true}
+	if errs := validateRouteBasics(bad); len(errs) < 2 {
+		t.Fatalf("openapi et grpc_transcode invalides doivent être signalés : %v", errs)
+	}
+}

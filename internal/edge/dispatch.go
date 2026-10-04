@@ -19,6 +19,7 @@ import (
 	"github.com/vincamok/goproxify/internal/edge/errorpages"
 	"github.com/vincamok/goproxify/internal/edge/geoip"
 	"github.com/vincamok/goproxify/internal/edge/metrics"
+	"github.com/vincamok/goproxify/internal/edge/grpctrans"
 	"github.com/vincamok/goproxify/internal/edge/middleware"
 	"github.com/vincamok/goproxify/internal/edge/proxy"
 	"github.com/vincamok/goproxify/internal/edge/static"
@@ -264,6 +265,7 @@ func (s *Server) handlerForRoute(route *router.Route, locPath string) http.Handl
 		h = static.Handler(route.Static)
 	} else {
 		h = proxy.NewHandler(route, s.health, s.metrics, s.peers, s.log.Logger())
+		h = grpctrans.Middleware(route.Host, route.GRPCTranscode)(h)
 	}
 	if route.Cache != nil && route.Cache.Enabled {
 		h = proxy.New(routeCacheDir(route)).MiddlewareWithConfig(route.Cache)(h)
@@ -272,6 +274,7 @@ func (s *Server) handlerForRoute(route *router.Route, locPath string) http.Handl
 	}
 	h = middleware.GraphQLLimits(route.GraphQL)(h)
 	h = middleware.RequestSchema(route.Host, route.RequestSchema)(h)
+	h = middleware.OpenAPI(route.Host, route.OpenAPI)(h)
 	h = middleware.SSOAuth(route.SSO)(h)
 	h = middleware.JWTValidation(route.JWT)(h)
 	h = middleware.MTLSValidation(route.MTLS)(h)
