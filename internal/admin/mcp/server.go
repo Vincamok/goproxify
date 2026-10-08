@@ -415,6 +415,11 @@ var tools = []map[string]any{
 		"inputSchema": schema(),
 	},
 	{
+		"name":        "list_plugins",
+		"description": "Plugins WebAssembly installés sur les passerelles (nom, version, hooks, politique d'erreur, limites, champs de configuration, empreinte). Lecture seule : l'installation d'un plugin passe par l'API ou la CLI.",
+		"inputSchema": schema(),
+	},
+	{
 		"name":        "list_security_engine_types",
 		"description": "Moteurs de sécurité globaux (Sentinel, Fail2Ban, CrowdSec) avec leurs champs de configuration (chemins imbriqués comme ip_score.ban_threshold, secrets).",
 		"inputSchema": schema(),
@@ -862,6 +867,8 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 		result, toolErr = h.toolGetAuditLog(r, limit)
 	case "get_security_overview":
 		result, toolErr = h.toolGetSecurityOverview(r)
+	case "list_plugins":
+		result, toolErr = h.toolListPlugins(r)
 	case "list_security_engine_types":
 		result = engines.Manifests()
 	case "list_security_bans":

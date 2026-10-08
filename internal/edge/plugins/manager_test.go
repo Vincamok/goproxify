@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	pt "github.com/vincamok/goproxify/internal/edge/plugins/plugintest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -37,7 +38,7 @@ func newManager(t *testing.T, dir string) *Manager {
 func TestManager_InstallEncryptedAndSurvivesRestart(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	wasm := staticPlugin(`{"action":"deny","status":403,"body":"stockage"}`)
+	wasm := pt.Static(`{"action":"deny","status":403,"body":"stockage"}`)
 	m := newManager(t, dir)
 	if err := m.Install(ctx, pkgFor("denier", wasm)); err != nil {
 		t.Fatal(err)
@@ -76,7 +77,7 @@ func TestManager_InstallEncryptedAndSurvivesRestart(t *testing.T) {
 func TestManager_InstallRefusals(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t, t.TempDir())
-	wasm := staticPlugin(`{}`)
+	wasm := pt.Static(`{}`)
 	noSHA := pkgFor("a", wasm)
 	noSHA.SHA256 = ""
 	wrongSHA := pkgFor("b", wasm)
@@ -96,10 +97,10 @@ func TestManager_ReplaceAndRemove(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	m := newManager(t, dir)
-	if err := m.Install(ctx, pkgFor("p", staticPlugin(`{"action":"deny","body":"v1"}`))); err != nil {
+	if err := m.Install(ctx, pkgFor("p", pt.Static(`{"action":"deny","body":"v1"}`))); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Install(ctx, pkgFor("p", staticPlugin(`{"action":"deny","body":"v2"}`))); err != nil {
+	if err := m.Install(ctx, pkgFor("p", pt.Static(`{"action":"deny","body":"v2"}`))); err != nil {
 		t.Fatal(err)
 	}
 	p, _ := m.Get("p")
@@ -125,7 +126,7 @@ func TestManager_LoadAllSkipsBadPackages(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	m := newManager(t, dir)
-	if err := m.Install(ctx, pkgFor("bon", staticPlugin(`{}`))); err != nil {
+	if err := m.Install(ctx, pkgFor("bon", pt.Static(`{}`))); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "plugins", "corrompu.gpx"), []byte("pas chiffré"), 0o600); err != nil {
@@ -144,19 +145,19 @@ func TestManager_LoadAllSkipsBadPackages(t *testing.T) {
 // La politique d'erreur : un plugin en échec refuse (503) par défaut, laisse passer sur demande.
 func TestEvaluate_OnErrorPolicy(t *testing.T) {
 	ctx := context.Background()
-	deny := load(t, manifest(), trapPlugin())
+	deny := load(t, manifest(), pt.Trap())
 	out, err := deny.Evaluate(ctx, HookRequest, RequestInput{})
 	if err == nil || out.Action != ActionDeny || out.Status != 503 {
 		t.Errorf("on_error deny : %+v %v", out, err)
 	}
 	m := manifest()
 	m.OnError = OnErrorAllow
-	allow := load(t, m, trapPlugin())
+	allow := load(t, m, pt.Trap())
 	out, err = allow.Evaluate(ctx, HookRequest, RequestInput{})
 	if err == nil || out.Action != ActionAllow {
 		t.Errorf("on_error allow : %+v %v", out, err)
 	}
-	ok := load(t, manifest(), staticPlugin(`{"action":"deny","status":402}`))
+	ok := load(t, manifest(), pt.Static(`{"action":"deny","status":402}`))
 	if out, err := ok.Evaluate(ctx, HookRequest, RequestInput{}); err != nil || out.Status != 402 {
 		t.Errorf("plugin sain : %+v %v", out, err)
 	}

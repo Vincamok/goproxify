@@ -749,6 +749,17 @@ Force un rafraîchissement complet (téléchargement inconditionnel, garde-fou d
 
 Lecture pour tout compte authentifié ; écritures réservées aux admins / superadmins et aux comptes `user` disposant d'au moins un grant `write`.
 
+### `/api/v1/plugins`
+
+Plugins WebAssembly (voir [plugins.md](plugins.md), ADR 0008). **Admin uniquement** ; scope PAT `audit:read` (lecture) / `security:write` (écriture), car installer un plugin fait exécuter du code sur les passerelles.
+
+- `GET` : liste (`name`, `version`, `api_version`, `hooks`, `on_error`, `limits`, `fields`, `sha256`, `size`, `updated_at`) ; le module n'est jamais renvoyé. `GET /:name` : un plugin.
+- `POST` : `{"manifest": {…}, "sha256": "<empreinte du module>", "wasm": "<base64>"}`. `201` ; `409` si le nom existe ; `400` si l'empreinte manque ou diffère, si le module dépasse 2 Mio, n'est pas du WebAssembly valide, importe autre chose que `gpx.log` ou n'exporte pas ce que le manifeste déclare, ou si le manifeste est invalide. Le module est compilé avant tout enregistrement.
+- `PUT /:name` : remplace (`200`, `404` si inconnu, `400` si le nom du manifeste diffère).
+- `DELETE /:name` : `204`. Les routes qui référencent un plugin supprimé refusent le trafic (`503`).
+
+Chaque changement est poussé à toutes les passerelles (liste complète). Une route référence un plugin par `plugins: [{"name", "config"}]` ; le dry-run refuse un plugin inconnu, en double, ou une configuration qui ne respecte pas son manifeste.
+
 ### `GET /api/v1/security/engine-types`
 
 Manifestes des moteurs de sécurité globaux : `sentinel` (champs dérivés de la configuration, chemins pointés), `fail2ban`, `crowdsec` (`api_key` secret). Admin uniquement. Outil MCP `list_security_engine_types`, CLI `goproxify security engines`.

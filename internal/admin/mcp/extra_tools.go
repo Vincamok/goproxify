@@ -947,3 +947,28 @@ func authProviderTypeNames() string {
 	}
 	return strings.Join(names, ", ")
 }
+
+// toolListPlugins liste les plugins WebAssembly installés, sans leur module.
+func (h *Handler) toolListPlugins(r *http.Request) (any, error) {
+	rows, err := h.DB.QueryContext(r.Context(), `SELECT manifest, sha256, length(wasm), updated_at FROM plugins ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var manifest, sha string
+		var size int
+		var updated time.Time
+		if err := rows.Scan(&manifest, &sha, &size, &updated); err != nil {
+			continue
+		}
+		var m map[string]any
+		if json.Unmarshal([]byte(manifest), &m) != nil {
+			continue
+		}
+		m["sha256"], m["size"], m["updated_at"] = sha, size, updated
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}

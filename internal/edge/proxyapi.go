@@ -4,6 +4,7 @@
 package edge
 
 import (
+	"github.com/vincamok/goproxify/internal/edge/plugins"
 	"encoding/json"
 	"io"
 	"errors"
@@ -249,6 +250,12 @@ func (s *Server) dryRunOptionsFromRuntime() proxypipeline.DryRunOptions {
 			if sn != nil {
 				opts.KnownSnippetIDs[sn.ID] = true
 			}
+		}
+	}
+	if s.pluginMgr != nil {
+		opts.KnownPlugins = map[string]plugins.Manifest{}
+		for _, info := range s.pluginMgr.List() {
+			opts.KnownPlugins[info.Manifest.Name] = info.Manifest
 		}
 	}
 	if s.providerStore != nil {

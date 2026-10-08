@@ -321,6 +321,15 @@ func migrate(db *sql.DB) error {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+		// Plugins WebAssembly installés (poussés vers les passerelles, ADR 0008)
+		`CREATE TABLE IF NOT EXISTS plugins (
+			name       TEXT PRIMARY KEY,
+			manifest   TEXT NOT NULL,
+			sha256     TEXT NOT NULL,
+			wasm       BLOB NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
 		// Profils de filtrage IP (listes publiques avec mise à jour automatique)
 		`CREATE TABLE IF NOT EXISTS ip_profiles (
 			id                TEXT PRIMARY KEY,

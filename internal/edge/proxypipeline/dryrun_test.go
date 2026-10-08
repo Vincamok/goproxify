@@ -5,6 +5,8 @@ package proxypipeline
 
 import (
 	"encoding/json"
+	"github.com/vincamok/goproxify/internal/edge/plugins"
+	"github.com/vincamok/goproxify/internal/modules"
 	"testing"
 
 	"github.com/vincamok/goproxify/internal/edge/proxystore"
@@ -194,5 +196,32 @@ func TestValidateRouteBasicsRejectsInvalidDetectors(t *testing.T) {
 		if errs := validateRouteBasics(r); len(errs) != 0 {
 			t.Errorf("%s refusée : %v", name, errs)
 		}
+	}
+}
+
+func TestValidatePlugins(t *testing.T) {
+	known := map[string]plugins.Manifest{
+		"geo": {Name: "geo", Fields: []modules.Field{{Key: "header", Label: "En-tête", Kind: modules.KindText, Required: true}}},
+		"raw": {Name: "raw"},
+	}
+	route := func(refs ...router.PluginRef) *router.Route { return &router.Route{Plugins: refs} }
+	opts := DryRunOptions{KnownPlugins: known}
+	if errs := validatePlugins(route(router.PluginRef{Name: "geo", Config: map[string]any{"header": "X-Geo"}}, router.PluginRef{Name: "raw"}), opts); len(errs) != 0 {
+		t.Errorf("config valide refusée : %v", errs)
+	}
+	for name, r := range map[string]*router.Route{
+		"inconnu":      route(router.PluginRef{Name: "autre"}),
+		"champ requis": route(router.PluginRef{Name: "geo"}),
+		"clé inconnue": route(router.PluginRef{Name: "geo", Config: map[string]any{"header": "X", "extra": 1}}),
+		"doublon":      route(router.PluginRef{Name: "raw"}, router.PluginRef{Name: "raw"}),
+		"nom vide":     route(router.PluginRef{}),
+	} {
+		if errs := validatePlugins(r, opts); len(errs) == 0 {
+			t.Errorf("%s : accepté", name)
+		}
+	}
+	// Sans liste de plugins connue (passerelle sans gestionnaire), seule la forme est contrôlée.
+	if errs := validatePlugins(route(router.PluginRef{Name: "quelconque"}), DryRunOptions{}); len(errs) != 0 {
+		t.Errorf("forme seule : %v", errs)
 	}
 }

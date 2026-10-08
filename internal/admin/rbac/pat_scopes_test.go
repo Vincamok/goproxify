@@ -219,6 +219,7 @@ func TestToolScopesMatchREST(t *testing.T) {
 		{"delete_alert_rule", http.MethodDelete, "/api/v1/alert-rules/r1"},
 		{"ack_alert_event", http.MethodPost, "/api/v1/alert-events/e1/ack"},
 		{"list_security_engine_types", http.MethodGet, "/api/v1/security/engine-types"},
+		{"list_plugins", http.MethodGet, "/api/v1/plugins"},
 		{"list_auth_providers", http.MethodGet, "/api/v1/auth-providers"},
 		{"list_auth_provider_types", http.MethodGet, "/api/v1/auth-provider-types"},
 		{"create_auth_provider", http.MethodPost, "/api/v1/auth-providers"},

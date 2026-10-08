@@ -626,6 +626,22 @@ goproxify settings mfa sms set -file sms.json
 
 ---
 
+### `goproxify plugin`
+
+Plugins WebAssembly des passerelles (admin uniquement ; voir [plugins.md](plugins.md)).
+
+```
+goproxify plugin list    [-admin-url …] [-token …]
+goproxify plugin get     <nom> [-admin-url …] [-token …]
+goproxify plugin install -manifest <plugin.json> -wasm <plugin.wasm> [-sha256 <empreinte>] [-admin-url …] [-token …]
+goproxify plugin update  -manifest <plugin.json> -wasm <plugin.wasm> [-sha256 <empreinte>] [-admin-url …] [-token …]
+goproxify plugin delete  <nom> [-y] [-admin-url …] [-token …]
+```
+
+`install` calcule l'empreinte SHA-256 du module et la transmet ; avec `-sha256`, elle doit égaler l'empreinte publiée par l'auteur, sinon rien n'est installé.
+
+---
+
 ### `goproxify auth-provider`
 
 Fournisseurs d'authentification externe (OIDC, SAML, LDAP…).

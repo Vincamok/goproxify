@@ -4,6 +4,7 @@
 package edgews
 
 import (
+	"github.com/vincamok/goproxify/internal/edge/plugins"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -906,6 +907,46 @@ func (m *Manager) PushSnippets(ctx context.Context) {
 	}
 }
 
+// loadPlugins lit les plugins installés (paquets complets) pour les passerelles.
+func (m *Manager) loadPlugins(ctx context.Context) ([]plugins.Package, error) {
+	rows, err := m.db.QueryContext(ctx, `SELECT manifest, sha256, wasm FROM plugins ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	list := []plugins.Package{}
+	for rows.Next() {
+		var pkg plugins.Package
+		var manifest string
+		if err := rows.Scan(&manifest, &pkg.SHA256, &pkg.Wasm); err != nil {
+			continue
+		}
+		if json.Unmarshal([]byte(manifest), &pkg.Manifest) != nil {
+			continue
+		}
+		list = append(list, pkg)
+	}
+	return list, rows.Err()
+}
+
+// PushPlugins envoie la liste complète des plugins à toutes les passerelles : celles-ci installent les
+// nouveaux ou modifiés et retirent les absents.
+func (m *Manager) PushPlugins(ctx context.Context) {
+	pkgs, err := m.loadPlugins(ctx)
+	if err != nil {
+		m.log.Error("edgews/manager: lecture plugins", "err", err)
+		return
+	}
+	for _, e := range m.allEntries() {
+		e := e
+		go func() {
+			if err := e.client.PushJSON(edgeWS.TypePushPlugins, pkgs); err != nil {
+				m.log.Warn("edgews/manager: push plugins", "edge", e.nodeName, "err", err)
+			}
+		}()
+	}
+}
+
 // PushErrorPages envoie la bibliothèque de pages d'erreur (scope admin) à toutes les passerelles.
 // Bloque jusqu'à la fin des envois (évite la course avec PushRoutes).
 func (m *Manager) PushErrorPages(ctx context.Context) {
@@ -1414,6 +1455,12 @@ func (m *Manager) pushAllToEntry(ctx context.Context, e *edgeEntry, s Settings) 
 		"providers":   providers,
 		"ip_profiles": profiles,
 		"bans":        banList,
+	}
+	// Plugins avant full_sync : les routes peuvent en référencer, et une route dont le plugin manque refuse le trafic.
+	if pkgs, err := m.loadPlugins(ctx); err != nil {
+		m.log.Warn("edgews/manager: lecture plugins", "edge", e.nodeName, "err", err)
+	} else if err := e.client.PushJSON(edgeWS.TypePushPlugins, pkgs); err != nil {
+		m.log.Warn("edgews/manager: push plugins", "edge", e.nodeName, "err", err)
 	}
 	// Pages d'erreur avant full_sync : les routes peuvent référencer des template_id.
 	if tpls, err := m.loadErrorPages(ctx); err != nil {

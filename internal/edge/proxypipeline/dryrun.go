@@ -4,6 +4,7 @@
 package proxypipeline
 
 import (
+	"github.com/vincamok/goproxify/internal/edge/plugins"
 	"fmt"
 	"net/url"
 	"strings"
@@ -24,6 +25,9 @@ type DryRunOptions struct {
 	KnownSnippetIDs map[string]bool
 	// KnownAuthProviders: if non-nil, auth_provider_id must be empty or listed.
 	KnownAuthProviders map[string]bool
+	// KnownPlugins: if non-nil, route.plugins must reference an installed plugin whose configuration
+	// satisfies its manifest.
+	KnownPlugins map[string]plugins.Manifest
 }
 
 // RunDryRun validates env against peers (other prod + validated revisions).
@@ -208,6 +212,7 @@ func validateRefs(route *router.Route, opts DryRunOptions) []string {
 			}
 		}
 	}
+	errs = append(errs, validatePlugins(route, opts)...)
 	if opts.KnownAuthProviders != nil && route.AuthProviderID != "" {
 		if !opts.KnownAuthProviders[route.AuthProviderID] {
 			errs = append(errs, fmt.Sprintf("auth_provider_id inconnu %q", route.AuthProviderID))

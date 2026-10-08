@@ -262,6 +262,7 @@ func (s *Server) Start(ctx context.Context) error {
 	snippetsH := &api.SnippetsHandler{DB: s.db, Log: s.log, OnChange: syncConfig}
 	errorPagesH := &api.ErrorPageTemplatesHandler{DB: s.db, Log: s.log, Pusher: manager, OnChange: syncConfig}
 	portalPagesH := &api.PortalPageTemplatesHandler{DB: s.db, Log: s.log, Pusher: manager}
+	pluginsH := &api.PluginsHandler{DB: s.db, Log: s.log, Pusher: manager}
 	authProvidersH := &api.AuthProvidersHandler{DB: s.db, Log: s.log, OnChange: syncConfig}
 	portalH := &api.PortalHandler{DB: s.db, Log: s.log, Pusher: manager}
 	if archStore != nil {
@@ -753,6 +754,8 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/api/v1/error-page-templates/", adminOnly(errorPagesH))
 	mux.Handle("/api/v1/portal-page-templates", adminOnly(portalPagesH))
 	mux.Handle("/api/v1/portal-page-templates/", adminOnly(portalPagesH))
+	mux.Handle("/api/v1/plugins", adminOnly(pluginsH))
+	mux.Handle("/api/v1/plugins/", adminOnly(pluginsH))
 	mux.Handle("/api/v1/auth-provider-types", adminOnly(api.AuthProviderTypesHandler{}))
 	mux.Handle("/api/v1/auth-providers", adminOnly(authProvidersH))
 	mux.Handle("/api/v1/auth-providers/", adminOnly(authProvidersH))

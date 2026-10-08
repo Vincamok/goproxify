@@ -299,6 +299,10 @@ func (s *Server) handlerForRoute(route *router.Route, locPath string) http.Handl
 		geoIPMW = middleware.GeoIP("", "", nil)
 	}
 	h = geoIPMW(h)
+	if len(route.Plugins) > 0 {
+		// Après le WAF, le bot, le débit et les filtres réseau (qui s'exécutent avant) ; avant l'authentification.
+		h = s.pluginMiddleware(route)(h)
+	}
 	h = middleware.IPFilter(route.IPFilter)(h)
 	h = middleware.RateLimit(route.RateLimit)(h)
 	h = middleware.LimitConn(route.ID, route.LimitConn)(h)

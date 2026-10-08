@@ -1,6 +1,6 @@
 # ADR 0008 — Moteur de plugins WASM
 
-**Statut :** accepté (phase 1 : moteur d'exécution) · **Date :** 2026-10
+**Statut :** accepté (phases 1 et 2 livrées) · **Date :** 2026-10
 
 ## Contexte
 

@@ -4,6 +4,7 @@
 package edge
 
 import (
+	"github.com/vincamok/goproxify/internal/edge/plugins"
 	"context"
 	"encoding/json"
 	"time"
@@ -111,6 +112,13 @@ func (s *Server) handleWSAdminMessage(connID string, msg edgews.Message) error {
 			return err
 		}
 		s.applyDelegationRoutes(routes)
+
+	case edgews.TypePushPlugins:
+		var pkgs []plugins.Package
+		if err := json.Unmarshal(msg.Payload, &pkgs); err != nil {
+			return err
+		}
+		s.applyPlugins(pkgs)
 
 	case edgews.TypePushSnippets:
 		var snippets []*router.Snippet

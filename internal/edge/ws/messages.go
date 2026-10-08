@@ -25,6 +25,7 @@ const (
 	TypeACMEChallenge       = "acme_challenge" // pose/retire une réponse http-01 / tls-alpn-01
 	TypePushECHKeys         = "push_ech_keys" // clés ECH (Encrypted Client Hello) à accepter ; liste vide = ECH désactivé
 	TypePushSnippets        = "push_snippets"
+	TypePushPlugins         = "push_plugins" // paquets de plugins WASM (liste complète : les absents sont retirés)
 	TypePushAuthProviders   = "push_auth_providers"
 	TypePushIPProfiles      = "push_ip_profiles"
 	TypePushBans            = "push_bans"

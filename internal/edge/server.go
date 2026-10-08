@@ -4,6 +4,7 @@
 package edge
 
 import (
+	"github.com/vincamok/goproxify/internal/edge/plugins"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -61,6 +62,7 @@ type Server struct {
 	certStore       *edgetls.CertStore
 	ech             *edgetls.ECHManager
 	snippetStore    *router.SnippetStore
+	pluginMgr       *plugins.Manager // plugins WASM installés (ADR 0008)
 	providerStore   *router.AuthProviderStore
 	profileStore    *router.IPProfileStore
 	banStore        *router.BanStore
@@ -407,6 +409,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.threatEngine.SetPriorBansFunc(s.priorThreatBans)
 	s.loadThreatConfigFromDisk()
 	s.threatEngine.Start(ctx)
+	s.loadPluginsFromDisk(ctx)
 
 	// Réglages poussés (protection des IP, journalisation…) avant le premier access log.
 	s.loadPushedSettingsFromDisk()

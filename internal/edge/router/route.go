@@ -40,6 +40,9 @@ type Route struct {
 	// TCP/UDP
 	ListenPort int `json:"listen_port,omitempty"` // port d'écoute local (L4)
 
+	// Plugins WebAssembly attachés à la route, exécutés dans l'ordre (ADR 0008).
+	Plugins []PluginRef `json:"plugins,omitempty"`
+
 	// Sécurité
 	RateLimit           *RateLimitConfig           `json:"rate_limit,omitempty"`
 	LimitConn           *LimitConnConfig           `json:"limit_conn,omitempty"`
@@ -254,6 +257,12 @@ type BackpressureConfig struct {
 	MaxInflight    int `json:"max_inflight"`               // 0 = désactivé
 	Queue          int `json:"queue,omitempty"`            // requêtes en attente max (0 = rejet immédiat)
 	QueueTimeoutMs int `json:"queue_timeout_ms,omitempty"` // attente max en file (défaut 1000)
+}
+
+// PluginRef attache un plugin WASM installé sur la passerelle à une route, avec sa configuration.
+type PluginRef struct {
+	Name   string         `json:"name"`
+	Config map[string]any `json:"config,omitempty"`
 }
 
 type IPFilterConfig struct {
