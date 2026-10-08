@@ -21,6 +21,7 @@ pages.settings = async function() {
       desc: t('settings.sec.proxy_desc'),
       items: [
         { page: 'admin-portal-catalog', icon: '<rect x="3" y="5" width="10" height="8" rx="1"/><path d="M6 8h6"/>', label: gpxPageLabel('admin-portal-catalog', 'Catalogue Access'), desc: t('settings.item.pcatalog_desc') || t('edgesettings.item.pcatalog_desc') || 'Destinations SSH / Docker et tags' },
+        { page: 'auth-providers', icon: '<circle cx="8" cy="5" r="3"/><path d="M3 14c0-3 2.2-5 5-5s5 2 5 5"/><path d="M11 8l1.5 1.5L15 7"/>', label: gpxPageLabel('auth-providers', 'Authentification (SSO)'), desc: t('settings.item.auth_providers_desc') === 'settings.item.auth_providers_desc' ? 'OIDC, GitHub, LDAP, SAML, Basic, forward-auth — partagés entre proxies' : t('settings.item.auth_providers_desc') },
         { page: 'snippets', icon: '<path d="M4 6l4-4 4 4M4 10l4 4 4-4"/>', label: gpxPageLabel('snippets'), desc: t('settings.item.snippets_desc') },
         { page: 'error-pages', icon: '<path d="M8 2v4M6 8h4M4 14h8M4 18h5"/><rect x="2" y="6" width="12" height="14" rx="2"/>', label: gpxPageLabel('error-pages'), desc: t('settings.item.error_pages_desc') },
         { page: 'portal-templates', icon: '<path d="M4 3h8v12H4zM6 6h4M6 9h4"/><path d="M10 15l2 2 4-4"/>', label: gpxPageLabel('portal-templates', 'Templates Access'), desc: t('settings.item.portal_tpl_desc') || 'HTML Access (login, catalogue…) poussé aux passerelles' },

@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/vincamok/goproxify/internal/admin/alerting/channels"
 	"github.com/vincamok/goproxify/internal/admin/scheduler"
+	"github.com/vincamok/goproxify/internal/edge/middleware"
 	"github.com/vincamok/goproxify/internal/edge/router"
 )
 
@@ -85,12 +86,17 @@ func extraTools() []map[string]any {
 			"inputSchema": schema(),
 		},
 		{
+			"name":        "list_auth_provider_types",
+			"description": "Types de fournisseur d'authentification avec leurs champs de configuration (chemins imbriqués comme oidc.client_secret, secrets, requis). À consulter avant create_auth_provider.",
+			"inputSchema": schema(),
+		},
+		{
 			"name":        "create_auth_provider",
 			"description": "Crée un fournisseur SSO. Retourne l'ID créé.",
 			"inputSchema": schema(
 				req("name", "string", "Nom unique du fournisseur"),
-				req("provider", "string", "Type : oidc, saml, ldap, github, google, azure"),
-				req("config", "object", "Configuration (client_id, client_secret, issuer, etc.)"),
+				req("provider", "string", "Type : "+authProviderTypeNames()),
+				req("config", "object", "Configuration du fournisseur, champs imbriqués par section (oidc.client_id, ldap.url, basic_users…) : voir list_auth_provider_types"),
 				opt("enabled", "boolean", "Activer immédiatement (défaut: true)"),
 			),
 		},
@@ -381,6 +387,14 @@ func (h *Handler) toolCreateAuthProvider(r *http.Request, args map[string]any) (
 	if name == "" || provider == "" || cfg == nil {
 		return nil, fmt.Errorf("name, provider et config sont requis")
 	}
+	man, known := middleware.SSOProviderManifest(provider)
+	if !known {
+		return nil, fmt.Errorf("fournisseur inconnu : %q (types : %s)", provider, authProviderTypeNames())
+	}
+	cfgMap, _ := cfg.(map[string]any)
+	if err := man.Validate(cfgMap); err != nil {
+		return nil, fmt.Errorf("config invalide : %w", err)
+	}
 	cfgJSON, err := json.Marshal(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("config invalide : %w", err)
@@ -514,6 +528,20 @@ func (h *Handler) toolCreateSnippet(r *http.Request, args map[string]any) (any, 
 	cfgJSON, err := json.Marshal(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("config invalide : %w", err)
+	}
+	switch typ {
+	case "ip_filter", "rate_limit", "cors", "headers", "tls", "geo_ip", "bot", "waf":
+	default:
+		return nil, fmt.Errorf("type de snippet inconnu : %q", typ)
+	}
+	if _, isDetector := middleware.DetectorManifest(typ); isDetector {
+		obj, _ := cfg.(map[string]any)
+		if obj == nil {
+			return nil, fmt.Errorf("config : objet attendu")
+		}
+		if err := middleware.ValidateDetector(typ, obj); err != nil {
+			return nil, err
+		}
 	}
 	id := uuid.New().String()
 	if _, err := h.DB.ExecContext(r.Context(),
@@ -909,4 +937,13 @@ func (h *Handler) toolDecidePlaybookRun(runID string, approve bool) (any, error)
 		return nil, err
 	}
 	return map[string]any{"ok": true}, nil
+}
+
+// authProviderTypeNames liste les types de fournisseur d'authentification du registre.
+func authProviderTypeNames() string {
+	var names []string
+	for _, m := range middleware.SSOProviders() {
+		names = append(names, m.Type)
+	}
+	return strings.Join(names, ", ")
 }

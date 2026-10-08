@@ -108,13 +108,13 @@ var mcpTools = []string{
 	"list_alerts", "list_alert_events", "list_alert_channels", "list_alert_channel_types", "list_alert_rules",
 	"create_alert_channel", "delete_alert_channel", "create_alert_rule", "delete_alert_rule", "ack_alert_event",
 	"get_metrics", "get_proxy_metrics", "list_backups", "list_users",
-	"list_snippets", "create_snippet", "delete_snippet",
+	"list_snippets", "list_detector_types", "create_snippet", "delete_snippet",
 	"list_domains", "create_domain", "renew_domain", "rotate_cert",
 	"list_certs", "get_cert_status", "list_cert_deploy_targets", "list_cert_deploy_types", "list_internal_cas", "list_internal_certs", "get_ech_status",
 	"obtain_cert", "import_cert", "trigger_cert_deploy", "create_internal_ca", "issue_internal_cert", "revoke_internal_cert",
 	"list_logs", "simulate_sentinel_config", "trace_ip", "preview_security_ban", "preview_asn_ban", "get_prism_anomalies", "get_prism_geo", "get_prism_tls_fingerprints", "get_prism_slo", "list_teams",
 	"get_audit_log", "get_security_overview", "list_security_bans", "lookup_asn", "list_security_threats", "list_security_cves",
-	"list_ip_profiles", "list_auth_providers",
+	"list_ip_profiles", "list_auth_providers", "list_auth_provider_types",
 	"list_rules", "list_rule_history", "list_pending_actions", "list_rule_versions", "list_silences", "export_automation",
 	"list_scheduled_tasks", "list_scheduled_task_runs", "list_playbooks", "list_playbook_runs", "get_playbook_run",
 	"create_security_ban", "delete_security_ban", "ban_ip", "unban_ip", "list_ban_whitelist", "add_ban_whitelist", "remove_ban_whitelist", "import_security_bans", "ban_asn", "unban_asn",
@@ -248,7 +248,7 @@ func ToolRequiredScope(tool string) string {
 		return ScopeBackupsRead
 	case "list_users":
 		return ScopeUsersRead
-	case "list_snippets":
+	case "list_snippets", "list_detector_types":
 		return ScopeSnippetsRead
 	case "create_snippet", "delete_snippet":
 		return ScopeSnippetsWrite
@@ -268,7 +268,7 @@ func ToolRequiredScope(tool string) string {
 	case "get_audit_log",
 		"get_security_overview", "list_security_bans", "lookup_asn", "list_ban_whitelist",
 		"list_security_threats", "list_security_cves",
-		"list_ip_profiles", "list_auth_providers",
+		"list_ip_profiles", "list_auth_providers", "list_auth_provider_types",
 		"list_rules", "list_rule_history", "list_pending_actions", "list_rule_versions",
 		"list_silences", "export_automation",
 		"list_scheduled_tasks", "list_scheduled_task_runs",
@@ -310,7 +310,7 @@ func ToolRequiresAdmin(tool string) bool {
 		"list_backups", "list_users", "list_teams",
 		"get_security_overview", "list_security_bans", "lookup_asn", "list_security_threats", "list_security_cves",
 		"create_security_ban", "delete_security_ban", "ban_ip", "unban_ip", "simulate_sentinel_config", "trace_ip", "preview_security_ban", "preview_asn_ban", "list_ban_whitelist", "add_ban_whitelist", "remove_ban_whitelist", "import_security_bans", "ban_asn", "unban_asn",
-		"list_auth_providers", "create_auth_provider", "delete_auth_provider",
+		"list_auth_providers", "list_auth_provider_types", "create_auth_provider", "delete_auth_provider",
 		"list_internal_cas", "list_internal_certs", "get_ech_status", "create_internal_ca", "issue_internal_cert", "revoke_internal_cert",
 		"list_rules", "run_rule", "list_rule_history", "replay_rule_history",
 		"list_pending_actions", "approve_pending_action", "reject_pending_action",
@@ -380,7 +380,7 @@ func RequiredScopeForRequest(r *http.Request) string {
 		return ScopeBackupsRead
 	case strings.HasPrefix(path, "/api/v1/users"):
 		return ScopeUsersRead
-	case strings.HasPrefix(path, "/api/v1/snippets"):
+	case strings.HasPrefix(path, "/api/v1/snippets"), strings.HasPrefix(path, "/api/v1/detector-types"):
 		if method == http.MethodGet {
 			return ScopeSnippetsRead
 		}
@@ -414,7 +414,7 @@ func RequiredScopeForRequest(r *http.Request) string {
 		return ScopeUsersRead
 	case strings.HasPrefix(path, "/api/v1/security"),
 		strings.HasPrefix(path, "/api/v1/ip-profiles"),
-		strings.HasPrefix(path, "/api/v1/auth-providers"),
+		strings.HasPrefix(path, "/api/v1/auth-provider"),
 		strings.HasPrefix(path, "/api/v1/rules-engine"),
 		strings.HasPrefix(path, "/api/v1/scheduled-tasks"),
 		strings.HasPrefix(path, "/api/v1/playbooks"):

@@ -34,6 +34,7 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/mcpaccess"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
 	"github.com/vincamok/goproxify/internal/admin/security"
+	"github.com/vincamok/goproxify/internal/edge/middleware"
 	"github.com/vincamok/goproxify/internal/edge/proxystore"
 	"github.com/vincamok/goproxify/internal/sqltime"
 	"gopkg.in/yaml.v3"
@@ -363,6 +364,11 @@ var tools = []map[string]any{
 	{
 		"name":        "list_snippets",
 		"description": "Liste les snippets middleware réutilisables (headers, rate-limit, auth…).",
+		"inputSchema": schema(),
+	},
+	{
+		"name":        "list_detector_types",
+		"description": "Types de détecteur par route (ip_filter, geo_ip, bot, waf) avec leurs champs de configuration. À consulter avant create_snippet pour ces types.",
 		"inputSchema": schema(),
 	},
 	// Domaines
@@ -824,6 +830,8 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 		result, toolErr = h.toolListUsers(r)
 	case "list_snippets":
 		result, toolErr = h.toolListSnippets(r)
+	case "list_detector_types":
+		result = middleware.Detectors()
 	case "list_domains":
 		result, toolErr = h.toolListDomains(r)
 	case "list_certs":
@@ -1070,6 +1078,8 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 	case "ack_alert_event":
 		id, _ := p.Arguments["id"].(string)
 		result, toolErr = h.toolAckAlertEvent(r.Context(), id, adminauth.ActorFromContext(r.Context()))
+	case "list_auth_provider_types":
+		result = middleware.SSOProviders()
 	case "list_auth_providers":
 		result, toolErr = h.toolListAuthProviders(r)
 	case "create_auth_provider":
@@ -1631,7 +1641,15 @@ func (h *Handler) toolListSnippets(r *http.Request) (any, error) {
 			continue
 		}
 		var cfgObj any
-		json.Unmarshal([]byte(cfg), &cfgObj) //nolint:errcheck
+		if man, ok := middleware.DetectorManifest(typ); ok {
+			var m map[string]any
+			if json.Unmarshal([]byte(cfg), &m) == nil && m != nil {
+				cfgObj = man.Mask(m)
+			}
+		}
+		if cfgObj == nil {
+			json.Unmarshal([]byte(cfg), &cfgObj) //nolint:errcheck
+		}
 		out = append(out, map[string]any{"id": id, "name": name, "type": typ, "description": desc, "config": cfgObj, "created_at": createdAt})
 	}
 	if out == nil {

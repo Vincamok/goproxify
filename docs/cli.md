@@ -464,6 +464,7 @@ Snippets de sécurité réutilisables (WAF, Sentinel, rate-limit…).
 
 ```
 goproxify snippet list   [-admin-url …] [-token …]
+goproxify snippet types  [-admin-url …] [-token …]   # champs des types ip_filter, geo_ip, bot, waf
 goproxify snippet get    <id> [-admin-url …] [-token …]
 goproxify snippet create -file <snippet.json> [-admin-url …] [-token …]
 goproxify snippet update <id> -file <snippet.json> [-admin-url …] [-token …]
@@ -479,6 +480,8 @@ Exemple de fichier `snippet.json` :
   "config": { "enabled": true, "mode": "block", "anomaly_threshold": 5 }
 }
 ```
+
+Les snippets `ip_filter`, `geo_ip`, `bot` et `waf` sont validés par leur manifeste (`goproxify snippet types`) : mode inconnu, CIDR ou code pays invalide, expression WAF invalide ou clé inconnue ⇒ erreur `400`. Les secrets (`challenge_secret`, `challenge_provider_secret`) sont masqués à la lecture et conservés à la modification.
 
 Exemples :
 
@@ -628,6 +631,7 @@ goproxify settings mfa sms set -file sms.json
 Fournisseurs d'authentification externe (OIDC, SAML, LDAP…).
 
 ```
+goproxify auth-provider types   [-admin-url …] [-token …]   # types et champs de configuration
 goproxify auth-provider list    [-admin-url …] [-token …]
 goproxify auth-provider get     <id> [-admin-url …] [-token …]
 goproxify auth-provider create  -file <provider.json> [-admin-url …] [-token …]
@@ -642,15 +646,20 @@ Exemple de fichier `provider.json` (OIDC) :
 ```json
 {
   "name": "Google",
-  "type": "oidc",
+  "provider": "google",
   "enabled": true,
   "config": {
-    "client_id": "xxx.apps.googleusercontent.com",
-    "client_secret": "GOCSPX-…",
-    "issuer": "https://accounts.google.com"
+    "oidc": {
+      "client_id": "xxx.apps.googleusercontent.com",
+      "client_secret": "GOCSPX-…",
+      "redirect_url": "https://app.example.fr/_gpx/oidc/callback",
+      "session_secret": "<32 octets aléatoires>"
+    }
   }
 }
 ```
+
+`provider` désigne le type (`type` est accepté comme synonyme). La configuration est validée par le manifeste du type (`goproxify auth-provider types`) : champ requis manquant ou clé inconnue ⇒ erreur `400`.
 
 Exemples :
 

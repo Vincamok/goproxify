@@ -683,6 +683,17 @@ Manifestes des types de canal, dans l'ordre d'affichage. Lecture pour tout compt
 
 `kind` : `text`, `password`, `number`, `list` (tableau de chaînes). Types fournis : `email`, `webhook`, `ntfy`, `gotify`, `jira`, `linear`, `github`, `gitlab`, `zammad`, `glpi`, `slack`, `teams`, `telegram`, `sms`.
 
+### `GET /api/v1/auth-provider-types`
+
+Manifestes des 20 types de fournisseur d'authentification (`oidc`, `pocket_id`, `google`, `microsoft`, `entra`, `auth0`, `okta`, `keycloak`, `zitadel`, `casdoor`, `dex`, `github`, `ldap`, `ldap_ad`, `saml`, `basic`, `forward`, `authentik`, `authelia`, `oauth2_proxy`). Les clés sont des chemins pointés (`oidc.client_secret`) ; `basic_users` est une liste dont le mot de passe est secret, clé d'élément `username`. Admin uniquement.
+
+### `/api/v1/auth-providers`
+
+- `GET` (liste) et `GET /:id` : les secrets du manifeste (dont les mots de passe Basic) sont remplacés par `••••••••`. Avant Admin `0.127.0`, la configuration complète était renvoyée en clair.
+- `POST` : `400` si le type est inconnu, un champ requis est vide ou une clé est absente du manifeste.
+- `PUT /:id` : un secret omis, vide ou masqué est conservé (mots de passe Basic appariés par nom d'utilisateur) tant que le type ne change pas ; `provider` et `name` omis gardent leur valeur.
+- `PATCH /:id` `{"enabled": bool}` : active ou désactive sans toucher à la configuration (`204`).
+
 ### `GET /api/v1/alert-channels`
 
 Liste des canaux. Les champs `secret` du manifeste sont remplacés par `••••••••`. Avant Admin `0.120.0`, la liste de clés masquées oubliait `webhook_url` (Slack, Teams), `bot_token` (Telegram) et `auth_token` (SMS) : ces secrets étaient renvoyés en clair.
@@ -737,6 +748,15 @@ Force un rafraîchissement complet (téléchargement inconditionnel, garde-fou d
 ## Snippets
 
 Lecture pour tout compte authentifié ; écritures réservées aux admins / superadmins et aux comptes `user` disposant d'au moins un grant `write`.
+
+### `GET /api/v1/detector-types`
+
+Manifestes des détecteurs par route : `ip_filter`, `geo_ip`, `bot`, `waf` (champs, secrets, requis). Scope `snippets:read`.
+
+### `/api/v1/snippets` — détecteurs
+
+- `POST` / `PUT` : la configuration d'un snippet `ip_filter`, `geo_ip`, `bot` ou `waf` est validée par son manifeste — clé inconnue, champ requis vide, mode hors `allow|deny` (`ip_filter`, `geo_ip`) ou `block|detect` (`waf`), CIDR invalide, code pays qui n'est pas ISO 3166-1 alpha-2, expression de règle WAF invalide, fournisseur de défi inconnu ⇒ `400`. Les autres types gardent une configuration libre.
+- `GET` : `challenge_secret` et `challenge_provider_secret` (bot) sont remplacés par `••••••••` ; omis ou masqués à la modification, ils sont conservés. `PUT` sans `type` conserve le type enregistré ; `404` si le snippet n'existe pas.
 
 ### `GET /api/v1/snippets/:section`
 

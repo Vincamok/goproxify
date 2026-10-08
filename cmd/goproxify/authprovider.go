@@ -34,7 +34,10 @@ func runAuthProvider() {
 		fmt.Println(strings.Repeat("-", 95))
 		for _, p := range providers {
 			id, _ := p["id"].(string)
-			typ, _ := p["type"].(string)
+			typ, _ := p["provider"].(string)
+			if typ == "" {
+				typ, _ = p["type"].(string)
+			}
 			name, _ := p["name"].(string)
 			enabled := "non"
 			if e, ok := p["enabled"].(bool); ok && e {
@@ -42,6 +45,42 @@ func runAuthProvider() {
 			}
 			fmt.Printf("%-36s  %-20s  %-30s  %s\n", id, typ, name, enabled)
 		}
+
+	case "types":
+		args := parseFlags(os.Args[3:])
+		client, err := newAdminClient(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+			os.Exit(1)
+		}
+		var types []struct {
+			Type   string `json:"type"`
+			Label  string `json:"label"`
+			Fields []struct {
+				Key      string `json:"key"`
+				Secret   bool   `json:"secret"`
+				Required bool   `json:"required"`
+			} `json:"fields"`
+		}
+		if _, err := client.DoJSON("GET", "/api/v1/auth-provider-types", nil, &types); err != nil {
+			fmt.Fprintf(os.Stderr, "auth-provider types : %v\n", err)
+			os.Exit(1)
+		}
+		for _, ty := range types {
+			var fields []string
+			for _, f := range ty.Fields {
+				n := f.Key
+				if f.Required {
+					n += "*"
+				}
+				if f.Secret {
+					n += " (secret)"
+				}
+				fields = append(fields, n)
+			}
+			fmt.Printf("%-13s %-26s %s\n", ty.Type, ty.Label, strings.Join(fields, ", "))
+		}
+		fmt.Println("\n* = champ requis")
 
 	case "get":
 		args := parseFlags(os.Args[3:])
@@ -80,6 +119,7 @@ func runAuthProvider() {
 			fmt.Fprintf(os.Stderr, "JSON invalide : %v\n", err)
 			os.Exit(1)
 		}
+		normalizeAuthProviderPayload(payload)
 		client, err := newAdminClient(args)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
@@ -112,6 +152,7 @@ func runAuthProvider() {
 			fmt.Fprintf(os.Stderr, "JSON invalide : %v\n", err)
 			os.Exit(1)
 		}
+		normalizeAuthProviderPayload(payload)
 		client, err := newAdminClient(args)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
@@ -210,15 +251,21 @@ goproxify auth-provider enable  <id> [-admin-url …] [-token …]
 goproxify auth-provider disable <id> [-admin-url …] [-token …]
 goproxify auth-provider delete  <id> [-y] [-admin-url …] [-token …]
 
-Exemple de fichier provider.json (OIDC) :
+goproxify auth-provider types  [-admin-url …] [-token …]   # types et champs de configuration
+
+Exemple de fichier provider.json (OIDC). « provider » désigne le type (« type » est accepté) ; la
+configuration est groupée par section, et les secrets (client_secret, session_secret) sont obligatoires :
   {
     "name": "Google",
-    "type": "oidc",
+    "provider": "google",
     "enabled": true,
     "config": {
-      "client_id": "xxx.apps.googleusercontent.com",
-      "client_secret": "GOCSPX-…",
-      "issuer": "https://accounts.google.com"
+      "oidc": {
+        "client_id": "xxx.apps.googleusercontent.com",
+        "client_secret": "GOCSPX-…",
+        "redirect_url": "https://app.example.fr/_gpx/oidc/callback",
+        "session_secret": "<32 octets aléatoires>"
+      }
     }
   }
 `)
@@ -227,4 +274,15 @@ Exemple de fichier provider.json (OIDC) :
 		fmt.Fprintln(os.Stderr, "utilisez : goproxify auth-provider help")
 		os.Exit(1)
 	}
+}
+
+// normalizeAuthProviderPayload accepte « type » comme synonyme de « provider » (nom du champ de
+// l'API) : les fichiers rédigés d'après l'ancienne aide de la commande utilisaient « type ».
+func normalizeAuthProviderPayload(p map[string]any) {
+	if _, ok := p["provider"]; !ok {
+		if t, ok := p["type"]; ok {
+			p["provider"] = t
+		}
+	}
+	delete(p, "type")
 }

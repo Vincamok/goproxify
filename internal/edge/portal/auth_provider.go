@@ -4,12 +4,9 @@
 package portal
 
 import (
-	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"strings"
-
-	"golang.org/x/crypto/bcrypt"
 
 	"github.com/vincamok/goproxify/internal/edge/middleware"
 	"github.com/vincamok/goproxify/internal/edge/router"
@@ -60,7 +57,7 @@ func authenticateProvider(sso *router.SSOConfig, username, password string) (boo
 			if u.Username != username {
 				continue
 			}
-			if matchBasicPassword(u.Password, password) {
+			if middleware.MatchBasicPassword(u.Password, password) {
 				return true, nil
 			}
 		}
@@ -85,16 +82,4 @@ func providerSupportsForm(sso *router.SSOConfig) bool {
 		return false
 	}
 	return oidcFormProviders[strings.ToLower(sso.Provider)]
-}
-
-// matchBasicPassword accepte bcrypt ($2a$/$2b$/$2y$) ou plaintext legacy (comparaison constant-time).
-func matchBasicPassword(stored, password string) bool {
-	stored = strings.TrimSpace(stored)
-	if stored == "" {
-		return false
-	}
-	if strings.HasPrefix(stored, "$2a$") || strings.HasPrefix(stored, "$2b$") || strings.HasPrefix(stored, "$2y$") {
-		return bcrypt.CompareHashAndPassword([]byte(stored), []byte(password)) == nil
-	}
-	return subtle.ConstantTimeCompare([]byte(stored), []byte(password)) == 1
 }

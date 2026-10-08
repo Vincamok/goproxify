@@ -29,37 +29,22 @@ var oidcPresets = map[string]string{
 	"dex":       "https://{host}/dex",
 }
 
-// SSOAuth retourne un middleware d'authentification SSO.
+// SSOAuth retourne un middleware d'authentification SSO. Le fournisseur est cherché dans le registre
+// (sso_registry.go). Un nom inconnu ou vide, ou une section de configuration absente, refuse tout
+// accès (503) : ces cas laissaient auparavant passer les requêtes sans authentification.
 func SSOAuth(cfg *router.SSOConfig) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		if cfg == nil || !cfg.Enabled {
 			return next
 		}
-		switch cfg.Provider {
-		case "authentik", "authelia", "oauth2_proxy", "forward":
-			return forwardAuthMiddleware(cfg, next)
-		case "basic":
-			return basicAuthMiddleware(cfg, next)
-		case "github":
-			return GitHubOAuth(cfg.GitHub)(next)
-		case "ldap", "ldap_ad":
-			return LDAPAuth(cfg.LDAP)(next)
-		case "saml":
-			return SAMLAuth(cfg.SAML)(next)
-		case "pocket_id", "oidc",
-			"google", "microsoft", "entra",
-			"auth0", "okta", "keycloak", "zitadel",
-			"casdoor", "dex":
-			// Injecter l'IssuerURL du preset si absent
-			if cfg.OIDC != nil && cfg.OIDC.IssuerURL == "" {
-				if preset, ok := oidcPresets[cfg.Provider]; ok {
-					cfg.OIDC.IssuerURL = preset
-				}
-			}
-			return OIDCAuth(cfg)(next)
-		default:
-			return next
+		if cfg.Provider == router.SSOProviderUnresolved {
+			return failClosed(cfg.Provider, "fournisseur d'authentification introuvable (supprimé, désactivé ou pas encore reçu)")
 		}
+		f, _, ok := ssoRegistry.Lookup(cfg.Provider)
+		if !ok {
+			return failClosed(cfg.Provider, "fournisseur d'authentification inconnu")
+		}
+		return f(cfg, next)
 	}
 }
 
@@ -205,8 +190,8 @@ func basicAuthMiddleware(cfg *router.SSOConfig, next http.Handler) http.Handler 
 			http.Error(w, "401 Unauthorized", http.StatusUnauthorized)
 			return
 		}
-		expected, exists := users[user]
-		if !exists || expected != pass {
+		stored, exists := users[user]
+		if !exists || !MatchBasicPassword(stored, pass) {
 			w.Header().Set("WWW-Authenticate", `Basic realm="`+realm+`"`)
 			http.Error(w, "401 Unauthorized", http.StatusUnauthorized)
 			return

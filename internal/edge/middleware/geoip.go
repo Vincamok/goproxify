@@ -8,7 +8,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/oschwald/maxminddb-golang"
 	"github.com/vincamok/goproxify/internal/edge/metrics"
@@ -40,51 +43,78 @@ func openGeoDB(path string) (*maxminddb.Reader, error) {
 }
 
 // GeoIP retourne un middleware de filtrage géographique.
-// Si dbPath est vide ou le fichier absent, le middleware est un no-op.
+// dbPath vide = pas de filtre (route sans configuration géographique).
 // Chemin recommandé (volume passerelle) : /etc/goproxify/geoip/GeoLite2-Country.mmdb
 // (téléchargement auto au démarrage de la passerelle si absent — voir package geoip)
 // mode "allow" : bloque si le pays n'est PAS dans countries → 403
 // mode "deny"  : bloque si le pays EST dans countries → 403
+//
+// La base est ouverte à la première requête qui la trouve : un fichier téléchargé après la
+// construction de la chaîne est pris en compte sans attendre une invalidation. Tant qu'elle manque,
+// « allow » refuse (503, fail-closed : le pays est inconnu) et « deny » laisse passer (rien à
+// refuser sans pays) en le signalant. Un mode inconnu avec des pays configurés refuse tout.
 func GeoIP(dbPath string, mode string, countries []string) func(http.Handler) http.Handler {
 	if dbPath == "" {
 		return noopMiddleware
 	}
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		slog.Warn("geoip: fichier .mmdb absent, middleware désactivé", "path", dbPath)
-		return noopMiddleware
-	}
+	return geoIPFilter(mode, countries, func() (func(net.IP) string, error) {
+		if _, err := os.Stat(dbPath); err != nil {
+			return nil, err
+		}
+		db, err := openGeoDB(dbPath)
+		if err != nil {
+			return nil, err
+		}
+		return func(ip net.IP) string {
+			var record geoRecord
+			_ = db.Lookup(ip, &record)
+			return record.Country.ISOCode
+		}, nil
+	})
+}
 
-	db, err := openGeoDB(dbPath)
-	if err != nil {
-		slog.Warn("geoip: impossible d'ouvrir la base", "path", dbPath, "err", err)
-		return noopMiddleware
-	}
-
+func geoIPFilter(mode string, countries []string, open func() (func(net.IP) string, error)) func(http.Handler) http.Handler {
+	mode = strings.ToLower(strings.TrimSpace(mode))
 	set := make(map[string]struct{}, len(countries))
 	for _, c := range countries {
-		set[c] = struct{}{}
+		set[strings.ToUpper(strings.TrimSpace(c))] = struct{}{}
 	}
-
+	validMode := mode == "allow" || mode == "deny"
+	if !validMode && len(set) > 0 {
+		slog.Error("geoip: mode inconnu, accès refusé", "mode", mode)
+	}
 	return func(next http.Handler) http.Handler {
+		if !validMode && len(set) == 0 {
+			return next // aucune restriction demandée
+		}
+		var lastWarn atomic.Int64
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ip := net.ParseIP(clientIP(r))
-
-			var record geoRecord
-			if ip != nil {
-				_ = db.Lookup(ip, &record)
+			if !validMode {
+				metrics.Pipeline.BlockedTotal.WithLabelValues(r.Host, "geoip", "invalid_mode").Inc()
+				http.Error(w, "403 Forbidden", http.StatusForbidden)
+				return
 			}
-			country := record.Country.ISOCode
+			lookup, err := open()
+			if err != nil {
+				if now := time.Now().Unix(); now-lastWarn.Load() > 60 {
+					lastWarn.Store(now)
+					slog.Warn("geoip: base indisponible", "mode", mode, "err", err)
+				}
+				if mode == "allow" {
+					metrics.Pipeline.BlockedTotal.WithLabelValues(r.Host, "geoip", "db_unavailable").Inc()
+					http.Error(w, "503 Service Unavailable", http.StatusServiceUnavailable)
+					return
+				}
+				next.ServeHTTP(w, r)
+				return
+			}
 
+			country := ""
+			if ip := net.ParseIP(clientIP(r)); ip != nil {
+				country = strings.ToUpper(lookup(ip))
+			}
 			_, inList := set[country]
-			blocked := false
-			switch mode {
-			case "allow":
-				blocked = !inList
-			case "deny":
-				blocked = inList
-			}
-
-			if blocked {
+			if (mode == "allow" && !inList) || (mode == "deny" && inList) {
 				metrics.Pipeline.BlockedTotal.WithLabelValues(r.Host, "geoip", country).Inc()
 				http.Error(w, "403 Forbidden", http.StatusForbidden)
 				return

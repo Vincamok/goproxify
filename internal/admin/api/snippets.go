@@ -6,6 +6,7 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
+	"github.com/vincamok/goproxify/internal/edge/middleware"
 )
 
 // Snippet est un profil réutilisable (IP, TLS, rate-limit, CORS, headers...).
@@ -92,7 +94,7 @@ func (h *SnippetsHandler) list(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&s.ID, &s.Name, &s.Type, &s.Description, &cfg, &s.CreatedAt, &s.UpdatedAt); err != nil {
 			continue
 		}
-		s.Config = json.RawMessage(cfg)
+		s.Config = maskSnippetConfig(s.Type, json.RawMessage(cfg))
 		result = append(result, s)
 	}
 	jsonOK(w, result)
@@ -112,7 +114,7 @@ func (h *SnippetsHandler) get(w http.ResponseWriter, r *http.Request, id string)
 		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
 		return
 	}
-	s.Config = json.RawMessage(cfg)
+	s.Config = maskSnippetConfig(s.Type, json.RawMessage(cfg))
 	jsonOK(w, s)
 }
 
@@ -136,6 +138,11 @@ func (h *SnippetsHandler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Name == "" || !validSnippetTypes[req.Type] {
 		http.Error(w, "name requis et type doit être : ip_filter | rate_limit | cors | headers | tls | geo_ip | bot | waf", http.StatusBadRequest)
+		return
+	}
+
+	if err := validateSnippetConfig(req.Type, req.Config, nil); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -166,7 +173,7 @@ func (h *SnippetsHandler) create(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(Snippet{ID: id, Name: req.Name, Type: req.Type, Description: desc, Config: req.Config}) //nolint:errcheck
+	json.NewEncoder(w).Encode(Snippet{ID: id, Name: req.Name, Type: req.Type, Description: desc, Config: maskSnippetConfig(req.Type, req.Config)}) //nolint:errcheck
 }
 
 func (h *SnippetsHandler) update(w http.ResponseWriter, r *http.Request, id string) {
@@ -176,6 +183,36 @@ func (h *SnippetsHandler) update(w http.ResponseWriter, r *http.Request, id stri
 		return
 	}
 
+	var oldType, oldCfg string
+	switch err := h.DB.QueryRowContext(r.Context(), `SELECT type, config FROM snippets WHERE id=?`, id).Scan(&oldType, &oldCfg); {
+	case err == sql.ErrNoRows:
+		writeErr(w, r, http.StatusNotFound, "api.err.snippet_not_found")
+		return
+	case err != nil:
+		if !isCtxErr(err) {
+			h.Log.Error("snippets: update lookup", "err", err)
+		}
+		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
+		return
+	}
+	if req.Type == "" {
+		req.Type = oldType
+	}
+	if !validSnippetTypes[req.Type] {
+		http.Error(w, "type doit être : ip_filter | rate_limit | cors | headers | tls | geo_ip | bot | waf", http.StatusBadRequest)
+		return
+	}
+	var prev json.RawMessage
+	if req.Type == oldType { // les secrets d'un autre type n'ont pas le même sens
+		prev = json.RawMessage(oldCfg)
+	}
+	if err := validateSnippetConfig(req.Type, req.Config, prev); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if merged, ok := keepSnippetSecrets(req.Type, prev, req.Config); ok {
+		req.Config = merged
+	}
 	cfg := string(req.Config)
 	if cfg == "" {
 		cfg = "{}"
@@ -228,4 +265,89 @@ func (h *SnippetsHandler) delete(w http.ResponseWriter, r *http.Request, id stri
 	h.notifyChange()
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// isDetectorSnippet indique si le type de snippet est un détecteur du registre (ADR 0007).
+func isDetectorSnippet(typ string) bool {
+	_, ok := middleware.DetectorManifest(typ)
+	return ok
+}
+
+func decodeSnippetConfig(raw json.RawMessage) (map[string]any, error) {
+	var cfg map[string]any
+	if len(raw) == 0 {
+		return cfg, nil
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// validateSnippetConfig valide la configuration d'un snippet de détecteur (clés, champs requis,
+// valeurs). Les autres types gardent une configuration libre. prev, la configuration enregistrée,
+// permet à un secret masqué de ne pas compter comme une valeur à valider.
+func validateSnippetConfig(typ string, raw, prev json.RawMessage) error {
+	if !isDetectorSnippet(typ) {
+		return nil
+	}
+	cfg, err := decodeSnippetConfig(raw)
+	if err != nil {
+		return fmt.Errorf("config invalide : %w", err)
+	}
+	if cfg == nil {
+		cfg = map[string]any{}
+	}
+	if merged, ok := keepSnippetSecrets(typ, prev, raw); ok {
+		cfg, _ = decodeSnippetConfig(merged)
+	}
+	return middleware.ValidateDetector(typ, cfg)
+}
+
+// keepSnippetSecrets reprend de la configuration enregistrée les secrets que la nouvelle omet ou
+// renvoie masqués.
+func keepSnippetSecrets(typ string, prev, next json.RawMessage) (json.RawMessage, bool) {
+	man, ok := middleware.DetectorManifest(typ)
+	if !ok || len(prev) == 0 {
+		return nil, false
+	}
+	oldCfg, err1 := decodeSnippetConfig(prev)
+	newCfg, err2 := decodeSnippetConfig(next)
+	if err1 != nil || err2 != nil {
+		return nil, false
+	}
+	if newCfg == nil {
+		newCfg = map[string]any{}
+	}
+	b, err := json.Marshal(man.KeepSecrets(oldCfg, newCfg))
+	return b, err == nil
+}
+
+// maskSnippetConfig masque les secrets d'un snippet de détecteur (secret du défi bot, clé du captcha).
+func maskSnippetConfig(typ string, raw json.RawMessage) json.RawMessage {
+	man, ok := middleware.DetectorManifest(typ)
+	if !ok {
+		return raw
+	}
+	cfg, err := decodeSnippetConfig(raw)
+	if err != nil || cfg == nil {
+		return raw
+	}
+	b, err := json.Marshal(man.Mask(cfg))
+	if err != nil {
+		return raw
+	}
+	return b
+}
+
+// DetectorTypesHandler GET /api/v1/detector-types : manifestes des détecteurs par route (ip_filter,
+// geo_ip, bot, waf), source de la validation des snippets.
+type DetectorTypesHandler struct{}
+
+func (DetectorTypesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.NotFound(w, r)
+		return
+	}
+	jsonOK(w, middleware.Detectors())
 }

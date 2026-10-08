@@ -162,6 +162,9 @@ type Route struct {
 	ErrorPages *ErrorPagesConfig `json:"error_pages,omitempty"`
 
 	// Références vers des ressources passerelle partagées
+	// SnippetUnresolved liste les snippets référencés mais introuvables ou illisibles (calculé par
+	// ResolveSnippets, jamais sérialisé) : la route refuse alors le trafic au lieu de perdre leur protection.
+	SnippetUnresolved string `json:"-"`
 	SnippetIDs     []string `json:"snippet_ids,omitempty"`      // snippets à fusionner dans la config
 	AuthProviderID string   `json:"auth_provider_id,omitempty"` // fournisseur SSO/OIDC de la passerelle
 

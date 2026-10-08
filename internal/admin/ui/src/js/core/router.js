@@ -19,7 +19,7 @@ const App = {
 
 // ── Ensembles de pages par catégorie ──────────────────────────────────────
   const SETTINGS_PAGES = new Set([
-  'snippets','error-pages','portal-templates','tokens','api-tokens','alerts','alert-channels','audit',
+  'snippets','auth-providers','error-pages','portal-templates','tokens','api-tokens','alerts','alert-channels','audit',
   'security','security-bans','security-trace','security-vulns','security-rules','automation','automation-flow','automation-history','automation-silences','automation-schedules','automation-playbooks','rules-store','mcp-access',
   'backups','import','docker-labels','prism','proxy-inspector',
 ]);

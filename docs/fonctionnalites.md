@@ -187,7 +187,8 @@ Endpoints on `:9443` — two families:
 | Teams | Access organization by scope; the superadmin can grant a team the right to reveal pseudonymised IPs (`gdpr:reveal`), its membership then being superadmin-only (Admin `0.78.0`) |
 | Pairing (Infrastructure › Pairing) | Generate, list, revoke pairing tokens (`gpx_edge_*`, `gpx_join_*`) and see each Edge's details (status, endpoint, version, last contact, token); read-only view in Edge settings › Infrastructure › Pairing (Admin `0.79.0`) |
 | User API tokens (PAT) | Self-service `/api/v1/me/tokens` — resource scopes, optional expiry; writes need the matching `:write` scope (`alerts:write`, `domains:write`, `certs:write`, `logs:write`, `security:write`…, admin roles only) |
-| Snippets | Reusable profiles: IP, TLS, CORS, rate-limit, auth providers, DNS providers |
+| Snippets | Reusable profiles: IP, TLS, CORS, rate-limit, auth providers, DNS providers. IP filter, GeoIP, bot and WAF snippets are edited through a form built from the server's module manifests and validated server-side (Admin `0.129.0`) |
+| SSO providers page | Settings → Authentication (SSO): create, edit, enable/disable and delete OIDC / GitHub / LDAP / SAML / Basic / forward-auth providers; types and fields come from `GET /api/v1/auth-provider-types`, secrets are masked and kept when left untouched (Admin `0.129.0`) |
 | Nodes | Registration, cluster state, accept/reject pending |
 | Agents | List, approve / revoke (pending → approved workflow) |
 | Declared / bootstrap | Wizard declared nodes; QR tickets `/i/{token}` + `curl|bash` |
@@ -627,7 +628,7 @@ goproxify <command> [options]
 | `domain list/get/create/renew/delete` | Managed ACME domains |
 | `agent-mgmt list/get/approve/revoke/delete` | Registered Docker agents (management) |
 | `settings smtp/mfa` | Admin config: SMTP, MFA (SMS, WebAuthn) |
-| `auth-provider list/get/create/update/enable/disable/delete` | External auth providers (OIDC, SAML…) |
+| `auth-provider types/list/get/create/update/enable/disable/delete` | External auth providers (OIDC, SAML…) |
 | `teams list/get/create/update/delete + members + permissions` | RBAC teams, permissions granted to members (`gdpr:reveal`) |
 | `workspaces list/get/create/update/delete + members + resources` | Workspaces (multi-tenant) |
 | `ip-profile list/get/create/update/delete` | IP profiles (CIDR allowlist/blocklist, GeoIP) |

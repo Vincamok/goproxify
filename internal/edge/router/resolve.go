@@ -17,9 +17,16 @@ func ResolveSnippets(route *Route, store *SnippetStore) *Route {
 	}
 	// Copie superficielle — on ne remplace que les champs nil.
 	r := *route
+	var unresolved []string
+	defer func() { r.SnippetUnresolved = strings.Join(unresolved, ", ") }()
 	for _, id := range route.SnippetIDs {
 		sn, ok := store.Get(id)
 		if !ok {
+			unresolved = append(unresolved, id+" (introuvable)")
+			continue
+		}
+		if !securitySnippetReadable(sn) {
+			unresolved = append(unresolved, id+" (configuration illisible)")
 			continue
 		}
 		switch sn.Type {
@@ -120,6 +127,25 @@ func ResolveSnippets(route *Route, store *SnippetStore) *Route {
 	return &r
 }
 
+// securitySnippetReadable indique si la configuration d'un snippet de détection (filtre IP, GeoIP, bot,
+// WAF) se décode : sinon elle serait ignorée et la route perdrait sa protection sans erreur.
+func securitySnippetReadable(sn *Snippet) bool {
+	var into any
+	switch sn.Type {
+	case SnippetIPFilter:
+		into = &IPFilterConfig{}
+	case SnippetGeoIP:
+		into = &GeoIPConfig{}
+	case SnippetBot:
+		into = &BotConfig{}
+	case SnippetWAF:
+		into = &WAFConfig{}
+	default:
+		return true
+	}
+	return json.Unmarshal(sn.Config, into) == nil
+}
+
 // NormalizeBotConfig aligne mode UI (challenge/monitor/log) sur js_challenge / enabled.
 func NormalizeBotConfig(cfg *BotConfig) {
 	if cfg == nil {
@@ -149,17 +175,26 @@ func ResolveAuthProvider(route *Route, store *AuthProviderStore) *Route {
 	}
 	p, ok := store.Get(route.AuthProviderID)
 	if !ok {
-		return route
+		// Fournisseur supprimé, désactivé ou pas encore reçu : la route reste protégée (refus), jamais
+		// ouverte au public.
+		r := *route
+		r.SSO = &SSOConfig{Enabled: true, Provider: SSOProviderUnresolved}
+		return &r
 	}
 	// Le Config JSON du fournisseur EST directement un SSOConfig sérialisé.
 	var sso SSOConfig
 	if err := json.Unmarshal(p.Config, &sso); err != nil {
-		return route
+		r := *route
+		r.SSO = &SSOConfig{Enabled: true, Provider: SSOProviderUnresolved}
+		return &r
 	}
 	// Si le provider Admin ne renseigne pas le champ Provider, on utilise le Type.
 	if sso.Provider == "" {
 		sso.Provider = p.Type
 	}
+	// Une route qui référence un fournisseur veut être protégée : le champ enabled de sa configuration
+	// (souvent absent) ne doit pas désactiver l'authentification.
+	sso.Enabled = true
 	r := *route
 	r.SSO = &sso
 	return &r

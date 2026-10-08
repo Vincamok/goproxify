@@ -58,9 +58,37 @@ function snippetConfigText(cfg) {
   return JSON.stringify(cfg, null, 2);
 }
 
+// Détecteurs (ip_filter, geo_ip, bot, waf) : le formulaire vient de leur manifeste (GET /detector-types),
+// les autres types gardent une configuration JSON libre.
+let _snDetectors = null;
+async function snLoadDetectors() {
+  if (_snDetectors) return _snDetectors;
+  try { _snDetectors = await api('GET', '/detector-types') || []; } catch { return []; }
+  return _snDetectors;
+}
+let _snExisting = null; // snippet en cours de modification
+function snConfigObject(cfg) {
+  if (cfg && typeof cfg === 'object') return cfg;
+  try { return JSON.parse(cfg) || {}; } catch { return {}; }
+}
+function renderSnippetConfig(type) {
+  const wrap = document.getElementById('s-config-wrap');
+  if (!wrap) return;
+  const man = (_snDetectors || []).find(m => m.type === type);
+  const base = _snExisting && _snExisting.type === type ? snConfigObject(_snExisting.config) : {};
+  wrap.innerHTML = man
+    ? ManifestForm.render('sn', man.fields, base)
+    : `<div class="field">
+        <label class="field-label">${t('snippets.config')}</label>
+        <textarea id="s-config" class="input" rows="8" placeholder='{"cidrs":["10.0.0.0/8"],"mode":"allow"}'>${esc(snippetConfigText(_snExisting && _snExisting.type === type ? _snExisting.config : ''))}</textarea>
+      </div>`;
+}
+
 window.openSnippetModal = async function(id) {
   let existing = null;
   if (id) { try { existing = await api('GET',`/snippets/${id}`); } catch {} }
+  _snExisting = existing;
+  await snLoadDetectors();
   modal(id ? t('snippets.edit') : t('snippets.new_modal'), `
     <div class="form-row">
       <div class="field">
@@ -82,20 +110,27 @@ window.openSnippetModal = async function(id) {
       <label class="field-label">${t('snippets.description')}</label>
       <input id="s-desc" class="input" placeholder="${esc(t('snippets.desc_ph'))}" value="${esc(existing?.description||'')}">
     </div>
-    <div class="field">
-      <label class="field-label">${t('snippets.config')}</label>
-      <textarea id="s-config" class="input" rows="8" placeholder='{"cidrs":["10.0.0.0/8"],"mode":"allow"}'>${esc(snippetConfigText(existing?.config))}</textarea>
-    </div>`,
+    <div id="s-config-wrap"></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">${t('common.cancel')}</button>
      <button class="btn btn-primary" onclick="saveSnippet('${esc(id||'')}')">${t('common.save')}</button>`);
+  renderSnippetConfig(existing?.type || document.getElementById('s-type').value);
 };
 
 window.saveSnippet = async function(id) {
-  const rawConfig = document.getElementById('s-config').value.trim();
+  const selType = document.getElementById('s-type').value;
+  const man = (_snDetectors || []).find(m => m.type === selType);
   let config = {};
-  if (rawConfig) {
-    try { config = JSON.parse(rawConfig); }
-    catch (e) { toast('Config JSON invalide : ' + e.message, 'error'); return; }
+  if (man) {
+    const base = _snExisting && _snExisting.type === selType ? snConfigObject(_snExisting.config) : {};
+    const res = ManifestForm.collect('sn', man.fields, base);
+    if (res.errors.length) { toast(res.errors.join(' · '), 'error'); return; }
+    config = res.config;
+  } else {
+    const rawConfig = document.getElementById('s-config').value.trim();
+    if (rawConfig) {
+      try { config = JSON.parse(rawConfig); }
+      catch (e) { toast('Config JSON invalide : ' + e.message, 'error'); return; }
+    }
   }
   const payload = {
     name: document.getElementById('s-name').value.trim(),
@@ -123,6 +158,7 @@ window.saveSnippet = async function(id) {
 window.updateSnippetTypeHint = function(type) {
   const el = document.getElementById('s-type-hint');
   if (el) el.style.display = type === 'waf' ? 'flex' : 'none';
+  renderSnippetConfig(type);
 };
 
 window.deleteSnippet = function(id) {

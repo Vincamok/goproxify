@@ -39,6 +39,42 @@ func runSnippet() {
 			fmt.Printf("%-36s  %-20s  %s\n", id, typ, name)
 		}
 
+	case "types":
+		args := parseFlags(os.Args[3:])
+		client, err := newAdminClient(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+			os.Exit(1)
+		}
+		var types []struct {
+			Type   string `json:"type"`
+			Label  string `json:"label"`
+			Fields []struct {
+				Key      string `json:"key"`
+				Secret   bool   `json:"secret"`
+				Required bool   `json:"required"`
+			} `json:"fields"`
+		}
+		if _, err := client.DoJSON("GET", "/api/v1/detector-types", nil, &types); err != nil {
+			fmt.Fprintf(os.Stderr, "snippet types : %v\n", err)
+			os.Exit(1)
+		}
+		for _, ty := range types {
+			var fields []string
+			for _, f := range ty.Fields {
+				n := f.Key
+				if f.Required {
+					n += "*"
+				}
+				if f.Secret {
+					n += " (secret)"
+				}
+				fields = append(fields, n)
+			}
+			fmt.Printf("%-10s %-16s %s\n", ty.Type, ty.Label, strings.Join(fields, ", "))
+		}
+		fmt.Println("\n* = champ requis (les autres types de snippet ont une configuration libre)")
+
 	case "get":
 		args := parseFlags(os.Args[3:])
 		id := firstPositional(os.Args[3:], args)
@@ -142,12 +178,14 @@ func runSnippet() {
 
 Sous-commandes :
   list    Liste les snippets de sécurité
+  types   Types de détecteur (ip_filter, geo_ip, bot, waf) et leurs champs
   get     Affiche un snippet
   create  Crée un snippet depuis un fichier JSON
   update  Met à jour un snippet depuis un fichier JSON
   delete  Supprime un snippet
 
 goproxify snippet list   [-admin-url …] [-token …]
+goproxify snippet types  [-admin-url …] [-token …]
 goproxify snippet get    <id> [-admin-url …] [-token …]
 goproxify snippet create -file <snippet.json> [-admin-url …] [-token …]
 goproxify snippet update <id> -file <snippet.json> [-admin-url …] [-token …]

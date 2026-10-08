@@ -171,6 +171,11 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 	// Résoudre les snippets et le fournisseur d'auth avant de construire la chaîne.
 	route = router.ResolveSnippets(route, s.snippetStore)
 	route = router.ResolveAuthProvider(route, s.providerStore)
+	if route.SnippetUnresolved != "" {
+		s.log.Error("snippets de la route inutilisables, accès refusé", "route", route.ID, "snippets", route.SnippetUnresolved)
+		serveDefaultError(w, r, http.StatusServiceUnavailable)
+		return
+	}
 	tracing.Annotate(r.Context(), attribute.String("gpx.route.id", route.ID), attribute.String("gpx.route.host", route.Host))
 
 	locPath := ""

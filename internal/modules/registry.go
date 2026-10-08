@@ -38,6 +38,11 @@ type Field struct {
 	Required bool `json:"required,omitempty"`
 	// Multiline : champ saisi sur plusieurs lignes (clé PEM, script) ; l'interface affiche une zone de texte.
 	Multiline bool `json:"multiline,omitempty"`
+	// ItemKey / ItemSecret : pour un champ liste d'objets (ex. utilisateurs Basic), le secret porté par chaque
+	// élément (ItemSecret) et la clé qui l'identifie d'un enregistrement à l'autre (ItemKey). Chaque secret
+	// est masqué, et conservé à la modification pour l'élément de même ItemKey.
+	ItemKey    string `json:"item_key,omitempty"`
+	ItemSecret string `json:"item_secret,omitempty"`
 	// Env : variable d'environnement qui fournit la valeur par défaut du champ (repli quand la
 	// configuration saisie ne le renseigne pas). Optionnel.
 	Env string `json:"env,omitempty"`
@@ -156,83 +161,14 @@ func (m Manifest) check() error {
 		default:
 			return fmt.Errorf("%s : champ %q de genre inconnu %q", m.Type, f.Key, f.Kind)
 		}
+		if (f.ItemKey == "") != (f.ItemSecret == "") || (f.ItemSecret != "" && f.Kind != KindList) {
+			return fmt.Errorf("%s : champ %q : ItemKey et ItemSecret vont ensemble et exigent une liste", m.Type, f.Key)
+		}
 		if f.Secret && f.Kind != KindPassword {
 			return fmt.Errorf("%s : le champ secret %q doit être de genre password", m.Type, f.Key)
 		}
 	}
 	return nil
-}
-
-func (m Manifest) field(key string) (Field, bool) {
-	for _, f := range m.Fields {
-		if f.Key == key {
-			return f, true
-		}
-	}
-	return Field{}, false
-}
-
-// Validate vérifie une configuration saisie : champs requis présents et non vides, clés
-// inconnues refusées. À appeler à la création et à la modification ; une configuration déjà
-// stockée n'est jamais revalidée.
-func (m Manifest) Validate(cfg map[string]any) error {
-	var missing []string
-	for _, f := range m.Fields {
-		if f.Required && empty(cfg[f.Key]) {
-			missing = append(missing, f.Key)
-		}
-	}
-	if len(missing) > 0 {
-		return fmt.Errorf("champs requis manquants : %s", strings.Join(missing, ", "))
-	}
-	var unknown []string
-	for k := range cfg {
-		if _, ok := m.field(k); !ok {
-			unknown = append(unknown, k)
-		}
-	}
-	if len(unknown) > 0 {
-		sort.Strings(unknown)
-		return fmt.Errorf("champs inconnus : %s", strings.Join(unknown, ", "))
-	}
-	return nil
-}
-
-// Mask remplace chaque secret renseigné par Masque.
-func (m Manifest) Mask(cfg map[string]any) map[string]any {
-	out := make(map[string]any, len(cfg))
-	for k, v := range cfg {
-		if f, ok := m.field(k); ok && f.Secret && !empty(v) {
-			out[k] = Masque
-		} else {
-			out[k] = v
-		}
-	}
-	return out
-}
-
-// KeepSecrets complète une nouvelle configuration avec les secrets de l'ancienne quand elle ne
-// les renseigne pas (absents, vides ou égaux au masque). Un secret ne s'efface donc pas en
-// modifiant le reste du canal.
-func (m Manifest) KeepSecrets(old, next map[string]any) map[string]any {
-	out := make(map[string]any, len(next))
-	for k, v := range next {
-		out[k] = v
-	}
-	for _, f := range m.Fields {
-		if !f.Secret {
-			continue
-		}
-		if v, ok := out[f.Key]; ok && !empty(v) && v != Masque {
-			continue
-		}
-		if prev, ok := old[f.Key]; ok && !empty(prev) {
-			out[f.Key] = prev
-		} else {
-			delete(out, f.Key)
-		}
-	}
-	return out
 }
 
 func empty(v any) bool {

@@ -70,3 +70,26 @@ func (s *AuthProviderStore) Len() int {
 	defer s.mu.RUnlock()
 	return len(s.providers)
 }
+
+// UnmarshalJSON accepte « provider » comme synonyme de « type » : l'Admin envoie
+// {"id","name","provider","config"} alors que la passerelle écrit son cache avec « type ». Sans cet
+// alias, le type d'un fournisseur poussé par l'Admin arrivait vide et, faute de champ « provider »
+// dans sa configuration, la route partait sans authentification.
+func (p *AuthProvider) UnmarshalJSON(b []byte) error {
+	type plain AuthProvider
+	aux := struct {
+		*plain
+		Provider string `json:"provider"`
+	}{plain: (*plain)(p)}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	if p.Type == "" {
+		p.Type = aux.Provider
+	}
+	return nil
+}
+
+// SSOProviderUnresolved marque une route qui référence un fournisseur d'authentification
+// introuvable ou illisible : le middleware SSO refuse alors toute requête.
+const SSOProviderUnresolved = "unresolved"
