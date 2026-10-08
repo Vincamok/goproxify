@@ -638,6 +638,8 @@ goproxify plugin update  -manifest <plugin.json> -wasm <plugin.wasm> [-sha256 <e
 goproxify plugin delete  <nom> [-y] [-admin-url …] [-token …]
 ```
 
+`goproxify plugin keygen -out <préfixe>` crée une paire de clés de signature (la clé privée n'est jamais écrasée), `plugin sign -key … -manifest … -wasm …` affiche la signature d'un paquet, `plugin install … -signature <base64>` (ou `-signature-file`) la transmet, `plugin keys list|add|delete` gère les clés de confiance de l'Admin. Dès qu'une clé de confiance existe, la signature est obligatoire.
+
 `install` calcule l'empreinte SHA-256 du module et la transmet ; avec `-sha256`, elle doit égaler l'empreinte publiée par l'auteur, sinon rien n'est installé.
 
 ---

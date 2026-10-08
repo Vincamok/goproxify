@@ -21,6 +21,22 @@ Les plugins d'une route s'exécutent dans l'ordre de la liste. Ils s'exécutent 
 
 L'Admin pousse la liste complète aux passerelles. Une passerelle installe les plugins nouveaux ou modifiés (empreinte SHA-256 vérifiée), retire les absents, les stocke **chiffrés** et les recharge à son démarrage : les plugins fonctionnent Admin coupé, y compris après un redémarrage.
 
+## Signature
+
+L'empreinte SHA-256 vérifie l'intégrité d'un module, pas son origine. La signature **Ed25519** prouve qui a publié le paquet. Elle couvre le **manifeste normalisé en entier** (politique d'erreur et limites comprises) et l'empreinte du module : un manifeste plus permissif ne peut pas être accolé à un module signé.
+
+```bash
+goproxify plugin keygen -out editeur                      # editeur.key (privée, à garder), editeur.pub
+goproxify plugin sign -key editeur.key -manifest plugin.json -wasm plugin.wasm   # affiche la signature
+goproxify plugin keys add -name "Éditeur" -public-key <base64 de editeur.pub>     # côté Admin
+goproxify plugin install -manifest plugin.json -wasm plugin.wasm -signature <signature>
+```
+
+- **Aucune clé de confiance enregistrée** : la signature est facultative. Une signature fournie est refusée (elle ne se vérifie pas) : enregistrez d'abord la clé.
+- **Au moins une clé enregistrée** : tout plugin installé ou **remplacé** doit être signé par l'une d'elles ; sinon `400`.
+- Retirer une clé ne retire pas les plugins qu'elle a signés ; l'identifiant de la clé signataire (`signed_by`) est conservé et affiché.
+- L'Admin vérifie la signature à l'installation ; les passerelles font confiance à l'Admin qui leur pousse la liste (comme pour le reste de la configuration).
+
 ## Manifeste
 
 ```json
@@ -58,10 +74,20 @@ Le module exporte `memory`, `alloc(size i32) i32`, et `on_request(ptr i32, len i
 
 L'hôte n'importe qu'une fonction : `gpx.log(ptr i32, len i32)` (journal, 1 Kio par appel). Tout autre import (WASI, système de fichiers, réseau, horloge, aléa) est refusé au chargement. Une instance neuve est créée à chaque appel : un plugin n'a pas d'état.
 
+## Coût d'un appel
+
+Mesuré avec un module de deux pages mémoire (`go test ./internal/edge/plugins -bench .`, Ryzen 7 5700G) : environ **55 µs et 165 Kio alloués par appel** en amd64 (moteur compilé), environ 58 µs en 386 (interpréteur), un hook trivial. L'essentiel est l'instanciation d'une instance neuve (mémoire linéaire remise à zéro), qui garantit qu'aucun état ne passe d'une requête à l'autre. À 10 000 requêtes/s avec un plugin, cela représente de l'ordre d'un demi-cœur et 1,6 Go/s d'allocations pour le ramasse-miettes. Conséquences pratiques :
+
+- déclarez le **minimum de mémoire** dont le module a besoin (le coût suit sa taille mémoire initiale) ;
+- un plugin par route et un seul hook suffisent presque toujours ; chaque plugin et chaque hook s'additionnent ;
+- le temps passé dans le plugin lui-même (`timeout_ms`) s'ajoute à ce coût fixe.
+
+Ces chiffres sont une base : à mesurer avec votre propre module et votre trafic avant de généraliser un plugin à toutes les routes.
+
 ## Limites de la v1
 
 - Pas de hook sur le corps de la requête ou de la réponse.
 - Pas d'état partagé ni d'appel réseau depuis un plugin.
 - Un plugin ne s'attache qu'à une route HTTP, pas à un flux TCP/UDP.
-- Paquets non signés : l'empreinte SHA-256 vérifie l'intégrité, pas l'origine.
-- Le coût d'un appel (instanciation et aller-retour JSON) n'est pas encore mesuré en charge.
+- Pas de dépôt de plugins ni de compilateur fourni : produisez le WASM avec la chaîne de votre langage (Rust `wasm32-unknown-unknown`, TinyGo `wasm-unknown`). Le moteur a été éprouvé avec des modules assemblés à la main, pas avec la sortie d'un compilateur réel.
+- Pas de mesure en charge réelle (seulement le micro-benchmark ci-dessus).

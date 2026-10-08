@@ -28,6 +28,8 @@ var backupTables = []string{
 	"domains",
 	"cert_deploy_targets",
 	"auth_providers",
+	"plugins",
+	"plugin_trusted_keys",
 	"ip_profiles",
 	"node_tunnel_configs",
 	"teams",
@@ -55,7 +57,7 @@ var backupTables = []string{
 }
 
 // blobColumns : colonnes BLOB, encodées en base64 dans le JSON de sauvegarde.
-var blobColumns = map[string]bool{"error_page_assets.content": true}
+var blobColumns = map[string]bool{"error_page_assets.content": true, "plugins.wasm": true}
 
 // clearedColumns : colonnes dont la valeur ne doit jamais sortir de la base.
 var clearedColumns = map[string]bool{"portal_users.invite_token_hash": true}

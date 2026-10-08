@@ -760,6 +760,16 @@ Plugins WebAssembly (voir [plugins.md](plugins.md), ADR 0008). **Admin uniquemen
 
 Chaque changement est poussé à toutes les passerelles (liste complète). Une route référence un plugin par `plugins: [{"name", "config"}]` ; le dry-run refuse un plugin inconnu, en double, ou une configuration qui ne respecte pas son manifeste.
 
+### `/api/v1/plugin-keys`
+
+Clés publiques Ed25519 de confiance pour la signature des plugins. Admin uniquement ; mêmes scopes PAT que `/plugins`.
+
+- `GET` : `[{id, name, public_key, created_at}]` (`id` = 8 premiers octets du SHA-256 de la clé, en hexadécimal).
+- `POST` `{"name", "public_key": "<base64, 32 octets>"}` : `201` ; `409` si la clé existe ; `400` si elle est illisible.
+- `DELETE /:id` : `204`. Les plugins déjà installés ne sont pas retirés.
+
+**Politique de signature** de `POST`/`PUT /api/v1/plugins` (champ `signature`, Ed25519 en base64 sur le manifeste normalisé et l'empreinte du module) : sans clé de confiance, la signature est facultative mais, fournie, elle est refusée (`400`) car invérifiable ; avec au moins une clé, elle est obligatoire et doit se vérifier avec l'une d'elles. La réponse et la liste portent `signed_by` (identifiant de la clé).
+
 ### `GET /api/v1/security/engine-types`
 
 Manifestes des moteurs de sécurité globaux : `sentinel` (champs dérivés de la configuration, chemins pointés), `fail2ban`, `crowdsec` (`api_key` secret). Admin uniquement. Outil MCP `list_security_engine_types`, CLI `goproxify security engines`.

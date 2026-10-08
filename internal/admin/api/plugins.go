@@ -40,14 +40,16 @@ type PluginsHandler struct {
 type PluginInfo struct {
 	plugins.Manifest
 	SHA256    string    `json:"sha256"`
+	SignedBy  string    `json:"signed_by,omitempty"` // identifiant de la clé de confiance signataire
 	Size      int       `json:"size"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type pluginRequest struct {
-	Manifest plugins.Manifest `json:"manifest"`
-	SHA256   string           `json:"sha256"`
-	Wasm     []byte           `json:"wasm"` // base64 en JSON
+	Manifest  plugins.Manifest `json:"manifest"`
+	SHA256    string           `json:"sha256"`
+	Wasm      []byte           `json:"wasm"`      // base64 en JSON
+	Signature string           `json:"signature"` // Ed25519 en base64, voir plugins.Sign
 }
 
 func (h *PluginsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -71,13 +73,13 @@ func (h *PluginsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *PluginsHandler) scan(rows interface{ Scan(...any) error }) (PluginInfo, error) {
 	var info PluginInfo
 	var manifest string
-	if err := rows.Scan(&manifest, &info.SHA256, &info.Size, &info.UpdatedAt); err != nil {
+	if err := rows.Scan(&manifest, &info.SHA256, &info.Size, &info.UpdatedAt, &info.SignedBy); err != nil {
 		return info, err
 	}
 	return info, json.Unmarshal([]byte(manifest), &info.Manifest)
 }
 
-const pluginCols = `manifest, sha256, length(wasm), updated_at`
+const pluginCols = `manifest, sha256, length(wasm), updated_at, signed_by`
 
 func (h *PluginsHandler) list(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.DB.QueryContext(r.Context(), `SELECT `+pluginCols+` FROM plugins ORDER BY name`)
@@ -140,6 +142,11 @@ func (h *PluginsHandler) install(w http.ResponseWriter, r *http.Request, name st
 	}
 	manifest := p.Manifest
 	p.Close(r.Context())
+	signedBy, sigErr := verifyPluginSignature(r.Context(), h.DB, manifest, got, req.Signature)
+	if sigErr != "" {
+		http.Error(w, sigErr, http.StatusBadRequest)
+		return
+	}
 
 	mb, _ := json.Marshal(manifest)
 	var exists int
@@ -153,9 +160,9 @@ func (h *PluginsHandler) install(w http.ResponseWriter, r *http.Request, name st
 		return
 	}
 	if _, err := h.DB.ExecContext(r.Context(),
-		`INSERT INTO plugins (name, manifest, sha256, wasm) VALUES (?, ?, ?, ?)
-		 ON CONFLICT(name) DO UPDATE SET manifest=excluded.manifest, sha256=excluded.sha256, wasm=excluded.wasm, updated_at=CURRENT_TIMESTAMP`,
-		manifest.Name, string(mb), got, req.Wasm); err != nil {
+		`INSERT INTO plugins (name, manifest, sha256, wasm, signed_by) VALUES (?, ?, ?, ?, ?)
+		 ON CONFLICT(name) DO UPDATE SET manifest=excluded.manifest, sha256=excluded.sha256, wasm=excluded.wasm, signed_by=excluded.signed_by, updated_at=CURRENT_TIMESTAMP`,
+		manifest.Name, string(mb), got, req.Wasm, signedBy); err != nil {
 		if !isCtxErr(err) {
 			h.Log.Error("plugins: install", "err", err)
 		}
@@ -175,7 +182,7 @@ func (h *PluginsHandler) install(w http.ResponseWriter, r *http.Request, name st
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(PluginInfo{Manifest: manifest, SHA256: got, Size: len(req.Wasm), UpdatedAt: time.Now().UTC()})
+	_ = json.NewEncoder(w).Encode(PluginInfo{Manifest: manifest, SHA256: got, SignedBy: signedBy, Size: len(req.Wasm), UpdatedAt: time.Now().UTC()})
 }
 
 func (h *PluginsHandler) remove(w http.ResponseWriter, r *http.Request, name string) {

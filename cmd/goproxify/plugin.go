@@ -106,6 +106,16 @@ func runPlugin() {
 			os.Exit(1)
 		}
 		payload := map[string]any{"manifest": manifest, "sha256": got, "wasm": wasm}
+		if sig := flagValue(args, "-signature", ""); sig != "" {
+			payload["signature"] = sig
+		} else if sf := flagValue(args, "-signature-file", ""); sf != "" {
+			b, err := os.ReadFile(sf)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "lecture de la signature : %v\n", err)
+				os.Exit(1)
+			}
+			payload["signature"] = strings.TrimSpace(string(b))
+		}
 		name, _ := manifest["name"].(string)
 		method, path := "POST", "/api/v1/plugins"
 		if sub == "update" {
@@ -116,6 +126,15 @@ func runPlugin() {
 			os.Exit(1)
 		}
 		fmt.Printf("Plugin %s installé (sha256 %s).\n", name, got)
+
+	case "keygen":
+		runPluginKeygen()
+
+	case "sign":
+		runPluginSign()
+
+	case "keys":
+		runPluginKeys()
 
 	case "delete", "rm":
 		args := parseFlags(os.Args[3:])
@@ -157,12 +176,23 @@ Sous-commandes :
   install  Installe un plugin depuis son manifeste et son module .wasm
   update   Remplace un plugin installé
   delete   Supprime un plugin
+  keygen   Génère une paire de clés de signature Ed25519
+  sign     Signe un paquet (manifeste + module)
+  keys     Clés publiques de confiance (list / add / delete)
 
 goproxify plugin list    [-admin-url …] [-token …]
 goproxify plugin get     <nom> [-admin-url …] [-token …]
 goproxify plugin install -manifest <plugin.json> -wasm <plugin.wasm> [-sha256 <empreinte>] [-admin-url …] [-token …]
 goproxify plugin update  -manifest <plugin.json> -wasm <plugin.wasm> [-sha256 <empreinte>] [-admin-url …] [-token …]
 goproxify plugin delete  <nom> [-y] [-admin-url …] [-token …]
+
+goproxify plugin keygen  -out <préfixe>                      # écrit <préfixe>.key (privée, à garder) et <préfixe>.pub
+goproxify plugin sign    -key <fichier.key> -manifest <plugin.json> -wasm <plugin.wasm>   # affiche la signature
+goproxify plugin install … -signature <base64> | -signature-file <fichier>
+goproxify plugin keys list|add|delete [-name <nom>] [-public-key <base64>] [-id <id>] [-admin-url …] [-token …]
+
+Signature : tant qu'aucune clé de confiance n'est enregistrée (plugin keys add), elle est facultative ; dès
+qu'il y en a une, tout plugin installé ou remplacé doit être signé par l'une d'elles.
 
 Exemple de manifeste plugin.json :
   {

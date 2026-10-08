@@ -6,9 +6,12 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"github.com/vincamok/goproxify/internal/edge/plugins"
 	"io"
 	"log/slog"
 	"net/http"
@@ -140,5 +143,74 @@ func TestPlugins_InstallRefusals(t *testing.T) {
 	_ = h.DB.QueryRow(`SELECT COUNT(1) FROM plugins`).Scan(&n)
 	if n != 0 {
 		t.Errorf("%d plugin(s) stocké(s) malgré les refus", n)
+	}
+}
+
+func signedBody(t *testing.T, priv ed25519.PrivateKey, name string, wasm []byte) map[string]any {
+	t.Helper()
+	body := pluginBody(name, wasm)
+	m := plugins.Manifest{Name: name, Version: "1.0.0", APIVersion: 1, Hooks: []string{"request"}}
+	sig, err := plugins.Sign(priv, m, body["sha256"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body["signature"] = sig
+	return body
+}
+
+func addKey(t *testing.T, h *PluginsHandler, pub ed25519.PublicKey) *httptest.ResponseRecorder {
+	t.Helper()
+	keys := &PluginKeysHandler{DB: h.DB, Log: h.Log}
+	var buf bytes.Buffer
+	_ = json.NewEncoder(&buf).Encode(map[string]string{"name": "éditeur", "public_key": base64.StdEncoding.EncodeToString(pub)})
+	rec := httptest.NewRecorder()
+	keys.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/plugin-keys", &buf))
+	return rec
+}
+
+// Sans clé de confiance, la signature est facultative ; avec une clé, elle devient obligatoire et doit
+// venir d'une clé approuvée. Une signature qu'on ne peut pas vérifier ne compte jamais.
+func TestPlugins_SignaturePolicy(t *testing.T) {
+	h, _ := newPluginsHandler(t)
+	wasm := pt.Static(`{}`)
+	pub, priv, _ := plugins.GenerateKey()
+	_, otherPriv, _ := plugins.GenerateKey()
+
+	if rec := plCall(h, http.MethodPost, "/api/v1/plugins", pluginBody("libre", wasm)); rec.Code != http.StatusCreated {
+		t.Fatalf("sans clé, non signé : %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := plCall(h, http.MethodPost, "/api/v1/plugins", signedBody(t, priv, "orphelin", wasm)); rec.Code != http.StatusBadRequest {
+		t.Errorf("signature sans clé de confiance : %d (attendu 400)", rec.Code)
+	}
+
+	if rec := addKey(t, h, pub); rec.Code != http.StatusCreated {
+		t.Fatalf("ajout de clé : %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := addKey(t, h, pub); rec.Code != http.StatusConflict {
+		t.Errorf("clé en double : %d", rec.Code)
+	}
+	if rec := plCall(h, http.MethodPost, "/api/v1/plugins", pluginBody("nu", wasm)); rec.Code != http.StatusBadRequest {
+		t.Errorf("non signé avec clés configurées : %d (attendu 400)", rec.Code)
+	}
+	if rec := plCall(h, http.MethodPost, "/api/v1/plugins", signedBody(t, otherPriv, "etranger", wasm)); rec.Code != http.StatusBadRequest {
+		t.Errorf("clé non approuvée : %d (attendu 400)", rec.Code)
+	}
+	tampered := signedBody(t, priv, "falsifie", wasm)
+	tampered["manifest"].(map[string]any)["on_error"] = "allow" // manifeste plus permissif que le signé
+	if rec := plCall(h, http.MethodPost, "/api/v1/plugins", tampered); rec.Code != http.StatusBadRequest {
+		t.Errorf("manifeste modifié : %d (attendu 400)", rec.Code)
+	}
+	rec := plCall(h, http.MethodPost, "/api/v1/plugins", signedBody(t, priv, "signe", wasm))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("signé par une clé de confiance : %d %s", rec.Code, rec.Body.String())
+	}
+	var info PluginInfo
+	_ = json.Unmarshal(rec.Body.Bytes(), &info)
+	if info.SignedBy != plugins.KeyID(pub) {
+		t.Errorf("signed_by = %q", info.SignedBy)
+	}
+	// Le remplacement d'un plugin déjà installé est soumis à la même règle.
+	if rec := plCall(h, http.MethodPut, "/api/v1/plugins/libre", pluginBody("libre", pt.Static(`{"action":"deny"}`))); rec.Code != http.StatusBadRequest {
+		t.Errorf("remplacement non signé : %d (attendu 400)", rec.Code)
 	}
 }

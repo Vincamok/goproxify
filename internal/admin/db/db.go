@@ -330,6 +330,13 @@ func migrate(db *sql.DB) error {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+		// Clés publiques de confiance pour la signature des plugins
+		`CREATE TABLE IF NOT EXISTS plugin_trusted_keys (
+			id         TEXT PRIMARY KEY,
+			name       TEXT NOT NULL,
+			public_key TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
 		// Profils de filtrage IP (listes publiques avec mise à jour automatique)
 		`CREATE TABLE IF NOT EXISTS ip_profiles (
 			id                TEXT PRIMARY KEY,
@@ -392,6 +399,8 @@ func migrate(db *sql.DB) error {
 		`ALTER TABLE geoip_cache ADD COLUMN lon REAL`,
 		`ALTER TABLE geoip_cache ADD COLUMN city TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE geoip_cache ADD COLUMN region TEXT NOT NULL DEFAULT ''`,
+		// Clé de confiance qui a signé le plugin ('' = non signé)
+		`ALTER TABLE plugins ADD COLUMN signed_by TEXT NOT NULL DEFAULT ''`,
 	} {
 		db.Exec(s) //nolint:errcheck
 	}

@@ -65,13 +65,13 @@ Le `.wasm` et son manifeste sont poussés par l'Admin, **stockés chiffrés** su
 
 ### Confiance
 
-Installer un plugin est une action d'administration (admin uniquement) qui exige l'empreinte SHA-256 attendue. La sandbox borne ce qu'un plugin peut *consommer* ; elle ne dit rien de ce qu'il *décide* : un plugin d'authentification qui répond `allow` à tout ouvre la route. Un plugin n'a donc pas de privilège de plus qu'une règle de routage, mais il faut le tenir pour du code de politique, à relire comme tel.
+Installer un plugin est une action d'administration (admin uniquement) qui exige l'empreinte SHA-256 attendue et, dès qu'une clé de confiance est enregistrée, une signature Ed25519 d'une de ces clés. La sandbox borne ce qu'un plugin peut *consommer* ; elle ne dit rien de ce qu'il *décide* : un plugin d'authentification qui répond `allow` à tout ouvre la route. Un plugin n'a donc pas de privilège de plus qu'une règle de routage, mais il faut le tenir pour du code de politique, à relire comme tel.
 
 ## Phases
 
 1. **Moteur d'exécution** (`internal/edge/plugins`) : chargement, validation du manifeste, ABI v1, limites, politique d'erreur, stockage chiffré local. Testé avec des modules WASM assemblés à la main (aucune chaîne de compilation requise).
 2. **Branchement** : plugins attachés à une route (`plugins: [{name, config}]`), exécutés dans la chaîne du `dispatch` ; poussés par l'Admin ; API, CLI, MCP.
-3. **Interface et distribution** : page Admin, signature des paquets, dépôt de plugins.
+3. **Interface et signature** (livrée) : page Admin, signature Ed25519 des paquets (manifeste normalisé en entier + empreinte du module) avec clés de confiance côté Admin, plugins dans les sauvegardes, mesure du coût d'un appel (~55 µs et ~165 Kio par appel, voir `docs/plugins.md`). Restent : un dépôt de plugins, une trousse d'exemples compilés avec un vrai compilateur (Rust, TinyGo), un hook sur le corps.
 
 ## Conséquences
 
