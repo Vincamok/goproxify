@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/x509"
 	"database/sql"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"strings"
@@ -43,6 +44,14 @@ func IsEdgeChallengeMethod(method string) bool {
 // ObtainCertForMethod émet un certificat selon la méthode du domaine ; dnsProviderType et
 // credentials ne servent qu'à DNS-01.
 func (m *Manager) ObtainCertForMethod(ctx context.Context, domain, method, dnsProviderType string, credentials map[string]any) error {
+	if err := m.obtainForMethod(ctx, domain, method, dnsProviderType, credentials); err != nil {
+		return err
+	}
+	m.setCertProvider(ctx, domain, "") // émis sans fournisseur nommé : ne pas garder un identifiant périmé
+	return nil
+}
+
+func (m *Manager) obtainForMethod(ctx context.Context, domain, method, dnsProviderType string, credentials map[string]any) error {
 	switch method {
 	case MethodHTTP01:
 		return m.obtainOnEdges(ctx, domain, edgetls.ChallengeHTTP01)
@@ -158,17 +167,71 @@ func buildEdgeChallenge(client *xacme.Client, chal *xacme.Challenge, typ, domain
 	return ch, nil
 }
 
-// renewCert renouvelle un certificat avec la méthode enregistrée pour son domaine.
-// Sans ligne domaine (cert importé, restauré depuis disque…), DNS-01 avec le fournisseur par défaut.
+// renewCert renouvelle un certificat comme il a été émis. Priorité : fournisseur DNS nommé mémorisé
+// sur le certificat > méthode et identifiants du domaine > fournisseur par défaut (certificat
+// importé, restauré depuis le disque, domaine sans ligne).
 func (m *Manager) renewCert(ctx context.Context, domain string) error {
-	var method, dnsProvider string
+	var providerID string
+	if err := m.db.QueryRowContext(ctx, `SELECT acme_provider_id FROM certs WHERE domain=?`, domain).Scan(&providerID); err != nil && err != sql.ErrNoRows {
+		m.log.Warn("acme: lecture du fournisseur du certificat", "domain", domain, "err", err)
+	}
+	if providerID != "" {
+		if m.NamedProviderExists(providerID) {
+			return m.ObtainCertWithNamedProvider(ctx, domain, providerID)
+		}
+		m.log.Warn("acme: fournisseur DNS nommé supprimé, repli sur les identifiants du domaine", "domain", domain, "provider", providerID)
+	}
+
+	var method, dnsProvider, credJSON string
 	err := m.db.QueryRowContext(ctx,
-		`SELECT cert_method, dns_provider FROM domains WHERE domain=?`, domain).Scan(&method, &dnsProvider)
+		`SELECT cert_method, dns_provider, dns_credentials FROM domains WHERE domain=?`, domain).Scan(&method, &dnsProvider, &credJSON)
 	if err != nil && err != sql.ErrNoRows {
 		m.log.Warn("acme: lecture méthode du domaine", "domain", domain, "err", err)
 	}
-	if IsEdgeChallengeMethod(method) {
-		return m.ObtainCertForMethod(ctx, domain, method, "", nil)
+	var creds map[string]any
+	_ = json.Unmarshal([]byte(credJSON), &creds)
+	if IsEdgeChallengeMethod(method) || (dnsProvider != "" && dnsProvider != "none") {
+		return m.ObtainCertForMethod(ctx, domain, method, dnsProvider, creds)
 	}
 	return m.ObtainCert(ctx, domain)
+}
+
+// NamedProviderExists indique si un fournisseur DNS nommé existe.
+func (m *Manager) NamedProviderExists(id string) bool {
+	if m.Providers == nil || id == "" {
+		return false
+	}
+	e, err := m.Providers.Get(id)
+	return err == nil && e != nil
+}
+
+// ObtainCertWithNamedProvider émet un certificat DNS-01 avec un fournisseur DNS nommé et le
+// mémorise sur le certificat pour que le renouvellement le réutilise.
+func (m *Manager) ObtainCertWithNamedProvider(ctx context.Context, domain, providerID string) error {
+	if m.Providers == nil {
+		return fmt.Errorf("acme: aucun fournisseur DNS nommé configuré")
+	}
+	e, err := m.Providers.Get(providerID)
+	if err != nil {
+		return fmt.Errorf("acme: lecture du fournisseur DNS nommé : %w", err)
+	}
+	if e == nil {
+		return fmt.Errorf("acme: fournisseur DNS nommé %q introuvable", providerID)
+	}
+	creds := make(map[string]any, len(e.Params))
+	for k, v := range e.Params {
+		creds[k] = v
+	}
+	if err := m.ObtainCertWithProvider(ctx, domain, e.Type, creds); err != nil {
+		return err
+	}
+	m.setCertProvider(ctx, domain, providerID)
+	return nil
+}
+
+// setCertProvider mémorise (ou efface, avec "") le fournisseur nommé qui a émis le certificat.
+func (m *Manager) setCertProvider(ctx context.Context, domain, providerID string) {
+	if _, err := m.db.ExecContext(ctx, `UPDATE certs SET acme_provider_id=? WHERE domain=?`, providerID, domain); err != nil {
+		m.log.Warn("acme: mémorisation du fournisseur du certificat", "domain", domain, "err", err)
+	}
 }

@@ -34,7 +34,7 @@ Chaque outil exige un scope, le même que sa route REST équivalente. Les outils
 | `snippets:write` | `create_snippet`, `delete_snippet` |
 | `domains:read` | `list_domains` |
 | `domains:write` | `create_domain`, `renew_domain`, `rotate_cert` |
-| `certs:read` | `list_certs`, `get_cert_status`, `list_cert_deploy_targets`, `list_internal_cas` †, `list_internal_certs` †, `get_ech_status` † |
+| `certs:read` | `list_certs`, `get_cert_status`, `list_cert_deploy_targets`, `list_cert_deploy_types`, `list_internal_cas` †, `list_internal_certs` †, `get_ech_status` † |
 | `certs:write` | `obtain_cert`, `import_cert`, `trigger_cert_deploy`, `create_internal_ca` †, `issue_internal_cert` †, `revoke_internal_cert` † |
 | `logs:read` | `list_logs`, `get_prism_anomalies`, `get_prism_geo`, `get_prism_tls_fingerprints`, `get_prism_slo`, `simulate_sentinel_config` †, `trace_ip` †, `preview_security_ban` †, `preview_asn_ban` † |
 | `audit:read` | `get_audit_log`, `list_ip_profiles`, `get_security_overview` †, `list_security_bans` †, `lookup_asn` †, `list_ban_whitelist` †, `list_security_threats` †, `list_security_cves` †, `list_auth_providers` †, `list_rules` †, `list_rule_history` †, `list_rule_versions` †, `list_pending_actions` †, `list_silences` †, `export_automation` †, `list_scheduled_tasks` †, `list_scheduled_task_runs` †, `list_playbooks` †, `list_playbook_runs` †, `get_playbook_run` † |
@@ -1098,6 +1098,16 @@ Liste les cibles de déploiement configurées pour un certificat (webhook, ssh_e
 | Paramètre | Type   | Requis | Description       |
 |-----------|--------|--------|-------------------|
 | `cert_id` | string | ✓      | ID du certificat  |
+
+**Scope :** `certs:read`
+
+---
+
+### `list_cert_deploy_types`
+
+Types de cible de déploiement de certificats (`webhook`, `ssh_exec`…) avec leurs champs de configuration (clé, libellé, `secret`, `required`, `multiline`).
+
+_Aucun paramètre._
 
 **Scope :** `certs:read`
 

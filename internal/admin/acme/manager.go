@@ -37,8 +37,11 @@ type Manager struct {
 	log      *slog.Logger
 	pusher   CertPusher
 	provider DNSProvider
-	email    string
-	certDir  string // répertoire de persistance des PEM sur disque (fallback DB)
+	// Providers : fournisseurs DNS nommés (acme-providers.yaml). Nil → seuls les identifiants du
+	// domaine et le fournisseur par défaut sont utilisables.
+	Providers *ProviderStore
+	email     string
+	certDir   string // répertoire de persistance des PEM sur disque (fallback DB)
 	// DirectoryURL vide → Let's Encrypt production.
 	DirectoryURL string
 	// OnCertObtained est appelé après chaque obtention/renouvellement réussi.
@@ -113,6 +116,9 @@ func (m *Manager) ObtainCert(ctx context.Context, domain string) error {
 }
 
 func (m *Manager) obtainCertWithProv(ctx context.Context, domain string, prov DNSProvider) error {
+	if prov == nil {
+		return fmt.Errorf("acme: aucun fournisseur DNS configuré pour %s (choisissez-en un pour le domaine ou définissez GPX_ACME_DNS_TYPE)", domain)
+	}
 	return m.obtainCert(ctx, domain, func(ctx context.Context, client *xacme.Client, authURLs []string) error {
 		return m.fulfillAllDNS01(ctx, client, authURLs, prov)
 	})

@@ -93,6 +93,15 @@ func (h *CertsHandler) list(w http.ResponseWriter, r *http.Request) {
 
 type obtainRequest struct {
 	Domain string `json:"domain"`
+	// ACMEProviderID : fournisseur DNS nommé (acme-providers.yaml) à utiliser. Prioritaire sur les
+	// identifiants du domaine et sur le fournisseur par défaut ; mémorisé pour le renouvellement.
+	ACMEProviderID string `json:"acme_provider_id"`
+}
+
+// NamedProviderObtainer est implémenté par acme.Manager : émission avec un fournisseur DNS nommé.
+type NamedProviderObtainer interface {
+	ObtainCertWithNamedProvider(ctx context.Context, domain, providerID string) error
+	NamedProviderExists(id string) bool
 }
 
 func (h *CertsHandler) obtain(w http.ResponseWriter, r *http.Request) {
@@ -106,7 +115,20 @@ func (h *CertsHandler) obtain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	obtain := func() error { return h.Manager.ObtainCert(context.Background(), req.Domain) }
-	if pm, ok := h.Manager.(DomainCertObtainer); ok {
+	if req.ACMEProviderID != "" {
+		np, ok := h.Manager.(NamedProviderObtainer)
+		if !ok {
+			http.Error(w, "fournisseurs DNS nommés indisponibles", http.StatusServiceUnavailable)
+			return
+		}
+		if !np.NamedProviderExists(req.ACMEProviderID) {
+			http.Error(w, "fournisseur DNS nommé introuvable", http.StatusBadRequest)
+			return
+		}
+		obtain = func() error {
+			return np.ObtainCertWithNamedProvider(context.Background(), req.Domain, req.ACMEProviderID)
+		}
+	} else if pm, ok := h.Manager.(DomainCertObtainer); ok {
 		var dnsProvider, credJSON, certMethod string
 		err := h.DB.QueryRowContext(r.Context(),
 			`SELECT dns_provider, dns_credentials, cert_method FROM domains WHERE domain=?`, req.Domain).Scan(&dnsProvider, &credJSON, &certMethod)

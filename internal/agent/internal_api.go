@@ -19,6 +19,7 @@ import (
 	"time"
 
 	agentdocker "github.com/vincamok/goproxify/internal/agent/docker"
+	agentsources "github.com/vincamok/goproxify/internal/agent/sources"
 )
 
 // internalAPI expose une API HTTP locale sur laquelle la passerelle / l'Admin poussent des commandes.
@@ -358,5 +359,15 @@ var secretKeys = map[string]bool{
 	"join_token": true,
 }
 
-func isSecretKey(k string) bool { return secretKeys[k] }
+// sourceSecretKeys : champs secrets déclarés par les manifestes des sources de découverte (jeton
+// Kubernetes, mot de passe de registre Docker, clé d'API Portainer…).
+var sourceSecretKeys = func() map[string]bool {
+	m := map[string]bool{}
+	for _, k := range agentsources.BuiltinSecretKeys() {
+		m[k] = true
+	}
+	return m
+}()
+
+func isSecretKey(k string) bool { return secretKeys[k] || sourceSecretKeys[k] }
 

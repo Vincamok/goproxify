@@ -544,7 +544,10 @@ goproxify agent-mgmt get     <id> [-admin-url …] [-token …]
 goproxify agent-mgmt approve <id> [-admin-url …] [-token …]
 goproxify agent-mgmt revoke  <id> [-admin-url …] [-token …]
 goproxify agent-mgmt delete  <id> [-y] [-admin-url …] [-token …]
+goproxify agent-mgmt sources [-admin-url …] [-token …]
 ```
+
+`sources` liste les sources de découverte de l'Agent (Docker/Podman, Portainer, Kubernetes…) avec leurs champs de configuration (`*` = requis, « secret » = masqué dans le heartbeat et conservé par un correctif de configuration). Chaque source est un module du registre (ADR 0007).
 
 Exemples :
 

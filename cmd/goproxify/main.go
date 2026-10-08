@@ -156,7 +156,7 @@ Commandes d'administration (API Admin — -admin-url / -token) :
   snippet   Snippets de sécurité réutilisables (list/get/create/update/delete)
   domain    Domaines gérés ACME (list/get/create/renew/delete)
   ech       Encrypted Client Hello (status/enable/disable/rotate/delete-key)
-  agent-mgmt     Agents Docker enregistrés (list/get/approve/revoke/delete)
+  agent-mgmt     Agents Docker enregistrés (list/get/approve/revoke/delete/sources)
   settings       Configuration Admin (smtp get/set/test)
   auth-provider  Fournisseurs SSO/OIDC/SAML/LDAP (list/get/create/update/enable/disable/delete)
   teams          Équipes RBAC (list/get/create/update/members/delete)

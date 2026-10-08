@@ -12,69 +12,6 @@ import (
 	"net/http"
 )
 
-// --- OVH -------------------------------------------------------------------
-
-type ovhProvider struct {
-	endpoint          string
-	appKey            string
-	appSecret         string
-	consumerKey       string
-	zone              string
-}
-
-func newOVHProvider(p map[string]string) (DNSProvider, error) {
-	ep := p["endpoint"]
-	if ep == "" {
-		ep = "https://eu.api.ovh.com/1.0"
-	}
-	return &ovhProvider{
-		endpoint:    ep,
-		appKey:      p["app_key"],
-		appSecret:   p["app_secret"],
-		consumerKey: p["consumer_key"],
-		zone:        p["zone"],
-	}, nil
-}
-
-func (o *ovhProvider) SetTXTRecord(ctx context.Context, domain, value string) error {
-	body, _ := json.Marshal(map[string]any{
-		"fieldType": "TXT",
-		"subDomain": "_acme-challenge." + domain,
-		"target":    value,
-		"ttl":       60,
-	})
-	return o.apiCall(ctx, http.MethodPost, "/domain/zone/"+o.zone+"/record", body)
-}
-
-func (o *ovhProvider) DeleteTXTRecord(ctx context.Context, domain string) error {
-	// Simplification : liste + suppression. Dans la réalité, on stockerait l'ID.
-	return o.apiCall(ctx, http.MethodDelete, "/domain/zone/"+o.zone+"/refresh", nil)
-}
-
-func (o *ovhProvider) apiCall(ctx context.Context, method, path string, body []byte) error {
-	var bodyR io.Reader
-	if body != nil {
-		bodyR = bytes.NewReader(body)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, o.endpoint+path, bodyR)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("X-Ovh-Application", o.appKey)
-	req.Header.Set("X-Ovh-Consumer", o.consumerKey)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("ovh: HTTP %d: %s", resp.StatusCode, b)
-	}
-	return nil
-}
-
 // --- Cloudflare ------------------------------------------------------------
 
 type cloudflareProvider struct {
@@ -207,68 +144,6 @@ func (c *cloudflareProvider) deleteTXTByZone(ctx context.Context, zoneID, domain
 			delResp.Body.Close()
 		}
 	}
-	return nil
-}
-
-// --- Route53 ---------------------------------------------------------------
-
-type route53Provider struct{ hostedZoneID string }
-
-func newRoute53Provider(p map[string]string) (DNSProvider, error) {
-	if p["hosted_zone_id"] == "" {
-		return nil, fmt.Errorf("route53: hosted_zone_id requis")
-	}
-	return &route53Provider{hostedZoneID: p["hosted_zone_id"]}, nil
-}
-
-func (r *route53Provider) SetTXTRecord(_ context.Context, _, _ string) error {
-	// Nécessite le SDK AWS — stub non-op pour compilation.
-	return fmt.Errorf("route53: non implémenté (utilisez le SDK AWS v2)")
-}
-
-func (r *route53Provider) DeleteTXTRecord(_ context.Context, _ string) error {
-	return fmt.Errorf("route53: non implémenté (utilisez le SDK AWS v2)")
-}
-
-// --- Hetzner ---------------------------------------------------------------
-
-type hetznerProvider struct {
-	apiToken string
-	zoneID   string
-}
-
-func newHetznerProvider(p map[string]string) (DNSProvider, error) {
-	if p["api_token"] == "" || p["zone_id"] == "" {
-		return nil, fmt.Errorf("hetzner: api_token et zone_id requis")
-	}
-	return &hetznerProvider{apiToken: p["api_token"], zoneID: p["zone_id"]}, nil
-}
-
-func (h *hetznerProvider) SetTXTRecord(ctx context.Context, domain, value string) error {
-	body, _ := json.Marshal(map[string]any{
-		"type":    "TXT",
-		"name":    "_acme-challenge." + domain,
-		"value":   value,
-		"ttl":     60,
-		"zone_id": h.zoneID,
-	})
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost,
-		"https://dns.hetzner.com/api/v1/records", bytes.NewReader(body))
-	req.Header.Set("Auth-API-Token", h.apiToken)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("hetzner: HTTP %d: %s", resp.StatusCode, b)
-	}
-	return nil
-}
-
-func (h *hetznerProvider) DeleteTXTRecord(_ context.Context, _ string) error {
 	return nil
 }
 

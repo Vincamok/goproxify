@@ -44,8 +44,10 @@ type Discovery struct {
 	skipEndpoints map[string]bool
 	endpointEdges map[string]endpointEdgeConf // endpoint name (lowercase) → passerelle alternatif
 
-	mu       sync.Mutex
-	prevSeen map[string]bool // clés "endpointID:containerID" du scan précédent
+	mu         sync.Mutex
+	endpointFn func() string   // passerelle courante de l'Agent (bascule HA) ; nil = adminEndpoint fixe
+	scanMu     sync.Mutex      // un seul scan à la fois (boucle périodique et réannonce)
+	prevSeen   map[string]bool // clés "endpointID:containerID" du scan précédent
 }
 
 // EndpointEdgeInput est utilisé par l'appelant pour configurer les passerelles alternatifs.
@@ -88,6 +90,33 @@ func NewDiscovery(client *Client, adminEndpoint, authToken, labelPrefix, agentNa
 	}
 }
 
+// SetEndpointFunc fait suivre à la découverte la passerelle courante de l'Agent (bascule HA) au lieu
+// de l'adresse fixée à la création. Les passerelles alternatives par endpoint Portainer
+// (endpoint_edges) restent un choix explicite de l'opérateur : elles ne suivent pas la bascule.
+func (d *Discovery) SetEndpointFunc(fn func() string) {
+	d.mu.Lock()
+	d.endpointFn = fn
+	d.mu.Unlock()
+}
+
+// endpoint retourne la passerelle par défaut : la courante de l'Agent si elle est connue, sinon
+// celle fixée à la création.
+func (d *Discovery) endpoint() string {
+	d.mu.Lock()
+	fn := d.endpointFn
+	d.mu.Unlock()
+	if fn != nil {
+		if ep := fn(); ep != "" {
+			return ep
+		}
+	}
+	return d.adminEndpoint
+}
+
+// Resync republie tout l'état maintenant (nouvelle passerelle, reconnexion), sans attendre le
+// prochain scan périodique.
+func (d *Discovery) Resync(ctx context.Context) { d.scan(ctx) }
+
 // SetToken met à jour le token d'authentification vers la passerelle.
 func (d *Discovery) SetToken(token string) {
 	d.mu.Lock()
@@ -113,6 +142,8 @@ func (d *Discovery) Start(ctx context.Context) {
 
 // scan liste tous les endpoints puis tous les conteneurs de chacun.
 func (d *Discovery) scan(ctx context.Context) {
+	d.scanMu.Lock()
+	defer d.scanMu.Unlock()
 	endpoints, err := d.client.ListEndpoints(ctx)
 	if err != nil {
 		d.log.Error("portainer: liste endpoints", "err", err)
@@ -230,7 +261,7 @@ func (d *Discovery) edgeFor(epName string) (edgeEndpoint, token string) {
 	d.mu.Lock()
 	tok := d.authToken
 	d.mu.Unlock()
-	return d.adminEndpoint, tok
+	return d.endpoint(), tok
 }
 
 // endpointHost extrait le hostname d'une URL d'endpoint Portainer.
@@ -351,20 +382,20 @@ func (d *Discovery) report(ctx context.Context, ep Endpoint, spec *docker.ProxyS
 		shortID = shortID[:12]
 	}
 	payload := map[string]any{
-		"id":           fmt.Sprintf("portainer:%d:%s:%s", ep.ID, shortID, spec.Host),
-		"host":         spec.Host,
-		"aliases":      spec.Aliases,
-		"paths":        spec.Paths,
-		"route_type":   spec.Type,
-		"backends":     []string{spec.BackendURL},
-		"tls_enabled":  spec.TLS,
-		"passthrough":  spec.Passthrough,
-		"source":       "portainer",
-		"container_id": spec.ContainerID,
-		"endpoint_id":  ep.ID,
+		"id":            fmt.Sprintf("portainer:%d:%s:%s", ep.ID, shortID, spec.Host),
+		"host":          spec.Host,
+		"aliases":       spec.Aliases,
+		"paths":         spec.Paths,
+		"route_type":    spec.Type,
+		"backends":      []string{spec.BackendURL},
+		"tls_enabled":   spec.TLS,
+		"passthrough":   spec.Passthrough,
+		"source":        "portainer",
+		"container_id":  spec.ContainerID,
+		"endpoint_id":   ep.ID,
 		"endpoint_name": ep.Name,
-		"agent_name":   d.agentName,
-		"role":         spec.Role,
+		"agent_name":    d.agentName,
+		"role":          spec.Role,
 	}
 	if spec.Role == docker.RoleCanary {
 		payload["canary_weight"] = spec.CanaryWeight

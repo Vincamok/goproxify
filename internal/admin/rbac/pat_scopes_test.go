@@ -204,6 +204,7 @@ func TestToolScopesMatchREST(t *testing.T) {
 		{"import_cert", http.MethodPost, "/api/v1/certs/import"},
 		{"trigger_cert_deploy", http.MethodPost, "/api/v1/certs/c1/deploy-targets/t1/trigger"},
 		{"list_internal_cas", http.MethodGet, "/api/v1/internal-ca"},
+		{"list_cert_deploy_types", http.MethodGet, "/api/v1/cert-deploy-types"},
 		{"get_ech_status", http.MethodGet, "/api/v1/ech"},
 		{"list_internal_certs", http.MethodGet, "/api/v1/internal-ca/ca1/certs"},
 		{"create_internal_ca", http.MethodPost, "/api/v1/internal-ca"},

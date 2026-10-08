@@ -247,7 +247,7 @@ Full reference → **[docs/cli.md](docs/cli.md)**
 - **Bans page** — the same page in the Admin (all Edges) and in each Edge menu: KPIs, 48 h timeline, origin by country, filters, bulk actions and a mobile card layout; every ban records the Edge that reported it
 - **HA groups** — Sentinel, IPS provider, HTTP timeouts and the access portal are configured once per HA group; the portal store (accounts, 2FA, vaults, optional shared web sessions) and Sentinel reference lists are replicated between Edges, and bans keep flowing between peers when the Admin is down
 - **Guided first start** — initial configuration wizard
-- ACME DNS-01 wildcard management (OVH, Cloudflare, Gandi, Route53, Hetzner), plus HTTP-01 and TLS-ALPN-01 validation served by the Edge (no DNS provider needed)
+- ACME DNS-01 wildcard management (OVH, Cloudflare, Gandi, Route 53, Hetzner), plus HTTP-01 and TLS-ALPN-01 validation served by the Edge (no DNS provider needed)
 - OCSP stapling fetched autonomously by each Edge
 - Certificate push to Edge (RAM only, never persisted on Edge side)
 - **Certificate Hub** — ACME monitoring (dashboard + expiry alerts), external PEM cert import, deploy targets (HMAC webhook / ssh_exec), multi-format pull tokens (PEM/DER/PKCS#12/JSON)

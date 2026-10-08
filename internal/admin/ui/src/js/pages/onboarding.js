@@ -28,6 +28,32 @@ const DNS_PROVIDERS = [
     fields: [{ id:'HETZNER_API_KEY',             label:'API Key',            type:'password' }] },
 ];
 
+/**
+ * Aligne les fournisseurs DNS sur les manifestes du serveur (GET /acme/provider-types). Pour chaque
+ * fournisseur, `fields[].id` devient la clé de paramètre réellement lue par l'Admin (utilisée pour
+ * les identifiants d'un domaine) et `fields[].env` la variable d'environnement correspondante
+ * (utilisée par les fichiers de déploiement générés). Les valeurs embarquées ci-dessus, qui
+ * mélangeaient les deux, ne servent plus que de repli hors ligne. Un fournisseur inconnu de ce
+ * fichier est ajouté avec son libellé et ses champs.
+ */
+let _dnsProvidersLoaded = false;
+async function dnsProvidersRefresh() {
+  if (_dnsProvidersLoaded) return;
+  let list;
+  try { list = await api('GET', '/acme/provider-types'); } catch { return; }
+  if (!Array.isArray(list) || !list.length) return;
+  _dnsProvidersLoaded = true;
+  for (const m of list) {
+    const fields = (m.fields || []).map(f => ({
+      id: f.key, env: f.env || '', label: f.label, placeholder: f.placeholder || '',
+      type: f.secret ? 'password' : 'text',
+    }));
+    const known = DNS_PROVIDERS.find(p => p.id === m.type);
+    if (known) known.fields = fields;
+    else DNS_PROVIDERS.push({ id: m.type, name: m.label, fields });
+  }
+}
+
 const INFRA_SVG = {
   standalone: `<svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>`,
   'cluster-ha': `<svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>`,
@@ -763,7 +789,7 @@ function _onbCompose() {
   const acmeAdminEnv = (() => {
     const p = DNS_PROVIDERS.find(p => p.id === onb.dnsProvider);
     if (!p || onb.dnsProvider === 'none') return '';
-    const providerVars = p.fields.map(f => `\n      - ${f.id}=\\\${${f.id}}`).join('');
+    const providerVars = p.fields.map(f => { const v = f.env || f.id; return `\n      - ${v}=\\\${${v}}`; }).join('');
     return `
       # ── ACME / DNS-01 (Admin uniquement) ────────────────────────────────
       - GPX_ACME_ENABLED=true
@@ -870,7 +896,7 @@ ${!isCluster ? '' : `
 GPX_ACME_ENABLED=true
 GPX_ACME_EMAIL=admin@example.com
 GPX_ACME_DNS_TYPE=${onb.dnsProvider}
-${p.fields.map(f => `${f.id}=${f.placeholder||''}`).join('\n')}
+${p.fields.map(f => `${f.env || f.id}=${f.placeholder||''}`).join('\n')}
 `;
   })()}`;
 }
@@ -1008,7 +1034,7 @@ function wizardStep2Html() {
         </div>
         ${onb.dnsProvider && onb.dnsProvider !== 'none' ? `
           <div style="margin-top:10px;padding:8px 12px;background:var(--bg3);border-radius:6px;border:1px solid var(--border);font-size:11px;color:var(--text2)">
-            ${t('onboarding.tls.vars_added', { vars: DNS_PROVIDERS.find(p=>p.id===onb.dnsProvider)?.fields?.map(f=>f.id).join(', ') })}
+            ${t('onboarding.tls.vars_added', { vars: DNS_PROVIDERS.find(p=>p.id===onb.dnsProvider)?.fields?.map(f=>f.env || f.id).join(', ') })}
           </div>` : ''}
       </div>
     </div>

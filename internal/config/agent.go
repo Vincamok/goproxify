@@ -91,6 +91,11 @@ type AgentConfig struct {
 		SkipEndpoints  []string                    `mapstructure:"skip_endpoints"`   // noms d'endpoints à ignorer
 		EndpointEdges  map[string]EndpointEdgeConf `mapstructure:"endpoint_edges"`   // endpoint → passerelle alternatif
 	} `mapstructure:"portainer"`
+
+	// Sources : configuration des sources de découverte ajoutées après Docker, Portainer et
+	// Kubernetes (qui gardent leur section dédiée), par type : `sources.<type>` dans agent.json.
+	// Validée par le manifeste de la source.
+	Sources map[string]map[string]any `mapstructure:"sources"`
 }
 
 // EndpointEdgeConf permet de router les routes d'un endpoint Portainer

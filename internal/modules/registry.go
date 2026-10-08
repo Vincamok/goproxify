@@ -20,6 +20,7 @@ const (
 	KindPassword = "password"
 	KindNumber   = "number"
 	KindList     = "list"
+	KindBool     = "bool"
 )
 
 // Masque est la valeur affichée à la place d'un secret.
@@ -35,6 +36,11 @@ type Field struct {
 	// modification ne le renseigne pas.
 	Secret   bool `json:"secret,omitempty"`
 	Required bool `json:"required,omitempty"`
+	// Multiline : champ saisi sur plusieurs lignes (clé PEM, script) ; l'interface affiche une zone de texte.
+	Multiline bool `json:"multiline,omitempty"`
+	// Env : variable d'environnement qui fournit la valeur par défaut du champ (repli quand la
+	// configuration saisie ne le renseigne pas). Optionnel.
+	Env string `json:"env,omitempty"`
 }
 
 // Manifest décrit un module.
@@ -146,7 +152,7 @@ func (m Manifest) check() error {
 		}
 		seen[f.Key] = true
 		switch f.Kind {
-		case KindText, KindPassword, KindNumber, KindList:
+		case KindText, KindPassword, KindNumber, KindList, KindBool:
 		default:
 			return fmt.Errorf("%s : champ %q de genre inconnu %q", m.Type, f.Key, f.Kind)
 		}

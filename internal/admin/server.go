@@ -295,6 +295,7 @@ func (s *Server) Start(ctx context.Context) error {
 			}
 		}
 	}
+	acmeProviderStore := acme.NewProviderStore(filepath.Join(s.cfg.Storage.BasePath, "acme-providers.yaml"))
 	buildACMEManager := func(email, directoryURL, dnsType string) *acme.Manager {
 		if !s.cfg.ACME.Enabled && email == "" {
 			return nil
@@ -313,6 +314,7 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 		mgr := acme.New(s.db, s.log, manager, provider, email)
 		mgr.DirectoryURL = directoryURL
+		mgr.Providers = acmeProviderStore
 		if s.cfg.Storage.BasePath != "" {
 			mgr.SetCertDir(filepath.Join(s.cfg.Storage.BasePath, "certs"))
 		}
@@ -767,6 +769,7 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 	})))
 	mux.Handle("/api/v1/cert-bundle", http.HandlerFunc(certBundleH.ServeHTTP))
+	mux.Handle("/api/v1/cert-deploy-types", adminWrites(api.CertDeployTypesHandler{}))
 	mux.Handle("/api/v1/internal-ca", adminOnly(internalCAH))
 	mux.Handle("/api/v1/internal-ca/", adminOnly(internalCAH))
 	mux.Handle("/api/v1/nodes", protected(nodesH))
@@ -863,8 +866,9 @@ func (s *Server) Start(ctx context.Context) error {
 	echH := &api.ECHHandler{DB: s.db, Log: s.log, Pusher: manager}
 	mux.Handle("/api/v1/ech", adminOnly(echH))
 	mux.Handle("/api/v1/ech/", adminOnly(echH))
-	acmeProvidersPath := filepath.Join(s.cfg.Storage.BasePath, "acme-providers.yaml")
-	acmeProvidersH := &api.ACMEProvidersHandler{Store: acme.NewProviderStore(acmeProvidersPath), Log: s.log}
+	acmeProvidersH := &api.ACMEProvidersHandler{Store: acmeProviderStore, Log: s.log}
+	mux.Handle("/api/v1/acme/provider-types", adminOnly(api.ACMEProviderTypesHandler{}))
+	mux.Handle("/api/v1/discovery-sources", adminOnly(api.DiscoverySourcesHandler{}))
 	mux.Handle("/api/v1/acme/providers", adminOnly(acmeProvidersH))
 	mux.Handle("/api/v1/acme/providers/", adminOnly(acmeProvidersH))
 

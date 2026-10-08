@@ -237,11 +237,15 @@ Active/désactive un proxy à chaud.
 
 ### `GET /api/v1/certs/:id/deploy-targets`
 
-Liste les deploy targets d'un certificat. Réponse : `[{id, cert_id, name, type, config, trigger_on, last_deploy, last_status, created_at}]` — les champs `secret` des configs webhook sont masqués (`***`).
+Liste les deploy targets d'un certificat. Réponse : `[{id, cert_id, name, type, config, trigger_on, last_deploy, last_status, created_at}]`. Les champs `secret` du manifeste du type sont masqués (`••••••••`) : secret HMAC d'un webhook et **clé privée SSH** d'un `ssh_exec` — avant Admin `0.125.0`, seul `secret` l'était et la clé privée SSH était renvoyée en clair.
 
 ### `POST /api/v1/certs/:id/deploy-targets`
 
-Crée un deploy target. Corps : `{name, type ("webhook"), config {url, secret?}, trigger_on ("on_renewal"|"manual")}`.
+Crée un deploy target. Corps : `{name, type ("webhook"|"ssh_exec"), config, trigger_on ("on_renewal"|"manual")}`. `400` si le type est inconnu, un champ requis est vide ou la config contient une clé absente du manifeste (voir `GET /api/v1/cert-deploy-types`).|"manual")}`.
+
+### `PUT /api/v1/certs/:id/deploy-targets/:targetID`
+
+Modifie une cible (`name`, `config`, `trigger_on` ; le type ne change pas). La configuration envoyée **remplace** l'ancienne, sauf les secrets du manifeste (clé privée SSH, secret HMAC) : absents, vides ou égaux au masque, ils sont conservés. Omettre `host_fingerprint` relance la mémorisation de la clé d'hôte SSH à la prochaine connexion. `400` (champ requis vide, clé inconnue, `trigger_on` invalide), `404` (cible inconnue).
 
 ### `DELETE /api/v1/certs/:id/deploy-targets/:targetID`
 
@@ -250,6 +254,13 @@ Supprime un deploy target.
 ### `POST /api/v1/certs/:id/deploy-targets/:targetID/trigger`
 
 Déclenche manuellement le déploiement vers ce target.
+
+### `GET /api/v1/cert-deploy-types`
+
+Manifestes des types de cible de déploiement, dans l'ordre d'affichage : `webhook`, `ssh_exec`. Chaque type est un **module** du registre commun (`internal/admin/certdeploy`, ADR 0007) ; `fields` décrit sa configuration (`key`, `kind`, `secret`, `required`, `multiline`). Un type ajouté au code de l'Admin apparaît ici et dans le formulaire sans autre modification. Lecture pour tout compte authentifié (`certs:read` pour un PAT).
+
+- **`webhook`** : `url` (requise), `secret` (HMAC-SHA256, en-tête `X-GoProxify-Signature`). Les schémas non HTTP, les adresses link-local et les métadonnées cloud sont refusés (`URL refusée`) ; le réseau interne reste permis.
+- **`ssh_exec`** : `host`, `user`, `private_key`, `script` (requis), `host_fingerprint` (optionnel, `SHA256:…` comme `ssh-keygen -lf`). **Confiance à la première utilisation** (Admin `0.126.0`) : laissé vide, l'empreinte de la clé d'hôte vue à la première connexion authentifiée est mémorisée dans la cible puis vérifiée aux déploiements suivants ; une clé d'hôte qui change (machine usurpée ou réinstallée) fait échouer le déploiement jusqu'à ce que l'empreinte soit corrigée (`PUT`) ou remplacée par `ignore`, qui désactive la vérification (machines éphémères). Avant, la clé d'hôte n'était jamais vérifiée. Le script reçoit `GPX_DOMAIN`, `GPX_CERT_PEM`, `GPX_KEY_PEM` et `GPX_EXPIRES_AT` (RFC 3339, UTC). Depuis Admin `0.125.0`, les valeurs sont transmises telles quelles, retours à la ligne compris : avant, le PEM arrivait avec des `\n` littéraux et `GPX_EXPIRES_AT` était toujours vide.
 
 ### `GET /api/v1/certs/:id/deploy-targets/:targetID/history`
 
@@ -526,6 +537,20 @@ Met à jour un fournisseur DNS existant (même corps que POST).
 
 Supprime un fournisseur DNS nommé.
 
+### `GET /api/v1/acme/provider-types`
+
+Manifestes des fournisseurs DNS ACME, dans l'ordre d'affichage. Admin uniquement. Chaque fournisseur est un **module** du registre (`internal/modules`, ADR 0007) ; le formulaire de l'Admin, la validation et la lecture de l'environnement en découlent.
+
+```json
+[{ "type": "cloudflare", "label": "Cloudflare", "fields": [
+  { "key": "api_token", "label": "API Token", "kind": "password", "secret": true, "required": true, "env": "CF_API_TOKEN" },
+  { "key": "zone_id", "label": "Zone ID", "kind": "text", "env": "CF_ZONE_ID" } ] }]
+```
+
+`env` : variable d'environnement qui fournit la valeur quand un domaine ne la renseigne pas. `attrs.status = "not_implemented"` : réservé à un fournisseur déclaré mais incapable d'émettre (aucun aujourd'hui ; Route 53, qui l'était, fonctionne depuis Admin `0.123.0`). Types : `ovh`, `cloudflare`, `route53`, `hetzner`, `gandi`.
+
+À partir d'Admin `0.122.0`, `POST` et `PUT /api/v1/acme/providers` renvoient `400` pour un type inconnu, un paramètre requis vide ou une clé inconnue ; `GET` masque les paramètres `secret` (`••••••••`) et `PUT` conserve un secret absent, vide ou égal au masque. Avant, la liste renvoyait les jetons en clair.
+
 ### `POST /api/v1/certs/request`
 
 Demande un certificat ACME. La méthode suit `domains.cert_method` du domaine : DNS-01 (`dns` + `dns_provider`), HTTP-01 (`acme-http`) ou TLS-ALPN-01 (`acme-tls-alpn`). Avec HTTP-01 / TLS-ALPN-01, l'Admin pose la réponse du challenge sur les passerelles connectées (port 80 / 443 publics du domaine) ; un wildcard est refusé (`400` sur `POST`/`PUT /api/v1/domains`, `cert_method` `acme-http` ou `acme-tls-alpn`).
@@ -534,8 +559,10 @@ Demande un certificat ACME. La méthode suit `domains.cert_method` du domaine : 
 
 **Corps :**
 ```json
-{ "domain": "*.example.fr", "dns_provider": "ovh_prod" }
+{ "domain": "*.example.fr", "acme_provider_id": "abc123" }
 ```
+
+`acme_provider_id` (facultatif) : identifiant d'un fournisseur DNS nommé (`GET /api/v1/acme/providers`). Depuis Admin `0.123.0` il est réellement utilisé — avant, il était accepté puis ignoré. Priorité à l'émission : **fournisseur nommé > méthode et identifiants du domaine > fournisseur par défaut**. `400` si l'identifiant n'existe pas. Le fournisseur nommé est mémorisé sur le certificat et **réutilisé au renouvellement automatique** ; s'il est supprimé entre-temps, le renouvellement retombe sur les identifiants du domaine.
 
 ### `POST /api/v1/certs/:domain/renew`
 
@@ -807,6 +834,18 @@ Liste tous les Agents (online, pending, offline).
   }
 ]
 ```
+
+### `GET /api/v1/discovery-sources`
+
+Manifestes des sources de découverte de l'Agent, dans l'ordre de démarrage : `docker`, `portainer`, `kubernetes`. Admin uniquement (`nodes:read` pour un PAT). Chaque source est un **module** du registre commun (`internal/agent/sources`, ADR 0007) ; le champ `fields` décrit sa configuration dans `agent.json` (clé, genre, `secret`, `required`). Une source ajoutée au code de l'Agent apparaît ici sans autre modification.
+
+```json
+[{ "type": "kubernetes", "label": "Kubernetes", "fields": [
+  { "key": "api_server", "label": "API server (empty = in-cluster)", "kind": "text" },
+  { "key": "token", "label": "Bearer token (empty = service account)", "kind": "password", "secret": true } ] }]
+```
+
+Une source qui n'a pas de section dédiée dans `agent.json` se configure sous `sources.<type>`, validée par son manifeste (champ requis manquant ou clé inconnue : source ignorée, journalisée). Le heartbeat de l'Agent expose désormais la section `kubernetes` (secrets masqués) en plus de `docker` et `portainer`.
 
 ### `POST /api/v1/agents/:id/approve`
 

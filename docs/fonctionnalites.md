@@ -290,7 +290,7 @@ Agents connecting for the first time via `JOIN_TOKEN` appear in `pending` status
 - **Domain entry Edge = HA group**: a domain's entry Edge can be a whole HA group (`ha:<group>`) so every member gets the domain scope, certificate and delegations
 - **Wildcard Let's Encrypt certificates** via DNS-01 challenge
 - **Validation per domain** (`cert_method`): **DNS-01** (wildcard, needs a DNS provider), **HTTP-01** (`acme-http`, port 80) or **TLS-ALPN-01** (`acme-tls-alpn`, port 443) — no DNS provider required, no wildcard. The Admin opens the ACME order and pushes the challenge answer to the Edges covering the domain (`acme_challenge` WS message); the Edge serves `/.well-known/acme-challenge/<token>` or presents the challenge certificate on ALPN `acme-tls/1` (RAM only, 15 min max, removed after validation). Used by automatic renewal too. Issuance still goes through the Admin and needs at least one connected Edge
-- Supported DNS providers: **OVH, Cloudflare, Gandi, Route53, Hetzner**
+- Supported DNS providers: **OVH, Cloudflare, Gandi, Route 53, Hetzner** (Route 53 over signed HTTP calls, no AWS SDK). TXT challenge records are created relative to the zone and removed after validation by record ID. Each provider is a module of the common registry (ADR 0007): its manifest lists the parameters, the secret ones, the required ones and the environment variable behind each (`OVH_APPLICATION_KEY`, `CF_API_TOKEN`, `HETZNER_API_KEY`, `GANDI_API_KEY`…) — `GET /api/v1/acme/provider-types`. Secrets of named providers are masked in the API and kept when a provider is edited without retyping them
 - Automatic renewal 30 days before expiry
 - Push decoded certificates to Edge in RAM only (never on disk on Edge side)
 - **OCSP stapling** (Edge `0.20.0`): the Edge fetches the CA's OCSP response itself (certificate AIA URL) and staples it in the TLS handshake — refreshed hourly and at half the response validity, never stale, works without the Admin. Skipped for certificates without an OCSP URL (Let's Encrypt, internal CA). Metrics `gpx_tls_ocsp_staple_seconds`, `gpx_tls_ocsp_revoked`
@@ -313,7 +313,7 @@ Feature suite around the TLS certificate lifecycle.
 - Modal interface in the `acme-monitor` page
 
 **Deploy Hub** (reachable via the "Deploy" button on each cert row in ACME Monitoring — no longer a standalone menu)
-- **Deploy targets**: webhook (POST HMAC-SHA256 signed) or `ssh_exec` (script executed on target machine with `GPX_CERT_PEM / GPX_KEY_PEM / GPX_DOMAIN`)
+- **Deploy targets** (modules of the common registry, ADR 0007; `GET /api/v1/cert-deploy-types`): webhook (POST HMAC-SHA256 signed) or `ssh_exec` (script executed on the target machine with `GPX_CERT_PEM / GPX_KEY_PEM / GPX_DOMAIN / GPX_EXPIRES_AT`, host key pinned on first use, or an explicit fingerprint / `ignore`). Secrets (HMAC secret, SSH private key) are masked in the API; a new target type appears in the Admin form without a JavaScript change
 - Automatic trigger on each ACME renewal + manual trigger
 - Audit history per target (`cert_deploy_history`)
 - `cert_deploy_failed` alert on failure
@@ -455,6 +455,10 @@ Symmetrically to Docker mode, the Agent can discover annotated Kubernetes resour
   }
 }
 ```
+
+### Discovery sources (modules)
+
+Docker/Podman, Portainer and Kubernetes are **modules** of a common registry (`internal/agent/sources`, ADR 0007): each declares a manifest (configuration fields, secrets, required fields) and a factory. The Agent builds, starts and hands the pairing token to every source without knowing which one it is, announces their runtimes to the Admin, and protects their secrets when the Admin pushes a configuration patch (Kubernetes token, private-registry password, Portainer API key). A source added to the code (Consul, Nomad, ECS…) is configured under `sources.<type>` in `agent.json`, validated by its manifest, and listed by `GET /api/v1/discovery-sources` / `goproxify agent-mgmt sources`. Sources only need their own gateway — they keep running without the Admin, across an Agent restart. All three follow the Agent's current gateway on an HA failover and re-publish their full state to it (Docker rescan, immediate Portainer scan, Kubernetes watch restart); Portainer `endpoint_edges` stay explicit operator choices.
 
 ### Horizontal auto-scaling
 

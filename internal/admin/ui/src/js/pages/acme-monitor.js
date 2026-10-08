@@ -34,6 +34,28 @@ const PROVIDER_FIELDS = {
   ],
 };
 
+// Fournisseurs DNS déclarés côté serveur (GET /acme/provider-types) : libellés, champs, secrets et
+// statut viennent du manifeste et remplacent les valeurs embarquées ci-dessus, qui ne servent plus
+// que de repli hors ligne. Un fournisseur ajouté à l'Admin apparaît donc sans modifier ce fichier.
+let PROVIDER_TYPES = ['cloudflare', 'ovh', 'gandi', 'hetzner', 'route53'];
+const PROVIDER_STATUS = {};
+let _dnsTypesLoaded = false;
+async function dnsTypesLoad() {
+  if (_dnsTypesLoaded) return;
+  let list;
+  try { list = await api('GET', '/acme/provider-types'); } catch { return; }
+  if (!Array.isArray(list) || !list.length) return;
+  _dnsTypesLoaded = true;
+  PROVIDER_TYPES = list.map(m => m.type);
+  for (const m of list) {
+    PROVIDER_LABELS[m.type] = m.label;
+    PROVIDER_STATUS[m.type] = (m.attrs && m.attrs.status) || '';
+    PROVIDER_FIELDS[m.type] = (m.fields || []).map(f => ({
+      key: f.key, label: f.label, required: !!f.required, ph: f.placeholder || '', secret: !!f.secret,
+    }));
+  }
+}
+
 // ── Config ACME (email + CA) ─────────────────────────────────────────────────
 
 window.acmeConfigLoad = async function () {
@@ -163,12 +185,13 @@ function providerFieldsHTML(type, params) {
   return fields.map(f => `
     <div class="field">
       <label>${esc(f.label)}${f.required ? '' : ` <span style="opacity:0.5;font-size:11px;">(${t('common.optional')})</span>`}</label>
-      <input class="input" id="pf-${esc(f.key)}" type="${f.key.includes('secret') || f.key.includes('token') || f.key.includes('key') ? 'password' : 'text'}"
+      <input class="input" id="pf-${esc(f.key)}" type="${(f.secret ?? (f.key.includes('secret') || f.key.includes('token') || f.key.includes('key'))) ? 'password' : 'text'}"
         autocomplete="off" placeholder="${esc(f.ph)}" value="${esc(params?.[f.key]||'')}">
     </div>`).join('');
 }
 
-window.openAcmeProviderModal = function (provider) {
+window.openAcmeProviderModal = async function (provider) {
+  await dnsTypesLoad();
   const isEdit = !!provider;
   const currentType = provider?.type || 'cloudflare';
   document.getElementById('acme-provider-modal-backdrop')?.remove();
@@ -185,8 +208,8 @@ window.openAcmeProviderModal = function (provider) {
           <div class="field">
             <label>${t('acme_monitor.providers_type')}</label>
             <select class="input" id="prov-type" onchange="acmeProviderTypeChange(${JSON.stringify(provider?.params||null).replace(/</g,'\\u003c')})">
-              ${['cloudflare','ovh','gandi','hetzner','route53'].map(v =>
-                `<option value="${v}" ${currentType===v?'selected':''}>${PROVIDER_LABELS[v]||v}</option>`
+              ${PROVIDER_TYPES.map(v =>
+                `<option value="${v}" ${currentType===v?'selected':''}>${PROVIDER_LABELS[v]||v}${PROVIDER_STATUS[v] === 'not_implemented' ? ' — ' + t('acme_monitor.provider_unavailable') : ''}</option>`
               ).join('')}
             </select>
           </div>

@@ -14,6 +14,42 @@ import (
 func runAgentCmd() {
 	sub := subcommand(os.Args, 2)
 	switch sub {
+	case "sources":
+		args := parseFlags(os.Args[3:])
+		client, err := newAdminClient(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+			os.Exit(1)
+		}
+		var srcs []struct {
+			Type   string `json:"type"`
+			Label  string `json:"label"`
+			Fields []struct {
+				Key      string `json:"key"`
+				Secret   bool   `json:"secret"`
+				Required bool   `json:"required"`
+			} `json:"fields"`
+		}
+		if _, err := client.DoJSON("GET", "/api/v1/discovery-sources", nil, &srcs); err != nil {
+			fmt.Fprintf(os.Stderr, "agent-mgmt sources : %v\n", err)
+			os.Exit(1)
+		}
+		for _, s := range srcs {
+			var fields []string
+			for _, f := range s.Fields {
+				n := f.Key
+				if f.Required {
+					n += "*"
+				}
+				if f.Secret {
+					n += " (secret)"
+				}
+				fields = append(fields, n)
+			}
+			fmt.Printf("%-11s %-16s %s\n", s.Type, s.Label, strings.Join(fields, ", "))
+		}
+		fmt.Println("\n* = champ requis")
+
 	case "list", "ls", "":
 		args := parseFlags(os.Args[3:])
 		client, err := newAdminClient(args)

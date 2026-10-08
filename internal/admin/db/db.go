@@ -363,6 +363,8 @@ func migrate(db *sql.DB) error {
 		// PEM des certificats — stockés pour re-push après redémarrage passerelle
 		`ALTER TABLE certs ADD COLUMN cert_pem TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE certs ADD COLUMN key_pem TEXT NOT NULL DEFAULT ''`,
+		// Fournisseur DNS nommé (acme-providers.yaml) qui a émis le certificat, rejoué au renouvellement
+		`ALTER TABLE certs ADD COLUMN acme_provider_id TEXT NOT NULL DEFAULT ''`,
 		// Validateurs HTTP (ETag / Last-Modified) des feeds des profils IP
 		`ALTER TABLE ip_profiles ADD COLUMN feed_cache TEXT NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE ip_profiles ADD COLUMN last_error TEXT NOT NULL DEFAULT ''`,

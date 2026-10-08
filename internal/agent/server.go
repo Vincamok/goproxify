@@ -15,14 +15,14 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"reflect"
 	"strings"
 	"syscall"
 	"time"
 
 	agentdocker "github.com/vincamok/goproxify/internal/agent/docker"
 	"github.com/vincamok/goproxify/internal/agent/edgeset"
-	agentk8s "github.com/vincamok/goproxify/internal/agent/k8s"
-	agentportainer "github.com/vincamok/goproxify/internal/agent/portainer"
+	agentsources "github.com/vincamok/goproxify/internal/agent/sources"
 	"github.com/vincamok/goproxify/internal/agent/telemetry"
 	"github.com/vincamok/goproxify/internal/agent/wsclient"
 	"github.com/vincamok/goproxify/internal/buildinfo"
@@ -33,24 +33,23 @@ import (
 
 // Agent orchestre tous les sous-systèmes.
 type Agent struct {
-	cfg               *config.AgentConfig
-	cfgPath           string // chemin vers agent.json (pour les écritures de config)
-	log               *slog.Logger
-	discovery         *agentdocker.Discovery
-	portainerDisc     *agentportainer.Discovery
-	k8sDiscovery      *agentk8s.Discovery
-	lifecycle         *agentdocker.LifecycleManager
-	logFwd            *agentdocker.LogForwarder
-	telSrv            *telemetry.Server
-	internalAPI       *internalAPI
-	autoScaler        *agentdocker.AutoScaler
-	digestWatch       *agentdocker.DigestWatcher
-	schedWatch        *agentdocker.ScheduleWatcher
-	wsClient          *wsclient.Client // client WS persistant Agent→Passerelle (nil si pas de JoinToken)
-	dockerClient      *agentdocker.Client
-	shellHub          *shellHub
-	tokenUpdate       chan string // notifie heartbeatLoop d'un nouveau token (retryPairing)
-	edges             *edgeset.Set // passerelle courante et autres membres du groupe HA (bascule)
+	cfg          *config.AgentConfig
+	cfgPath      string // chemin vers agent.json (pour les écritures de config)
+	log          *slog.Logger
+	discovery    *agentdocker.Discovery   // source Docker/Podman (accès typé : rescan, cycle de vie)
+	sources      []*agentsources.Instance // toutes les sources de découverte actives (registre)
+	lifecycle    *agentdocker.LifecycleManager
+	logFwd       *agentdocker.LogForwarder
+	telSrv       *telemetry.Server
+	internalAPI  *internalAPI
+	autoScaler   *agentdocker.AutoScaler
+	digestWatch  *agentdocker.DigestWatcher
+	schedWatch   *agentdocker.ScheduleWatcher
+	wsClient     *wsclient.Client // client WS persistant Agent→Passerelle (nil si pas de JoinToken)
+	dockerClient *agentdocker.Client
+	shellHub     *shellHub
+	tokenUpdate  chan string  // notifie heartbeatLoop d'un nouveau token (retryPairing)
+	edges        *edgeset.Set // passerelle courante et autres membres du groupe HA (bascule)
 }
 
 // agentEdgesPath conserve les autres membres du groupe HA annoncés par la passerelle.
@@ -72,21 +71,15 @@ func New(cfg *config.AgentConfig, cfgPath string) (*Agent, error) {
 	// Network manager
 	netMgr := agentdocker.NewNetworkManager(client, cfg.NetworkManagement.EdgeContainerName, log)
 
-	// Discovery Docker locale (désactivable via docker.enabled: false).
-	// Compat ascendante : si docker.runtime est défini (ancienne config), Docker reste actif.
-	dockerEnabled := cfg.Docker.Enabled || cfg.Docker.Runtime != ""
+	// Sources de découverte (Docker/Podman, Portainer, Kubernetes… : modules du registre
+	// internal/agent/sources). Docker reste actif avec une ancienne config qui définit
+	// docker.runtime ; Docker est désactivable via docker.enabled: false.
+	srcs := agentsources.BuildBuiltin(agentsources.Deps{Cfg: cfg, Log: log, Docker: client, Net: netMgr, Edges: edges})
 	var disc *agentdocker.Discovery
-	if dockerEnabled {
-		disc = agentdocker.NewDiscovery(
-			client,
-			cfg.ControlPlane.EdgeEndpoint,
-			cfg.ControlPlane.AuthToken,
-			cfg.Docker.LabelPrefix,
-			cfg.Identity.NodeName,
-			netMgr,
-			log,
-		)
-		disc.SetEndpointFunc(edges.Current)
+	for _, s := range srcs {
+		if d, ok := s.Impl.(*agentdocker.Discovery); ok {
+			disc = d
+		}
 	}
 
 	// Lifecycle
@@ -173,60 +166,24 @@ func New(cfg *config.AgentConfig, cfgPath string) (*Agent, error) {
 	// Schedule watcher (mises à jour selon cron label)
 	sw := agentdocker.NewScheduleWatcher(client, lc, log)
 
-	// Portainer discovery (optionnel — remplace ou complète la discovery locale)
-	var portainerDisc *agentportainer.Discovery
-	if cfg.Portainer.Enabled && cfg.Portainer.URL != "" && cfg.Portainer.APIKey != "" {
-		pc := agentportainer.NewClient(cfg.Portainer.URL, cfg.Portainer.APIKey)
-		epEdges := make(map[string]agentportainer.EndpointEdgeInput, len(cfg.Portainer.EndpointEdges))
-		for name, c := range cfg.Portainer.EndpointEdges {
-			epEdges[name] = agentportainer.EndpointEdgeInput{
-				EdgeEndpoint: c.EdgeEndpoint,
-				AuthToken:    c.AuthToken,
-			}
-		}
-		portainerDisc = agentportainer.NewDiscovery(
-			pc,
-			cfg.ControlPlane.EdgeEndpoint,
-			cfg.ControlPlane.AuthToken,
-			cfg.Docker.LabelPrefix,
-			cfg.Identity.NodeName,
-			cfg.Portainer.PollIntervalS,
-			log,
-			netMgr,
-			cfg.Portainer.SkipEndpoints,
-			epEdges,
-		)
-	}
-
-	// Kubernetes discovery (optionnel)
-	var k8sDisc *agentk8s.Discovery
-	if cfg.Kubernetes.Enabled {
-		if kd, err := agentk8s.New(cfg, log); err != nil {
-			log.Warn("k8s discovery: initialisation impossible", "err", err)
-		} else {
-			k8sDisc = kd
-		}
-	}
-
 	intAPI.setDiscovery(disc)
 	intAPI.cfgPath = cfgPath
 
 	return &Agent{
-		edges:         edges,
-		cfg:           cfg,
-		cfgPath:       cfgPath,
-		log:           log,
-		discovery:     disc,
-		portainerDisc: portainerDisc,
-		k8sDiscovery:  k8sDisc,
-		lifecycle:     lc,
-		logFwd:        logFwd,
-		telSrv:        tel,
-		internalAPI:   intAPI,
-		autoScaler:    as,
-		digestWatch:   dw,
-		schedWatch:    sw,
-		dockerClient:  client,
+		edges:        edges,
+		cfg:          cfg,
+		cfgPath:      cfgPath,
+		log:          log,
+		discovery:    disc,
+		sources:      srcs,
+		lifecycle:    lc,
+		logFwd:       logFwd,
+		telSrv:       tel,
+		internalAPI:  intAPI,
+		autoScaler:   as,
+		digestWatch:  dw,
+		schedWatch:   sw,
+		dockerClient: client,
 	}, nil
 }
 
@@ -416,13 +373,8 @@ func (a *Agent) retryPairing(ctx context.Context) {
 				a.log.Warn("agent: appairage (retry) échoué", "err", err, "prochain_essai", delay)
 				continue
 			}
-			if a.discovery != nil {
-				a.discovery.SetToken(token)
-				go a.discovery.ScanAll(ctx)
-			}
-			if a.portainerDisc != nil {
-				a.portainerDisc.SetToken(token)
-			}
+			a.setSourcesToken(token)
+			a.reannounceSources(ctx)
 			// Propager le token au heartbeatLoop (qui tourne avec authToken="")
 			select {
 			case a.tokenUpdate <- token:
@@ -458,35 +410,48 @@ func (a *Agent) onEdgeSwitch(edge string) {
 	if err != nil {
 		a.log.Warn("agent: appairage sur la nouvelle passerelle échoué — il sera retenté par le heartbeat", "edge", edge, "err", err)
 	} else {
-		if a.discovery != nil {
-			a.discovery.SetToken(token)
-		}
-		if a.portainerDisc != nil {
-			a.portainerDisc.SetToken(token)
-		}
+		a.setSourcesToken(token)
 		select {
 		case a.tokenUpdate <- token:
 		default:
 		}
 	}
-	if a.discovery != nil {
-		a.discovery.ScanAll(ctx)
+	a.reannounceSources(ctx)
+}
+
+// reannounceSources fait republier son état complet à chaque source (Docker, Portainer,
+// Kubernetes…) vers la passerelle courante. Chaque source part dans sa goroutine : une source lente
+// ne retarde ni les autres ni l'appelant.
+func (a *Agent) reannounceSources(ctx context.Context) {
+	for _, s := range a.sources {
+		if s.Reannounce != nil {
+			go s.Reannounce(ctx)
+		}
 	}
 }
 
-// reannounceOnConnect republie tous les conteneurs à chaque (re)connexion à la passerelle : un
+func (a *Agent) hasReannounce() bool {
+	for _, s := range a.sources {
+		if s.Reannounce != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// reannounceOnConnect republie toutes les sources à chaque (re)connexion à la passerelle : un
 // changement survenu pendant une coupure, ou une passerelle redémarrée, n'est pas perdu.
 func (a *Agent) reannounceOnConnect() {
 	if a.wsClient == nil {
 		return
 	}
 	a.wsClient.SetEdgeSet(a.edges, a.onEdgeSwitch)
-	if a.discovery == nil {
+	if !a.hasReannounce() {
 		return
 	}
 	a.wsClient.SetOnConnect(func() {
-		a.log.Info("agent: connexion à la passerelle — réannonce de tous les conteneurs")
-		a.discovery.ScanAll(context.Background())
+		a.log.Info("agent: connexion à la passerelle — réannonce de toutes les sources")
+		a.reannounceSources(context.Background())
 	})
 }
 
@@ -596,12 +561,7 @@ func (a *Agent) Start(ctx context.Context) error {
 	// Propager le token résolu à la discovery et aux autres composants
 	// qui ont été construits avant le pairing (dans New()).
 	if token != "" {
-		if a.discovery != nil {
-			a.discovery.SetToken(token)
-		}
-		if a.portainerDisc != nil {
-			a.portainerDisc.SetToken(token)
-		}
+		a.setSourcesToken(token)
 	}
 
 	// Client WS persistant Agent→Passerelle
@@ -676,9 +636,7 @@ func (a *Agent) Start(ctx context.Context) error {
 				a.log.Warn("heartbeat: re-appairage impossible", "err", err)
 				return ""
 			}
-			if a.discovery != nil {
-				a.discovery.SetToken(t)
-			}
+			a.setSourcesToken(t)
 			return t
 		},
 		a.log,
@@ -687,25 +645,16 @@ func (a *Agent) Start(ctx context.Context) error {
 	// Signal online pour l'historique UI (Événements agent)
 	go a.emitEvent("", "agent_online", "version="+buildinfo.Agent)
 
-	// Discovery Docker/Podman (socket local)
-	if a.discovery != nil {
-		a.discovery.Start(ctx)
-	}
+	// Sources de découverte qui rendent la main après leur scan initial (Docker/Podman, socket local)
+	a.startSources(ctx, false)
 
 	// Métriques conteneur → passerelle (LB adaptatif)
 	if a.wsClient != nil && a.dockerClient != nil {
 		go metricsLoop(ctx, a.dockerClient, a.cfg.Identity.NodeName, a.wsClient, a.log)
 	}
 
-	// Discovery Portainer (multi-hôtes via API)
-	if a.portainerDisc != nil {
-		go a.portainerDisc.Start(ctx)
-	}
-
-	// Discovery Kubernetes (si activé)
-	if a.k8sDiscovery != nil {
-		go a.k8sDiscovery.Start(ctx)
-	}
+	// Sources qui bouclent jusqu'à l'arrêt (Portainer multi-hôtes, Kubernetes…) : une goroutine chacune
+	a.startSources(ctx, true)
 
 	// Schedule watcher (cron label)
 	a.schedWatch.Start(ctx)
@@ -763,7 +712,7 @@ func sanitizedAgentConfig(cfg *config.AgentConfig) map[string]any {
 			"auth_token":    "••••••••",
 		}
 	}
-	return map[string]any{
+	out := map[string]any{
 		"control_plane": map[string]any{
 			"edge_endpoint": cfg.ControlPlane.EdgeEndpoint,
 		},
@@ -780,28 +729,57 @@ func sanitizedAgentConfig(cfg *config.AgentConfig) map[string]any {
 			"endpoint_edges":  epEdges,
 		},
 	}
+	// Sources déclarées par un manifeste (Kubernetes et sources ajoutées) : champs du manifeste,
+	// secrets masqués. Docker et Portainer gardent la forme historique ci-dessus.
+	if m, ok := agentsources.ManifestOf("kubernetes"); ok {
+		out["kubernetes"] = agentsources.View(m, structToMap(cfg.Kubernetes))
+	}
+	if len(cfg.Sources) > 0 {
+		extra := map[string]any{}
+		for typ, settings := range cfg.Sources {
+			if m, ok := agentsources.ManifestOf(typ); ok {
+				extra[typ] = agentsources.View(m, settings)
+			}
+		}
+		if len(extra) > 0 {
+			out["sources"] = extra
+		}
+	}
+	return out
 }
 
 // detectedRuntimes retourne la liste des runtimes de conteneurs actifs sur cet agent.
 func (a *Agent) detectedRuntimes() []string {
 	var runtimes []string
-	if a.discovery != nil {
-		sp := a.cfg.Docker.SocketPath
-		if sp != "" {
-			if strings.Contains(sp, "podman") {
-				runtimes = append(runtimes, "podman")
-			} else {
-				runtimes = append(runtimes, "docker")
-			}
-		}
-	}
-	if a.portainerDisc != nil {
-		runtimes = append(runtimes, "portainer")
-	}
-	if a.k8sDiscovery != nil {
-		runtimes = append(runtimes, "kubernetes")
+	for _, s := range a.sources {
+		runtimes = append(runtimes, s.Runtimes...)
 	}
 	return runtimes
+}
+
+// setSourcesToken transmet le jeton d'agent (obtenu à l'appairage, après la construction) à chaque
+// source qui en reçoit un.
+func (a *Agent) setSourcesToken(token string) {
+	for _, s := range a.sources {
+		if s.SetToken != nil {
+			s.SetToken(token)
+		}
+	}
+}
+
+// startSources démarre les sources dont Blocking vaut blocking : celles qui bouclent
+// jusqu'à l'arrêt dans leur propre goroutine, les autres en rendant la main.
+func (a *Agent) startSources(ctx context.Context, blocking bool) {
+	for _, s := range a.sources {
+		if s.Blocking != blocking || s.Start == nil {
+			continue
+		}
+		if blocking {
+			go s.Start(ctx)
+		} else {
+			s.Start(ctx)
+		}
+	}
 }
 
 // Stop arrête proprement l'agent.
@@ -893,4 +871,18 @@ func externalIP(toward string) string {
 		return "127.0.0.1"
 	}
 	return hostname
+}
+
+// structToMap lit une section de configuration (champs étiquetés mapstructure) sous la forme
+// clé de agent.json → valeur, pour la confronter au manifeste d'une source.
+func structToMap(v any) map[string]any {
+	rv := reflect.ValueOf(v)
+	rt := rv.Type()
+	out := make(map[string]any, rt.NumField())
+	for i := 0; i < rt.NumField(); i++ {
+		if tag := rt.Field(i).Tag.Get("mapstructure"); tag != "" && tag != "-" {
+			out[tag] = rv.Field(i).Interface()
+		}
+	}
+	return out
 }

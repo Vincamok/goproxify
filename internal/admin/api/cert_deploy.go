@@ -18,6 +18,7 @@ import (
 
 	"github.com/vincamok/goproxify/internal/admin/auth"
 	"github.com/vincamok/goproxify/internal/admin/certformat"
+	"github.com/vincamok/goproxify/internal/admin/certdeploy"
 )
 
 // CertDeployHandler gère les deploy-targets et pull-tokens d'un certificat.
@@ -58,6 +59,8 @@ func (h *CertDeployHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.listTargets(w, r, certID)
 		case r.Method == http.MethodPost && targetID == "":
 			h.createTarget(w, r, certID)
+		case r.Method == http.MethodPut && targetID != "" && action == "":
+			h.updateTarget(w, r, targetID)
 		case r.Method == http.MethodDelete && targetID != "" && action == "":
 			h.deleteTarget(w, r, targetID)
 		case r.Method == http.MethodPost && targetID != "" && action == "trigger":
@@ -130,11 +133,10 @@ func (h *CertDeployHandler) listTargets(w http.ResponseWriter, r *http.Request, 
 		} else {
 			dt.Config = map[string]any{}
 		}
-		// masque les secrets dans la config webhook
+		// Masque les secrets selon le manifeste du type (clé privée SSH, secret HMAC…). Un type
+		// inconnu (ligne ancienne) retombe sur la liste historique de noms de clés.
 		if m, ok := dt.Config.(map[string]any); ok {
-			if _, has := m["secret"]; has {
-				m["secret"] = "***"
-			}
+			dt.Config = maskDeployConfig(dt.Type, m)
 		}
 		result = append(result, dt)
 	}
@@ -156,6 +158,16 @@ func (h *CertDeployHandler) createTarget(w http.ResponseWriter, r *http.Request,
 	}
 	if req.TriggerOn == "" {
 		req.TriggerOn = "on_renewal"
+	}
+	man, ok := certdeploy.ManifestOf(req.Type)
+	if !ok {
+		http.Error(w, "type de cible inconnu : "+req.Type, http.StatusBadRequest)
+		return
+	}
+	cfgMap, _ := req.Config.(map[string]any)
+	if err := man.Validate(cfgMap); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 	cfgBytes, _ := json.Marshal(req.Config)
 
@@ -419,4 +431,85 @@ func (h *CertBundleHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", bundle.ContentType)
 	w.Header().Set("Content-Disposition", `attachment; filename="`+bundle.Filename+`"`)
 	_, _ = w.Write(bundle.Data)
+}
+
+// maskDeployConfig masque les secrets d'une cible de déploiement selon le manifeste de son type.
+func maskDeployConfig(typ string, cfg map[string]any) map[string]any {
+	if man, ok := certdeploy.ManifestOf(typ); ok {
+		return man.Mask(cfg)
+	}
+	out := make(map[string]any, len(cfg))
+	for k, v := range cfg {
+		if k == "secret" || k == "private_key" || k == "password" || k == "token" {
+			out[k] = "***"
+		} else {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// CertDeployTypesHandler GET /api/v1/cert-deploy-types : manifestes des types de cible de
+// déploiement de certificats (webhook, ssh_exec…) — champs, secrets, requis. Source du formulaire
+// de l'Admin, qui affiche ainsi tout nouveau type sans modification du JavaScript.
+type CertDeployTypesHandler struct{}
+
+func (CertDeployTypesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.NotFound(w, r)
+		return
+	}
+	jsonOK(w, certdeploy.Manifests())
+}
+
+// updateTarget remplace le nom, la configuration et le déclenchement d'une cible (le type ne change
+// pas). Un secret absent, vide ou égal au masque est conservé : modifier une cible ne l'efface pas.
+// La configuration envoyée remplace l'ancienne : omettre host_fingerprint relance la mémorisation de
+// la clé d'hôte SSH à la prochaine connexion.
+func (h *CertDeployHandler) updateTarget(w http.ResponseWriter, r *http.Request, targetID string) {
+	var req createTargetReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, r, http.StatusBadRequest, "api.err.bad_request")
+		return
+	}
+	var typ, oldCfg, name, trigger string
+	err := h.DB.QueryRowContext(r.Context(),
+		`SELECT type, config, name, trigger_on FROM cert_deploy_targets WHERE id=?`, targetID).Scan(&typ, &oldCfg, &name, &trigger)
+	if err == sql.ErrNoRows {
+		writeErr(w, r, http.StatusNotFound, "api.err.not_found")
+		return
+	}
+	if err != nil {
+		if !isCtxErr(err) {
+			h.Log.Error("cert_deploy: update target", "err", err)
+		}
+		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
+		return
+	}
+	if req.Name != "" {
+		name = req.Name
+	}
+	if req.TriggerOn != "" {
+		trigger = req.TriggerOn
+	}
+	cfg, _ := req.Config.(map[string]any)
+	if man, ok := certdeploy.ManifestOf(typ); ok {
+		var old map[string]any
+		_ = json.Unmarshal([]byte(oldCfg), &old)
+		cfg = man.KeepSecrets(old, cfg)
+		if err := man.Validate(cfg); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	b, _ := json.Marshal(cfg)
+	if _, err := h.DB.ExecContext(r.Context(),
+		`UPDATE cert_deploy_targets SET name=?, config=?, trigger_on=? WHERE id=?`, name, string(b), trigger, targetID); err != nil {
+		if !isCtxErr(err) {
+			h.Log.Error("cert_deploy: update target", "err", err)
+		}
+		writeErr(w, r, http.StatusBadRequest, "api.err.bad_request") // trigger_on invalide (CHECK)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

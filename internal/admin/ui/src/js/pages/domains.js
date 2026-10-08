@@ -220,6 +220,7 @@ function _domainScopeCovers(scopeVal, domain) {
 }
 
 window.openDomainModal = async function(id) {
+  if (typeof dnsProvidersRefresh === 'function') await dnsProvidersRefresh();
   let existing = null;
   let edges = [];
   let tokens = [];

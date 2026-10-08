@@ -4,24 +4,19 @@
 package certdeploy
 
 import (
-	"bytes"
 	"context"
-	"crypto/hmac"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
-
-	"golang.org/x/crypto/ssh"
 )
 
-// Deployer déclenche les déploiements de certificats vers les cibles configurées.
+// Deployer déclenche les déploiements de certificats vers les cibles configurées. Chaque type de
+// cible (webhook, ssh_exec…) est un module du registre : voir targets.go.
 type Deployer struct {
 	db     *sql.DB
 	log    *slog.Logger
@@ -36,21 +31,6 @@ func New(db *sql.DB, log *slog.Logger) *Deployer {
 		log:    log,
 		client: &http.Client{Timeout: 15 * time.Second},
 	}
-}
-
-type webhookConfig struct {
-	URL    string `json:"url"`
-	Secret string `json:"secret"`
-}
-
-type webhookPayload struct {
-	Domain      string `json:"domain"`
-	CertPEM     string `json:"cert_pem"`
-	KeyPEM      string `json:"key_pem"`
-	ChainPEM    string `json:"chain_pem"`
-	Fingerprint string `json:"fingerprint"`
-	ExpiresAt   string `json:"expires_at"`
-	TriggeredAt string `json:"triggered_at"`
 }
 
 // TriggerForCert déclenche tous les targets on_renewal pour un cert donné.
@@ -86,9 +66,6 @@ func (d *Deployer) TriggerTarget(ctx context.Context, targetID string) error {
 }
 
 func (d *Deployer) runTarget(ctx context.Context, targetID, certID, typ, cfgJSON string) {
-	var msg string
-	var status string
-
 	var certPEM, keyPEM, domain string
 	var expiresAt time.Time
 	err := d.db.QueryRowContext(ctx,
@@ -99,14 +76,8 @@ func (d *Deployer) runTarget(ctx context.Context, targetID, certID, typ, cfgJSON
 		return
 	}
 
-	switch typ {
-	case "webhook":
-		status, msg = d.doWebhook(cfgJSON, domain, certPEM, keyPEM, expiresAt)
-	case "ssh_exec":
-		status, msg = d.doSSHExec(cfgJSON, domain, certPEM, keyPEM)
-	default:
-		status, msg = "error", "type non supporté: "+typ
-	}
+	status, msg, learned := d.deploy(ctx, typ, cfgJSON, Bundle{Domain: domain, CertPEM: certPEM, KeyPEM: keyPEM, ExpiresAt: expiresAt})
+	d.saveLearned(ctx, targetID, cfgJSON, learned)
 
 	d.recordHistory(targetID, certID, status, msg)
 	_, _ = d.db.ExecContext(ctx,
@@ -122,44 +93,49 @@ func (d *Deployer) runTarget(ctx context.Context, targetID, certID, typ, cfgJSON
 	}
 }
 
-func (d *Deployer) doWebhook(cfgJSON, domain, certPEM, keyPEM string, expiresAt time.Time) (string, string) {
-	var cfg webhookConfig
-	if err := json.Unmarshal([]byte(cfgJSON), &cfg); err != nil || cfg.URL == "" {
-		return "error", "config webhook invalide"
+// deploy construit la cible du type demandé depuis sa configuration stockée et l'exécute.
+func (d *Deployer) deploy(ctx context.Context, typ, cfgJSON string, b Bundle) (status, message string, learned map[string]any) {
+	f, _, ok := registry.Lookup(typ)
+	if !ok {
+		return "error", "type non supporté: " + typ, nil
 	}
-
-	payload := webhookPayload{
-		Domain:      domain,
-		CertPEM:     certPEM,
-		KeyPEM:      keyPEM,
-		ChainPEM:    certPEM,
-		Fingerprint: certFingerprint([]byte(certPEM)),
-		ExpiresAt:   expiresAt.UTC().Format(time.RFC3339),
-		TriggeredAt: time.Now().UTC().Format(time.RFC3339),
-	}
-	body, _ := json.Marshal(payload)
-
-	req, err := http.NewRequest(http.MethodPost, cfg.URL, bytes.NewReader(body))
+	var cfg map[string]any
+	_ = json.Unmarshal([]byte(cfgJSON), &cfg) // une config illisible est signalée par la fabrique du type
+	t, err := f(cfg, Deps{Client: d.client})
 	if err != nil {
-		return "error", "URL invalide: " + err.Error()
+		return "error", err.Error(), nil
 	}
-	req.Header.Set("Content-Type", "application/json")
-	if cfg.Secret != "" {
-		mac := hmac.New(sha256.New, []byte(cfg.Secret))
-		mac.Write(body)
-		req.Header.Set("X-GoProxify-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+	status, message = t.Deploy(ctx, b)
+	if l, ok := t.(Learner); ok {
+		learned = l.Learned()
 	}
+	return status, message, learned
+}
 
-	resp, err := d.client.Do(req)
-	if err != nil {
-		return "error", "requête échouée: " + err.Error()
+// saveLearned inscrit dans la configuration de la cible ce qu'elle a appris pendant le déploiement
+// (ex. l'empreinte de la clé d'hôte SSH vue à la première connexion). Les champs déjà renseignés
+// ne sont jamais écrasés.
+func (d *Deployer) saveLearned(ctx context.Context, targetID, cfgJSON string, learned map[string]any) {
+	if len(learned) == 0 {
+		return
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return "ok", fmt.Sprintf("HTTP %d", resp.StatusCode)
+	var cfg map[string]any
+	if json.Unmarshal([]byte(cfgJSON), &cfg) != nil || cfg == nil {
+		return
 	}
-	return "error", fmt.Sprintf("HTTP %d", resp.StatusCode)
+	changed := false
+	for k, v := range learned {
+		if s, _ := cfg[k].(string); s == "" {
+			cfg[k] = v
+			changed = true
+		}
+	}
+	if !changed {
+		return
+	}
+	if b, err := json.Marshal(cfg); err == nil {
+		_, _ = d.db.ExecContext(ctx, `UPDATE cert_deploy_targets SET config=? WHERE id=?`, string(b), targetID)
+	}
 }
 
 func (d *Deployer) recordHistory(targetID, certID, status, message string) {
@@ -172,80 +148,4 @@ func (d *Deployer) recordHistory(targetID, certID, status, message string) {
 func certFingerprint(certPEM []byte) string {
 	h := sha256.Sum256(certPEM)
 	return hex.EncodeToString(h[:])
-}
-
-// ── SSH exec ──────────────────────────────────────────────────────────────
-
-type sshConfig struct {
-	Host       string `json:"host"`        // "10.0.0.1:22"
-	User       string `json:"user"`        // "deploy"
-	PrivateKey string `json:"private_key"` // PEM de la clé privée Ed25519/RSA
-	// Script exécuté sur la cible. Les variables d'env suivantes sont injectées :
-	//   GPX_CERT_PEM, GPX_KEY_PEM, GPX_DOMAIN, GPX_EXPIRES_AT
-	// Exemple : "echo \"$GPX_CERT_PEM\" > /etc/ssl/certs/$GPX_DOMAIN.pem && nginx -s reload"
-	Script string `json:"script"`
-}
-
-func (d *Deployer) doSSHExec(cfgJSON, domain, certPEM, keyPEM string) (string, string) {
-	var cfg sshConfig
-	if err := json.Unmarshal([]byte(cfgJSON), &cfg); err != nil || cfg.Host == "" || cfg.User == "" || cfg.Script == "" {
-		return "error", "config ssh_exec invalide (host, user, script requis)"
-	}
-
-	signer, err := ssh.ParsePrivateKey([]byte(cfg.PrivateKey))
-	if err != nil {
-		return "error", "clé privée SSH invalide: " + err.Error()
-	}
-
-	clientCfg := &ssh.ClientConfig{
-		User:            cfg.User,
-		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), //nolint:gosec — cible interne, pas de TOFU pour le MVP
-		Timeout:         20 * time.Second,
-	}
-
-	host := cfg.Host
-	if !strings.Contains(host, ":") {
-		host += ":22"
-	}
-
-	conn, err := ssh.Dial("tcp", host, clientCfg)
-	if err != nil {
-		return "error", "connexion SSH échouée: " + err.Error()
-	}
-	defer conn.Close()
-
-	sess, err := conn.NewSession()
-	if err != nil {
-		return "error", "session SSH échouée: " + err.Error()
-	}
-	defer sess.Close()
-
-	// Injecte les variables d'environnement via le script lui-même (pas SetEnv,
-	// souvent désactivé côté serveur). On préfixe le script avec les exports.
-	script := fmt.Sprintf(
-		"export GPX_DOMAIN=%q GPX_EXPIRES_AT=%q GPX_CERT_PEM GPX_KEY_PEM\nGPX_CERT_PEM=%q\nGPX_KEY_PEM=%q\n%s",
-		domain, "", certPEM, keyPEM, cfg.Script,
-	)
-
-	var stderr bytes.Buffer
-	sess.Stderr = &stderr
-	out, err := sess.Output(script)
-	if err != nil {
-		errMsg := strings.TrimSpace(stderr.String())
-		if errMsg == "" {
-			errMsg = err.Error()
-		}
-		return "error", "script SSH échoué: " + errMsg
-	}
-
-	outStr := strings.TrimSpace(string(out))
-	_ = io.Discard // évite import inutilisé
-	if len(outStr) > 200 {
-		outStr = outStr[:200] + "…"
-	}
-	if outStr == "" {
-		outStr = "ok"
-	}
-	return "ok", outStr
 }

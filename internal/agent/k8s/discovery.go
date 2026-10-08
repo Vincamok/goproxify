@@ -19,6 +19,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/vincamok/goproxify/internal/agent/docker"
@@ -37,6 +38,12 @@ type Discovery struct {
 	cfg         *config.AgentConfig
 	adminURL    string
 	authToken   string
+	tokMu       sync.RWMutex // protège authToken : le jeton peut être obtenu après la construction (appairage)
+	epMu        sync.RWMutex
+	endpointFn  func() string     // passerelle courante de l'Agent (bascule HA) ; nil = adminURL fixe
+	resync      chan struct{}     // demande de réannonce : relance les watches, qui renvoient l'état complet
+	dirty       atomic.Bool       // un envoi vers la passerelle a échoué : l'état publié est peut-être en retard
+	pendingDel  map[string]string // routes dont la suppression a échoué (ID → hôte), à réessayer
 	labelPrefix string
 	log         *slog.Logger
 	client      *http.Client
@@ -57,6 +64,7 @@ func New(cfg *config.AgentConfig, log *slog.Logger) (*Discovery, error) {
 		labelPrefix: cfg.Kubernetes.LabelPrefix,
 		log:         log,
 		hostByKey:   make(map[string]string),
+		resync:      make(chan struct{}, 1),
 	}
 	if d.labelPrefix == "" {
 		d.labelPrefix = cfg.Docker.LabelPrefix
@@ -107,6 +115,7 @@ func New(cfg *config.AgentConfig, log *slog.Logger) (*Discovery, error) {
 // Start lance la boucle de surveillance et bloque jusqu'à ctx.Done().
 func (d *Discovery) Start(ctx context.Context) {
 	d.log.Info("k8s discovery: démarrage", "api_server", d.apiServer)
+	go d.retryLoop(ctx)
 	for {
 		if err := d.watchAll(ctx); err != nil {
 			if ctx.Err() != nil {
@@ -155,7 +164,7 @@ type k8sWatchEvent struct {
 
 // k8sIngress représente un Ingress Kubernetes minimal.
 type k8sIngress struct {
-	Metadata k8sMeta    `json:"metadata"`
+	Metadata k8sMeta     `json:"metadata"`
 	Spec     ingressSpec `json:"spec"`
 }
 
@@ -165,8 +174,8 @@ type ingressSpec struct {
 }
 
 type ingressRule struct {
-	Host string      `json:"host"`
-	HTTP *httpPaths  `json:"http"`
+	Host string     `json:"host"`
+	HTTP *httpPaths `json:"http"`
 }
 
 type httpPaths struct {
@@ -205,9 +214,45 @@ func (d *Discovery) watchAll(ctx context.Context) error {
 	go func() { errCh <- d.watchServices(ctx) }()
 	go func() { errCh <- d.watchIngresses(ctx) }()
 
-	// La première erreur annule l'autre goroutine via cancel().
-	err := <-errCh
-	return err
+	// La première erreur annule l'autre goroutine via cancel(). Une demande de réannonce relance
+	// les deux watches : sans resourceVersion, l'API Kubernetes renvoie d'abord l'état courant sous
+	// forme d'événements ADDED, donc toutes les routes sont republiées.
+	select {
+	case err := <-errCh:
+		return err
+	case <-d.resync:
+		d.log.Info("k8s discovery: réannonce demandée — watches relancés")
+		return nil
+	}
+}
+
+// Resync republie toutes les routes (nouvelle passerelle, reconnexion) sans attendre un
+// changement côté cluster : un Service ou un Ingress inchangé ne génère aucun événement.
+func (d *Discovery) Resync(context.Context) {
+	select {
+	case d.resync <- struct{}{}:
+	default: // une demande est déjà en attente
+	}
+}
+
+// SetEndpointFunc fait suivre à la découverte la passerelle courante de l'Agent (bascule HA) au lieu
+// de l'adresse fixée à la création.
+func (d *Discovery) SetEndpointFunc(fn func() string) {
+	d.epMu.Lock()
+	d.endpointFn = fn
+	d.epMu.Unlock()
+}
+
+func (d *Discovery) endpoint() string {
+	d.epMu.RLock()
+	fn := d.endpointFn
+	d.epMu.RUnlock()
+	if fn != nil {
+		if ep := fn(); ep != "" {
+			return ep
+		}
+	}
+	return d.adminURL
 }
 
 // watchServices utilise le watch API K8s pour maintenir la liste à jour.
@@ -424,23 +469,28 @@ func (d *Discovery) pushRoute(ctx context.Context, key string, ann map[string]st
 	}
 	d.mu.Lock()
 	d.hostByKey[key] = spec.Host
+	delete(d.pendingDel, "docker-host:"+spec.Host) // la route est de nouveau voulue
 	d.mu.Unlock()
 	host = spec.Host
 	tls = spec.TLS
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		d.adminURL+"/internal/v1/agent/containers", bytes.NewReader(body))
+		d.endpoint()+"/internal/v1/agent/containers", bytes.NewReader(body))
 	if err != nil {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+d.authToken)
+	req.Header.Set("Authorization", "Bearer "+d.token())
 	resp, err := d.client.Do(req)
 	if err != nil {
 		d.log.Warn("k8s discovery: push route", "host", host, "err", err)
+		d.dirty.Store(true)
 		return
 	}
 	resp.Body.Close()
+	if resp.StatusCode >= 500 {
+		d.dirty.Store(true)
+	}
 	d.log.Info("k8s discovery: route enregistrée", "host", host, "backend", backendURL, "tls", tls)
 }
 
@@ -466,17 +516,22 @@ func (d *Discovery) deleteByKey(ctx context.Context, key string) {
 	// La passerelle génère l'ID de route "docker-host:{host}" via handleAgentContainerStart.
 	routeID := "docker-host:" + host
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete,
-		d.adminURL+"/internal/v1/routes/"+url.PathEscape(routeID), nil)
+		d.endpoint()+"/internal/v1/routes/"+url.PathEscape(routeID), nil)
 	if err != nil {
 		return
 	}
-	req.Header.Set("Authorization", "Bearer "+d.authToken)
+	req.Header.Set("Authorization", "Bearer "+d.token())
 	resp, err := d.client.Do(req)
 	if err != nil {
 		d.log.Warn("k8s discovery: suppression route", "host", host, "err", err)
+		d.rememberFailedDelete(routeID, host)
 		return
 	}
 	resp.Body.Close()
+	if resp.StatusCode >= 500 {
+		d.rememberFailedDelete(routeID, host)
+		return
+	}
 	d.log.Info("k8s discovery: route supprimée", "host", host)
 }
 
@@ -490,4 +545,79 @@ func ingKey(m k8sMeta) string {
 
 func labelSelectorEscape(s string) string {
 	return strings.ReplaceAll(s, " ", "%20")
+}
+
+// SetToken remplace le jeton d'agent utilisé auprès de la passerelle. Il est appelé quand
+// l'appairage aboutit après la construction de la découverte : sans cela, un agent appairé à
+// l'exécution (sans jeton statique en configuration) envoyait ses routes Kubernetes sans
+// authentification.
+func (d *Discovery) SetToken(token string) {
+	d.tokMu.Lock()
+	d.authToken = token
+	d.tokMu.Unlock()
+}
+
+func (d *Discovery) token() string {
+	d.tokMu.RLock()
+	defer d.tokMu.RUnlock()
+	return d.authToken
+}
+
+// retryInterval est le délai entre deux contrôles des envois échoués.
+const retryInterval = 20 * time.Second
+
+func (d *Discovery) rememberFailedDelete(routeID, host string) {
+	d.mu.Lock()
+	if d.pendingDel == nil {
+		d.pendingDel = map[string]string{}
+	}
+	d.pendingDel[routeID] = host
+	d.mu.Unlock()
+}
+
+// retryLoop rejoue ce qui n'est pas parti : les suppressions échouées, puis — si un envoi de route a
+// échoué — la réannonce complète. Sans cela, une passerelle injoignable un instant laissait une route
+// manquante (ou périmée) jusqu'à la prochaine bascule, reconnexion ou expiration du watch.
+func (d *Discovery) retryLoop(ctx context.Context) {
+	t := time.NewTicker(retryInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			d.retryOnce(ctx)
+		}
+	}
+}
+
+func (d *Discovery) retryOnce(ctx context.Context) {
+	d.mu.Lock()
+	pending := make(map[string]string, len(d.pendingDel))
+	for id, host := range d.pendingDel {
+		pending[id] = host
+	}
+	d.mu.Unlock()
+	for id, host := range pending {
+		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, d.endpoint()+"/internal/v1/routes/"+url.PathEscape(id), nil)
+		if err != nil {
+			continue
+		}
+		req.Header.Set("Authorization", "Bearer "+d.token())
+		resp, err := d.client.Do(req)
+		if err != nil {
+			continue
+		}
+		resp.Body.Close()
+		if resp.StatusCode < 500 {
+			d.mu.Lock()
+			delete(d.pendingDel, id)
+			d.mu.Unlock()
+			d.log.Info("k8s discovery: suppression rejouée", "host", host)
+		}
+	}
+	if d.dirty.Swap(false) {
+		d.log.Info("k8s discovery: réannonce après envoi en échec")
+		d.Resync(ctx)
+	}
 }

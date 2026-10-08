@@ -63,7 +63,7 @@ Yes, via ACME DNS-01 (Let's Encrypt). A `*.example.com` certificate covers all s
 Yes. The Admin pushes decoded certificates directly into the Edge's RAM via Go's native TLS `GetCertificate` function. No reload is required.
 
 **Q: Which DNS providers are supported for ACME DNS-01?**
-OVH, Cloudflare, Gandi, Route53 (AWS), Hetzner DNS.
+OVH, Cloudflare, Gandi, Route 53 (AWS) and Hetzner DNS. `GET /api/v1/acme/provider-types` shows each provider's parameters and the environment variable behind each.
 
 ---
 

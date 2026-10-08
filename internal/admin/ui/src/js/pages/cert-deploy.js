@@ -139,7 +139,35 @@ async function cdLoadTokens(certID, domain) {
 
 // ── Actions ─────────────────────────────────────────────────────────────────
 
-window.openAddTargetModal = function(certID, domain) {
+// Types de cible déclarés côté serveur (GET /cert-deploy-types). Webhook et SSH ont leur formulaire
+// ci-dessous ; tout autre type (ajouté au code de l'Admin) est construit depuis son manifeste, sans
+// modification de ce fichier.
+const CD_KNOWN_TYPES = ['webhook', 'ssh_exec'];
+let _cdManifests = null;
+async function cdLoadManifests() {
+  if (_cdManifests) return _cdManifests;
+  try { _cdManifests = await api('GET', '/cert-deploy-types') || []; } catch { return []; }
+  return _cdManifests;
+}
+
+function cdExtraTypeOptions() {
+  return (_cdManifests || []).filter(m => !CD_KNOWN_TYPES.includes(m.type))
+    .map(m => `<option value="${esc(m.type)}">${esc(m.label)}</option>`).join('');
+}
+
+function cdGenericFieldsHtml(type) {
+  const m = (_cdManifests || []).find(x => x.type === type);
+  if (!m) return '';
+  return (m.fields || []).map(f => `
+    <div class="field"><label>${esc(f.label)}${f.required ? '' : ' <span style="opacity:0.5;font-size:11px;">(optionnel)</span>'}</label>
+      ${f.multiline
+        ? `<textarea class="input" id="tgt-g-${esc(f.key)}" rows="4" style="font-family:monospace;font-size:11px;resize:vertical;" placeholder="${esc(f.placeholder || '')}"></textarea>`
+        : `<input class="input" id="tgt-g-${esc(f.key)}" type="${f.kind === 'password' ? 'password' : 'text'}" placeholder="${esc(f.placeholder || '')}">`}
+    </div>`).join('');
+}
+
+window.openAddTargetModal = async function(certID, domain) {
+  await cdLoadManifests();
   modal(
     'Nouveau deploy target',
     `<div style="display:flex;flex-direction:column;gap:14px;">
@@ -148,8 +176,10 @@ window.openAddTargetModal = function(certID, domain) {
         <select class="input" id="tgt-type" onchange="onTgtTypeChange()">
           <option value="webhook">Webhook (HTTP POST signé)</option>
           <option value="ssh_exec">SSH exec (script sur machine distante)</option>
+          ${cdExtraTypeOptions()}
         </select>
       </div>
+      <div id="tgt-cfg-generic" style="display:none;flex-direction:column;gap:10px;"></div>
       <div id="tgt-cfg-webhook" style="display:flex;flex-direction:column;gap:10px;">
         <div class="field"><label>URL du webhook</label><input class="input" id="tgt-url" placeholder="https://your-server.example.com/cert-hook" type="url"></div>
         <div class="field"><label>Secret HMAC <span style="opacity:0.5;font-size:11px;">(optionnel)</span></label><input class="input" id="tgt-secret" placeholder="Clé secrète partagée" type="password" autocomplete="new-password"></div>
@@ -172,6 +202,11 @@ echo "$GPX_KEY_PEM" > /etc/ssl/private/$GPX_DOMAIN.key
 nginx -s reload' style="font-family:monospace;font-size:11px;resize:vertical;"></textarea>
           <p style="margin:4px 0 0;font-size:11px;opacity:0.5;">Variables disponibles : <code>$GPX_DOMAIN</code>, <code>$GPX_CERT_PEM</code>, <code>$GPX_KEY_PEM</code>, <code>$GPX_EXPIRES_AT</code></p>
         </div>
+        <div class="field">
+          <label>Empreinte de la clé d'hôte <span style="opacity:0.5;font-size:11px;">(optionnelle)</span></label>
+          <input class="input" id="tgt-ssh-fp" placeholder="SHA256:… (ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub)" style="font-family:monospace;font-size:11px;">
+          <p style="margin:4px 0 0;font-size:11px;opacity:0.5;">Laissée vide, l'empreinte vue à la première connexion réussie est mémorisée puis vérifiée aux déploiements suivants ; <code>ignore</code> désactive la vérification.</p>
+        </div>
       </div>
       <div class="field"><label>Déclenchement</label>
         <select class="input" id="tgt-trigger">
@@ -190,6 +225,10 @@ window.onTgtTypeChange = function() {
   const type = document.getElementById('tgt-type')?.value;
   document.getElementById('tgt-cfg-webhook').style.display = type === 'webhook' ? 'flex' : 'none';
   document.getElementById('tgt-cfg-ssh').style.display = type === 'ssh_exec' ? 'flex' : 'none';
+  const generic = document.getElementById('tgt-cfg-generic');
+  const isGeneric = !CD_KNOWN_TYPES.includes(type);
+  generic.style.display = isGeneric ? 'flex' : 'none';
+  generic.innerHTML = isGeneric ? cdGenericFieldsHtml(type) : '';
 };
 
 window.submitAddTarget = async function(certID, domain) {
@@ -213,6 +252,16 @@ window.submitAddTarget = async function(certID, domain) {
     };
     if (!config.host || !config.user || !config.private_key || !config.script) {
       alert('Hôte, utilisateur, clé privée et script sont requis'); return;
+    }
+    const fp = document.getElementById('tgt-ssh-fp')?.value.trim();
+    if (fp) config.host_fingerprint = fp;
+  } else {
+    // Type ajouté côté serveur : champs et champs requis viennent de son manifeste.
+    const m = (_cdManifests || []).find(x => x.type === type);
+    for (const f of (m?.fields || [])) {
+      const v = document.getElementById('tgt-g-' + f.key)?.value.trim();
+      if (v) config[f.key] = v;
+      else if (f.required) { alert(f.label + ' requis'); return; }
     }
   }
   if (!name) { alert('Nom requis'); return; }

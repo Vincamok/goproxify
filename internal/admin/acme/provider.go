@@ -6,10 +6,7 @@
 // Les clés privées ne sont jamais écrites en base — elles sont poussées en RAM vers les passerelles.
 package acme
 
-import (
-	"context"
-	"fmt"
-)
+import "context"
 
 // DNSProvider sait écrire et supprimer un enregistrement TXT DNS.
 type DNSProvider interface {
@@ -21,22 +18,4 @@ type DNSProvider interface {
 type ProviderConfig struct {
 	Type   string            `json:"type"`
 	Params map[string]string `json:"params"`
-}
-
-// NewProvider instancie le bon fournisseur selon le type.
-func NewProvider(cfg ProviderConfig) (DNSProvider, error) {
-	switch cfg.Type {
-	case "ovh":
-		return newOVHProvider(cfg.Params)
-	case "cloudflare":
-		return newCloudflareProvider(cfg.Params)
-	case "route53":
-		return newRoute53Provider(cfg.Params)
-	case "hetzner":
-		return newHetznerProvider(cfg.Params)
-	case "gandi":
-		return newGandiProvider(cfg.Params)
-	default:
-		return nil, fmt.Errorf("acme: fournisseur DNS inconnu %q", cfg.Type)
-	}
 }

@@ -27,6 +27,7 @@ import (
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
 	"github.com/vincamok/goproxify/internal/admin/alerting/channels"
+	"github.com/vincamok/goproxify/internal/admin/certdeploy"
 	"github.com/vincamok/goproxify/internal/admin/ech"
 	"github.com/vincamok/goproxify/internal/admin/edgeproxy"
 	"github.com/vincamok/goproxify/internal/admin/internalca"
@@ -464,6 +465,11 @@ var tools = []map[string]any{
 		"name":        "list_cert_deploy_targets",
 		"description": "Liste les cibles de déploiement configurées pour un certificat (webhook, ssh_exec) avec leur dernier statut.",
 		"inputSchema": schema(req("cert_id", "string", "ID du certificat")),
+	},
+	{
+		"name":        "list_cert_deploy_types",
+		"description": "Types de cible de déploiement de certificats (webhook, ssh_exec…) avec leurs champs de configuration (clé, libellé, secret, requis).",
+		"inputSchema": schema(),
 	},
 	{
 		"name":        "trigger_cert_deploy",
@@ -1094,6 +1100,8 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 	case "get_cert_status":
 		domain, _ := p.Arguments["domain"].(string)
 		result, toolErr = h.toolGetCertStatus(r, domain)
+	case "list_cert_deploy_types":
+		result = certdeploy.Manifests()
 	case "list_cert_deploy_targets":
 		certID, _ := p.Arguments["cert_id"].(string)
 		result, toolErr = h.toolListCertDeployTargets(r, certID)
