@@ -4,6 +4,7 @@
 package api
 
 import (
+	"github.com/vincamok/goproxify/internal/admin/rulesengine"
 	"encoding/json"
 	"net/http"
 
@@ -141,6 +142,10 @@ func (h *RulesEngineHandler) importAutomation(w http.ResponseWriter, r *http.Req
 		}
 		condJSON, _ := json.Marshal(er.Condition)
 		actionJSON, _ := json.Marshal(er.Action)
+		if rulesengine.ValidateActionJSON(actionJSON) != nil {
+			summary["rules_rejected"]++
+			continue
+		}
 		enabled := 0
 		if er.Enabled {
 			enabled = 1

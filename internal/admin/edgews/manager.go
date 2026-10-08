@@ -4,6 +4,7 @@
 package edgews
 
 import (
+	"github.com/vincamok/goproxify/internal/admin/rulesengine"
 	"github.com/vincamok/goproxify/internal/edge/plugins"
 	"context"
 	"database/sql"
@@ -2010,6 +2011,7 @@ func (m *Manager) PushAutoRules(ctx context.Context) {
 		CooldownSec int             `json:"cooldown_sec"`
 	}
 	var rules []ruleRow
+	edgeActions := rulesengine.EdgeActionTypes()
 	for rows.Next() {
 		var r ruleRow
 		var condJSON, actionJSON string
@@ -2020,6 +2022,13 @@ func (m *Manager) PushAutoRules(ctx context.Context) {
 		r.Enabled = enabled == 1
 		r.Condition = json.RawMessage(condJSON)
 		r.Action = json.RawMessage(actionJSON)
+		// Seules les règles dont l'action s'exécute sur une passerelle lui sont poussées.
+		var act struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal([]byte(actionJSON), &act) != nil || !edgeActions[act.Type] {
+			continue
+		}
 		rules = append(rules, r)
 	}
 	if rules == nil {

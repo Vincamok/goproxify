@@ -1321,7 +1321,9 @@ Liste les descripteurs de types de conditions disponibles (nom, paramètres, des
 
 ### `GET /api/v1/rules-engine/action-types`
 
-Liste les descripteurs de types d'actions disponibles (nom, paramètres, descriptions).
+Liste les actions du moteur de règles, dérivées du registre de modules (ADR 0007) : `type`, `label`, `params` (clés des champs, format historique), `fields` (manifeste complet : genre, requis) et `edge` (l'action s'exécute sur une passerelle).
+
+**Validation** : `POST`/`PUT /rules-engine/rules`, `POST`/`PUT /scheduled-tasks`, l'import d'automatisation et les outils MCP `create_scheduled_task`/`update_scheduled_task`/`import_automation` valident l'action — type connu, champs requis (`webhook_url` pour `webhook_call`, `playbook_id` pour `run_playbook`), `webhook_url` en http(s), durées lisibles et positives (`ban_duration`, `strict_duration`), gravité `info|warning|critical`, rétention positive — et répondent `400` (`rules_rejected` dans le résumé d'un import). Avant Admin `0.133.0`, une action invalide n'échouait qu'au déclenchement, et une `ban_duration` illisible donnait un ban **permanent**. Seules les règles dont l'action s'exécute sur une passerelle (`disable_proxy`, `ban_ip`, `notify`, `enable_strict`) lui sont poussées.
 
 ### `GET /api/v1/rules-engine/templates`
 

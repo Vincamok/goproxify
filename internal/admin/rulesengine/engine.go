@@ -203,25 +203,11 @@ func (e *Engine) RunAction(ctx context.Context, action Action, name string, deta
 
 // execAction exécute l'action d'une règle déclenchée.
 func (e *Engine) execAction(ctx context.Context, ac ActionContext) error {
-	switch ac.Rule.Action.Type {
-	case ActionDisableProxy:
-		return e.execDisableProxy(ctx, ac)
-	case ActionBanIP:
-		return e.execBanIP(ctx, ac)
-	case ActionNotify:
-		e.execNotify(ac)
-		return nil
-	case ActionEnableStrict:
-		return e.execEnableStrict(ctx, ac)
-	case ActionWebhookCall:
-		return e.execWebhookCall(ctx, ac)
-	case ActionRunBackup:
-		return e.execRunBackup(ctx, ac)
-	case ActionRunPlaybook:
-		return e.execRunPlaybook(ctx, ac)
-	default:
+	mod, _, ok := actionRegistry.Lookup(string(ac.Rule.Action.Type))
+	if !ok {
 		return fmt.Errorf("type d'action inconnu: %s", ac.Rule.Action.Type)
 	}
+	return mod.run(e, ctx, ac)
 }
 
 // EvalNow force une évaluation immédiate d'une règle (dry-run si dryRun=true).

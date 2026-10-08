@@ -155,6 +155,10 @@ func (h *RulesEngineHandler) createRule(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, r, http.StatusBadRequest, "api.err.bad_request")
 		return
 	}
+	if err := body.Action.Validate(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	condJSON, _ := json.Marshal(body.Condition)
 	actionJSON, _ := json.Marshal(body.Action)
 	id := uuid.New().String()
@@ -212,6 +216,10 @@ func (h *RulesEngineHandler) updateRule(w http.ResponseWriter, r *http.Request, 
 	var body ruleBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, r, http.StatusBadRequest, "api.err.bad_request")
+		return
+	}
+	if err := body.Action.Validate(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	condJSON, _ := json.Marshal(body.Condition)
@@ -549,43 +557,18 @@ func (h *RulesEngineHandler) conditionTypes(w http.ResponseWriter, r *http.Reque
 	jsonOK(w, types)
 }
 
+// actionTypes liste les actions du moteur de règles, dérivées du registre de modules (ADR 0007) :
+// "params" (clés des champs) garde le format historique, "fields" apporte le manifeste complet.
 func (h *RulesEngineHandler) actionTypes(w http.ResponseWriter, r *http.Request) {
-	types := []map[string]any{
-		{
-			"type":   "disable_proxy",
-			"label":  "Désactiver le proxy",
-			"params": []string{"proxy_id"},
-		},
-		{
-			"type":   "ban_ip",
-			"label":  "Bannir l'IP",
-			"params": []string{"ban_reason", "ban_duration"},
-		},
-		{
-			"type":   "notify",
-			"label":  "Notifier",
-			"params": []string{"notify_severity", "notify_message"},
-		},
-		{
-			"type":   "enable_strict",
-			"label":  "Mode strict Fail2Ban (temporaire)",
-			"params": []string{"strict_duration"},
-		},
-		{
-			"type":   "webhook_call",
-			"label":  "Appeler un webhook",
-			"params": []string{"webhook_url"},
-		},
-		{
-			"type":   "run_backup",
-			"label":  "Déclencher une sauvegarde",
-			"params": []string{"backup_retention"},
-		},
-		{
-			"type":   "run_playbook",
-			"label":  "Enchaîner un playbook",
-			"params": []string{"playbook_id"},
-		},
+	manifests := rulesengine.ActionManifests()
+	types := make([]map[string]any, 0, len(manifests))
+	for _, m := range manifests {
+		params := make([]string, 0, len(m.Fields))
+		for _, f := range m.Fields {
+			params = append(params, f.Key)
+		}
+		edge, _ := m.Attrs["edge"].(bool)
+		types = append(types, map[string]any{"type": m.Type, "label": m.Label, "params": params, "fields": m.Fields, "edge": edge})
 	}
 	jsonOK(w, types)
 }

@@ -4,6 +4,7 @@
 package mcp
 
 import (
+	"github.com/vincamok/goproxify/internal/admin/rulesengine"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -666,6 +667,9 @@ func (h *Handler) toolCreateScheduledTask(r *http.Request, args map[string]any) 
 		return nil, err
 	}
 	actionJSON, _ := json.Marshal(args["action"])
+	if err := rulesengine.ValidateActionJSON(actionJSON); err != nil {
+		return nil, err
+	}
 	enabled := 1
 	if e, ok := args["enabled"].(bool); ok && !e {
 		enabled = 0
@@ -690,6 +694,9 @@ func (h *Handler) toolUpdateScheduledTask(r *http.Request, args map[string]any) 
 		return nil, err
 	}
 	actionJSON, _ := json.Marshal(args["action"])
+	if err := rulesengine.ValidateActionJSON(actionJSON); err != nil {
+		return nil, err
+	}
 	enabled := 1
 	if e, ok := args["enabled"].(bool); ok && !e {
 		enabled = 0

@@ -7,6 +7,7 @@
 package mcp
 
 import (
+	"github.com/vincamok/goproxify/internal/admin/rulesengine"
 	"github.com/vincamok/goproxify/internal/edge/engines"
 	"context"
 	"crypto/x509"
@@ -2693,6 +2694,10 @@ func (h *Handler) toolImportAutomation(r *http.Request, args map[string]any) (an
 		}
 		condJSON, _ := json.Marshal(rm["condition"])
 		actionJSON, _ := json.Marshal(rm["action"])
+		if rulesengine.ValidateActionJSON(actionJSON) != nil {
+			summary["rules_rejected"]++
+			continue
+		}
 		enabledInt := 0
 		if enabled {
 			enabledInt = 1

@@ -4,6 +4,7 @@
 package api
 
 import (
+	"github.com/vincamok/goproxify/internal/admin/rulesengine"
 	"database/sql"
 	"encoding/json"
 	"log/slog"
@@ -104,6 +105,10 @@ func (h *SchedulerHandler) create(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusBadRequest, "api.err.bad_request")
 		return
 	}
+	if err := validateTaskAction(body.Action); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	actionJSON, _ := json.Marshal(body.Action)
 	enabled := 1
 	if body.Enabled != nil && !*body.Enabled {
@@ -130,6 +135,10 @@ func (h *SchedulerHandler) update(w http.ResponseWriter, r *http.Request, id str
 	}
 	if _, err := scheduler.ParseExpr(body.CronExpr); err != nil {
 		writeErr(w, r, http.StatusBadRequest, "api.err.bad_request")
+		return
+	}
+	if err := validateTaskAction(body.Action); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	actionJSON, _ := json.Marshal(body.Action)
@@ -197,4 +206,14 @@ func (h *SchedulerHandler) listRuns(w http.ResponseWriter, r *http.Request, task
 		out = append(out, map[string]any{"id": id, "success": success == 1, "error": errStr, "ran_at": ranAt})
 	}
 	jsonOK(w, out)
+}
+
+// validateTaskAction valide l'action d'une planification avec le registre des actions du moteur de règles.
+func validateTaskAction(raw map[string]any) error {
+	b, _ := json.Marshal(raw)
+	var a rulesengine.Action
+	if err := json.Unmarshal(b, &a); err != nil {
+		return err
+	}
+	return a.Validate()
 }
