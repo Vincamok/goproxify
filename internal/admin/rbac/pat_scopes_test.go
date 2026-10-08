@@ -213,6 +213,7 @@ func TestToolScopesMatchREST(t *testing.T) {
 		{"renew_domain", http.MethodPost, "/api/v1/domains/d1/renew"},
 		{"rotate_cert", http.MethodPost, "/api/v1/domains/d1/renew"},
 		{"list_alert_channels", http.MethodGet, "/api/v1/alert-channels"},
+		{"list_alert_channel_types", http.MethodGet, "/api/v1/alert-channel-types"},
 		{"create_alert_channel", http.MethodPost, "/api/v1/alert-channels"},
 		{"delete_alert_rule", http.MethodDelete, "/api/v1/alert-rules/r1"},
 		{"ack_alert_event", http.MethodPost, "/api/v1/alert-events/e1/ack"},

@@ -267,8 +267,52 @@ const CHANNEL_TYPES = [
   { id: 'sms',      labelKey: 'alerts.type.sms',      shortKey: 'alerts.type.sms',      color: '#f43f5e' },
 ];
 
+// Manifestes des types de canal (GET /alert-channel-types) : source des champs de configuration
+// et des types que ce fichier ne connaît pas. Un module ajouté côté serveur apparaît donc dans
+// l'interface sans modification du JavaScript (libellé et champs viennent du manifeste).
+let _chManifests = null;
+async function chLoadManifests() {
+  if (_chManifests) return _chManifests;
+  try {
+    _chManifests = await api('GET', '/alert-channel-types') || [];
+  } catch {
+    return [];
+  }
+  for (const m of _chManifests) {
+    if (!CHANNEL_TYPES.some(ct => ct.id === m.type)) {
+      CHANNEL_TYPES.push({ id: m.type, label: m.label, color: '#64748b' });
+    }
+  }
+  return _chManifests;
+}
+
 function channelTypeMeta(id) {
   return CHANNEL_TYPES.find(ct => ct.id === id) || CHANNEL_TYPES[0];
+}
+
+// Libellé traduit pour les types connus, libellé du manifeste pour les autres.
+function channelTypeText(ct, short) {
+  const key = short ? ct.shortKey : ct.labelKey;
+  return key ? t(key) : (ct.label || ct.id);
+}
+
+// Champs d'un type : libellés traduits pour les types connus, manifeste pour les autres. `secret`
+// et `kind` viennent toujours du manifeste.
+function channelFields(chType) {
+  const man = (_chManifests || []).find(m => m.type === chType);
+  const meta = {};
+  (man?.fields || []).forEach(f => { meta[f.key] = f; });
+  const known = CHANNEL_FIELDS[chType];
+  if (known) {
+    return known.map(([key, labelKey, ph, inputType]) => ({
+      key, label: t(labelKey), ph: ph || '', type: inputType || 'text',
+      secret: inputType === 'password' || !!meta[key]?.secret, kind: meta[key]?.kind || 'text',
+    }));
+  }
+  return (man?.fields || []).map(f => ({
+    key: f.key, label: f.label, ph: f.placeholder || '', type: f.kind === 'password' ? 'password' : 'text',
+    secret: !!f.secret, kind: f.kind,
+  }));
 }
 
 function channelTypeIconHtml(id, size = 18) {
@@ -278,7 +322,7 @@ function channelTypeIconHtml(id, size = 18) {
 }
 
 function channelTypeLabel(id) {
-  return t(channelTypeMeta(id).labelKey);
+  return channelTypeText(channelTypeMeta(id), false);
 }
 
 const CHANNEL_FIELDS = {
@@ -304,6 +348,7 @@ pages['alert-channels'] = async function() {
   const content = document.getElementById('content');
   content.innerHTML = `<p style="color:var(--text2)">${t('common.loading')}</p>`;
   try {
+    await chLoadManifests();
     const chans = await api('GET', '/alert-channels');
     content.innerHTML = `
       <div class="card blueprint" style="padding:0">
@@ -345,18 +390,19 @@ window.deleteChannel = function(id, name) {
 };
 
 window.openChannelModal = async function(id) {
+  await chLoadManifests();
   let existing = null;
   if (id) { try { existing = (await api('GET','/alert-channels')||[]).find(c=>c.id===id); } catch {} }
   const type = existing?.type || 'webhook';
   const typeLocked = !!id;
 
+  // Un secret n'est jamais prérempli : laissé vide, le serveur conserve la valeur enregistrée.
   function buildFields(chType) {
-    const fields = CHANNEL_FIELDS[chType] || [];
-    return fields.map(([k, labelKey, ph, inputType]) => `
+    return channelFields(chType).map(f => `
       <div class="field">
-        <label class="field-label">${t(labelKey)}</label>
-        <input id="ch-${k}" class="input" type="${inputType||'text'}" placeholder="${ph||''}"
-          value="${esc(existing?.config?.[k] && !['password','token','api_key','secret','user_token','app_token','webhook_url','bot_token','auth_token'].includes(k) ? existing.config[k] : '')}">
+        <label class="field-label">${esc(f.label)}</label>
+        <input id="ch-${f.key}" class="input" type="${f.type}" placeholder="${esc(f.secret && existing ? '••••••••' : f.ph)}"
+          value="${esc(!f.secret && existing?.config?.[f.key] != null ? existing.config[f.key] : '')}">
       </div>`).join('');
   }
 
@@ -367,7 +413,7 @@ window.openChannelModal = async function(id) {
         <div class="ch-type-locked">
           ${channelTypeIconHtml(selected, 18)}
           <div class="ch-type-locked-text">
-            <span class="ch-type-locked-label">${esc(t(meta.labelKey))}</span>
+            <span class="ch-type-locked-label">${esc(channelTypeText(meta, false))}</span>
             <span class="ch-type-locked-hint">${esc(t('alerts.type_locked'))}</span>
           </div>
           <input type="hidden" id="ch-type" value="${esc(selected)}">
@@ -381,7 +427,7 @@ window.openChannelModal = async function(id) {
             data-type="${ct.id}" aria-selected="${ct.id === selected}"
             onclick="selectChannelType('${ct.id}')">
             ${channelTypeIconHtml(ct.id, 18)}
-            <span class="ch-type-card-label">${esc(t(ct.shortKey))}</span>
+            <span class="ch-type-card-label">${esc(channelTypeText(ct, true))}</span>
           </button>`).join('')}
       </div>`;
   }
@@ -431,14 +477,13 @@ window.saveChannel = async function(id) {
   const name    = document.getElementById('ch-name').value.trim();
   const type    = document.getElementById('ch-type').value;
   const enabled = document.getElementById('ch-enabled').checked;
-  const fields  = CHANNEL_FIELDS[type] || [];
   const config  = {};
-  for (const [k] of fields) {
-    const v = document.getElementById('ch-' + k)?.value;
-    if (v) config[k] = v;
-  }
-  if (type === 'email' && config.to) {
-    config.to = config.to.split(',').map(s => s.trim()).filter(Boolean);
+  for (const f of channelFields(type)) {
+    const v = document.getElementById('ch-' + f.key)?.value;
+    if (!v) continue;
+    if (f.kind === 'list') config[f.key] = v.split(',').map(s => s.trim()).filter(Boolean);
+    else if (f.kind === 'number') config[f.key] = Number(v);
+    else config[f.key] = v;
   }
   try {
     if (id) {

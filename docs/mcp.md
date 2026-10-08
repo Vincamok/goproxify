@@ -24,7 +24,7 @@ Chaque outil exige un scope, le même que sa route REST équivalente. Les outils
 | `proxies:delete` | `delete_proxy` |
 | `nodes:read` | `list_nodes`, `list_declared_nodes`, `get_topology_live`, `list_agents` †, `get_architecture` † |
 | `nodes:write` | `create_declared_node`, `delete_declared_node`, `create_bootstrap_ticket`, `accept_node`, `reject_node`, `approve_agent` †, `revoke_agent` † |
-| `alerts:read` | `list_alerts`, `list_alert_events`, `list_alert_channels`, `list_alert_rules` |
+| `alerts:read` | `list_alerts`, `list_alert_events`, `list_alert_channels`, `list_alert_channel_types`, `list_alert_rules` |
 | `alerts:write` | `create_alert_channel`, `delete_alert_channel`, `create_alert_rule`, `delete_alert_rule`, `ack_alert_event` |
 | `metrics:read` | `get_metrics`, `get_proxy_metrics` |
 | `backups:read` | `list_backups` † |
@@ -1426,6 +1426,16 @@ Liste les canaux de notification (email, webhook, ntfy, Gotify, Jira…).
 
 ---
 
+### `list_alert_channel_types`
+
+Types de canal de notification avec leurs champs (clé, libellé, `secret`, `required`, `kind`). À consulter avant `create_alert_channel`.
+
+_Aucun paramètre._
+
+**Scope :** `alerts:read`
+
+---
+
 ### `create_alert_channel`
 
 Crée un canal de notification.
@@ -1434,7 +1444,7 @@ Crée un canal de notification.
 |-----------|--------|--------|------------------------------------------------|
 | `name`    | string | ✓      | Nom du canal                                   |
 | `type`    | string | ✓      | `email`, `webhook`, `ntfy`, `gotify`, `jira`, `linear`, `github`, `gitlab`, `zammad`, `glpi`, `slack`, `teams`, `telegram`, `sms` |
-| `config`  | object | ✓      | Configuration dépendant du type                |
+| `config`  | object | ✓      | Configuration dépendant du type (champs : `list_alert_channel_types`) ; refusée si un champ requis manque ou si une clé est inconnue |
 
 **Réponse :** `{ "id": "ac_…", "name": "…", "type": "…" }`
 

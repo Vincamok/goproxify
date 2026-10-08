@@ -105,7 +105,7 @@ var mcpTools = []string{
 	"list_nodes", "list_agents", "list_declared_nodes", "get_topology_live", "get_architecture",
 	"approve_agent", "revoke_agent", "create_declared_node", "delete_declared_node",
 	"create_bootstrap_ticket", "accept_node", "reject_node",
-	"list_alerts", "list_alert_events", "list_alert_channels", "list_alert_rules",
+	"list_alerts", "list_alert_events", "list_alert_channels", "list_alert_channel_types", "list_alert_rules",
 	"create_alert_channel", "delete_alert_channel", "create_alert_rule", "delete_alert_rule", "ack_alert_event",
 	"get_metrics", "get_proxy_metrics", "list_backups", "list_users",
 	"list_snippets", "create_snippet", "delete_snippet",
@@ -238,7 +238,7 @@ func ToolRequiredScope(tool string) string {
 		"create_declared_node", "delete_declared_node",
 		"create_bootstrap_ticket", "accept_node", "reject_node":
 		return ScopeNodesWrite
-	case "list_alerts", "list_alert_events", "list_alert_channels", "list_alert_rules":
+	case "list_alerts", "list_alert_events", "list_alert_channels", "list_alert_channel_types", "list_alert_rules":
 		return ScopeAlertsRead
 	case "create_alert_channel", "delete_alert_channel", "create_alert_rule", "delete_alert_rule", "ack_alert_event":
 		return ScopeAlertsWrite

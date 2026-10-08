@@ -5,7 +5,6 @@ package grpctrans
 
 import (
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -82,14 +81,6 @@ func demoConfig(mut func(*router.GRPCTranscodeConfig)) *router.GRPCTranscodeConf
 		mut(c)
 	}
 	return c
-}
-
-// frame écrit un message gRPC cadré.
-func frame(msg []byte) []byte {
-	out := make([]byte, 5+len(msg))
-	binary.BigEndian.PutUint32(out[1:5], uint32(len(msg)))
-	copy(out[5:], msg)
-	return out
 }
 
 // newBackend démarre un faux backend gRPC en h2c : il décode la requête, la republie en JSON dans
@@ -356,10 +347,6 @@ func TestTranscodeRejectsBadRequests(t *testing.T) {
 	}
 	if rec := f.do("DELETE", "/v1/users/1", "", ""); rec.Header().Get("Allow") != "GET, PATCH" {
 		t.Errorf("Allow = %q", rec.Header().Get("Allow"))
-	}
-	// un flux n'est pas publié
-	if rec := f.do("GET", "/v1/watch", "", ""); rec.Code != 404 {
-		t.Errorf("méthode à flux : %d", rec.Code)
 	}
 }
 

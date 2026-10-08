@@ -26,6 +26,7 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/asn"
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
+	"github.com/vincamok/goproxify/internal/admin/alerting/channels"
 	"github.com/vincamok/goproxify/internal/admin/ech"
 	"github.com/vincamok/goproxify/internal/admin/edgeproxy"
 	"github.com/vincamok/goproxify/internal/admin/internalca"
@@ -1044,6 +1045,8 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 		result, toolErr = h.toolAcceptNode(r, p.Arguments)
 	case "reject_node":
 		result, toolErr = h.toolRejectNode(r, p.Arguments)
+	case "list_alert_channel_types":
+		result = channels.Manifests()
 	case "list_alert_channels":
 		result, toolErr = h.toolListAlertChannels(r)
 	case "create_alert_channel":

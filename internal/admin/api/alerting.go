@@ -75,7 +75,7 @@ func (h *ChannelsHandler) list(w http.ResponseWriter, _ *http.Request) {
 		var cfg map[string]any
 		_ = json.Unmarshal([]byte(cfgJSON), &cfg)
 		// Masquer les secrets dans la réponse
-		cfg = maskSecrets(cfg)
+		cfg = maskChannelSecrets(typ, cfg)
 		out = append(out, map[string]any{
 			"id": id, "name": name, "type": typ, "config": cfg,
 			"enabled": enabled == 1, "created_at": createdAt, "updated_at": updatedAt,
@@ -100,6 +100,15 @@ func (h *ChannelsHandler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Name == "" || body.Type == "" {
 		http.Error(w, "name et type requis", http.StatusBadRequest)
+		return
+	}
+	man, ok := channels.ManifestOf(body.Type)
+	if !ok {
+		http.Error(w, "type de canal inconnu : "+body.Type, http.StatusBadRequest)
+		return
+	}
+	if err := man.Validate(body.Config); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	enabled := 1
@@ -130,6 +139,23 @@ func (h *ChannelsHandler) update(w http.ResponseWriter, r *http.Request, id stri
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, r, http.StatusBadRequest, "api.err.json")
 		return
+	}
+	var typ, oldJSON string
+	if err := h.DB.QueryRow(`SELECT type, config FROM alert_channels WHERE id=?`, id).Scan(&typ, &oldJSON); err == sql.ErrNoRows {
+		http.NotFound(w, r)
+		return
+	} else if err != nil {
+		alertJSONErr(w, err, http.StatusInternalServerError)
+		return
+	}
+	if man, ok := channels.ManifestOf(typ); ok {
+		var old map[string]any
+		_ = json.Unmarshal([]byte(oldJSON), &old)
+		body.Config = man.KeepSecrets(old, body.Config)
+		if err := man.Validate(body.Config); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	cfgJSON, _ := json.Marshal(body.Config)
 	enabled := 1
@@ -432,6 +458,15 @@ func matchesScope(s alerting.Scope, ev alerting.Event) bool {
 	return true
 }
 
+// maskChannelSecrets masque les secrets d'un canal selon le manifeste de son type. Un type inconnu
+// (ligne ancienne ou corrompue) retombe sur la liste historique de noms de clés.
+func maskChannelSecrets(typ string, cfg map[string]any) map[string]any {
+	if man, ok := channels.ManifestOf(typ); ok {
+		return man.Mask(cfg)
+	}
+	return maskSecrets(cfg)
+}
+
 func maskSecrets(cfg map[string]any) map[string]any {
 	out := make(map[string]any, len(cfg))
 	secret := map[string]bool{"password": true, "token": true, "api_key": true, "secret": true, "user_token": true, "app_token": true}
@@ -449,4 +484,17 @@ func alertJSONErr(w http.ResponseWriter, err error, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": err.Error()}) //nolint:errcheck
+}
+
+// ChannelTypesHandler GET /api/v1/alert-channel-types : manifestes des types de canal (champs,
+// secrets, champs requis). Source du formulaire de l'interface, qui affiche ainsi tout nouveau
+// module sans modification du JavaScript.
+type ChannelTypesHandler struct{}
+
+func (ChannelTypesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.NotFound(w, r)
+		return
+	}
+	jsonOK(w, channels.Manifests())
 }

@@ -784,6 +784,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/api/v1/metrics/summary", protected(http.HandlerFunc(proxyMetricsH.ServeSummary)))
 	mux.Handle("/api/v1/audit", protected(auditH))
 	mux.Handle("/api/v1/audit/", protected(auditH))
+	mux.Handle("/api/v1/alert-channel-types", protected(api.ChannelTypesHandler{}))
 	mux.Handle("/api/v1/alert-channels", adminWrites(channelsH))
 	mux.Handle("/api/v1/alert-channels/", adminWrites(channelsH))
 	alertEventsH := &api.AlertEventsHandler{DB: s.db}

@@ -418,6 +418,7 @@ Canaux de notification, règles d'alerte, et tests.
 # Canaux
 goproxify alert events [-days <n>] [-trigger <id>] [-node <passerelle>] [-limit <n>] [-admin-url …] [-token …]   # alertes déclenchées (30 jours)
 goproxify alert channels list   [-admin-url …] [-token …]
+goproxify alert channels types  [-admin-url …] [-token …]
 goproxify alert channels get    <id> [-admin-url …] [-token …]
 goproxify alert channels create -file <channel.json> [-admin-url …] [-token …]
 goproxify alert channels update <id> -file <channel.json> [-admin-url …] [-token …]
@@ -439,7 +440,7 @@ goproxify alert events [-days N] [-trigger <t>] [-node <n>] [-limit N] [-admin-u
 goproxify alert ack <event-id> [-admin-url …] [-token …]
 ```
 
-Types de canal (`alert channels create -file`, champ `type`) : `email`, `webhook`, `slack`, `teams`, `telegram`, `sms` (Twilio), `ntfy`, `gotify`, `jira`, `linear`, `github`, `gitlab`, `zammad`, `glpi`. `alert rules create`/`update` acceptent `group_window_sec` (secondes, défaut 0 = désactivé) : les événements qui correspondent à la règle dans cette fenêtre sont fusionnés en une seule notification au lieu d'une par événement. Ils acceptent aussi `escalation` (tableau `{after_sec, channels}`) : si l'événement n'est pas acquitté (`alert ack <event-id>`) avant `after_sec` secondes, il est renotifié vers `channels` (vide = canaux de la règle) ; les paliers déjà programmés se désactivent d'eux-mêmes dès l'accusé de réception.
+`alert channels types` liste les types avec leurs champs (* = requis, « secret » = jamais réaffiché ; un secret omis lors d'un `update` est conservé). Types de canal (`alert channels create -file`, champ `type`) : `email`, `webhook`, `slack`, `teams`, `telegram`, `sms` (Twilio), `ntfy`, `gotify`, `jira`, `linear`, `github`, `gitlab`, `zammad`, `glpi`. `alert rules create`/`update` acceptent `group_window_sec` (secondes, défaut 0 = désactivé) : les événements qui correspondent à la règle dans cette fenêtre sont fusionnés en une seule notification au lieu d'une par événement. Ils acceptent aussi `escalation` (tableau `{after_sec, channels}`) : si l'événement n'est pas acquitté (`alert ack <event-id>`) avant `after_sec` secondes, il est renotifié vers `channels` (vide = canaux de la règle) ; les paliers déjà programmés se désactivent d'eux-mêmes dès l'accusé de réception.
 
 Exemples :
 

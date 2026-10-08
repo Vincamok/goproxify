@@ -3,12 +3,19 @@
 
 // Package channels implémente les adaptateurs de notification pour chaque canal.
 // Il ne doit pas importer le package parent alerting pour éviter les cycles.
+//
+// Chaque type de canal est un module du registre commun (internal/modules) : il déclare un
+// manifeste (champs, secrets, champs requis) et une fabrique. Ajouter un canal = un fichier qui
+// appelle Register depuis init() ; l'API, le masquage des secrets et le formulaire de l'interface
+// en découlent.
 package channels
 
 import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/vincamok/goproxify/internal/modules"
 )
 
 // Message est le payload envoyé à un canal de notification.
@@ -37,51 +44,36 @@ type Sender interface {
 	Send(ctx context.Context, msg Message) error
 }
 
+// Factory construit un Sender depuis la configuration stockée. Elle est tolérante : une
+// configuration partielle (canal créé avant l'introduction de la validation) donne un Sender dont
+// l'envoi échoue proprement, jamais une erreur de construction.
+type Factory func(cfg map[string]any) Sender
+
+var registry = modules.NewRegistry[Factory]()
+
+// Register déclare un type de canal. À appeler depuis init() ; panique sur un manifeste invalide
+// ou un type en double.
+func Register(m modules.Manifest, f Factory) { registry.Register(m, f) }
+
+// Manifests retourne les manifestes de tous les types de canal, dans l'ordre de déclaration.
+func Manifests() []modules.Manifest { return registry.Manifests() }
+
+// ManifestOf retourne le manifeste d'un type de canal.
+func ManifestOf(typ string) (modules.Manifest, bool) {
+	_, m, ok := registry.Lookup(typ)
+	return m, ok
+}
+
+// Types retourne les types de canal connus, triés.
+func Types() []string { return registry.Types() }
+
 // Build instancie le bon Sender selon le type de canal.
 func Build(ch Channel) (Sender, error) {
-	cfg := ch.Config
-	switch ch.Type {
-	case "email":
-		return &EmailSender{
-			Host:     str(cfg, "host"),
-			Port:     intv(cfg, "port", 587),
-			Username: str(cfg, "username"),
-			Password: str(cfg, "password"),
-			From:     str(cfg, "from"),
-			To:       strSlice(cfg, "to"),
-		}, nil
-	case "webhook":
-		return &WebhookSender{URL: str(cfg, "url"), Secret: str(cfg, "secret")}, nil
-	case "ntfy":
-		return &NtfySender{URL: str(cfg, "url"), Topic: str(cfg, "topic"), Token: str(cfg, "token")}, nil
-	case "gotify":
-		return &GotifySender{URL: str(cfg, "url"), Token: str(cfg, "token")}, nil
-	case "jira":
-		return &JiraSender{
-			URL: str(cfg, "url"), Username: str(cfg, "username"), Token: str(cfg, "token"),
-			Project: str(cfg, "project"), IssueType: str(cfg, "issue_type"),
-		}, nil
-	case "linear":
-		return &LinearSender{APIKey: str(cfg, "api_key"), TeamID: str(cfg, "team_id")}, nil
-	case "github":
-		return &GitHubSender{Token: str(cfg, "token"), Owner: str(cfg, "owner"), Repo: str(cfg, "repo")}, nil
-	case "gitlab":
-		return &GitLabSender{URL: str(cfg, "url"), Token: str(cfg, "token"), ProjectID: str(cfg, "project_id")}, nil
-	case "zammad":
-		return &ZammadSender{URL: str(cfg, "url"), Token: str(cfg, "token"), GroupID: str(cfg, "group_id")}, nil
-	case "glpi":
-		return &GLPISender{URL: str(cfg, "url"), AppToken: str(cfg, "app_token"), UserToken: str(cfg, "user_token")}, nil
-	case "slack":
-		return &SlackSender{WebhookURL: str(cfg, "webhook_url")}, nil
-	case "teams":
-		return &TeamsSender{WebhookURL: str(cfg, "webhook_url")}, nil
-	case "telegram":
-		return &TelegramSender{BotToken: str(cfg, "bot_token"), ChatID: str(cfg, "chat_id")}, nil
-	case "sms":
-		return &SMSSender{AccountSID: str(cfg, "account_sid"), AuthToken: str(cfg, "auth_token"), From: str(cfg, "from"), To: str(cfg, "to")}, nil
-	default:
+	f, _, ok := registry.Lookup(ch.Type)
+	if !ok {
 		return nil, fmt.Errorf("type de canal inconnu : %q", ch.Type)
 	}
+	return f(ch.Config), nil
 }
 
 func str(cfg map[string]any, k string) string {

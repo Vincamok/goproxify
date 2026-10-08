@@ -91,6 +91,7 @@ Sous-commandes :
   ack       Accuser réception d'un événement (stoppe l'escalade)
 
 goproxify alert channels list
+goproxify alert channels types
 goproxify alert channels get    <id>
 goproxify alert channels create -file <channel.json>
 goproxify alert channels update <id> -file <channel.json>
@@ -149,6 +150,42 @@ func runAlertChannels() {
 			status, _ := c["status"].(string)
 			fmt.Printf("%-36s  %-20s  %-30s  %s\n", id, typ, name, status)
 		}
+
+	case "types":
+		args := parseFlags(os.Args[4:])
+		client, err := newAdminClient(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+			os.Exit(1)
+		}
+		var types []struct {
+			Type   string `json:"type"`
+			Label  string `json:"label"`
+			Fields []struct {
+				Key      string `json:"key"`
+				Secret   bool   `json:"secret"`
+				Required bool   `json:"required"`
+			} `json:"fields"`
+		}
+		if _, err := client.DoJSON("GET", "/api/v1/alert-channel-types", nil, &types); err != nil {
+			fmt.Fprintf(os.Stderr, "alert channels types : %v\n", err)
+			os.Exit(1)
+		}
+		for _, ty := range types {
+			var fields []string
+			for _, f := range ty.Fields {
+				s := f.Key
+				if f.Required {
+					s += "*"
+				}
+				if f.Secret {
+					s += " (secret)"
+				}
+				fields = append(fields, s)
+			}
+			fmt.Printf("%-10s %-18s %s\n", ty.Type, ty.Label, strings.Join(fields, ", "))
+		}
+		fmt.Println("\n* = champ requis")
 
 	case "get":
 		args := parseFlags(os.Args[4:])

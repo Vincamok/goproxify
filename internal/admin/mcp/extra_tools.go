@@ -9,9 +9,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/vincamok/goproxify/internal/admin/alerting/channels"
 	"github.com/vincamok/goproxify/internal/admin/scheduler"
 	"github.com/vincamok/goproxify/internal/edge/router"
 )
@@ -26,11 +28,16 @@ func extraTools() []map[string]any {
 			"inputSchema": schema(),
 		},
 		{
+			"name":        "list_alert_channel_types",
+			"description": "Liste les types de canal de notification avec leurs champs de configuration (clé, libellé, secret, requis). À consulter avant create_alert_channel.",
+			"inputSchema": schema(),
+		},
+		{
 			"name":        "create_alert_channel",
 			"description": "Crée un canal de notification. Retourne l'ID créé.",
 			"inputSchema": schema(
 				req("name", "string", "Nom unique du canal"),
-				req("type", "string", "Type : email, webhook, slack, teams, telegram, sms, ntfy, gotify, jira, linear, github, gitlab, zammad, glpi"),
+				req("type", "string", "Type : "+strings.Join(channels.Types(), ", ")+". Champs de chaque type : GET /api/v1/alert-channel-types"),
 				req("config", "object", "Configuration spécifique au type (url, token, destinataires…)"),
 				opt("enabled", "boolean", "Activer immédiatement (défaut: true)"),
 			),
@@ -194,6 +201,14 @@ func (h *Handler) toolCreateAlertChannel(r *http.Request, args map[string]any) (
 	cfg := args["config"]
 	if name == "" || typ == "" || cfg == nil {
 		return nil, fmt.Errorf("name, type et config sont requis")
+	}
+	man, ok := channels.ManifestOf(typ)
+	if !ok {
+		return nil, fmt.Errorf("type de canal inconnu : %q (types : %s)", typ, strings.Join(channels.Types(), ", "))
+	}
+	cfgMap, _ := cfg.(map[string]any)
+	if err := man.Validate(cfgMap); err != nil {
+		return nil, fmt.Errorf("config invalide : %w", err)
 	}
 	cfgJSON, err := json.Marshal(cfg)
 	if err != nil {

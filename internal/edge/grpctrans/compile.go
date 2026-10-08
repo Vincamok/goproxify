@@ -47,7 +47,7 @@ type Transcoder struct {
 	protoFieldNames bool
 	maxRequest      int64
 	maxResponse     int64
-	Skipped         []string // méthodes ignorées (flux) ou sans route
+	Skipped         []string // méthodes sans route (ni annotation google.api.http, ni auto_mapping)
 }
 
 // googleResolver résout les imports google/* (annotations, rpc, protobuf) depuis les types compilés
@@ -174,6 +174,9 @@ func addBinding(t *Transcoder, m protoreflect.MethodDescriptor, verb, path, body
 	if err != nil {
 		return fmt.Errorf("%s : %w", m.FullName(), err)
 	}
+	if m.IsStreamingClient() && body != "*" {
+		return fmt.Errorf("%s : un flux client exige body: \"*\" (chaque valeur JSON du corps est un message)", m.FullName())
+	}
 	in := m.Input()
 	for _, v := range tpl.vars {
 		if _, err := resolveField(in, v.field); err != nil {
@@ -242,10 +245,6 @@ func Compile(cfg *router.GRPCTranscodeConfig) (*Transcoder, error) {
 			ms := svc.Methods()
 			for j := 0; j < ms.Len(); j++ {
 				m := ms.Get(j)
-				if m.IsStreamingClient() || m.IsStreamingServer() {
-					t.Skipped = append(t.Skipped, string(m.FullName())+" (flux)")
-					continue
-				}
 				rule := httpRule(m)
 				added := 0
 				if rule != nil {
@@ -295,10 +294,23 @@ func Compile(cfg *router.GRPCTranscodeConfig) (*Transcoder, error) {
 func (t *Transcoder) Routes() []string {
 	out := make([]string, len(t.bindings))
 	for i, b := range t.bindings {
-		out[i] = b.httpMethod + " " + b.tpl.String() + " → " + strings.TrimPrefix(b.grpcPath, "/")
+		out[i] = b.httpMethod + " " + b.tpl.String() + " → " + strings.TrimPrefix(b.grpcPath, "/") + b.streamKind()
 	}
 	sort.Strings(out)
 	return out
+}
+
+// streamKind décrit le flux de la méthode pour le dry-run (vide pour une méthode unaire).
+func (b *binding) streamKind() string {
+	switch {
+	case b.method.IsStreamingClient() && b.method.IsStreamingServer():
+		return " [flux bidirectionnel]"
+	case b.method.IsStreamingClient():
+		return " [flux client]"
+	case b.method.IsStreamingServer():
+		return " [flux serveur]"
+	}
+	return ""
 }
 
 func (t *template) String() string {

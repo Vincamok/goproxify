@@ -94,7 +94,16 @@ func Middleware(host string, cfg *router.GRPCTranscodeConfig) func(http.Handler)
 				}
 				body = raw
 			}
-			msg, err := b.buildRequest(r, body, vars)
+			var framed []byte
+			var err error
+			if b.method.IsStreamingClient() {
+				framed, err = b.buildClientStream(r, body, vars)
+			} else {
+				var msg []byte
+				if msg, err = b.buildRequest(r, body, vars); err == nil {
+					framed = frame(msg)
+				}
+			}
 			if err != nil {
 				count("bad_request")
 				var br *BadRequest
@@ -106,8 +115,14 @@ func Middleware(host string, cfg *router.GRPCTranscodeConfig) func(http.Handler)
 				return
 			}
 
+			if b.method.IsStreamingServer() {
+				sw := &streamWriter{w: w, t: t, b: b, count: count, header: http.Header{}}
+				next.ServeHTTP(sw, toGRPC(r, b.grpcPath, framed))
+				sw.finish()
+				return
+			}
 			rec := &recorder{header: http.Header{}, max: t.maxResponse}
-			next.ServeHTTP(rec, toGRPC(r, b.grpcPath, msg))
+			next.ServeHTTP(rec, toGRPC(r, b.grpcPath, framed))
 			t.finish(w, b, rec, count)
 		})
 	}
@@ -145,12 +160,16 @@ func dedupe(s []string) []string {
 	return out
 }
 
-// toGRPC réécrit la requête REST en requête gRPC unaire (corps cadré, chemin /paquet.Service/Méthode).
-func toGRPC(r *http.Request, grpcPath string, msg []byte) *http.Request {
-	framed := make([]byte, 5+len(msg))
-	binary.BigEndian.PutUint32(framed[1:5], uint32(len(msg)))
-	copy(framed[5:], msg)
+// frame ajoute le cadrage gRPC (drapeau de compression + longueur sur 4 octets) à un message.
+func frame(msg []byte) []byte {
+	out := make([]byte, 5+len(msg))
+	binary.BigEndian.PutUint32(out[1:5], uint32(len(msg)))
+	copy(out[5:], msg)
+	return out
+}
 
+// toGRPC réécrit la requête REST en requête gRPC (corps déjà cadré, chemin /paquet.Service/Méthode).
+func toGRPC(r *http.Request, grpcPath string, framed []byte) *http.Request {
 	r2 := r.Clone(r.Context())
 	r2.Method = http.MethodPost
 	u := *r.URL
@@ -351,12 +370,17 @@ func httpStatus(code int) int {
 
 // writeGRPCError écrit {"code", "message", "details"} avec le statut HTTP correspondant.
 func (t *Transcoder) writeGRPCError(w http.ResponseWriter, rec *recorder, code int) {
-	msg := trailer(rec.header, "Grpc-Message")
+	writeGRPCErrorFrom(w, rec.header, code)
+}
+
+// grpcErrorBody construit {"code","message","details"} depuis les trailers (ou en-têtes) gRPC.
+func grpcErrorBody(h http.Header, code int) map[string]any {
+	msg := trailer(h, "Grpc-Message")
 	if dec, err := url.PathUnescape(msg); err == nil {
 		msg = dec
 	}
 	out := map[string]any{"code": code, "message": msg, "details": []any{}}
-	if raw := trailer(rec.header, "Grpc-Status-Details-Bin"); raw != "" {
+	if raw := trailer(h, "Grpc-Status-Details-Bin"); raw != "" {
 		var bin []byte
 		for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding} {
 			if b, err := enc.DecodeString(raw); err == nil {
@@ -379,10 +403,15 @@ func (t *Transcoder) writeGRPCError(w http.ResponseWriter, rec *recorder, code i
 			}
 		}
 	}
-	copyHeaders(w, rec.header)
+	return out
+}
+
+// writeGRPCErrorFrom écrit l'erreur gRPC avec le statut HTTP correspondant.
+func writeGRPCErrorFrom(w http.ResponseWriter, h http.Header, code int) {
+	copyHeaders(w, h)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(httpStatus(code))
-	_ = json.NewEncoder(w).Encode(out)
+	_ = json.NewEncoder(w).Encode(grpcErrorBody(h, code))
 }
 
 func writeStatus(w http.ResponseWriter, httpCode, grpcCode int, msg string) {

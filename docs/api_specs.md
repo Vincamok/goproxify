@@ -71,7 +71,7 @@ Une requête authentifiée par PAT doit porter le scope de la route (`403 scope 
 |---|---|---|
 | `/api/v1/proxies` | `proxies:read` | `proxies:write` (`DELETE` : `proxies:delete`) |
 | `/api/v1/nodes`, `/declared-nodes`, `/bootstrap-tickets`, `/node-events`, `/discovered-containers`, `/backends/health`, `/agents` | `nodes:read` | `nodes:write` |
-| `/api/v1/alert-channels`, `/alert-rules`, `/alert-events` | `alerts:read` | `alerts:write` |
+| `/api/v1/alert-channels`, `/alert-channel-types`, `/alert-rules`, `/alert-events` | `alerts:read` | `alerts:write` |
 | `/api/v1/domains` | `domains:read` | `domains:write` |
 | `/api/v1/certs` (dont `deploy-targets`, `pull-tokens`), `/api/v1/internal-ca`, `/api/v1/ech` | `certs:read` | `certs:write` |
 | `/api/v1/snippets` | `snippets:read` | `snippets:write` |
@@ -621,6 +621,40 @@ Nouvelle clé active ; l'ancienne devient **retirée** : plus publiée, mais tou
 Supprime une clé **retirée** (`204`) ; `404` pour une clé inconnue ou active.
 
 Limites : ECH n'est servi qu'en TCP (HTTP/1.1, h2), pas en QUIC/HTTP3 ; il est incompatible avec les hôtes en SNI passthrough (le nom interne chiffré n'est pas lisible pour choisir la route).
+
+---
+
+## Canaux de notification — `/api/v1/alert-channels`
+
+Chaque type de canal est un **module** du registre (`internal/modules`) : son manifeste déclare les champs de configuration, ceux qui sont secrets et ceux qui sont requis. L'API, le masquage des secrets et le formulaire de l'interface en découlent.
+
+### `GET /api/v1/alert-channel-types`
+
+Manifestes des types de canal, dans l'ordre d'affichage. Lecture pour tout compte authentifié (`alerts:read`).
+
+```json
+[{ "type": "telegram", "label": "Telegram", "fields": [
+  { "key": "bot_token", "label": "Bot token", "kind": "password", "secret": true, "required": true },
+  { "key": "chat_id", "label": "Chat ID", "placeholder": "-1001234567890", "kind": "text", "required": true } ] }]
+```
+
+`kind` : `text`, `password`, `number`, `list` (tableau de chaînes). Types fournis : `email`, `webhook`, `ntfy`, `gotify`, `jira`, `linear`, `github`, `gitlab`, `zammad`, `glpi`, `slack`, `teams`, `telegram`, `sms`.
+
+### `GET /api/v1/alert-channels`
+
+Liste des canaux. Les champs `secret` du manifeste sont remplacés par `••••••••`. Avant Admin `0.120.0`, la liste de clés masquées oubliait `webhook_url` (Slack, Teams), `bot_token` (Telegram) et `auth_token` (SMS) : ces secrets étaient renvoyés en clair.
+
+### `POST /api/v1/alert-channels`
+
+Corps : `{ "name", "type", "config", "enabled" }`. `400` si le type est inconnu, si un champ requis manque ou est vide, ou si `config` contient une clé absente du manifeste. Les canaux déjà enregistrés ne sont jamais revalidés.
+
+### `PUT /api/v1/alert-channels/{id}`
+
+Corps : `{ "name", "config", "enabled" }` (le type ne change pas). Un secret absent, vide ou égal au masque est **conservé** : modifier un canal ne l'efface plus. `400` si la configuration obtenue ne passe pas la validation ; `404` si le canal n'existe pas.
+
+### `POST /api/v1/alert-channels/{id}/test`
+
+Envoie un message de test. `DELETE /api/v1/alert-channels/{id}` supprime le canal.
 
 ---
 

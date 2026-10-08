@@ -15,6 +15,7 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - **Rejeu depuis le Journal** : une entrée d'historique en échec se rejoue en un clic, sans réévaluer la condition
 - **Export/import YAML de l'automatisation** : règles, canaux et silences dans un seul document GitOps, réimportable (upsert par nom)
 - **Canaux Slack, Microsoft Teams, Telegram, SMS (Twilio)** : quatre types de canal d'alerte supplémentaires, au même titre qu'email/webhook/ntfy/gotify
+- **Registre de modules (pilote : canaux de notification)** : paquet commun `internal/modules` (manifestes, validation, secrets), les 14 types de canal migrés, API `/alert-channel-types`, MCP, CLI et formulaire pilotés par le manifeste (ADR 0007, Admin `0.120.0`). Prochaines familles : Importer, Discovery, fournisseurs DNS, cibles de déploiement, puis AuthProvider et Detector
 - **Regroupement anti-bruit** : une fenêtre de regroupement par règle d'alerte fusionne les événements similaires en une seule notification
 - **Versionnage des règles avec retour arrière** : un instantané par modification, 20 versions conservées par règle, restauration en un clic
 - **Escalades avec accusé de réception** : des paliers renotifient un événement non acquitté vers d'autres canaux, jusqu'à acquittement
@@ -114,7 +115,7 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - [x] **Mode maintenance par route**, **masquage de champs JSON**, **limites de profondeur et d'introspection GraphQL** — livré
 - [x] **Requêtes « hedged »** : GET/HEAD doublé vers un second backend après un délai, première réponse gardée — livré
 - [x] **gRPC-Web** vers un backend gRPC — livré
-- [x] **Transcodage REST↔gRPC** : option `grpc_transcode` — un backend gRPC unaire exposé en REST/JSON d'après ses annotations `google.api.http`, à partir d'un `.proto` ou d'un `FileDescriptorSet` ; réglable dans l'interface — livré (Edge `0.47.0`, Admin `0.119.0`) ; méthodes à flux restant à faire
+- [x] **Transcodage REST↔gRPC** : option `grpc_transcode` — un backend gRPC unaire exposé en REST/JSON d'après ses annotations `google.api.http`, à partir d'un `.proto` ou d'un `FileDescriptorSet` ; réglable dans l'interface — livré (Edge `0.47.0`, Admin `0.119.0`) ; méthodes à flux (serveur en NDJSON, client, bidirectionnel) — livré (Edge `0.48.0`)
 - [x] **Quotas partagés entre les passerelles d'un groupe HA** (`rate_limit.shared`) — livré ; le débit instantané reste local
 - [x] **Options de routage avancé en CLI et MCP** (`proxy option`, `update_proxy` `options`) — livré
 - [x] **Options de routage avancé dans l'interface graphique** : modale de proxy › Avancé › Routage avancé (split, URLs signées, maintenance, masquage, GraphQL, hedge, gRPC-Web, débit, statique, schéma de requête) et quotas dans Protection › Rate limiting — livré (Admin `0.115.0`)
@@ -173,10 +174,6 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 
 - [ ] **Provider Terraform — publication et ressources restantes** : le provider est écrit (`integrations/terraform-provider-goproxify` : `goproxify_proxy`, `goproxify_ban`, `goproxify_ban_whitelist_entry`, `goproxify_ip_profile`) ; reste à le publier sur le Registry (dépôt public dédié, clé GPG) et à ajouter `goproxify_domain`, `goproxify_workspace`… — gestion déclarative de la config GoProxify depuis Terraform/OpenTofu, appuyée sur l'API existante
 - [ ] **Collection Ansible** : modules et rôles (`goproxify_proxy`, `goproxify_cert`, `goproxify_access_target`…) pour provisionner et maintenir GoProxify depuis des playbooks
-
-### Chatbot d'implémentation (landing page)
-
-- [ ] **Assistant conversationnel sur la landing page** : chatbot guidant l'intégration de GoProxify dans une infrastructure existante (choix d'architecture, génération de config de départ, réponses aux questions courantes)
 
 Proposer des idées via
 [Discussions](https://github.com/Vincamok/goproxify/discussions) ou une issue
