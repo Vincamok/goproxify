@@ -53,8 +53,8 @@ func TestDetectImportFormat(t *testing.T) {
 		"backup.gpx-admin-backup": "goproxify",
 	}
 	for path, want := range cases {
-		if got := detectImportFormat(path); got != want {
-			t.Errorf("detectImportFormat(%q)=%q want %q", path, got, want)
+		if got := importer.DetectFormat(path); got != want {
+			t.Errorf("DetectFormat(%q)=%q want %q", path, got, want)
 		}
 	}
 }

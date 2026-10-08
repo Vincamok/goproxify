@@ -377,7 +377,7 @@ Alertmanager-inspired model: each rule independently defines its scope, triggers
 
 Automatic source format detection. Two modes: paste content or import one or more files. Preview before validation, partial import possible.
 
-Supported formats: nginx, HAProxy, Traefik YAML, Traefik TOML, Traefik Labels, Caddy, Zoraxy, BunkerWeb, CSV, GoProxify native JSON.
+Supported formats: nginx, HAProxy, Traefik YAML, Traefik TOML, Caddy, GoProxify native JSON and generic JSON (`host` + `backends`). Each format is a module of the common registry (ADR 0007): `GET /api/v1/import/config-formats` and `goproxify import formats` list them, and the Admin selector shows any new one without a JavaScript change.
 
 ### Coordinated cluster update
 

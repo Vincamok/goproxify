@@ -57,26 +57,7 @@ type DetectedProxy struct {
 	MaxBodySize     int64 `json:"max_body_size,omitempty"`    // octets
 }
 
-// ParseConfig détecte le format et extrait les proxies.
-func ParseConfig(format, content string) ([]DetectedProxy, error) {
-	switch format {
-	case "nginx":
-		return parseNginx(content)
-	case "traefik-yaml":
-		return parseTraefikYAML(content)
-	case "traefik-toml":
-		return parseTraefikTOML(content)
-	case "caddy":
-		return parseCaddy(content)
-	case "haproxy":
-		return parseHAProxy(content)
-	case "goproxify":
-		return parseGoproxify(content)
-	default:
-		// Essaie JSON générique (tableau de proxies)
-		return parseGenericJSON(content)
-	}
-}
+// ParseConfig, DetectFormat et Formats : voir registry.go.
 
 // ── nginx ─────────────────────────────────────────────────────────────────────
 

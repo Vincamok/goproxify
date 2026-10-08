@@ -41,6 +41,8 @@ func (h *ImportHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && path == "backup/apply":
 		h.backupApply(w, r)
 	// Config migration
+	case r.Method == http.MethodGet && path == "config-formats":
+		jsonOK(w, importer.Formats())
 	case r.Method == http.MethodPost && path == "config/parse":
 		h.configParse(w, r)
 	case r.Method == http.MethodPost && path == "config/apply":

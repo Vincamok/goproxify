@@ -14,16 +14,22 @@ import (
 
 func runImport() {
 	sub := subcommand(os.Args, 2)
+	if sub == "formats" {
+		for _, m := range importer.Formats() {
+			fmt.Printf("%-13s %-16s %-22s %s\n", m.Type, m.Label, m.String("hint"), strings.Join(m.Strings("extensions"), " "))
+		}
+		return
+	}
 	if sub == "help" {
-		fmt.Print(`Usage: goproxify import [options]
+		fmt.Printf(`Usage: goproxify import [options]
 
 goproxify import -file <chemin> [-format <format>] [-dry-run] [-select <domaines>] [-overwrite]
+goproxify import formats
 
 Options :
   -file       Fichier source (ou répertoire)
-  -format     Format source (défaut: détection par extension)
-              nginx | traefik-yaml | traefik-toml | caddy | haproxy |
-              goproxify | json
+  -format     Format source (défaut: détection par nom de fichier)
+              %s
   -dry-run    Parse et affiche sans écrire (pas besoin d'Admin)
   -select     Domaines à importer (virgules)
   -overwrite  on_conflict=overwrite (défaut: skip)
@@ -34,7 +40,7 @@ Exemples :
   goproxify import -file nginx.conf -dry-run
   goproxify import -file traefik.yml -format traefik-yaml
   goproxify import -file configs/ -select "app.example.fr,api.example.fr"
-`)
+`, importFormatIDs())
 		return
 	}
 
@@ -64,7 +70,7 @@ Exemples :
 		}
 		fmtDetected := format
 		if fmtDetected == "" {
-			fmtDetected = detectImportFormat(p)
+			fmtDetected = importer.DetectFormat(p)
 		}
 		proxies, err := importer.ParseConfig(fmtDetected, string(content))
 		if err != nil {
@@ -146,28 +152,13 @@ func collectImportFiles(path string) ([]string, error) {
 	return out, nil
 }
 
-// detectImportFormat aligne la détection UI (extensions).
-func detectImportFormat(path string) string {
-	ext := strings.ToLower(filepath.Ext(path))
-	base := strings.ToLower(filepath.Base(path))
-	switch {
-	case ext == ".conf" || strings.Contains(base, "nginx"):
-		return "nginx"
-	case ext == ".yml" || ext == ".yaml":
-		return "traefik-yaml"
-	case ext == ".toml":
-		return "traefik-toml"
-	case base == "caddyfile" || ext == ".caddy":
-		return "caddy"
-	case ext == ".cfg" || strings.Contains(base, "haproxy"):
-		return "haproxy"
-	case ext == ".json":
-		return "json"
-	case strings.HasSuffix(base, ".gpx-admin-backup"):
-		return "goproxify"
-	default:
-		return "json"
+// importFormatIDs liste les formats du registre pour l'aide, séparés par « | ».
+func importFormatIDs() string {
+	var ids []string
+	for _, m := range importer.Formats() {
+		ids = append(ids, m.Type)
 	}
+	return strings.Join(ids, " | ")
 }
 
 func filterProxiesBySelect(proxies []importer.DetectedProxy, selectCSV string) []importer.DetectedProxy {

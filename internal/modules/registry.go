@@ -42,6 +42,32 @@ type Manifest struct {
 	Type   string  `json:"type"`
 	Label  string  `json:"label"`
 	Fields []Field `json:"fields"`
+	// Attrs porte les métadonnées propres à une famille (extensions de fichier d'un importeur,
+	// indication d'affichage…). Libre, sérialisé tel quel ; ni validé ni interprété par le registre.
+	Attrs map[string]any `json:"attrs,omitempty"`
+}
+
+// Strings lit un attribut de type liste de chaînes (absent ou d'un autre type : nil).
+func (m Manifest) Strings(key string) []string {
+	switch v := m.Attrs[key].(type) {
+	case []string:
+		return v
+	case []any:
+		var out []string
+		for _, e := range v {
+			if s, ok := e.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// String lit un attribut de type chaîne.
+func (m Manifest) String(key string) string {
+	s, _ := m.Attrs[key].(string)
+	return s
 }
 
 // Registry range les modules d'une famille. T est le type de la fabrique.
@@ -65,6 +91,9 @@ func NewRegistry[T any]() *Registry[T] {
 func (r *Registry[T]) Register(m Manifest, factory T) {
 	if err := m.check(); err != nil {
 		panic("modules: " + err.Error())
+	}
+	if m.Fields == nil {
+		m.Fields = []Field{} // JSON : [] et non null
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -164,13 +164,17 @@ goproxify backup restore -file backup-2026-08-01.gpx-admin-backup -yes
 
 ### `goproxify import`
 
-Import de configurations existantes (nginx, Traefik, Caddy, HAProxy, CSV, JSON).
+Import de configurations existantes (nginx, Traefik, Caddy, HAProxy, export Goproxify, JSON). Chaque format est un module du registre (ADR 0007) : `goproxify import formats` les liste avec leurs extensions.
 
 ```
-goproxify import -file <chemin> [-format <format>] [-dry-run]
-  -file     Fichier de configuration source
-  -format   nginx (défaut auto) | traefik-yaml | caddy | haproxy | csv | json
-  -dry-run  Affiche ce qui serait importé sans appliquer
+goproxify import -file <chemin> [-format <format>] [-dry-run] [-select <domaines>] [-overwrite]
+goproxify import formats
+  -file       Fichier de configuration source (ou répertoire)
+  -format     nginx | traefik-yaml | traefik-toml | caddy | haproxy | goproxify | json
+              (défaut : détection par nom de fichier ; un format inconnu est lu comme du JSON générique)
+  -dry-run    Affiche ce qui serait importé sans appliquer
+  -select     Domaines à importer (virgules)
+  -overwrite  Écrase les proxies existants (défaut : ignorés)
 ```
 
 Exemples :

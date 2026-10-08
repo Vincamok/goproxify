@@ -21,6 +21,23 @@ const CONFIG_FORMATS = [
   { id: 'json',         label: 'JSON générique', hint: 'host + backends' },
 ];
 
+/**
+ * Complète la liste avec les formats déclarés côté serveur (GET /import/config-formats) que ce
+ * fichier ne connaît pas : un format ajouté à l'Admin apparaît dans les sélecteurs sans modifier
+ * le JavaScript (icône générique). Les formats connus gardent leur libellé et leur icône. Appelé
+ * sans attendre après la connexion ; réservé aux admins, une erreur est ignorée.
+ */
+async function configFormatsRefresh() {
+  try {
+    const list = await api('GET', '/import/config-formats');
+    for (const m of list || []) {
+      if (!CONFIG_FORMATS.some(f => f.id === m.type)) {
+        CONFIG_FORMATS.push({ id: m.type, label: m.label, hint: (m.attrs && m.attrs.hint) || '' });
+      }
+    }
+  } catch { /* non admin ou hors ligne : la liste embarquée suffit */ }
+}
+
 /** Icône + couleur pour un format (svg à la taille demandée). */
 function configFormatMeta(id, size = 20) {
   const m = CONFIG_FORMAT_SVG[id] || { svg: '', color: 'var(--accent)' };

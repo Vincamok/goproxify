@@ -25,6 +25,11 @@ Chaque famille instancie son registre avec sa propre fabrique (`channels.Factory
 
 ## Conséquences
 
-- Les familles suivantes (`Importer`, `Discovery`, fournisseurs DNS, cibles de déploiement…) réutilisent `internal/modules` ; `AuthProvider` et `Detector` en dernier, après renforcement des tests, car ils touchent la sécurité.
+- Les familles suivantes (`Discovery`, fournisseurs DNS, cibles de déploiement…) réutilisent `internal/modules` ; `AuthProvider` et `Detector` en dernier, après renforcement des tests, car ils touchent la sécurité.
 - Un moteur d'exécution externe (WASM) pourra enregistrer des modules dans les mêmes registres : le registre est la couche commune, le moteur n'en est qu'une implémentation de fabrique.
 - Changement de comportement assumé : `POST /alert-channels` refuse un type inconnu, un champ requis vide et une clé inconnue (`400`), alors qu'il acceptait tout.
+
+## Mise en œuvre
+
+- **Canaux de notification** (Admin 0.120.0) : pilote.
+- **Importeurs** (Admin 0.121.0) : les 7 formats d'import de configuration tierce. Le manifeste n'a pas de champs mais des `Attrs` (`hint`, `extensions`, `basenames`, `name_contains`, `suffixes`) qui pilotent la détection par nom de fichier, partagée par la CLI et l'API ; un identifiant inconnu retombe sur le JSON générique, comme avant. Même méthode que le pilote : un test de caractérisation compare le nouvel aiguillage à une copie de l'ancien avant de migrer.

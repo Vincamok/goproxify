@@ -421,6 +421,22 @@ Corps : JSON de sauvegarde (32 Mo max). Réponse : résumé (`proxies[]`, `user_
 ### `POST /api/v1/import/backup/apply`
 
 Corps : `{"data": <sauvegarde>, "selection": {"proxy_ids", "import_users", "import_tokens", "import_pats", "import_snippets", "import_alert_channels", "import_alert_rules", "skip_nodes", "import_config", "import_secrets", "on_conflict": "skip|overwrite"}}` (32 Mo max). `proxy_ids` : identifiants des proxies à restaurer (vide = tous, `[""]` = aucun) ; `skip_nodes: true` ne recrée pas la topologie déclarée (restaurée par défaut). En `overwrite`, un snapshot `avant-import-<date>` est pris d'abord. Réponse : `{proxies, users, tokens, pats, snippets, channels, rules, config, declared_nodes, skipped, errors}`.
+
+### `GET /api/v1/import/config-formats`
+
+Formats de configuration tierce pris en charge, dans l'ordre d'affichage. Chaque format est un **module** du registre (`internal/modules`, ADR 0007) ; la CLI (`goproxify import formats`) et le sélecteur de l'Admin en dérivent.
+
+```json
+[{ "type": "nginx", "label": "nginx", "fields": [],
+   "attrs": { "hint": "Blocs server { }", "extensions": [".conf"], "name_contains": ["nginx"] } }]
+```
+
+Formats : `nginx`, `traefik-yaml`, `traefik-toml`, `caddy`, `haproxy`, `goproxify` (export natif), `json` (générique : `host` + `backends`). `attrs` : `hint`, et pour la détection par nom de fichier `extensions`, `basenames`, `name_contains`, `suffixes`.
+
+### `POST /api/v1/import/config/parse` · `POST /api/v1/import/config/apply`
+
+`parse` : corps `{"format", "content"}` ; un `format` inconnu est traité comme du JSON générique. `apply` : corps `{"proxies": [...], "on_conflict": "skip"|"overwrite"}`.
+
 ---
 
 ## Certificats
