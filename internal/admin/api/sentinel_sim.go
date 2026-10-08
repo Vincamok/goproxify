@@ -4,6 +4,7 @@
 package api
 
 import (
+	"github.com/vincamok/goproxify/internal/edge/engines"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -39,6 +40,9 @@ func SimulateSentinel(ctx context.Context, db *sql.DB, cfgKey string, override m
 	}
 	candidate := current
 	b, _ := json.Marshal(override)
+	if err := engines.Validate(engines.Sentinel, b); err != nil {
+		return nil, fmt.Errorf("config candidate invalide: %w", err)
+	}
 	if err := json.Unmarshal(b, &candidate); err != nil {
 		return nil, fmt.Errorf("config candidate invalide: %w", err)
 	}

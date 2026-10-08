@@ -802,6 +802,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// Révélation : ouverte aux détenteurs de gdpr:reveal (rôle dpo, droit délégué), pas
 	// seulement aux admins ; le handler vérifie la permission.
 	mux.Handle("/api/v1/logs/reveal-ip", protected(logsH))
+	mux.Handle("/api/v1/security/engine-types", adminOnly(api.EngineTypesHandler{}))
 	mux.Handle("/api/v1/security", adminOnly(securityH))
 	mux.Handle("/api/v1/security/", adminOnly(securityH))
 	mux.Handle("/api/v1/rules-engine/", adminOnly(reH))

@@ -7,6 +7,7 @@
 package mcp
 
 import (
+	"github.com/vincamok/goproxify/internal/edge/engines"
 	"context"
 	"crypto/x509"
 	"database/sql"
@@ -411,6 +412,11 @@ var tools = []map[string]any{
 	{
 		"name":        "get_security_overview",
 		"description": "Vue d'ensemble sécurité : bans actifs, menaces CrowdSec, CVE ouvertes, certs expirants.",
+		"inputSchema": schema(),
+	},
+	{
+		"name":        "list_security_engine_types",
+		"description": "Moteurs de sécurité globaux (Sentinel, Fail2Ban, CrowdSec) avec leurs champs de configuration (chemins imbriqués comme ip_score.ban_threshold, secrets).",
 		"inputSchema": schema(),
 	},
 	{
@@ -856,6 +862,8 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 		result, toolErr = h.toolGetAuditLog(r, limit)
 	case "get_security_overview":
 		result, toolErr = h.toolGetSecurityOverview(r)
+	case "list_security_engine_types":
+		result = engines.Manifests()
 	case "list_security_bans":
 		result, toolErr = h.toolListSecurityBans(r, p.Arguments)
 	case "create_security_ban":

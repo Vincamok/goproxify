@@ -107,11 +107,11 @@ func TestValidateRouteBasicsBotChallengeAndProxyProtocol(t *testing.T) {
 		t.Fatalf("route valide refusée : %v", errs)
 	}
 	cases := map[string]func(*router.Route){
-		"proxy_protocol": func(r *router.Route) { r.ProxyProtocol = "v3" },
-		"provider":       func(r *router.Route) { r.Bot = &router.BotConfig{ChallengeProvider: "recaptcha"} },
+		"proxy_protocol":  func(r *router.Route) { r.ProxyProtocol = "v3" },
+		"provider":        func(r *router.Route) { r.Bot = &router.BotConfig{ChallengeProvider: "recaptcha"} },
 		"clés manquantes": func(r *router.Route) { r.Bot = &router.BotConfig{ChallengeProvider: "turnstile"} },
-		"difficulté":     func(r *router.Route) { r.Bot = &router.BotConfig{ChallengeDifficulty: 30} },
-		"ttl":            func(r *router.Route) { r.Bot = &router.BotConfig{ChallengeTTL: "dix minutes"} },
+		"difficulté":      func(r *router.Route) { r.Bot = &router.BotConfig{ChallengeDifficulty: 30} },
+		"ttl":             func(r *router.Route) { r.Bot = &router.BotConfig{ChallengeTTL: "dix minutes"} },
 	}
 	for name, mutate := range cases {
 		r := base()
@@ -144,5 +144,55 @@ func TestValidateRouteBasicsRejectsInvalidOpenAPIAndGRPCTranscode(t *testing.T) 
 	bad.GRPCTranscode = &router.GRPCTranscodeConfig{Enabled: true}
 	if errs := validateRouteBasics(bad); len(errs) < 2 {
 		t.Fatalf("openapi et grpc_transcode invalides doivent être signalés : %v", errs)
+	}
+}
+
+func TestValidateRouteBasicsRejectsInvalidDetectors(t *testing.T) {
+	base := func() *router.Route {
+		return &router.Route{Type: router.RouteHTTP, Host: "a.test", Backends: []router.Backend{{URL: "http://127.0.0.1:1"}}}
+	}
+	bad := map[string]func(*router.Route){
+		"ip_filter mode": func(r *router.Route) {
+			r.IPFilter = &router.IPFilterConfig{Mode: "block", CIDRs: []string{"10.0.0.0/8"}}
+		},
+		"ip_filter vide mode": func(r *router.Route) { r.IPFilter = &router.IPFilterConfig{CIDRs: []string{"10.0.0.0/8"}} },
+		"ip_filter CIDR": func(r *router.Route) {
+			r.IPFilter = &router.IPFilterConfig{Mode: "deny", CIDRs: []string{"10.0.0.0/40"}}
+		},
+		"geo_ip mode":      func(r *router.Route) { r.GeoIP = &router.GeoIPConfig{Mode: "ban", Countries: []string{"CN"}} },
+		"geo_ip pays":      func(r *router.Route) { r.GeoIP = &router.GeoIPConfig{Mode: "deny", Countries: []string{"CHINE"}} },
+		"geo_ip sans mode": func(r *router.Route) { r.GeoIP = &router.GeoIPConfig{Countries: []string{"CN"}} },
+		"waf mode":         func(r *router.Route) { r.WAF = &router.WAFConfig{Enabled: true, Mode: "off"} },
+		"waf regex": func(r *router.Route) {
+			r.WAF = &router.WAFConfig{Enabled: true, CustomRules: []router.CustomRule{{ID: 1, Pattern: "("}}}
+		},
+		"waf proxys": func(r *router.Route) { r.WAF = &router.WAFConfig{Enabled: true, TrustedProxies: []string{"nope"}} },
+		"bot mode":   func(r *router.Route) { r.Bot = &router.BotConfig{Enabled: true, Mode: "strict"} },
+	}
+	for name, mutate := range bad {
+		r := base()
+		mutate(r)
+		if errs := validateRouteBasics(r); len(errs) == 0 {
+			t.Errorf("%s : aucune erreur", name)
+		}
+	}
+	// Détecteurs inactifs ou valides : acceptés.
+	for name, mutate := range map[string]func(*router.Route){
+		"ip_filter sans adresse": func(r *router.Route) { r.IPFilter = &router.IPFilterConfig{Mode: "allow"} },
+		"geo_ip vide":            func(r *router.Route) { r.GeoIP = &router.GeoIPConfig{} },
+		"ip_filter valide": func(r *router.Route) {
+			r.IPFilter = &router.IPFilterConfig{Mode: "Allow", CIDRs: []string{"10.0.0.0/8", "203.0.113.1"}}
+		},
+		"geo_ip valide": func(r *router.Route) { r.GeoIP = &router.GeoIPConfig{Mode: "deny", Countries: []string{"cn", "RU"}} },
+		"waf valide": func(r *router.Route) {
+			r.WAF = &router.WAFConfig{Enabled: true, Mode: "detect", ExcludeIDs: []int{920350}, MaxBodyMB: 2}
+		},
+		"bot valide": func(r *router.Route) { r.Bot = &router.BotConfig{Enabled: true, Mode: "challenge", JSChallenge: true} },
+	} {
+		r := base()
+		mutate(r)
+		if errs := validateRouteBasics(r); len(errs) != 0 {
+			t.Errorf("%s refusée : %v", name, errs)
+		}
 	}
 }

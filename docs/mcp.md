@@ -37,7 +37,7 @@ Chaque outil exige un scope, le même que sa route REST équivalente. Les outils
 | `certs:read` | `list_certs`, `get_cert_status`, `list_cert_deploy_targets`, `list_cert_deploy_types`, `list_internal_cas` †, `list_internal_certs` †, `get_ech_status` † |
 | `certs:write` | `obtain_cert`, `import_cert`, `trigger_cert_deploy`, `create_internal_ca` †, `issue_internal_cert` †, `revoke_internal_cert` † |
 | `logs:read` | `list_logs`, `get_prism_anomalies`, `get_prism_geo`, `get_prism_tls_fingerprints`, `get_prism_slo`, `simulate_sentinel_config` †, `trace_ip` †, `preview_security_ban` †, `preview_asn_ban` † |
-| `audit:read` | `get_audit_log`, `list_ip_profiles`, `get_security_overview` †, `list_security_bans` †, `lookup_asn` †, `list_ban_whitelist` †, `list_security_threats` †, `list_security_cves` †, `list_auth_providers` †, `list_auth_provider_types` †, `list_rules` †, `list_rule_history` †, `list_rule_versions` †, `list_pending_actions` †, `list_silences` †, `export_automation` †, `list_scheduled_tasks` †, `list_scheduled_task_runs` †, `list_playbooks` †, `list_playbook_runs` †, `get_playbook_run` † |
+| `audit:read` | `get_audit_log`, `list_ip_profiles`, `get_security_overview` †, `list_security_bans` †, `list_security_engine_types` †, `lookup_asn` †, `list_ban_whitelist` †, `list_security_threats` †, `list_security_cves` †, `list_auth_providers` †, `list_auth_provider_types` †, `list_rules` †, `list_rule_history` †, `list_rule_versions` †, `list_pending_actions` †, `list_silences` †, `export_automation` †, `list_scheduled_tasks` †, `list_scheduled_task_runs` †, `list_playbooks` †, `list_playbook_runs` †, `get_playbook_run` † |
 | `security:write` | `create_ip_profile`, `delete_ip_profile`, `create_security_ban` †, `delete_security_ban` †, `ban_ip` †, `unban_ip` †, `add_ban_whitelist` †, `remove_ban_whitelist` †, `import_security_bans` †, `ban_asn` †, `unban_asn` †, `create_auth_provider` †, `delete_auth_provider` †, `run_rule` †, `replay_rule_history` †, `restore_rule_version` †, `approve_pending_action` †, `reject_pending_action` †, `create_silence` †, `import_automation` †, `create_scheduled_task` †, `update_scheduled_task` †, `delete_scheduled_task` †, `run_scheduled_task` †, `create_playbook` †, `update_playbook` †, `delete_playbook` †, `run_playbook_now` †, `approve_playbook_run` †, `reject_playbook_run` † |
 | `portal:read` / `portal:write` | outils Access (`*_portal_*`, `push_portal`) † — voir [GoProxify Access](#goproxify-access-portail) |
 
@@ -380,6 +380,14 @@ Liste les comptes utilisateurs avec leur rôle. Les données sensibles (hash du 
 ### `list_detector_types`
 
 Types de détecteur par route (`ip_filter`, `geo_ip`, `bot`, `waf`) avec leurs champs de configuration (secrets, requis). Même source que `GET /api/v1/detector-types`. `create_snippet` valide la configuration de ces types avec le même manifeste et refuse un type de snippet inconnu. Scope `snippets:read`.
+
+**Paramètres :** aucun
+
+---
+
+### `list_security_engine_types`
+
+Moteurs de sécurité globaux (Sentinel, Fail2Ban, CrowdSec) avec les champs de leur configuration. Même source que `GET /api/v1/security/engine-types`. Scope `audit:read` (rôle admin).
 
 **Paramètres :** aucun
 

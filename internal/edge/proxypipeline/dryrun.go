@@ -64,25 +64,7 @@ func validateRouteBasics(route *router.Route) []string {
 	if !proxyproto.ValidVersion(route.ProxyProtocol) {
 		errs = append(errs, fmt.Sprintf("proxy_protocol invalide %q (v1 ou v2)", route.ProxyProtocol))
 	}
-	if b := route.Bot; b != nil {
-		switch strings.ToLower(strings.TrimSpace(b.ChallengeProvider)) {
-		case "", "pow":
-		case "turnstile", "hcaptcha":
-			if b.ChallengeSiteKey == "" || b.ChallengeProviderSecret == "" {
-				errs = append(errs, "bot.challenge_site_key et bot.challenge_provider_secret requis pour "+b.ChallengeProvider)
-			}
-		default:
-			errs = append(errs, fmt.Sprintf("bot.challenge_provider invalide %q (pow, turnstile ou hcaptcha)", b.ChallengeProvider))
-		}
-		if b.ChallengeDifficulty < 0 || b.ChallengeDifficulty > 24 {
-			errs = append(errs, "bot.challenge_difficulty doit être dans [0,24]")
-		}
-		if b.ChallengeTTL != "" {
-			if d, err := time.ParseDuration(b.ChallengeTTL); err != nil || d < time.Minute {
-				errs = append(errs, "bot.challenge_ttl invalide (durée d'au moins 1m, ex. 24h)")
-			}
-		}
-	}
+	errs = append(errs, middleware.ValidateRouteDetectors(route)...)
 	if st := route.Static; st != nil && st.Enabled {
 		if strings.TrimSpace(st.Root) == "" {
 			errs = append(errs, "static.root requis")

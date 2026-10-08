@@ -748,6 +748,9 @@ goproxify ip-profile delete <id> -y
 Sentinel (threat engine global), gestion des bans, config WAF par proxy, et moteur de règles automatiques.
 
 ```
+# Moteurs globaux et leurs champs de configuration (Sentinel, Fail2Ban, CrowdSec)
+goproxify security engines [-admin-url …] [-token …]
+
 # Config du moteur Sentinel
 goproxify security threat get  [-edge <id>] [-admin-url …] [-token …]   # passerelle d'un groupe HA : config du groupe
 goproxify security threat set  [-edge <id>] -file <threat-config.json> [-admin-url …] [-token …]
@@ -774,6 +777,8 @@ goproxify security waf set -proxy <proxy-id> -file <waf-config.json> [-admin-url
 goproxify security cve sla get [-admin-url …] [-token …]
 goproxify security cve sla set -file <sla.json> [-admin-url …] [-token …]
 ```
+
+**`security engines`** — liste les moteurs globaux et les champs de leur configuration (chemins pointés comme `ip_score.ban_threshold`, secrets repérés). `security threat set` valide le fichier avec ce manifeste : clé inconnue, mode hors `block|detect`, durée illisible ou négative, IP ou CIDR invalide, code d'erreur HTTP hors 400-599, source de liste qui n'est pas http(s) ⇒ erreur `400`, rien n'est enregistré.
 
 **`security threat`** — lit ou écrit la configuration du moteur Sentinel (fail2ban, seuils, whitelist globale…). Le paramètre `-edge` cible une passerelle spécifique dans un cluster multi-passerelle.
 

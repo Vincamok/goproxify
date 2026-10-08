@@ -25,6 +25,7 @@ require (
 require (
 	github.com/bufbuild/protocompile v0.14.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
+	github.com/tetratelabs/wazero v1.12.0
 )
 
 require golang.org/x/sync v0.22.0 // indirect

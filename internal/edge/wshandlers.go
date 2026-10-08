@@ -169,7 +169,7 @@ func (s *Server) handleWSAdminMessage(connID string, msg edgews.Message) error {
 		}
 		if s.crowdSecBouncer != nil {
 			s.crowdSecBouncer.UpdateConfig(cfg)
-			if err := edgecrowdsec.SaveConfig("", cfg); err != nil {
+			if err := s.saveCrowdSecConfig(cfg); err != nil {
 				s.log.Warn("crowdsec: persistance config échouée", "err", err)
 			}
 			go s.crowdSecBouncer.SyncNow(context.Background())

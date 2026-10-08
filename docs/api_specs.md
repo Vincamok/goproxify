@@ -196,7 +196,7 @@ Corps : `{ "id": "<uuid, optionnel>", "config": {…}, "enabled": true, "probe":
 `probe: true` ajoute une sonde réseau (DNS, TLS, connexion des backends).
 
 Réponse : `{ "ok": bool, "summary": {…}, "checks": [{ "check", "status": "ok|warning|error|skip", "message", "details": [] }], "probes": [{ "step", "status", "message", "latency_ms" }], "route": {…} }`.
-Contrôles : `syntax`, `structure` (type, host, backends, URLs), `conflicts` (host/alias/port face aux proxies en production des passerelles ; `warning` si aucune passerelle ne répond), `enabled`. (Admin `0.72.0`)
+Contrôles : `syntax`, `structure` (type, host, backends, URLs, et — depuis Edge `0.51.0` — blocs `ip_filter`, `geo_ip`, `bot`, `waf` validés comme les snippets : mode, CIDR, code pays, expression WAF ; voir `GET /api/v1/detector-types`), `conflicts` (host/alias/port face aux proxies en production des passerelles ; `warning` si aucune passerelle ne répond), `enabled`. (Admin `0.72.0`)
 
 ### `POST /api/v1/proxies`
 
@@ -748,6 +748,14 @@ Force un rafraîchissement complet (téléchargement inconditionnel, garde-fou d
 ## Snippets
 
 Lecture pour tout compte authentifié ; écritures réservées aux admins / superadmins et aux comptes `user` disposant d'au moins un grant `write`.
+
+### `GET /api/v1/security/engine-types`
+
+Manifestes des moteurs de sécurité globaux : `sentinel` (champs dérivés de la configuration, chemins pointés), `fail2ban`, `crowdsec` (`api_key` secret). Admin uniquement. Outil MCP `list_security_engine_types`, CLI `goproxify security engines`.
+
+### `PUT /api/v1/security/threat-config`, `/fail2ban`, `/crowdsec` — validation
+
+Les trois configurations sont validées avant enregistrement (`400` avec le motif, rien n'est écrit ni poussé) : clé inconnue à tous les niveaux, valeur du mauvais type, durée illisible ou négative, seuil négatif, IP ou CIDR invalide, mode Sentinel hors `block|detect`, code d'erreur HTTP hors 400-599, source de liste non http(s), chemin sans `/` initial, `tarpit.delay_ms` au-delà de 30000 ; CrowdSec activé exige `api_url` (http/https) et `api_key`. `GET /security/crowdsec` remplace `api_key` par `••••••••` (avant Admin `0.130.0`, la clé du bouncer était renvoyée en clair) ; omise, vide ou masquée dans un `PUT`, elle est conservée.
 
 ### `GET /api/v1/detector-types`
 

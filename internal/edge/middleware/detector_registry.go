@@ -4,12 +4,14 @@
 package middleware
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/vincamok/goproxify/internal/edge/router"
 	"github.com/vincamok/goproxify/internal/modules"
 )
 
@@ -250,4 +252,66 @@ func init() {
 		}
 		return nil
 	})
+}
+
+// ValidateRouteDetectors valide les détecteurs portés directement par une route (filtre IP, GeoIP, bot,
+// WAF) avec les mêmes manifestes et contrôles que les snippets. Seuls les champs renseignés comptent
+// (les valeurs nulles d'une structure ne sont pas « saisies »), et un détecteur sans réglage actif est
+// ignoré : un filtre IP sans adresse ou un GeoIP sans mode ni pays est désactivé, pas erroné.
+func ValidateRouteDetectors(route *router.Route) []string {
+	var errs []string
+	check := func(typ string, v any, active bool) {
+		if !active {
+			return
+		}
+		cfg := providedFields(v)
+		if err := ValidateDetector(typ, cfg); err != nil {
+			errs = append(errs, typ+" : "+err.Error())
+		}
+	}
+	if c := route.IPFilter; c != nil {
+		check("ip_filter", c, len(c.CIDRs) > 0)
+	}
+	if c := route.GeoIP; c != nil {
+		check("geo_ip", c, strings.TrimSpace(c.Mode) != "" || len(c.Countries) > 0)
+	}
+	if c := route.Bot; c != nil {
+		check("bot", c, true)
+	}
+	if c := route.WAF; c != nil {
+		check("waf", c, true)
+	}
+	return errs
+}
+
+// providedFields sérialise une configuration et en retire les valeurs nulles.
+func providedFields(v any) map[string]any {
+	b, _ := json.Marshal(v)
+	var all map[string]any
+	_ = json.Unmarshal(b, &all)
+	out := make(map[string]any, len(all))
+	for k, val := range all {
+		switch t := val.(type) {
+		case nil:
+		case string:
+			if strings.TrimSpace(t) != "" {
+				out[k] = val
+			}
+		case bool:
+			if t {
+				out[k] = val
+			}
+		case float64:
+			if t != 0 {
+				out[k] = val
+			}
+		case []any:
+			if len(t) > 0 {
+				out[k] = val
+			}
+		default:
+			out[k] = val
+		}
+	}
+	return out
 }

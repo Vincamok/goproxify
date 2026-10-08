@@ -474,7 +474,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Bouncer CrowdSec — autonome, sync LAPI, bans locaux.
 	s.crowdSecBouncer = edgecrowdsec.New(s.log.Logger())
-	s.crowdSecBouncer.UpdateConfig(edgecrowdsec.LoadConfig(""))
+	s.crowdSecBouncer.UpdateConfig(s.loadCrowdSecConfig())
 	s.crowdSecBouncer.OnBansChanged = s.onCrowdSecBansChanged
 	s.crowdSecBouncer.OnDecisions = s.onCrowdSecDecisions
 	s.crowdSecBouncer.Start(ctx)

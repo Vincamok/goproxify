@@ -440,3 +440,24 @@ func SaveConfig(dir string, cfg Config) error {
 	_ = tmp.Close()
 	return os.Rename(name, filepath.Join(dir, configFile))
 }
+
+// HasConfig indique si l'ancien fichier de configuration en clair existe (clé d'API comprise).
+func HasConfig(dir string) bool {
+	if dir == "" {
+		dir = Dir()
+	}
+	_, err := os.Stat(filepath.Join(dir, configFile))
+	return err == nil
+}
+
+// RemoveConfig supprime l'ancien fichier de configuration en clair.
+func RemoveConfig(dir string) error {
+	if dir == "" {
+		dir = Dir()
+	}
+	err := os.Remove(filepath.Join(dir, configFile))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}

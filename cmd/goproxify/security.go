@@ -33,6 +33,8 @@ func runSecurity() {
 		runSecurityPlaybook()
 	case "cve":
 		runSecurityCVE()
+	case "engines":
+		runSecurityEngines()
 	case "help", "":
 		fmt.Print(`Usage: goproxify security <sous-commande> [options]
 
@@ -45,10 +47,13 @@ Sous-commandes :
   schedule Planifications (cron) : exécute une action à heure fixe
   playbook Enchaîne plusieurs étapes (action, attente, condition, approbation)
   cve      SLA de correction des CVE (délai attendu selon la gravité)
+  engines  Moteurs globaux (Sentinel, Fail2Ban, CrowdSec) et leurs champs de configuration
 
 goproxify security threat get  [-edge <id>] [-admin-url …] [-token …]
 goproxify security threat set  [-edge <id>] -file <config.json> [-admin-url …] [-token …]
 goproxify security threat simulate -file <config.json> [-hours N] [-domain <d>] [-edge <id>]
+
+goproxify security engines [-admin-url …] [-token …]
 
 goproxify security bans list   [-admin-url …] [-token …]
 goproxify security bans add    -ip <ip|cidr> [-reason <raison>] [-ttl <durée>] [-scope <passerelle|group:nom>] [-admin-url …] [-token …]
@@ -1643,5 +1648,39 @@ func runSecurityCVESLA() {
 	default:
 		fmt.Fprintf(os.Stderr, "sous-commande cve sla inconnue : %q\n", sub)
 		os.Exit(1)
+	}
+}
+
+// ── Moteurs de sécurité (Sentinel, Fail2Ban, CrowdSec) ────────────────────────
+
+func runSecurityEngines() {
+	args := parseFlags(os.Args[3:])
+	client, err := newAdminClient(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+		os.Exit(1)
+	}
+	var types []struct {
+		Type   string `json:"type"`
+		Label  string `json:"label"`
+		Fields []struct {
+			Key    string `json:"key"`
+			Secret bool   `json:"secret"`
+		} `json:"fields"`
+	}
+	if _, err := client.DoJSON("GET", "/api/v1/security/engine-types", nil, &types); err != nil {
+		fmt.Fprintf(os.Stderr, "security engines : %v\n", err)
+		os.Exit(1)
+	}
+	for _, ty := range types {
+		var fields []string
+		for _, f := range ty.Fields {
+			n := f.Key
+			if f.Secret {
+				n += " (secret)"
+			}
+			fields = append(fields, n)
+		}
+		fmt.Printf("%s — %s\n  %s\n", ty.Type, ty.Label, strings.Join(fields, ", "))
 	}
 }

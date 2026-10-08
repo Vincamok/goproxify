@@ -4,6 +4,7 @@
 package api
 
 import (
+	"github.com/vincamok/goproxify/internal/edge/engines"
 	"context"
 	"database/sql"
 	"encoding/csv"
@@ -856,8 +857,7 @@ func (h *SecurityHandler) putF2BConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var cfg fail2ban.Config
-	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
-		writeErr(w, r, http.StatusBadRequest, "api.err.json")
+	if !decodeEngineConfig(w, r, engines.Fail2Ban, &cfg) {
 		return
 	}
 	if err := h.Fail2Ban.SaveConfig(cfg); err != nil {
@@ -925,7 +925,9 @@ func (h *SecurityHandler) getCrowdSecConfig(w http.ResponseWriter, r *http.Reque
 		jsonOK(w, crowdsec.DefaultConfig())
 		return
 	}
-	jsonOK(w, h.CrowdSec.GetConfig())
+	cur, _ := json.Marshal(h.CrowdSec.GetConfig())
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(engines.MaskConfig(engines.CrowdSec, cur)) //nolint:errcheck
 }
 
 func (h *SecurityHandler) putCrowdSecConfig(w http.ResponseWriter, r *http.Request) {
@@ -934,8 +936,8 @@ func (h *SecurityHandler) putCrowdSecConfig(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var cfg crowdsec.Config
-	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
-		writeErr(w, r, http.StatusBadRequest, "api.err.json")
+	cur, _ := json.Marshal(h.CrowdSec.GetConfig())
+	if !decodeEngineConfig(w, r, engines.CrowdSec, &cfg, cur) {
 		return
 	}
 	if err := h.CrowdSec.SaveConfig(cfg); err != nil {
@@ -1021,8 +1023,7 @@ func (h *SecurityHandler) getThreatConfig(w http.ResponseWriter, r *http.Request
 func (h *SecurityHandler) putThreatConfig(w http.ResponseWriter, r *http.Request) {
 	scope, _ := h.scope(r)
 	var cfg json.RawMessage
-	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
-		writeErr(w, r, http.StatusBadRequest, "api.err.json")
+	if !decodeEngineConfig(w, r, engines.Sentinel, &cfg) {
 		return
 	}
 	_, err := h.DB.ExecContext(r.Context(),

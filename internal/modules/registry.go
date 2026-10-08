@@ -184,3 +184,7 @@ func empty(v any) bool {
 	}
 	return false
 }
+
+// Check vérifie qu un manifeste est bien formé (clés et genres de champs). Register le fait aussi, en
+// paniquant ; Check sert aux manifestes construits à l exécution, comme celui d un plugin.
+func (m Manifest) Check() error { return m.check() }
