@@ -191,7 +191,7 @@ func (s *Server) handleWSAdminMessage(connID string, msg edgews.Message) error {
 		}
 		if s.f2bEngine != nil {
 			s.f2bEngine.UpdateConfig(cfg)
-			if err := edgef2b.SaveConfig("", cfg); err != nil {
+			if err := s.saveF2BConfig(cfg); err != nil {
 				s.log.Warn("f2b: persistance config échouée", "err", err)
 			}
 			s.reloadBanStore()

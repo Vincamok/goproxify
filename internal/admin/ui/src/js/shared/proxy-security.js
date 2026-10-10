@@ -325,13 +325,16 @@ window._psecMount = async function(id, initialTab, embedEl) {
   try {
   let existing = null;
   let allSnippets = [];
+  let installedPlugins = [];
   try {
-    const [ex, snips] = await Promise.all([
+    const [ex, snips, plugs] = await Promise.all([
       id ? api('GET', `/proxies/${encodeURIComponent(id)}`).catch(() => null) : Promise.resolve(null),
       api('GET', '/snippets').catch(() => []),
+      api('GET', '/plugins').catch(() => []), // réservé aux admins : vide pour les autres comptes
     ]);
     existing = ex;
     allSnippets = Array.isArray(snips) ? snips : [];
+    installedPlugins = Array.isArray(plugs) ? plugs : [];
   } catch {}
   let cfg = {};
   if (existing) {
@@ -502,6 +505,7 @@ window._psecMount = async function(id, initialTab, embedEl) {
         ${stab('recap', 'Récap', '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4" stroke-width="2.5"/>')}
         ${stab('params', 'Paramètres', '<circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>')}
         ${stab('snippets', `Snippets${selectedSnippetIds.length ? ` <span style="display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:99px;background:var(--accent);color:#000;font-size:9px;font-weight:800;margin-left:2px;">${selectedSnippetIds.length}</span>` : ''}`, '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>')}
+        ${stab('plugins', `${esc(t('rtplug.tab'))} <span class="psec-count" style="display:${(Array.isArray(cfg.plugins) && cfg.plugins.length) ? 'inline-flex' : 'none'};align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:99px;background:var(--accent);color:#000;font-size:9px;font-weight:800;margin-left:2px;">${Array.isArray(cfg.plugins) ? cfg.plugins.length : ''}</span>`, '<path d="M9 2v4M15 2v4M6 6h12v5a6 6 0 0 1-12 0zM12 17v5"/>')}
         ${stab('headers', `Headers${_fixCount > 0 ? ` <span style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:#f59e0b;color:#000;font-size:9px;font-weight:800;margin-left:2px;">${_fixCount}</span>` : ''}`, '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>')}
         ${stab('bans', 'Bans & Blocs', '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>')}
         ${stab('timeline', 'Timeline', '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>')}
@@ -847,6 +851,11 @@ window._psecMount = async function(id, initialTab, embedEl) {
         </div>
 
         <!-- Timeline -->
+        <!-- Plugins WebAssembly -->
+        <div id="psectab-plugins" style="display:none;padding:20px;flex-direction:column;">
+          <div id="psec-plugins-list"></div>
+        </div>
+
         <div id="psectab-timeline" style="display:none;padding:16px 20px;flex-direction:column;gap:4px;">
           <div id="psec-timeline-content" style="font-size:12.5px;color:var(--text3);">Chargement…</div>
         </div>
@@ -859,7 +868,8 @@ window._psecMount = async function(id, initialTab, embedEl) {
   const wafHost = document.getElementById('ptab-waf');
   if (wafPanel && wafHost) wafHost.appendChild(wafPanel);
   psecWafRefresh();
-  switchSecTab(initialTab && ['recap','params','snippets','headers','bans','timeline'].includes(initialTab) ? initialTab : 'recap');
+  switchSecTab(initialTab && ['recap','params','snippets','plugins','headers','bans','timeline'].includes(initialTab) ? initialTab : 'recap');
+  try { psecPluginsInit(installedPlugins, cfg.plugins); } catch (e) { console.warn('psecPluginsInit', e); }
   try { psecGeoInit(geoCfg.countries || [], 'psec-geo-picker'); } catch (e) { console.warn('psecGeoInit', e); }
   try {
     const snipList = document.getElementById('psec-snippets-list');
@@ -1053,7 +1063,7 @@ window.psecParseCustomRules = function(text) {
 };
 
 window.switchSecTab = function(tab) {
-  ['recap','params','snippets','headers','bans','timeline'].forEach(t => {
+  ['recap','params','snippets','plugins','headers','bans','timeline'].forEach(t => {
     const panel = document.getElementById('psectab-' + t);
     if (panel) panel.style.display = t === tab ? 'flex' : 'none';
   });
@@ -1373,6 +1383,10 @@ window._psecBuildConfig = function(baseCfg) {
     snippet_ids: (() => {
       const ids = typeof psecGetSnippetIds === 'function' ? psecGetSnippetIds() : (cfg.snippet_ids || []);
       return ids.length ? ids : undefined;
+    })(),
+    plugins: (() => {
+      const list = typeof psecGetPlugins === 'function' ? psecGetPlugins() : (cfg.plugins || []);
+      return list.length ? list : undefined;
     })(),
   };
   // Nettoyer custom des doublons HSTS/XFO (gérés en typés)

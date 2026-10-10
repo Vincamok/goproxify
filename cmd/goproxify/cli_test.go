@@ -158,7 +158,7 @@ func TestConfigPathMatchesBackupDefault(t *testing.T) {
 		if got != want {
 			t.Fatalf("configPath(%q) = %q, defaultConfigPath = %q", component, got, want)
 		}
-		if filepath.Dir(got) != "/etc/goproxify" {
+		if filepath.ToSlash(filepath.Dir(got)) != "/etc/goproxify" { // ToSlash : séparateurs Windows
 			t.Fatalf("configPath(%q) = %q, attendu sous /etc/goproxify", component, got)
 		}
 	}

@@ -121,6 +121,7 @@ func (h *RulesEngineHandler) listRules(w http.ResponseWriter, r *http.Request) {
 		rule.RequireApproval = requireApproval == 1
 		_ = json.Unmarshal([]byte(condJSON), &rule.Condition)
 		_ = json.Unmarshal([]byte(actionJSON), &rule.Action)
+		rule.Action = rulesengine.MaskAction(rule.Action)
 		if lastFired.Valid && lastFired.String != "" {
 			t, _ := time.Parse("2006-01-02T15:04:05Z", lastFired.String)
 			if t.IsZero() {
@@ -218,6 +219,14 @@ func (h *RulesEngineHandler) updateRule(w http.ResponseWriter, r *http.Request, 
 		writeErr(w, r, http.StatusBadRequest, "api.err.bad_request")
 		return
 	}
+	// Un secret omis ou renvoyé masqué reprend la valeur enregistrée (avant la validation, qui exige le secret).
+	var oldActionJSON string
+	if h.DB.QueryRowContext(r.Context(), `SELECT action_json FROM rules_engine_rules WHERE id=?`, id).Scan(&oldActionJSON) == nil {
+		var old rulesengine.Action
+		if json.Unmarshal([]byte(oldActionJSON), &old) == nil {
+			body.Action = rulesengine.KeepActionSecrets(old, body.Action)
+		}
+	}
 	if err := body.Action.Validate(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -272,6 +281,7 @@ func (h *RulesEngineHandler) listRuleVersions(w http.ResponseWriter, r *http.Req
 		var cond, action map[string]any
 		_ = json.Unmarshal([]byte(condJSON), &cond)
 		_ = json.Unmarshal([]byte(actionJSON), &action)
+		action = rulesengine.MaskActionMap(action)
 		versions = append(versions, map[string]any{
 			"version": version, "name": name, "description": desc, "enabled": enabled == 1,
 			"condition": cond, "action": action, "cooldown_sec": cooldown, "created_at": createdAt,
@@ -601,6 +611,7 @@ func (h *RulesEngineHandler) listPending(w http.ResponseWriter, r *http.Request)
 		}
 		var action, detail map[string]any
 		_ = json.Unmarshal([]byte(actionJSON), &action)
+		action = rulesengine.MaskActionMap(action)
 		_ = json.Unmarshal([]byte(detailJSON), &detail)
 		item := map[string]any{
 			"id": id, "rule_id": ruleID, "rule_name": ruleName, "action": action, "detail": detail,

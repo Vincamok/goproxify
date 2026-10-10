@@ -179,6 +179,12 @@ const slowStartFloor = 0.05
 // RampFactor retourne la part de trafic nominale [slowStartFloor, 1] d'un backend
 // pendant sa montée en charge ; 1 hors fenêtre, sans fenêtre ou pour un backend inconnu.
 func (h *BackendHealth) RampFactor(u string, window time.Duration) float64 {
+	return h.rampFactorAt(u, window, time.Now())
+}
+
+// rampFactorAt évalue la montée en charge à un instant donné : comparer deux backends exige le même
+// instant, sinon le second, évalué quelques nanosecondes plus tard, paraît toujours plus avancé.
+func (h *BackendHealth) rampFactorAt(u string, window time.Duration, now time.Time) float64 {
 	if h == nil || window <= 0 {
 		return 1
 	}
@@ -192,7 +198,7 @@ func (h *BackendHealth) RampFactor(u string, window time.Duration) float64 {
 	if since.IsZero() {
 		return 1
 	}
-	elapsed := time.Since(since)
+	elapsed := now.Sub(since)
 	if elapsed >= window {
 		return 1
 	}

@@ -106,9 +106,12 @@ func TestSlowStartDisabledKeepsRoundRobin(t *testing.T) {
 
 func TestSlowStartNoAlternativeKeepsOrder(t *testing.T) {
 	h := slowStartHandler(60, "http://a", "http://b")
+	// Même instant exact pour les deux : deux time.Now() successifs diffèrent de quelques nanosecondes,
+	// ce qui suffit à rendre l'un « plus avancé » que l'autre et à détourner du trafic (test intermittent).
+	now := time.Now()
 	h.health.mu.Lock()
-	h.health.getOrCreateLocked("http://a").upSince = time.Now()
-	h.health.getOrCreateLocked("http://b").upSince = time.Now()
+	h.health.getOrCreateLocked("http://a").upSince = now
+	h.health.getOrCreateLocked("http://b").upSince = now
 	h.health.mu.Unlock()
 	// Tous en montée au même instant : aucun détournement possible.
 	seen := map[string]int{}

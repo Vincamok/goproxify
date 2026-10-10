@@ -1,6 +1,6 @@
 # ADR 0008 — Moteur de plugins WASM
 
-**Statut :** accepté (phases 1 et 2 livrées) · **Date :** 2026-10
+**Statut :** accepté (phases 1 à 4 livrées) · **Date :** 2026-10
 
 ## Contexte
 
@@ -72,6 +72,8 @@ Installer un plugin est une action d'administration (admin uniquement) qui exige
 1. **Moteur d'exécution** (`internal/edge/plugins`) : chargement, validation du manifeste, ABI v1, limites, politique d'erreur, stockage chiffré local. Testé avec des modules WASM assemblés à la main (aucune chaîne de compilation requise).
 2. **Branchement** : plugins attachés à une route (`plugins: [{name, config}]`), exécutés dans la chaîne du `dispatch` ; poussés par l'Admin ; API, CLI, MCP.
 3. **Interface et signature** (livrée) : page Admin, signature Ed25519 des paquets (manifeste normalisé en entier + empreinte du module) avec clés de confiance côté Admin, plugins dans les sauvegardes, mesure du coût d'un appel (~55 µs et ~165 Kio par appel, voir `docs/plugins.md`). Restent : un dépôt de plugins, une trousse d'exemples compilés avec un vrai compilateur (Rust, TinyGo), un hook sur le corps.
+
+4. **Extensions du moteur** (livrée) : hooks de corps (`request_body`, `response_body`) avec tampon borné et politique `on_oversize` ; capacités déclarées — état `kv` borné et réseau `http` limité à une liste d'hôtes, adresses internes refusées à la connexion ; hook `connect` pour les routes TCP/UDP (la passerelle rapproche ses écouteurs L4 de la table de routage) ; onglet Plugins du formulaire de route et labels Docker ; dépôts de plugins (index HTTPS, mêmes contrôles qu'une installation manuelle) ; poussée aussi par le canal HTTP interne. Les capacités s'ajoutent sans changer l'ABI : un manifeste qui n'en déclare aucune garde le même résumé, donc la même signature.
 
 ## Conséquences
 

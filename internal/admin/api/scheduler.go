@@ -79,6 +79,7 @@ func (h *SchedulerHandler) list(w http.ResponseWriter, r *http.Request) {
 		}
 		var action map[string]any
 		_ = json.Unmarshal([]byte(actionJSON), &action)
+		action = rulesengine.MaskActionMap(action)
 		item := map[string]any{
 			"id": id, "name": name, "cron_expr": cronExpr, "action": action, "enabled": enabled == 1,
 			"created_at": createdAt, "updated_at": updatedAt,
@@ -136,6 +137,14 @@ func (h *SchedulerHandler) update(w http.ResponseWriter, r *http.Request, id str
 	if _, err := scheduler.ParseExpr(body.CronExpr); err != nil {
 		writeErr(w, r, http.StatusBadRequest, "api.err.bad_request")
 		return
+	}
+	// Un secret omis ou renvoyé masqué reprend la valeur enregistrée (avant la validation, qui exige le secret).
+	var oldActionJSON string
+	if h.DB.QueryRowContext(r.Context(), `SELECT action_json FROM scheduled_tasks WHERE id=?`, id).Scan(&oldActionJSON) == nil {
+		var old map[string]any
+		if json.Unmarshal([]byte(oldActionJSON), &old) == nil {
+			body.Action = rulesengine.KeepActionSecretsMap(old, body.Action)
+		}
 	}
 	if err := validateTaskAction(body.Action); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

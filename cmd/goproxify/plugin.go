@@ -127,6 +127,15 @@ func runPlugin() {
 		}
 		fmt.Printf("Plugin %s installé (sha256 %s).\n", name, got)
 
+	case "repo":
+		runPluginRepo()
+
+	case "catalog":
+		runPluginCatalog()
+
+	case "fetch":
+		runPluginFetch()
+
 	case "keygen":
 		runPluginKeygen()
 
@@ -176,6 +185,9 @@ Sous-commandes :
   install  Installe un plugin depuis son manifeste et son module .wasm
   update   Remplace un plugin installé
   delete   Supprime un plugin
+  repo     Dépôts de plugins (list / add / delete)
+  catalog  Plugins proposés par les dépôts
+  fetch    Installe ou met à jour un plugin depuis un dépôt
   keygen   Génère une paire de clés de signature Ed25519
   sign     Signe un paquet (manifeste + module)
   keys     Clés publiques de confiance (list / add / delete)
@@ -186,6 +198,9 @@ goproxify plugin install -manifest <plugin.json> -wasm <plugin.wasm> [-sha256 <e
 goproxify plugin update  -manifest <plugin.json> -wasm <plugin.wasm> [-sha256 <empreinte>] [-admin-url …] [-token …]
 goproxify plugin delete  <nom> [-y] [-admin-url …] [-token …]
 
+goproxify plugin repo list|add|delete [-name <nom>] [-url <https://…/index.json>] [-allow-private] [-id <id>] [-admin-url …] [-token …]
+goproxify plugin catalog [-repo <id>] [-admin-url …] [-token …]
+goproxify plugin fetch   <nom> -repo <id> [-version <v>] [-admin-url …] [-token …]
 goproxify plugin keygen  -out <préfixe>                      # écrit <préfixe>.key (privée, à garder) et <préfixe>.pub
 goproxify plugin sign    -key <fichier.key> -manifest <plugin.json> -wasm <plugin.wasm>   # affiche la signature
 goproxify plugin install … -signature <base64> | -signature-file <fichier>

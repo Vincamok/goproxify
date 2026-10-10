@@ -6,6 +6,7 @@
 package edgepush
 
 import (
+	"github.com/vincamok/goproxify/internal/edge/plugins"
 	"bytes"
 	"context"
 	"database/sql"
@@ -179,6 +180,42 @@ func (p *Pusher) PushSnippets(ctx context.Context) {
 	}
 }
 
+// PushPlugins envoie la liste complète des plugins WASM à toutes les passerelles enregistrées.
+func (p *Pusher) PushPlugins(ctx context.Context) {
+	edges, err := p.activeEdges(ctx)
+	if err != nil {
+		p.log.Error("edgepush: lecture des passerelles pour plugins", "err", err)
+		return
+	}
+	pkgs, err := p.activePlugins(ctx)
+	if err != nil {
+		p.log.Error("edgepush: lecture des plugins", "err", err)
+		return
+	}
+	body, _ := json.Marshal(pkgs)
+	for _, c := range edges {
+		go p.post(ctx, c, "/internal/v1/plugins", body, "plugins")
+	}
+}
+
+func (p *Pusher) activePlugins(ctx context.Context) ([]plugins.Package, error) {
+	rows, err := p.db.QueryContext(ctx, `SELECT manifest, sha256, wasm FROM plugins ORDER BY name`)
+	if err != nil {
+		return []plugins.Package{}, nil // table absente sur une base ancienne
+	}
+	defer rows.Close()
+	list := []plugins.Package{}
+	for rows.Next() {
+		var pkg plugins.Package
+		var manifest string
+		if err := rows.Scan(&manifest, &pkg.SHA256, &pkg.Wasm); err != nil || json.Unmarshal([]byte(manifest), &pkg.Manifest) != nil {
+			continue
+		}
+		list = append(list, pkg)
+	}
+	return list, rows.Err()
+}
+
 // PushAuthProviders envoie tous les fournisseurs auth à toutes les passerelles enregistrées.
 func (p *Pusher) PushAuthProviders(ctx context.Context) {
 	edges, err := p.activeEdges(ctx)
@@ -203,6 +240,7 @@ func (p *Pusher) PushAuthProviders(ctx context.Context) {
 func (p *Pusher) PushAll(ctx context.Context, settings Settings) {
 	go p.PushRoutes(ctx)
 	go p.PushSnippets(ctx)
+	go p.PushPlugins(ctx)
 	go p.PushAuthProviders(ctx)
 	go p.PushIPProfiles(ctx)
 	go p.PushBans(ctx)

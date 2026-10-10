@@ -25,13 +25,15 @@ const (
 type ActionType string
 
 const (
-	ActionDisableProxy ActionType = "disable_proxy" // désactiver le proxy lié au backend CVE
-	ActionBanIP        ActionType = "ban_ip"        // bannir l'IP déclenchante
-	ActionNotify       ActionType = "notify"        // émettre vers le moteur d'alertes
-	ActionEnableStrict ActionType = "enable_strict" // réduire max_errors F2B (mode strict temporaire)
-	ActionWebhookCall  ActionType = "webhook_call"  // POST JSON vers une URL externe
-	ActionRunBackup    ActionType = "run_backup"    // déclencher un snapshot de sauvegarde immédiat
-	ActionRunPlaybook  ActionType = "run_playbook"  // enchaîner un playbook (actions, attentes, approbations)
+	ActionDisableProxy  ActionType = "disable_proxy"  // désactiver le proxy lié au backend CVE
+	ActionBanIP         ActionType = "ban_ip"         // bannir l'IP déclenchante
+	ActionNotify        ActionType = "notify"         // émettre vers le moteur d'alertes
+	ActionEnableStrict  ActionType = "enable_strict"  // réduire max_errors F2B (mode strict temporaire)
+	ActionWebhookCall   ActionType = "webhook_call"   // POST JSON vers une URL externe
+	ActionRunBackup     ActionType = "run_backup"     // déclencher un snapshot de sauvegarde immédiat
+	ActionWebhookSigned ActionType = "webhook_signed" // webhook signé HMAC-SHA256 (module, paramètres sous params)
+	ActionPagerDuty     ActionType = "pagerduty"      // incident PagerDuty Events API v2 (module, paramètres sous params)
+	ActionRunPlaybook   ActionType = "run_playbook"   // enchaîner un playbook (actions, attentes, approbations)
 )
 
 // Condition décrit le prédicat évalué périodiquement.
@@ -94,6 +96,10 @@ type Action struct {
 
 	// ActionRunPlaybook
 	PlaybookID string `json:"playbook_id,omitempty"`
+
+	// Params : paramètres des actions fournies en modules (webhook_signed, pagerduty…). Les secrets s'y trouvent
+	// et sont masqués par toutes les sorties (action_secrets.go).
+	Params map[string]any `json:"params,omitempty"`
 }
 
 // Rule est une règle du moteur : une condition + une action + métadonnées.

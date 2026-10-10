@@ -11,6 +11,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,6 +19,7 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/edgeproxy"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
+	"github.com/vincamok/goproxify/internal/admin/routesecrets"
 	"github.com/vincamok/goproxify/internal/edge/proxystore"
 	"github.com/vincamok/goproxify/internal/edge/router"
 )
@@ -77,6 +79,7 @@ func (h *ProxiesHandler) listFiles(w http.ResponseWriter, r *http.Request) {
 			if filterByEdge && !rbac.RouteAllowedByToken(edgeAccess.Role, edgeAccess.Scopes, &route) {
 				continue
 			}
+			row.Config = h.maskConfig(row.Config)
 			byID[row.ID] = row
 		}
 	}
@@ -111,6 +114,7 @@ func (h *ProxiesHandler) getFiles(w http.ResponseWriter, r *http.Request, id str
 		writeErr(w, r, http.StatusNotFound, "api.err.proxy_not_found")
 		return
 	}
+	row.Config = h.maskConfig(row.Config)
 	jsonOK(w, row)
 }
 
@@ -129,7 +133,12 @@ func (h *ProxiesHandler) createFiles(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusForbidden, "api.err.out_of_scope_domain")
 		return
 	}
-	cfgJSON, _ := injectRouteFields(body.Config, route.ID, route.UpdatedAt)
+	cfg, missing := h.restoreSecrets(r.Context(), "", body.Config)
+	if len(missing) > 0 {
+		maskedSecretError(w, missing)
+		return
+	}
+	cfgJSON, _ := injectRouteFields(cfg, route.ID, route.UpdatedAt)
 	enabled := true
 	if body.Enabled != nil {
 		enabled = *body.Enabled
@@ -142,7 +151,9 @@ func (h *ProxiesHandler) createFiles(w http.ResponseWriter, r *http.Request) {
 	_ = admindb.WriteAudit(h.DB, userID, "create", "proxy:"+route.ID, route.Host)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(envelopeToRow(prod))
+	created := envelopeToRow(prod)
+	created.Config = h.maskConfig(created.Config)
+	_ = json.NewEncoder(w).Encode(created)
 }
 
 func (h *ProxiesHandler) updateFiles(w http.ResponseWriter, r *http.Request, id string) {
@@ -160,7 +171,12 @@ func (h *ProxiesHandler) updateFiles(w http.ResponseWriter, r *http.Request, id 
 		writeErr(w, r, http.StatusForbidden, "api.err.out_of_scope")
 		return
 	}
-	cfgJSON, _ := injectRouteFields(body.Config, id, route.UpdatedAt)
+	cfg, missing := h.restoreSecrets(r.Context(), id, body.Config)
+	if len(missing) > 0 {
+		maskedSecretError(w, missing)
+		return
+	}
+	cfgJSON, _ := injectRouteFields(cfg, id, route.UpdatedAt)
 	enabled := true
 	if body.Enabled != nil {
 		enabled = *body.Enabled
@@ -173,7 +189,9 @@ func (h *ProxiesHandler) updateFiles(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 	_ = admindb.WriteAudit(h.DB, userID, "update", "proxy:"+id, route.Host)
-	jsonOK(w, envelopeToRow(prod))
+	updated := envelopeToRow(prod)
+	updated.Config = h.maskConfig(updated.Config)
+	jsonOK(w, updated)
 }
 
 // purgeCacheFiles vide le cache disque d'un proxy sur toutes les passerelles qui
@@ -509,8 +527,14 @@ func (h *ProxiesHandler) revisionsDiff(w http.ResponseWriter, r *http.Request, p
 		return out
 	}
 
-	aFields := flattenJSON(aEnv.Config)
-	bFields := flattenJSON(bEnv.Config)
+	aFields := flattenJSON(h.maskConfig(aEnv.Config))
+	bFields := flattenJSON(h.maskConfig(bEnv.Config))
+	maskedRevisions := make([]*proxystore.Envelope, 0, len(revisions))
+	for _, rv := range revisions {
+		cp := *rv
+		cp.Config = h.maskConfig(rv.Config)
+		maskedRevisions = append(maskedRevisions, &cp)
+	}
 	diffs := []diffEntry{}
 
 	seen := map[string]bool{}
@@ -547,7 +571,7 @@ func (h *ProxiesHandler) revisionsDiff(w http.ResponseWriter, r *http.Request, p
 		"from":      meta(aEnv),
 		"to":        meta(bEnv),
 		"diffs":     diffs,
-		"revisions": revisions,
+		"revisions": maskedRevisions,
 	})
 }
 
@@ -586,4 +610,24 @@ func envelopeToRow(env *proxystore.Envelope) proxyRow {
 		row.CreatedAt = *env.CreatedAt
 	}
 	return row
+}
+
+func (h *ProxiesHandler) maskConfig(raw json.RawMessage) json.RawMessage {
+	return routesecrets.Mask(raw, routesecrets.FromDB(h.DB))
+}
+
+// restoreSecrets rétablit, dans la configuration reçue, les secrets de la version en production quand le client
+// renvoie le masque (route relue puis renvoyée telle quelle). `missing` liste les masques sans valeur d'origine.
+func (h *ProxiesHandler) restoreSecrets(ctx context.Context, id string, cfg json.RawMessage) (json.RawMessage, []string) {
+	var old []byte
+	if id != "" {
+		if prod, err := h.fetchProd(ctx, id); err == nil {
+			old = prod.Config
+		}
+	}
+	return routesecrets.Keep(old, cfg, routesecrets.FromDB(h.DB))
+}
+
+func maskedSecretError(w http.ResponseWriter, missing []string) {
+	http.Error(w, "secret masqué sans valeur d'origine : saisissez la valeur de "+strings.Join(missing, ", "), http.StatusBadRequest)
 }

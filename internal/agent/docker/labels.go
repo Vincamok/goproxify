@@ -28,6 +28,8 @@ const (
 	LabelGeoIP           = "goproxify.geo_ip"        // "allow:FR,DE"
 	LabelSnippets        = "goproxify.snippets"      // IDs snippets Admin, CSV
 	LabelAuthProvider    = "goproxify.auth_provider" // ID fournisseur auth Admin
+	LabelPlugins         = "goproxify.plugins"      // noms de plugins WASM installés, CSV, dans l'ordre d'exécution
+	LabelPluginPrefix    = "goproxify.plugin."      // goproxify.plugin.<nom>.<clé>=<valeur> : configuration d'un plugin
 	LabelWAF                    = "goproxify.waf"                     // true|block|detect
 	LabelWAFAnomalyThreshold    = "goproxify.waf.anomaly_threshold"    // ex: "10" (score cumulatif)
 	LabelWAFMaxBodyMB           = "goproxify.waf.max_body_mb"          // ex: "10"
@@ -126,6 +128,8 @@ type ProxySpec struct {
 	GeoIP     string
 
 	SnippetIDs     string // CSV d'IDs snippets Admin
+	Plugins        string                    // CSV de noms de plugins WASM
+	PluginConfig   map[string]map[string]any // configuration par plugin (labels goproxify.plugin.<nom>.<clé>)
 	AuthProviderID string
 	WAF                 string // true|block|detect
 	WAFAnomalyThreshold int    // 0 = premier match
@@ -283,6 +287,8 @@ func ParseLabelsMulti(containerID, containerName, image, networkID string, label
 		GeoIP:     labels[LabelGeoIP],
 
 		SnippetIDs:     labels[LabelSnippets],
+		Plugins:        labels[LabelPlugins],
+		PluginConfig:   parsePluginConfigLabels(labels),
 		AuthProviderID: labels[LabelAuthProvider],
 		WAF:                  labels[LabelWAF],
 		WAFAnomalyThreshold:  intLabel(labels, LabelWAFAnomalyThreshold, 0),
@@ -412,4 +418,39 @@ func intLabel(labels map[string]string, key string, def int) int {
 		}
 	}
 	return def
+}
+
+// parsePluginConfigLabels lit goproxify.plugin.<nom>.<clé>=<valeur>. Les valeurs « true »/« false » et les
+// nombres gardent leur type ; le reste reste du texte. Un nom ou une clé vides sont ignorés.
+func parsePluginConfigLabels(labels map[string]string) map[string]map[string]any {
+	var out map[string]map[string]any
+	for k, v := range labels {
+		rest, ok := strings.CutPrefix(k, LabelPluginPrefix)
+		if !ok {
+			continue
+		}
+		name, key, ok := strings.Cut(rest, ".")
+		if !ok || name == "" || key == "" {
+			continue
+		}
+		if out == nil {
+			out = map[string]map[string]any{}
+		}
+		if out[name] == nil {
+			out[name] = map[string]any{}
+		}
+		var val any = v
+		switch strings.ToLower(v) {
+		case "true":
+			val = true
+		case "false":
+			val = false
+		default:
+			if n, err := strconv.ParseFloat(v, 64); err == nil {
+				val = n
+			}
+		}
+		out[name][key] = val
+	}
+	return out
 }

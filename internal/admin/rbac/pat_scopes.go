@@ -417,6 +417,7 @@ func RequiredScopeForRequest(r *http.Request) string {
 		strings.HasPrefix(path, "/api/v1/auth-provider"),
 		strings.HasPrefix(path, "/api/v1/plugins"),
 		strings.HasPrefix(path, "/api/v1/plugin-keys"),
+		strings.HasPrefix(path, "/api/v1/plugin-repos"),
 		strings.HasPrefix(path, "/api/v1/rules-engine"),
 		strings.HasPrefix(path, "/api/v1/scheduled-tasks"),
 		strings.HasPrefix(path, "/api/v1/playbooks"):

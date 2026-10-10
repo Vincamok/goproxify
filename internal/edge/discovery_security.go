@@ -4,9 +4,13 @@
 package edge
 
 import (
+	"github.com/vincamok/goproxify/internal/edge/proxypipeline"
+	"github.com/vincamok/goproxify/internal/edge/plugins"
 	"encoding/json"
+	"strings"
 
 	"github.com/vincamok/goproxify/internal/edge/geoip"
+	"github.com/vincamok/goproxify/internal/edge/middleware"
 	"github.com/vincamok/goproxify/internal/edge/router"
 	"github.com/vincamok/goproxify/internal/labels"
 )
@@ -35,6 +39,9 @@ func applyDiscoverySecurity(rt *router.Route, p *agentContainerPayload, defaultG
 	}
 	if p.AuthProviderID != "" {
 		rt.AuthProviderID = p.AuthProviderID
+	}
+	if p.Plugins != nil {
+		rt.Plugins = append([]router.PluginRef(nil), p.Plugins...)
 	}
 	if cfg := decodeWAF(p.WAF); cfg != nil {
 		rt.WAF = cfg
@@ -154,4 +161,29 @@ func decodeBot(raw json.RawMessage) *router.BotConfig {
 		return labels.ParseBot(s)
 	}
 	return nil
+}
+
+func rawPresent(raw json.RawMessage) bool {
+	s := strings.TrimSpace(string(raw))
+	return s != "" && s != "null" && s != `""`
+}
+
+// discoverySecurityErrors valide la sécurité portée par les labels d'un conteneur avant d'enregistrer la
+// route : les mêmes manifestes et contrôles que le dry-run d'un proxy, et un filtre IP ou GeoIP présent
+// mais illisible est une erreur (le décodeur le supprimait en silence, laissant la route sans filtre).
+// Seules les erreurs intrinsèques comptent : un snippet ou un fournisseur encore absent est géré à
+// l'exécution (503), pas ici, puisqu'il peut arriver après le conteneur.
+func discoverySecurityErrors(p *agentContainerPayload, geoDB string, known map[string]plugins.Manifest) []string {
+	probe := &router.Route{Type: router.RouteHTTP}
+	applyDiscoverySecurity(probe, p, geoDB)
+	errs := append([]string(nil), p.LabelErrors...)
+	errs = append(errs, middleware.ValidateRouteDetectors(probe)...)
+	errs = append(errs, proxypipeline.ValidatePluginRefs(probe, known, false)...)
+	if rawPresent(p.IPFilter) && probe.IPFilter == nil {
+		errs = append(errs, "ip_filter : valeur illisible ou sans adresse (attendu allow:<cidr>,… ou deny:<cidr>,…)")
+	}
+	if rawPresent(p.GeoIP) && probe.GeoIP == nil {
+		errs = append(errs, "geo_ip : valeur illisible (attendu allow:FR,DE ou deny:CN,RU)")
+	}
+	return errs
 }

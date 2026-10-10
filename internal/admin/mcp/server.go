@@ -7,6 +7,7 @@
 package mcp
 
 import (
+	"github.com/vincamok/goproxify/internal/admin/routesecrets"
 	"github.com/vincamok/goproxify/internal/admin/rulesengine"
 	"github.com/vincamok/goproxify/internal/edge/engines"
 	"context"
@@ -1205,7 +1206,7 @@ func (h *Handler) toolGetProxy(r *http.Request, id string) (any, error) {
 		return nil, err
 	}
 	var out any
-	_ = json.Unmarshal(env.Config, &out)
+	_ = json.Unmarshal(routesecrets.Mask(env.Config, routesecrets.FromDB(h.DB)), &out)
 	return out, nil
 }
 
@@ -2399,7 +2400,7 @@ func (h *Handler) toolListRules(r *http.Request, args map[string]any) (any, erro
 		}
 		item := map[string]any{
 			"id": id, "name": name, "description": desc, "enabled": enabled == 1,
-			"condition": json.RawMessage(condJSON), "action": json.RawMessage(actionJSON),
+			"condition": json.RawMessage(condJSON), "action": json.RawMessage(rulesengine.MaskActionRaw([]byte(actionJSON))),
 			"cooldown_sec": cooldown, "fire_count": fireCount,
 			"created_at": createdAt, "updated_at": updatedAt,
 		}
@@ -2504,7 +2505,7 @@ func (h *Handler) toolListPendingActions(r *http.Request, status string) (any, e
 		}
 		item := map[string]any{
 			"id": id, "rule_id": ruleID, "rule_name": ruleName,
-			"action": json.RawMessage(actionJSON), "detail": json.RawMessage(detailJSON),
+			"action": json.RawMessage(rulesengine.MaskActionRaw([]byte(actionJSON))), "detail": json.RawMessage(detailJSON),
 			"status": st, "created_at": createdAt, "decided_by": decidedBy,
 		}
 		if decidedAt.Valid {
@@ -2553,7 +2554,7 @@ func (h *Handler) toolListRuleVersions(r *http.Request, args map[string]any) (an
 		}
 		out = append(out, map[string]any{
 			"version": version, "name": name, "description": desc, "enabled": enabled == 1,
-			"condition": json.RawMessage(condJSON), "action": json.RawMessage(actionJSON),
+			"condition": json.RawMessage(condJSON), "action": json.RawMessage(rulesengine.MaskActionRaw([]byte(actionJSON))),
 			"cooldown_sec": cooldown, "created_at": createdAt,
 		})
 	}
@@ -2624,6 +2625,7 @@ func (h *Handler) toolExportAutomation(r *http.Request) (any, error) {
 		var cond, action map[string]any
 		_ = json.Unmarshal([]byte(condJSON), &cond)
 		_ = json.Unmarshal([]byte(actionJSON), &action)
+		action = rulesengine.MaskActionMap(action)
 		out.Rules = append(out.Rules, map[string]any{
 			"name": name, "description": desc, "enabled": enabled == 1,
 			"condition": cond, "action": action, "cooldown_sec": cooldown,
@@ -2643,6 +2645,7 @@ func (h *Handler) toolExportAutomation(r *http.Request) (any, error) {
 		}
 		var cfg map[string]any
 		_ = json.Unmarshal([]byte(cfgJSON), &cfg)
+		cfg = channels.MaskConfig(typ, cfg)
 		out.Channels = append(out.Channels, map[string]any{"name": name, "type": typ, "config": cfg, "enabled": enabled == 1})
 	}
 	chanRows.Close()
@@ -2694,6 +2697,11 @@ func (h *Handler) toolImportAutomation(r *http.Request, args map[string]any) (an
 		}
 		condJSON, _ := json.Marshal(rm["condition"])
 		actionJSON, _ := json.Marshal(rm["action"])
+		// Un export masque les secrets : à l'import, une règle existante garde les siens.
+		var oldAction string
+		if h.DB.QueryRowContext(ctx, `SELECT action_json FROM rules_engine_rules WHERE name=?`, name).Scan(&oldAction) == nil {
+			actionJSON = rulesengine.KeepActionJSON([]byte(oldAction), actionJSON)
+		}
 		if rulesengine.ValidateActionJSON(actionJSON) != nil {
 			summary["rules_rejected"]++
 			continue
@@ -2729,9 +2737,16 @@ func (h *Handler) toolImportAutomation(r *http.Request, args map[string]any) (an
 		if enabled {
 			enabledInt = 1
 		}
-		cfgJSON, _ := json.Marshal(cm["config"])
-		var existingID string
-		if h.DB.QueryRowContext(ctx, `SELECT id FROM alert_channels WHERE name=?`, name).Scan(&existingID) == nil {
+		newCfg, _ := cm["config"].(map[string]any)
+		var existingID, oldCfg string
+		found := h.DB.QueryRowContext(ctx, `SELECT id, config FROM alert_channels WHERE name=?`, name).Scan(&existingID, &oldCfg) == nil
+		if found {
+			var old map[string]any
+			_ = json.Unmarshal([]byte(oldCfg), &old)
+			newCfg = channels.KeepConfigSecrets(typ, old, newCfg)
+		}
+		cfgJSON, _ := json.Marshal(newCfg)
+		if found {
 			if _, err := h.DB.ExecContext(ctx,
 				`UPDATE alert_channels SET type=?, config=?, enabled=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
 				typ, string(cfgJSON), enabledInt, existingID); err == nil {

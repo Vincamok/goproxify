@@ -4,6 +4,7 @@
 package edge
 
 import (
+	"github.com/vincamok/goproxify/internal/edge/plugins"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -55,6 +56,7 @@ func (s *Server) startInternalAPI() error {
 	mux.HandleFunc("POST /internal/v1/certs", s.handlePushCerts)
 	mux.HandleFunc("POST /internal/v1/snippets", s.handlePushSnippets)
 	mux.HandleFunc("POST /internal/v1/error-pages", s.handlePushErrorPages)
+	mux.HandleFunc("POST /internal/v1/plugins", s.handlePushPlugins)
 	mux.HandleFunc("POST /internal/v1/auth-providers", s.handlePushAuthProviders)
 	mux.HandleFunc("POST /internal/v1/ip-profiles", s.handlePushIPProfiles)
 	mux.HandleFunc("POST /internal/v1/bans", s.handlePushBans)
@@ -319,6 +321,18 @@ func (s *Server) handlePushSnippets(w http.ResponseWriter, r *http.Request) {
 	s.snippetStore.Replace(snippets)
 	s.saveCache()
 	s.log.Info("snippets mis à jour", "count", len(snippets))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handlePushPlugins aligne les plugins sur la liste complète envoyée (même effet que le message WebSocket
+// push_plugins) : installe les nouveaux ou modifiés, retire les absents.
+func (s *Server) handlePushPlugins(w http.ResponseWriter, r *http.Request) {
+	var pkgs []plugins.Package
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<20)).Decode(&pkgs); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.applyPlugins(pkgs)
 	w.WriteHeader(http.StatusNoContent)
 }
 

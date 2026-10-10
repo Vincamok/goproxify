@@ -36,14 +36,29 @@ const (
 	MaxTimeoutMs       = 1000
 	MaxIOBytes         = 64 << 10
 
+	// Hooks sur corps : le corps est tamponné en mémoire, plafonné par limits.max_body_bytes.
+	DefaultMaxBodyBytes = 32 << 10
+	MaxBodyBytesCap     = 1 << 20
+
 	maxLogBytes = 1 << 10
 )
 
 // Hooks pris en charge.
 const (
-	HookRequest  = "request"
-	HookResponse = "response"
+	HookRequest      = "request"
+	HookResponse     = "response"
+	HookRequestBody  = "request_body"  // corps de la requête, tamponné
+	HookResponseBody = "response_body" // corps de la réponse, tamponné
+	HookConnect      = "connect"       // connexion TCP/UDP entrante (routes L4)
 )
+
+// Politique face à un corps plus gros que limits.max_body_bytes.
+const (
+	OnOversizeDeny = "deny" // 413 (requête) ou 502 (réponse) : le plugin ne peut pas juger, on refuse
+	OnOversizeSkip = "skip" // le corps passe sans que le plugin le voie
+)
+
+var knownHooks = map[string]bool{HookRequest: true, HookResponse: true, HookRequestBody: true, HookResponseBody: true, HookConnect: true}
 
 // Politique d'erreur.
 const (
@@ -57,17 +72,22 @@ var nameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
 type Limits struct {
 	MemoryPages uint32 `json:"memory_pages,omitempty"`
 	TimeoutMs   int    `json:"timeout_ms,omitempty"`
+	// MaxBodyBytes : taille maximale du corps présenté aux hooks request_body / response_body.
+	MaxBodyBytes int `json:"max_body_bytes,omitempty"`
 }
 
 // Manifest décrit un plugin.
 type Manifest struct {
-	Name       string          `json:"name"`
-	Version    string          `json:"version"`
-	APIVersion int             `json:"api_version"`
-	Hooks      []string        `json:"hooks"`
-	OnError    string          `json:"on_error,omitempty"`
-	Limits     Limits          `json:"limits,omitempty"`
-	Fields     []modules.Field `json:"fields,omitempty"`
+	Name       string   `json:"name"`
+	Version    string   `json:"version"`
+	APIVersion int      `json:"api_version"`
+	Hooks      []string `json:"hooks"`
+	OnError    string   `json:"on_error,omitempty"`
+	Limits     Limits   `json:"limits,omitempty"`
+	// OnOversize : corps trop gros pour un hook de corps (deny par défaut, skip pour le laisser passer).
+	OnOversize   string          `json:"on_oversize,omitempty"`
+	Capabilities *Capabilities   `json:"capabilities,omitempty"`
+	Fields       []modules.Field `json:"fields,omitempty"`
 }
 
 // Normalize applique les valeurs par défaut et vérifie le manifeste.
@@ -82,13 +102,15 @@ func (m *Manifest) Normalize() error {
 		return fmt.Errorf("api_version %d non prise en charge (attendu %d)", m.APIVersion, APIVersion)
 	}
 	if len(m.Hooks) == 0 {
-		return errors.New("au moins un hook requis (request, response)")
+		return errors.New("au moins un hook requis (request, response, request_body, response_body, connect)")
 	}
 	seen := map[string]bool{}
+	bodyHook := false
 	for _, h := range m.Hooks {
-		if h != HookRequest && h != HookResponse {
-			return fmt.Errorf("hook %q inconnu (request, response)", h)
+		if !knownHooks[h] {
+			return fmt.Errorf("hook %q inconnu (request, response, request_body, response_body, connect)", h)
 		}
+		bodyHook = bodyHook || h == HookRequestBody || h == HookResponseBody
 		if seen[h] {
 			return fmt.Errorf("hook %q en double", h)
 		}
@@ -112,6 +134,28 @@ func (m *Manifest) Normalize() error {
 	}
 	if m.Limits.TimeoutMs < 0 || m.Limits.TimeoutMs > MaxTimeoutMs {
 		return fmt.Errorf("limits.timeout_ms %d hors de 1..%d", m.Limits.TimeoutMs, MaxTimeoutMs)
+	}
+	// Les valeurs par défaut des corps ne sont posées que pour un plugin qui en a : le résumé d'un manifeste
+	// plus ancien (donc sa signature) ne change pas.
+	if bodyHook {
+		if m.Limits.MaxBodyBytes == 0 {
+			m.Limits.MaxBodyBytes = DefaultMaxBodyBytes
+		}
+		if m.Limits.MaxBodyBytes < 0 || m.Limits.MaxBodyBytes > MaxBodyBytesCap {
+			return fmt.Errorf("limits.max_body_bytes %d hors de 1..%d", m.Limits.MaxBodyBytes, MaxBodyBytesCap)
+		}
+		switch m.OnOversize {
+		case "":
+			m.OnOversize = OnOversizeDeny
+		case OnOversizeDeny, OnOversizeSkip:
+		default:
+			return fmt.Errorf("on_oversize %q invalide (deny, skip)", m.OnOversize)
+		}
+	} else if m.Limits.MaxBodyBytes != 0 || m.OnOversize != "" {
+		return errors.New("limits.max_body_bytes et on_oversize exigent un hook request_body ou response_body")
+	}
+	if err := m.Capabilities.validate(); err != nil {
+		return err
 	}
 	mm := modules.Manifest{Type: m.Name, Label: m.Name, Fields: m.Fields}
 	return mm.Check()
@@ -157,7 +201,9 @@ type Output struct {
 	Body          string            `json:"body,omitempty"`
 	SetHeaders    map[string]string `json:"set_headers,omitempty"`
 	RemoveHeaders []string          `json:"remove_headers,omitempty"`
-	Log           string            `json:"log,omitempty"`
+	// ReplaceBody remplace le corps (hooks request_body / response_body, action modify) ; base64 en JSON.
+	ReplaceBody *[]byte `json:"replace_body,omitempty"`
+	Log         string  `json:"log,omitempty"`
 }
 
 // Actions d'un plugin.
@@ -175,10 +221,9 @@ type Plugin struct {
 	rt       wazero.Runtime
 	compiled wazero.CompiledModule
 	log      *slog.Logger
+	kv       *kvStore // état du plugin (capacité kv), neuf à chaque chargement
 	closed   sync.Once
 }
-
-type logKey struct{}
 
 // Load valide le manifeste, vérifie l'empreinte du .wasm (si wantSHA est renseignée), le compile et
 // contrôle son contrat : exports requis, aucun import hors `gpx.log`.
@@ -199,9 +244,16 @@ func Load(ctx context.Context, m Manifest, wasm []byte, wantSHA string, log *slo
 		WithMemoryLimitPages(m.Limits.MemoryPages)
 	rt := wazero.NewRuntimeWithConfig(ctx, cfg)
 	p := &Plugin{Manifest: m, SHA256: got, rt: rt, log: log.With("plugin", m.Name)}
+	if m.Capabilities != nil && m.Capabilities.KV {
+		p.kv = newKV()
+	}
 
 	if _, err := rt.NewHostModuleBuilder("gpx").
 		NewFunctionBuilder().WithFunc(p.hostLog).Export("log").
+		NewFunctionBuilder().WithFunc(p.hostKVGet).Export("kv_get").
+		NewFunctionBuilder().WithFunc(p.hostKVSet).Export("kv_set").
+		NewFunctionBuilder().WithFunc(p.hostKVIncr).Export("kv_incr").
+		NewFunctionBuilder().WithFunc(p.hostHTTPFetch).Export("http_fetch").
 		Instantiate(ctx); err != nil {
 		_ = rt.Close(ctx)
 		return nil, err
@@ -222,8 +274,8 @@ func Load(ctx context.Context, m Manifest, wasm []byte, wantSHA string, log *slo
 func (p *Plugin) checkContract() error {
 	for _, f := range p.compiled.ImportedFunctions() {
 		mod, name, _ := f.Import()
-		if mod != "gpx" || name != "log" {
-			return fmt.Errorf("import non autorisé %s.%s (seul gpx.log est fourni)", mod, name)
+		if mod != "gpx" || !p.importAllowed(name) {
+			return fmt.Errorf("import non autorisé %s.%s (gpx.log toujours ; kv_* avec capabilities.kv ; http_fetch avec capabilities.http)", mod, name)
 		}
 	}
 	if len(p.compiled.ImportedMemories()) > 0 {
@@ -242,7 +294,24 @@ func (p *Plugin) checkContract() error {
 			return fmt.Errorf("export `%s` manquant", n)
 		}
 	}
+	if f, ok := exports["_initialize"]; ok && (len(f.ParamTypes()) != 0 || len(f.ResultTypes()) != 0) {
+		return errors.New("`_initialize` ne prend ni argument ni résultat")
+	}
 	return nil
+}
+
+// importAllowed : les fonctions hôtes qu'un plugin peut importer, selon les capacités de son manifeste.
+func (p *Plugin) importAllowed(name string) bool {
+	caps := p.Manifest.Capabilities
+	switch name {
+	case "log":
+		return true
+	case "kv_get", "kv_set", "kv_incr":
+		return caps != nil && caps.KV
+	case "http_fetch":
+		return caps != nil && len(caps.HTTP) > 0
+	}
+	return false
 }
 
 // hostLog est gpx.log(ptr, len) : journalise un message du plugin, borné.
@@ -254,8 +323,8 @@ func (p *Plugin) hostLog(ctx context.Context, m api.Module, ptr, n uint32) {
 	if !ok {
 		return
 	}
-	if c, ok := ctx.Value(logKey{}).(*logCollector); ok {
-		c.add(string(b))
+	if st := stateOf(ctx); st != nil {
+		st.logs.add(string(b))
 	}
 }
 
@@ -286,21 +355,29 @@ func (p *Plugin) Call(ctx context.Context, hook string, input any) (Output, erro
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(p.Manifest.Limits.TimeoutMs)*time.Millisecond)
 	defer cancel()
-	logs := &logCollector{}
-	ctx = context.WithValue(ctx, logKey{}, logs)
+	state := &callState{p: p}
+	ctx = context.WithValue(ctx, stateKey{}, state)
 
 	in, err := json.Marshal(input)
 	if err != nil {
 		return Output{}, err
 	}
-	if len(in) > MaxIOBytes {
-		return Output{}, fmt.Errorf("entrée de %d octets : plafond %d", len(in), MaxIOBytes)
+	if limit := p.ioCap(); len(in) > limit {
+		return Output{}, fmt.Errorf("entrée de %d octets : plafond %d", len(in), limit)
 	}
 	mod, err := p.rt.InstantiateModule(ctx, p.compiled, wazero.NewModuleConfig().WithName("").WithStartFunctions())
 	if err != nil {
 		return Output{}, fmt.Errorf("instanciation : %w", err)
 	}
 	defer mod.Close(ctx)
+
+	// Les compilateurs réels (TinyGo, Rust en « reactor ») exportent `_initialize` : sans l'appel, le tas et les
+	// variables globales du module ne sont pas prêts et le premier hook s'arrête sur `unreachable`.
+	if init := mod.ExportedFunction("_initialize"); init != nil {
+		if _, err := init.Call(ctx); err != nil {
+			return Output{}, fmt.Errorf("_initialize : %w", callErr(err))
+		}
+	}
 
 	res, err := mod.ExportedFunction("alloc").Call(ctx, uint64(len(in)))
 	if err != nil || len(res) != 1 {
@@ -315,10 +392,43 @@ func (p *Plugin) Call(ctx context.Context, hook string, input any) (Output, erro
 		return Output{}, fmt.Errorf("on_%s : %w", hook, callErr(err))
 	}
 	out, err := p.readOutput(mod, res[0])
-	if l := logs.buf.String(); l != "" {
+	if l := state.logs.buf.String(); l != "" {
 		p.log.Info("plugin: journal", "hook", hook, "message", strings.TrimSpace(l))
 	}
+	if err == nil {
+		err = out.validateFor(hook)
+	}
 	return out, err
+}
+
+// validateFor vérifie ce qu'une décision a le droit de contenir selon le hook : seul un hook de corps peut
+// remplacer le corps, et une connexion L4 n'a ni en-têtes ni corps à modifier.
+func (o Output) validateFor(hook string) error {
+	bodyHook := hook == HookRequestBody || hook == HookResponseBody
+	if o.ReplaceBody != nil {
+		if !bodyHook {
+			return fmt.Errorf("replace_body n'est permis que pour request_body et response_body")
+		}
+		if o.Action != ActionModify {
+			return fmt.Errorf("replace_body exige l'action modify")
+		}
+		if len(*o.ReplaceBody) > MaxBodyBytesCap {
+			return fmt.Errorf("corps de remplacement de %d octets : plafond %d", len(*o.ReplaceBody), MaxBodyBytesCap)
+		}
+	}
+	if hook == HookConnect && o.Action == ActionModify {
+		return fmt.Errorf("l'action modify n'a pas de sens pour une connexion (allow ou deny)")
+	}
+	return nil
+}
+
+// ioCap : taille maximale d'une entrée ou d'une sortie JSON. Un plugin à hooks de corps y ajoute le corps
+// encodé en base64 (4/3) : le plafond de 64 Kio ne suffirait plus.
+func (p *Plugin) ioCap() int {
+	if n := p.Manifest.Limits.MaxBodyBytes; n > 0 {
+		return MaxIOBytes + n*4/3 + 4
+	}
+	return MaxIOBytes
 }
 
 func callErr(err error) error {
@@ -333,8 +443,8 @@ func (p *Plugin) readOutput(mod api.Module, packed uint64) (Output, error) {
 	if n == 0 {
 		return Output{Action: ActionAllow}, nil
 	}
-	if n > MaxIOBytes {
-		return Output{}, fmt.Errorf("sortie de %d octets : plafond %d", n, MaxIOBytes)
+	if int(n) > p.ioCap() {
+		return Output{}, fmt.Errorf("sortie de %d octets : plafond %d", n, p.ioCap())
 	}
 	raw, ok := mod.Memory().Read(ptr, n)
 	if !ok {
@@ -411,4 +521,25 @@ func (p *Plugin) Evaluate(ctx context.Context, hook string, input any) (out Outp
 		return Output{Action: ActionAllow}, err
 	}
 	return Output{Action: ActionDeny, Status: 503, Body: "plugin indisponible"}, err
+}
+
+// RequestBodyInput est ce que reçoit le hook request_body : la requête et son corps (base64 en JSON).
+type RequestBodyInput struct {
+	RequestInput
+	Body []byte `json:"body"`
+}
+
+// ResponseBodyInput est ce que reçoit le hook response_body : la réponse et son corps (base64 en JSON).
+type ResponseBodyInput struct {
+	ResponseInput
+	Body []byte `json:"body"`
+}
+
+// ConnectInput est ce que reçoit le hook connect d'une route TCP/UDP.
+type ConnectInput struct {
+	ClientIP   string         `json:"client_ip"`
+	Protocol   string         `json:"protocol"` // tcp | udp
+	ListenPort int            `json:"listen_port"`
+	RouteID    string         `json:"route_id"`
+	Config     map[string]any `json:"config,omitempty"`
 }

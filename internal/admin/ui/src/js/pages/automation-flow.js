@@ -6,6 +6,7 @@ pages['automation-flow'] = async function() {
   const content = document.getElementById('content');
   document.getElementById('topbar-actions').innerHTML = '';
   content.innerHTML = `<p style="color:var(--text2)">${t('common.loading')}</p>`;
+  await _reLoadModuleActs();
   try {
     const [rules, playbooks] = await Promise.all([
       api('GET', '/rules-engine/rules').catch(() => []),

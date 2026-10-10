@@ -6,6 +6,7 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -44,12 +45,15 @@ func (h *SMTPSettingsHandler) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SMTPSettingsHandler) put(w http.ResponseWriter, r *http.Request) {
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	var body mailer.Config
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	var present map[string]json.RawMessage
+	if err != nil || json.Unmarshal(raw, &body) != nil || json.Unmarshal(raw, &present) != nil {
 		writeErr(w, r, http.StatusBadRequest, "api.err.bad_json")
 		return
 	}
-	if body.Password == "••••••••" {
+	// Un mot de passe omis ou masqué garde l'enregistré ; une chaîne vide explicite l'efface (relais sans authentification).
+	if _, sent := present["password"]; !sent || body.Password == "••••••••" {
 		existing := mailer.Load(h.DB)
 		body.Password = existing.Password
 	}

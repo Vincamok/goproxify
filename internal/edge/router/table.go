@@ -10,13 +10,48 @@ import (
 	"sync/atomic"
 )
 
-// Table est la table de routage de la passerelle.
-// Toutes les opérations sont thread-safe et sans verrou de lecture (sync.Map).
-type Table struct {
+// tableData est le contenu de la table à un instant donné. Replace en construit un neuf et le publie d'un
+// coup : une sync.Map ne se copie pas, et un lecteur ne doit jamais voir un mélange de l'ancien et du nouveau.
+type tableData struct {
 	routes sync.Map // key: route.ID → *Route
 	byHost sync.Map // key: host      → *Route  (HTTP uniquement)
 	byPort sync.Map // key: port(int) → *Route  (TCP/UDP uniquement)
 	count  atomic.Int64
+}
+
+// Table est la table de routage de la passerelle. Les lectures sont thread-safe et sans verrou ; les écritures
+// (Upsert, Delete, Replace) sont sérialisées entre elles, ce qui évite qu'une mise à jour tombe dans le contenu
+// que Replace vient de remplacer. La valeur zéro est utilisable.
+type Table struct {
+	data atomic.Pointer[tableData]
+	mu   sync.Mutex // sérialise les écritures
+
+	onChange atomic.Pointer[func()] // appelé après chaque modification de la table
+}
+
+// d retourne le contenu courant, créé au premier usage.
+func (t *Table) d() *tableData {
+	if d := t.data.Load(); d != nil {
+		return d
+	}
+	t.data.CompareAndSwap(nil, &tableData{})
+	return t.data.Load()
+}
+
+// SetOnChange enregistre une fonction appelée après chaque Upsert, Delete ou Replace (rapprochement des
+// écouteurs TCP/UDP avec la table). Elle doit être rapide et ne pas bloquer.
+func (t *Table) SetOnChange(fn func()) {
+	if fn == nil {
+		t.onChange.Store(nil)
+		return
+	}
+	t.onChange.Store(&fn)
+}
+
+func (t *Table) changed() {
+	if fn := t.onChange.Load(); fn != nil {
+		(*fn)()
+	}
 }
 
 func hostKey(h string) string {
@@ -25,64 +60,83 @@ func hostKey(h string) string {
 	return h
 }
 
-// Upsert ajoute ou remplace une route atomiquement.
-func (t *Table) Upsert(r *Route) {
-	prev, loaded := t.routes.Swap(r.ID, r)
-	if loaded {
-		old := prev.(*Route)
-		if old.Host != "" {
-			t.byHost.Delete(hostKey(old.Host))
-		}
-		for _, a := range old.Aliases {
-			if a != "" {
-				t.byHost.Delete(hostKey(a))
-			}
-		}
-		if old.ListenPort > 0 {
-			t.byPort.Delete(old.ListenPort)
-		}
-	} else {
-		t.count.Add(1)
-	}
+// hostKeys liste les clés d'hôte (host et alias) d'une route.
+func hostKeys(r *Route) []string {
+	keys := make([]string, 0, 1+len(r.Aliases))
 	if r.Host != "" {
-		t.byHost.Store(hostKey(r.Host), r)
+		keys = append(keys, hostKey(r.Host))
 	}
 	for _, a := range r.Aliases {
 		if a != "" {
-			t.byHost.Store(hostKey(a), r)
+			keys = append(keys, hostKey(a))
 		}
 	}
-	if r.ListenPort > 0 {
-		t.byPort.Store(r.ListenPort, r)
+	return keys
+}
+
+// upsertLocked écrit la route dans d. Les nouvelles clés sont posées avant le retrait de celles que l'ancienne
+// version possédait et que la nouvelle n'a plus : un hôte conservé n'est jamais absent de la table, même un instant.
+func (d *tableData) upsertLocked(r *Route) {
+	prev, loaded := d.routes.Swap(r.ID, r)
+	if !loaded {
+		d.count.Add(1)
 	}
+	kept := map[string]bool{}
+	for _, k := range hostKeys(r) {
+		kept[k] = true
+		d.byHost.Store(k, r)
+	}
+	if r.ListenPort > 0 {
+		d.byPort.Store(r.ListenPort, r)
+	}
+	if !loaded {
+		return
+	}
+	old := prev.(*Route)
+	for _, k := range hostKeys(old) {
+		if !kept[k] {
+			d.byHost.Delete(k)
+		}
+	}
+	if old.ListenPort > 0 && old.ListenPort != r.ListenPort {
+		d.byPort.Delete(old.ListenPort)
+	}
+}
+
+// Upsert ajoute ou remplace une route.
+func (t *Table) Upsert(r *Route) {
+	t.mu.Lock()
+	t.d().upsertLocked(r)
+	t.mu.Unlock()
+	t.changed()
 }
 
 // Delete supprime une route par son ID.
 func (t *Table) Delete(id string) bool {
-	val, loaded := t.routes.LoadAndDelete(id)
+	t.mu.Lock()
+	d := t.d()
+	val, loaded := d.routes.LoadAndDelete(id)
 	if !loaded {
+		t.mu.Unlock()
 		return false
 	}
 	r := val.(*Route)
-	if r.Host != "" {
-		t.byHost.Delete(hostKey(r.Host))
-	}
-	for _, a := range r.Aliases {
-		if a != "" {
-			t.byHost.Delete(hostKey(a))
-		}
+	for _, k := range hostKeys(r) {
+		d.byHost.Delete(k)
 	}
 	if r.ListenPort > 0 {
-		t.byPort.Delete(r.ListenPort)
+		d.byPort.Delete(r.ListenPort)
 	}
-	t.count.Add(-1)
+	d.count.Add(-1)
+	t.mu.Unlock()
+	t.changed()
 	return true
 }
 
 // DisableByIDOrHost retire de la table la route correspondant à l'ID ou au host.
 // Utilisé par le moteur de règles automatiques (disable_proxy action).
 func (t *Table) DisableByIDOrHost(idOrHost string) {
-	t.routes.Range(func(key, val any) bool {
+	t.d().routes.Range(func(key, val any) bool {
 		r := val.(*Route)
 		if r.ID == idOrHost || r.Host == idOrHost {
 			t.Delete(r.ID)
@@ -95,11 +149,11 @@ func (t *Table) DisableByIDOrHost(idOrHost string) {
 // Essaie d'abord un match exact, puis un match wildcard (*.parent.tld).
 func (t *Table) ByHost(host string) (*Route, bool) {
 	host = hostKey(host)
-	if val, ok := t.byHost.Load(host); ok {
+	if val, ok := t.d().byHost.Load(host); ok {
 		return val.(*Route), true
 	}
 	if idx := strings.IndexByte(host, '.'); idx >= 0 {
-		if val, ok := t.byHost.Load("*" + host[idx:]); ok {
+		if val, ok := t.d().byHost.Load("*" + host[idx:]); ok {
 			return val.(*Route), true
 		}
 	}
@@ -111,13 +165,13 @@ func (t *Table) ByHost(host string) (*Route, bool) {
 // un wildcard passthrough (ex: deleg-* *.domaine.fr) — requis pour la délégation inter-passerelles.
 func (t *Table) PassthroughRoute(host string) (*Route, bool) {
 	host = hostKey(host)
-	if val, ok := t.byHost.Load(host); ok {
+	if val, ok := t.d().byHost.Load(host); ok {
 		if r := val.(*Route); r.TLSPassthrough {
 			return r, true
 		}
 	}
 	if idx := strings.IndexByte(host, '.'); idx >= 0 {
-		if val, ok := t.byHost.Load("*" + host[idx:]); ok {
+		if val, ok := t.d().byHost.Load("*" + host[idx:]); ok {
 			if r := val.(*Route); r.TLSPassthrough {
 				return r, true
 			}
@@ -151,7 +205,7 @@ func HostCoveredByPattern(host, pattern string) bool {
 
 // ByPort retourne la route TCP/UDP écoutant sur ce port.
 func (t *Table) ByPort(port int) (*Route, bool) {
-	val, ok := t.byPort.Load(port)
+	val, ok := t.d().byPort.Load(port)
 	if !ok {
 		return nil, false
 	}
@@ -160,8 +214,9 @@ func (t *Table) ByPort(port int) (*Route, bool) {
 
 // All retourne toutes les routes (snapshot).
 func (t *Table) All() []*Route {
-	routes := make([]*Route, 0, t.count.Load())
-	t.routes.Range(func(_, val any) bool {
+	d := t.d()
+	routes := make([]*Route, 0, d.count.Load())
+	d.routes.Range(func(_, val any) bool {
 		routes = append(routes, val.(*Route))
 		return true
 	})
@@ -169,7 +224,7 @@ func (t *Table) All() []*Route {
 }
 
 // Len retourne le nombre de routes.
-func (t *Table) Len() int64 { return t.count.Load() }
+func (t *Table) Len() int64 { return t.d().count.Load() }
 
 // Replace remplace toute la table atomiquement (utilisé lors du chargement du cache).
 // En cas d'erreur de validation, la table courante n'est pas touchée (revue P1 #11).
@@ -179,13 +234,22 @@ func (t *Table) Replace(routes []*Route) error {
 			return fmt.Errorf("route sans ID ignorée")
 		}
 	}
-	var next Table
+	next := &tableData{}
 	for _, r := range routes {
-		next.Upsert(r)
+		next.upsertLocked(r)
 	}
-	t.routes = next.routes
-	t.byHost = next.byHost
-	t.byPort = next.byPort
-	t.count.Store(next.count.Load())
+	t.mu.Lock()
+	t.data.Store(next)
+	t.mu.Unlock()
+	t.changed()
 	return nil
+}
+
+// ByID retourne la route d'identifiant id.
+func (t *Table) ByID(id string) (*Route, bool) {
+	val, ok := t.d().routes.Load(id)
+	if !ok {
+		return nil, false
+	}
+	return val.(*Route), true
 }

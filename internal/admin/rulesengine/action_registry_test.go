@@ -17,7 +17,7 @@ func TestActionRegistry_TypesAndEdgeSet(t *testing.T) {
 	for _, m := range ActionManifests() {
 		types = append(types, m.Type)
 	}
-	want := "disable_proxy,ban_ip,notify,enable_strict,webhook_call,run_backup,run_playbook"
+	want := "disable_proxy,ban_ip,notify,enable_strict,webhook_call,run_backup,run_playbook,webhook_signed,pagerduty"
 	if strings.Join(types, ",") != want {
 		t.Fatalf("types = %v", types)
 	}
@@ -40,7 +40,7 @@ func TestActionRegistry_CoversActionFields(t *testing.T) {
 	declared := map[string]bool{"type": true}
 	for _, m := range ActionManifests() {
 		for _, f := range m.Fields {
-			declared[f.Key] = true
+			declared[strings.Split(f.Key, ".")[0]] = true // params.url declare la section params
 		}
 	}
 	for _, key := range actionJSONKeys(t) {

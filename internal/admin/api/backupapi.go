@@ -16,6 +16,7 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/audit"
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	"github.com/vincamok/goproxify/internal/admin/backup"
+	"github.com/vincamok/goproxify/internal/admin/routesecrets"
 	"github.com/vincamok/goproxify/internal/admin/importer"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
 )
@@ -269,7 +270,7 @@ func (h *BackupHandler) getProxyVersionConfig(w http.ResponseWriter, _ *http.Req
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write([]byte(v.Config))
+	_, _ = w.Write(routesecrets.Mask([]byte(v.Config), routesecrets.FromDB(h.DB)))
 }
 
 func (h *BackupHandler) restoreProxyVersion(w http.ResponseWriter, r *http.Request, versionID string) {

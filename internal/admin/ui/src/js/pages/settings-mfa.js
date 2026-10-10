@@ -32,7 +32,7 @@ pages['settings-mfa'] = async function() {
           </div>
           <div class="field">
             <label class="field-label" id="mfa-sms-apikey-label">${t('settings.mfa.api_key')}</label>
-            <input id="mfa-sms-apikey" class="input" value="${esc(sms.api_key||'')}" placeholder="AuthToken / appKey">
+            <input id="mfa-sms-apikey" class="input" type="password" autocomplete="new-password" value="${esc(sms.api_key||'')}" placeholder="AuthToken / appKey">
           </div>
           <div class="field" id="mfa-sms-secret-field">
             <label class="field-label">${t('settings.mfa.api_secret')}</label>

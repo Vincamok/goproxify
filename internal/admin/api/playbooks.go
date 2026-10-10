@@ -4,6 +4,7 @@
 package api
 
 import (
+	"github.com/vincamok/goproxify/internal/admin/rulesengine"
 	"database/sql"
 	"encoding/json"
 	"log/slog"
@@ -96,6 +97,7 @@ func (h *PlaybooksHandler) list(w http.ResponseWriter, r *http.Request) {
 		}
 		var steps []playbooks.Step
 		_ = json.Unmarshal([]byte(stepsJSON), &steps)
+		maskSteps(steps)
 		out = append(out, map[string]any{
 			"id": id, "name": name, "description": desc, "steps": steps, "enabled": enabled == 1,
 			"created_at": createdAt, "updated_at": updatedAt,
@@ -115,6 +117,10 @@ func (h *PlaybooksHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	stepsJSON, _ := json.Marshal(body.Steps)
+	if err := rulesengine.ValidateStepsJSON(stepsJSON); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	enabled := 1
 	if body.Enabled != nil && !*body.Enabled {
 		enabled = 0
@@ -143,6 +149,14 @@ func (h *PlaybooksHandler) update(w http.ResponseWriter, r *http.Request, id str
 		return
 	}
 	stepsJSON, _ := json.Marshal(body.Steps)
+	var oldSteps string
+	if h.DB.QueryRowContext(r.Context(), `SELECT steps_json FROM playbooks WHERE id=?`, id).Scan(&oldSteps) == nil {
+		stepsJSON = rulesengine.KeepStepsSecrets([]byte(oldSteps), stepsJSON)
+	}
+	if err := rulesengine.ValidateStepsJSON(stepsJSON); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	enabled := 1
 	if body.Enabled != nil && !*body.Enabled {
 		enabled = 0
@@ -241,6 +255,7 @@ func (h *PlaybooksHandler) getRun(w http.ResponseWriter, r *http.Request, id str
 	var log []playbooks.LogEntry
 	var ctxMap map[string]any
 	_ = json.Unmarshal([]byte(stepsJSON), &steps)
+	maskSteps(steps)
 	_ = json.Unmarshal([]byte(logJSON), &log)
 	_ = json.Unmarshal([]byte(contextJSON), &ctxMap)
 	item := map[string]any{
@@ -264,4 +279,11 @@ func (h *PlaybooksHandler) decideRun(w http.ResponseWriter, r *http.Request, run
 		return
 	}
 	jsonOK(w, map[string]bool{"ok": true})
+}
+
+// maskSteps remplace les secrets des actions d'un playbook par le masque avant de les renvoyer.
+func maskSteps(steps []playbooks.Step) {
+	for i := range steps {
+		steps[i].Action = rulesengine.MaskAction(steps[i].Action)
+	}
 }

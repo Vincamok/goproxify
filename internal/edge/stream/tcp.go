@@ -19,6 +19,10 @@ type TCPListener struct {
 	listener net.Listener
 	log      *slog.Logger
 	metrics  *Metrics
+
+	// Gate, si elle est définie, décide d'accepter une connexion avant tout appel au backend : false ferme la
+	// connexion. C'est le point d'accroche du hook connect des plugins.
+	Gate func(client net.Addr) bool
 }
 
 func NewTCPListener(route *router.Route, log *slog.Logger, m *Metrics) *TCPListener {
@@ -56,6 +60,9 @@ func (l *TCPListener) accept() {
 func (l *TCPListener) handle(client net.Conn) {
 	defer client.Close()
 
+	if l.Gate != nil && !l.Gate(client.RemoteAddr()) {
+		return
+	}
 	backend := pickBackend(l.route)
 	if backend == nil {
 		return

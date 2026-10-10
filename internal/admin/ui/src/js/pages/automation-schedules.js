@@ -16,6 +16,11 @@ const SCHED_PRESETS = [
 function _schedCollectAction() {
   const type = document.getElementById('re-act-type')?.value;
   const action = { type };
+  const mod = _reCollectModuleAction(type);
+  if (mod) {
+    if (mod.errors.length) throw new Error(mod.errors[0]);
+    return mod.action;
+  }
   if (type === 'disable_proxy') {
     action.proxy_id = document.getElementById('re-act-proxy-id')?.value || '';
   } else if (type === 'ban_ip') {
@@ -44,6 +49,7 @@ pages['automation-schedules'] = async function() {
   document.getElementById('topbar-actions').innerHTML =
     `<button class="btn btn-primary btn-sm" onclick="_schedOpenModal()">${t('automation.sched_new')}</button>`;
   content.innerHTML = `<p style="color:var(--text2)">${t('common.loading')}</p>`;
+  await _reLoadModuleActs();
   try { window._schedTasks = await api('GET', '/scheduled-tasks') || []; }
   catch (e) { toast(e.message, 'error'); window._schedTasks = []; }
   _schedRender();
@@ -111,11 +117,11 @@ window._schedSave = async function(id) {
   const name = document.getElementById('sched-name')?.value?.trim();
   const cronExpr = document.getElementById('sched-cron')?.value?.trim();
   if (!name || !cronExpr) { toast(t('automation.sched_fields_required'), 'error'); return; }
-  const payload = {
-    name, cron_expr: cronExpr, action: _schedCollectAction(),
-    enabled: document.getElementById('sched-enabled')?.checked !== false,
-  };
   try {
+    const payload = {
+      name, cron_expr: cronExpr, action: _schedCollectAction(),
+      enabled: document.getElementById('sched-enabled')?.checked !== false,
+    };
     if (id) await api('PUT', `/scheduled-tasks/${id}`, payload);
     else await api('POST', '/scheduled-tasks', payload);
     closeModal();

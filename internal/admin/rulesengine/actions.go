@@ -73,14 +73,8 @@ func (e *Engine) execNotify(ac ActionContext) {
 	)
 }
 
-func (e *Engine) execWebhookCall(ctx context.Context, ac ActionContext) error {
-	rawURL := ac.Rule.Action.WebhookURL
-	if rawURL == "" {
-		return fmt.Errorf("aucune webhook_url configurée pour l'action webhook_call")
-	}
-	if _, err := url.ParseRequestURI(rawURL); err != nil {
-		return fmt.Errorf("webhook_url invalide: %w", err)
-	}
+// webhookPayload est le corps JSON envoyé par les actions de webhook.
+func webhookPayload(ac ActionContext) ([]byte, error) {
 	payload := map[string]any{
 		"rule":        ac.Rule.Name,
 		"rule_id":     ac.Rule.ID,
@@ -90,7 +84,18 @@ func (e *Engine) execWebhookCall(ctx context.Context, ac ActionContext) error {
 		"detail":      ac.Detail,
 		"fired_at":    time.Now().UTC().Format(time.RFC3339),
 	}
-	body, err := json.Marshal(payload)
+	return json.Marshal(payload)
+}
+
+func (e *Engine) execWebhookCall(ctx context.Context, ac ActionContext) error {
+	rawURL := ac.Rule.Action.WebhookURL
+	if rawURL == "" {
+		return fmt.Errorf("aucune webhook_url configurée pour l'action webhook_call")
+	}
+	if _, err := url.ParseRequestURI(rawURL); err != nil {
+		return fmt.Errorf("webhook_url invalide: %w", err)
+	}
+	body, err := webhookPayload(ac)
 	if err != nil {
 		return err
 	}

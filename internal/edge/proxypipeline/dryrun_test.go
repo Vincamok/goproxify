@@ -201,8 +201,8 @@ func TestValidateRouteBasicsRejectsInvalidDetectors(t *testing.T) {
 
 func TestValidatePlugins(t *testing.T) {
 	known := map[string]plugins.Manifest{
-		"geo": {Name: "geo", Fields: []modules.Field{{Key: "header", Label: "En-tête", Kind: modules.KindText, Required: true}}},
-		"raw": {Name: "raw"},
+		"geo": {Name: "geo", Hooks: []string{"request"}, Fields: []modules.Field{{Key: "header", Label: "En-tête", Kind: modules.KindText, Required: true}}},
+		"raw": {Name: "raw", Hooks: []string{"request"}},
 	}
 	route := func(refs ...router.PluginRef) *router.Route { return &router.Route{Plugins: refs} }
 	opts := DryRunOptions{KnownPlugins: known}
@@ -223,5 +223,29 @@ func TestValidatePlugins(t *testing.T) {
 	// Sans liste de plugins connue (passerelle sans gestionnaire), seule la forme est contrôlée.
 	if errs := validatePlugins(route(router.PluginRef{Name: "quelconque"}), DryRunOptions{}); len(errs) != 0 {
 		t.Errorf("forme seule : %v", errs)
+	}
+}
+
+func TestValidatePlugins_HooksMustMatchRouteType(t *testing.T) {
+	known := map[string]plugins.Manifest{
+		"http-only": {Name: "http-only", Hooks: []string{plugins.HookRequest}},
+		"l4-only":   {Name: "l4-only", Hooks: []string{plugins.HookConnect}},
+		"both":      {Name: "both", Hooks: []string{plugins.HookRequest, plugins.HookConnect}},
+	}
+	opts := DryRunOptions{KnownPlugins: known}
+	check := func(typ router.RouteType, name string) []string {
+		return validatePlugins(&router.Route{Type: typ, Plugins: []router.PluginRef{{Name: name}}}, opts)
+	}
+	for _, c := range []struct {
+		typ  router.RouteType
+		name string
+		ok   bool
+	}{
+		{router.RouteHTTP, "http-only", true}, {router.RouteHTTP, "l4-only", false}, {router.RouteHTTP, "both", true},
+		{router.RouteTCP, "l4-only", true}, {router.RouteTCP, "http-only", false}, {router.RouteUDP, "both", true},
+	} {
+		if errs := check(c.typ, c.name); (len(errs) == 0) != c.ok {
+			t.Errorf("%s sur %s : %v", c.name, c.typ, errs)
+		}
 	}
 }

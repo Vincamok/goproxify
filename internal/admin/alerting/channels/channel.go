@@ -116,3 +116,19 @@ func strSlice(cfg map[string]any, k string) []string {
 	}
 	return nil
 }
+
+// MaskConfig masque les secrets de la configuration d'un canal (export, sorties MCP).
+func MaskConfig(typ string, cfg map[string]any) map[string]any {
+	if m, ok := ManifestOf(typ); ok && cfg != nil {
+		return m.Mask(cfg)
+	}
+	return cfg
+}
+
+// KeepConfigSecrets conserve les secrets enregistrés quand la nouvelle configuration les omet ou renvoie le masque.
+func KeepConfigSecrets(typ string, old, next map[string]any) map[string]any {
+	if m, ok := ManifestOf(typ); ok && old != nil && next != nil {
+		return m.KeepSecrets(old, next)
+	}
+	return next
+}

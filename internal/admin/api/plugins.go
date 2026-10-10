@@ -113,76 +113,88 @@ func (h *PluginsHandler) get(w http.ResponseWriter, r *http.Request, name string
 	jsonOK(w, info)
 }
 
-// install crée (POST) ou remplace (PUT) un plugin. Le module est compilé et son contrat vérifié avant
-// tout enregistrement : un plugin refusé par une passerelle ne doit pas pouvoir être stocké.
+// install crée (POST) ou remplace (PUT) un plugin.
 func (h *PluginsHandler) install(w http.ResponseWriter, r *http.Request, name string) {
 	var req pluginRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&req); err != nil {
 		writeErr(w, r, http.StatusBadRequest, "api.err.json")
 		return
 	}
-	if name != "" && req.Manifest.Name != name {
-		http.Error(w, "le nom du manifeste doit être celui de l'URL", http.StatusBadRequest)
+	info, created, ierr := h.installPackage(r.Context(), req, name)
+	if ierr != nil {
+		http.Error(w, ierr.msg, ierr.status)
 		return
 	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(info)
+}
+
+// installError est un échec d'installation avec le statut HTTP à renvoyer.
+type installError struct {
+	status int
+	msg    string
+}
+
+// installPackage valide et enregistre un paquet de plugin, puis le pousse aux passerelles. name vide : création
+// (409 si le nom existe) ; sinon remplacement (404 si absent, 400 si le manifeste porte un autre nom). Le module
+// est compilé et son contrat vérifié avant tout enregistrement : un plugin refusé par une passerelle ne doit pas
+// pouvoir être stocké. Partagé par l'API et l'installation depuis un dépôt.
+func (h *PluginsHandler) installPackage(ctx context.Context, req pluginRequest, name string) (PluginInfo, bool, *installError) {
+	fail := func(status int, msg string) (PluginInfo, bool, *installError) {
+		return PluginInfo{}, false, &installError{status, msg}
+	}
+	if name != "" && req.Manifest.Name != name {
+		return fail(http.StatusBadRequest, "le nom du manifeste doit être celui de l'URL")
+	}
 	if len(req.Wasm) == 0 || len(req.Wasm) > maxPluginWasmBytes {
-		http.Error(w, "module .wasm requis (2 Mio au plus)", http.StatusBadRequest)
-		return
+		return fail(http.StatusBadRequest, "module .wasm requis (2 Mio au plus)")
 	}
 	sum := sha256.Sum256(req.Wasm)
 	got := hex.EncodeToString(sum[:])
 	if req.SHA256 == "" || !strings.EqualFold(req.SHA256, got) {
-		http.Error(w, "sha256 requis et égal à l'empreinte du module ("+got+")", http.StatusBadRequest)
-		return
+		return fail(http.StatusBadRequest, "sha256 requis et égal à l'empreinte du module ("+got+")")
 	}
-	p, err := plugins.Load(r.Context(), req.Manifest, req.Wasm, got, h.Log)
+	p, err := plugins.Load(ctx, req.Manifest, req.Wasm, got, h.Log)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return fail(http.StatusBadRequest, err.Error())
 	}
 	manifest := p.Manifest
-	p.Close(r.Context())
-	signedBy, sigErr := verifyPluginSignature(r.Context(), h.DB, manifest, got, req.Signature)
+	p.Close(ctx)
+	signedBy, sigErr := verifyPluginSignature(ctx, h.DB, manifest, got, req.Signature)
 	if sigErr != "" {
-		http.Error(w, sigErr, http.StatusBadRequest)
-		return
+		return fail(http.StatusBadRequest, sigErr)
 	}
 
 	mb, _ := json.Marshal(manifest)
 	var exists int
-	_ = h.DB.QueryRowContext(r.Context(), `SELECT COUNT(1) FROM plugins WHERE name=?`, manifest.Name).Scan(&exists)
+	_ = h.DB.QueryRowContext(ctx, `SELECT COUNT(1) FROM plugins WHERE name=?`, manifest.Name).Scan(&exists)
 	if name == "" && exists > 0 {
-		http.Error(w, "un plugin de ce nom existe déjà (PUT pour le remplacer)", http.StatusConflict)
-		return
+		return fail(http.StatusConflict, "un plugin de ce nom existe déjà (PUT pour le remplacer)")
 	}
 	if name != "" && exists == 0 {
-		http.Error(w, "plugin introuvable", http.StatusNotFound)
-		return
+		return fail(http.StatusNotFound, "plugin introuvable")
 	}
-	if _, err := h.DB.ExecContext(r.Context(),
+	if _, err := h.DB.ExecContext(ctx,
 		`INSERT INTO plugins (name, manifest, sha256, wasm, signed_by) VALUES (?, ?, ?, ?, ?)
 		 ON CONFLICT(name) DO UPDATE SET manifest=excluded.manifest, sha256=excluded.sha256, wasm=excluded.wasm, signed_by=excluded.signed_by, updated_at=CURRENT_TIMESTAMP`,
 		manifest.Name, string(mb), got, req.Wasm, signedBy); err != nil {
 		if !isCtxErr(err) {
 			h.Log.Error("plugins: install", "err", err)
 		}
-		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
-		return
+		return fail(http.StatusInternalServerError, "erreur interne")
 	}
 	action := "create"
 	if exists > 0 {
 		action = "update"
 	}
-	_ = admindb.WriteAudit(h.DB, adminauth.UserIDFromContext(r.Context()), action, "plugin:"+manifest.Name, got)
+	_ = admindb.WriteAudit(h.DB, adminauth.UserIDFromContext(ctx), action, "plugin:"+manifest.Name, got)
 	h.push()
-
-	status := http.StatusCreated
-	if exists > 0 {
-		status = http.StatusOK
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(PluginInfo{Manifest: manifest, SHA256: got, SignedBy: signedBy, Size: len(req.Wasm), UpdatedAt: time.Now().UTC()})
+	return PluginInfo{Manifest: manifest, SHA256: got, SignedBy: signedBy, Size: len(req.Wasm), UpdatedAt: time.Now().UTC()}, exists == 0, nil
 }
 
 func (h *PluginsHandler) remove(w http.ResponseWriter, r *http.Request, name string) {

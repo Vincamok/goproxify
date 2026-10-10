@@ -4,6 +4,7 @@
 package api
 
 import (
+	"github.com/vincamok/goproxify/internal/admin/alerting/channels"
 	"github.com/vincamok/goproxify/internal/admin/rulesengine"
 	"encoding/json"
 	"net/http"
@@ -70,6 +71,7 @@ func (h *RulesEngineHandler) exportAutomation(w http.ResponseWriter, r *http.Req
 		er.Enabled = enabled == 1
 		_ = json.Unmarshal([]byte(condJSON), &er.Condition)
 		_ = json.Unmarshal([]byte(actionJSON), &er.Action)
+		er.Action = rulesengine.MaskActionMap(er.Action)
 		out.Rules = append(out.Rules, er)
 	}
 	ruleRows.Close()
@@ -89,6 +91,7 @@ func (h *RulesEngineHandler) exportAutomation(w http.ResponseWriter, r *http.Req
 		}
 		ec.Enabled = enabled == 1
 		_ = json.Unmarshal([]byte(cfgJSON), &ec.Config)
+		ec.Config = channels.MaskConfig(ec.Type, ec.Config)
 		out.Channels = append(out.Channels, ec)
 	}
 	chanRows.Close()
@@ -142,6 +145,11 @@ func (h *RulesEngineHandler) importAutomation(w http.ResponseWriter, r *http.Req
 		}
 		condJSON, _ := json.Marshal(er.Condition)
 		actionJSON, _ := json.Marshal(er.Action)
+		// Un export masque les secrets : à l'import, une règle existante garde les siens.
+		var oldAction string
+		if h.DB.QueryRowContext(ctx, `SELECT action_json FROM rules_engine_rules WHERE name=?`, er.Name).Scan(&oldAction) == nil {
+			actionJSON = rulesengine.KeepActionJSON([]byte(oldAction), actionJSON)
+		}
 		if rulesengine.ValidateActionJSON(actionJSON) != nil {
 			summary["rules_rejected"]++
 			continue
@@ -177,13 +185,18 @@ func (h *RulesEngineHandler) importAutomation(w http.ResponseWriter, r *http.Req
 		if ec.Name == "" || ec.Type == "" {
 			continue
 		}
-		cfgJSON, _ := json.Marshal(ec.Config)
 		enabled := 0
 		if ec.Enabled {
 			enabled = 1
 		}
-		var existingID string
-		err := h.DB.QueryRowContext(ctx, `SELECT id FROM alert_channels WHERE name=?`, ec.Name).Scan(&existingID)
+		var existingID, oldCfg string
+		err := h.DB.QueryRowContext(ctx, `SELECT id, config FROM alert_channels WHERE name=?`, ec.Name).Scan(&existingID, &oldCfg)
+		if err == nil {
+			var old map[string]any
+			_ = json.Unmarshal([]byte(oldCfg), &old)
+			ec.Config = channels.KeepConfigSecrets(ec.Type, old, ec.Config)
+		}
+		cfgJSON, _ := json.Marshal(ec.Config)
 		if err == nil {
 			_, execErr := h.DB.ExecContext(ctx,
 				`UPDATE alert_channels SET type=?, config=?, enabled=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,

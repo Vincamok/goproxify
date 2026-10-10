@@ -408,6 +408,8 @@ Le moteur de règles (`Admin > Automatisation > Règles automatiques`) permet de
 | `notify` | Émet une alerte via le moteur d'alertes | `notify_severity`, `notify_message` |
 | `enable_strict` | Active le mode strict Fail2Ban (max_errors=5) | `strict_duration` (défaut 30m) |
 | `webhook_call` | POST JSON générique vers une URL externe (`{rule, condition, action, detail, fired_at}`) | `webhook_url` |
+| `webhook_signed` | Même charge utile, signée HMAC-SHA256 (`X-GPX-Timestamp`, `X-GPX-Signature: sha256=…` sur `horodatage.corps`) | `params.url`, `params.secret` |
+| `pagerduty` | Événement PagerDuty Events API v2 (`dedup_key` = identifiant de la règle) | `params.routing_key`, `params.severity`, `params.url` |
 | `run_backup` | Déclenche un snapshot de sauvegarde immédiat | `backup_retention` (0 = pas de purge automatique) |
 
 ### Cooldown

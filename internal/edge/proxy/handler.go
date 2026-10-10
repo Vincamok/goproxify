@@ -598,7 +598,8 @@ func (h *Handler) applySlowStart(r *http.Request, out []*router.Backend) []*rout
 		return out
 	}
 	pref := out[0]
-	f := h.health.RampFactor(pref.URL, window)
+	now := time.Now() // un seul instant pour comparer le backend préféré à ses alternatives
+	f := h.health.rampFactorAt(pref.URL, window, now)
 	if f >= 1 || rand.Float64() < f {
 		return out
 	}
@@ -619,7 +620,7 @@ func (h *Handler) applySlowStart(r *http.Request, out []*router.Backend) []*rout
 	}
 	for k := 1; k < n; k++ {
 		alt := &h.route.Backends[(start+k)%n]
-		if alt.URL == pref.URL || !h.health.IsHealthyFor(h.route.ID, alt.URL) || h.health.RampFactor(alt.URL, window) <= f {
+		if alt.URL == pref.URL || !h.health.IsHealthyFor(h.route.ID, alt.URL) || h.health.rampFactorAt(alt.URL, window, now) <= f {
 			continue
 		}
 		metrics.Backend.SlowStartShifted.WithLabelValues(h.route.Host, pref.URL).Inc()

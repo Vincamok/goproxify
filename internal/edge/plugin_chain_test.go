@@ -4,14 +4,17 @@
 package edge
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	edgecache "github.com/vincamok/goproxify/internal/edge/cache"
@@ -178,4 +181,38 @@ func TestPlugins_SyncFromAdminPush(t *testing.T) {
 func nextPluginReq() int {
 	pluginReqSeq++
 	return pluginReqSeq
+}
+
+// Le canal HTTP interne a le même effet que le message WebSocket push_plugins.
+func TestPlugins_PushOverInternalHTTP(t *testing.T) {
+	s := pluginTestServer(t, t.TempDir())
+	wasm := pt.Static(`{"action":"deny","status":451}`)
+	sum := sha256.Sum256(wasm)
+	pkgs := []plugins.Package{{
+		Manifest: plugins.Manifest{Name: "http-push", Version: "1", APIVersion: 1, Hooks: []string{"request"}},
+		SHA256:   hex.EncodeToString(sum[:]), Wasm: wasm,
+	}}
+	body, _ := json.Marshal(pkgs)
+	rr := httptest.NewRecorder()
+	s.handlePushPlugins(rr, httptest.NewRequest(http.MethodPost, "/internal/v1/plugins", bytes.NewReader(body)))
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("code %d %s", rr.Code, rr.Body.String())
+	}
+	if r := pluginRequest(t, s, router.PluginRef{Name: "http-push"}); r.code != 451 {
+		t.Errorf("plugin non actif : %d", r.code)
+	}
+	bad := httptest.NewRecorder()
+	s.handlePushPlugins(bad, httptest.NewRequest(http.MethodPost, "/internal/v1/plugins", strings.NewReader("pas du json")))
+	if bad.Code != http.StatusBadRequest {
+		t.Errorf("corps invalide : %d", bad.Code)
+	}
+}
+
+func packageOf(m plugins.Manifest, wasm []byte) plugins.Package {
+	sum := sha256.Sum256(wasm)
+	return plugins.Package{Manifest: m, SHA256: hex.EncodeToString(sum[:]), Wasm: wasm}
+}
+
+func wasmManifest(name string) plugins.Manifest {
+	return plugins.Manifest{Name: name, Version: "1.0.0", APIVersion: 1, Hooks: []string{"request"}}
 }

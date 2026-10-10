@@ -17,6 +17,10 @@ type UDPListener struct {
 	conn    *net.UDPConn
 	log     *slog.Logger
 	metrics *Metrics
+
+	// Gate décide d'accepter un datagramme avant de le transmettre (false : ignoré). Elle est appelée pour
+	// chaque datagramme : l'appelant met en cache sa décision par client.
+	Gate func(client net.Addr) bool
 }
 
 func NewUDPListener(route *router.Route, log *slog.Logger, m *Metrics) *UDPListener {
@@ -51,6 +55,9 @@ func (l *UDPListener) loop() {
 		n, clientAddr, err := l.conn.ReadFromUDP(buf)
 		if err != nil {
 			return
+		}
+		if l.Gate != nil && !l.Gate(clientAddr) {
+			continue
 		}
 		payload := make([]byte, n)
 		copy(payload, buf[:n])

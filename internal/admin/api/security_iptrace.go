@@ -188,10 +188,15 @@ func TraceIP(ctx context.Context, db *sql.DB, qy TraceQuery) (map[string]any, er
 	if qy.matcher.sqlPrefix != nil {
 		sqlTarget = *qy.matcher.sqlPrefix
 	}
+	// Sans stats, SQLite préfère idx_logs_ts (il évite le tri) et lit toute la période : on impose
+	// idx_logs_ip_ts dès que la colonne ip est bornée.
 	if qy.matcher.scanAll {
 		// Tout un ASN : pas de borne sur la colonne ip, la sélection se fait en mémoire.
+	} else if sqlTarget.IsSingleIP() {
+		query += ` AND ip = ?`
+		args = append(args, sqlTarget.Addr().String())
 	} else if lo, hi, ok := security.TraceIPRange(sqlTarget); ok {
-		query += ` AND ip >= ? AND ip < ?`
+		query = strings.Replace(query, "FROM logs", "FROM logs INDEXED BY idx_logs_ip_ts", 1) + ` AND ip >= ? AND ip < ?`
 		args = append(args, lo, hi)
 	}
 	rows, err := db.QueryContext(ctx, query+` ORDER BY ts ASC`, args...)

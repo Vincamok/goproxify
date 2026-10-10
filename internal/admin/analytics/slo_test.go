@@ -6,6 +6,7 @@ package analytics
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -126,5 +127,31 @@ func TestSLOTargetPerNode(t *testing.T) {
 	}
 	if got := LoadSLOTarget(ctx, d, "paris-01"); got != 99 {
 		t.Fatalf("après ClearSLOTarget, retour au global (99) attendu, got %v", got)
+	}
+}
+
+// Le SLO compte 30 jours de logs à chaque affichage : la lecture de la table dépassait le délai
+// de 30 s de la passerelle devant l'Admin (502).
+func TestSLOCountUsesCoveringIndex(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d.Close() })
+	w, args := where(Params{From: time.Now().AddDate(0, 0, -30), To: time.Now()})
+	rows, err := d.Query(`EXPLAIN QUERY PLAN SELECT COUNT(*), COALESCE(SUM(CASE WHEN status >= 500 THEN 1 ELSE 0 END),0) FROM logs `+w, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var plan string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		rows.Scan(&id, &parent, &unused, &detail) //nolint:errcheck
+		plan += detail + "\n"
+	}
+	if !strings.Contains(plan, "COVERING INDEX idx_logs_access_ts_status") {
+		t.Fatalf("plan SLO sans index couvrant :\n%s", plan)
 	}
 }

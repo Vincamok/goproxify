@@ -256,7 +256,7 @@ func (h *DomainsHandler) list(w http.ResponseWriter, r *http.Request) {
 		}
 		var creds any
 		if err := json.Unmarshal([]byte(credJSON), &creds); err == nil {
-			d.DNSCredentials = creds
+			d.DNSCredentials = maskDNSCreds(d.DNSProvider, creds)
 		}
 		result = append(result, d)
 	}
@@ -296,7 +296,7 @@ func (h *DomainsHandler) get(w http.ResponseWriter, r *http.Request, id string) 
 	}
 	var creds any
 	if err := json.Unmarshal([]byte(credJSON), &creds); err == nil {
-		d.DNSCredentials = creds
+		d.DNSCredentials = maskDNSCreds(d.DNSProvider, creds)
 	}
 	jsonOK(w, d)
 }
@@ -311,6 +311,7 @@ func (h *DomainsHandler) create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}
+	req.DNSCredentials = keepDNSCreds(req.DNSProvider, req.DNSProvider, "{}", req.DNSCredentials)
 	credJSON := "{}"
 	if req.DNSCredentials != nil {
 		if b, err := json.Marshal(req.DNSCredentials); err == nil {
@@ -389,6 +390,10 @@ func (h *DomainsHandler) update(w http.ResponseWriter, r *http.Request, id strin
 	if msg := certMethodError(req.Domain, req.CertMethod); msg != "" {
 		http.Error(w, msg, http.StatusBadRequest)
 		return
+	}
+	var oldProvider, oldCreds string
+	if err := h.DB.QueryRowContext(r.Context(), `SELECT dns_provider, dns_credentials FROM domains WHERE id=?`, id).Scan(&oldProvider, &oldCreds); err == nil {
+		req.DNSCredentials = keepDNSCreds(oldProvider, req.DNSProvider, oldCreds, req.DNSCredentials)
 	}
 	credJSON := "{}"
 	if req.DNSCredentials != nil {

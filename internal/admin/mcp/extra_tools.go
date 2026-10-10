@@ -643,7 +643,7 @@ func (h *Handler) toolListScheduledTasks(r *http.Request) (any, error) {
 			continue
 		}
 		item := map[string]any{
-			"id": id, "name": name, "cron_expr": cronExpr, "action": json.RawMessage(actionJSON),
+			"id": id, "name": name, "cron_expr": cronExpr, "action": json.RawMessage(rulesengine.MaskActionRaw([]byte(actionJSON))),
 			"enabled": enabled == 1, "created_at": createdAt,
 		}
 		if lastRun.Valid {
@@ -694,6 +694,10 @@ func (h *Handler) toolUpdateScheduledTask(r *http.Request, args map[string]any) 
 		return nil, err
 	}
 	actionJSON, _ := json.Marshal(args["action"])
+	var oldAction string
+	if h.DB.QueryRowContext(r.Context(), `SELECT action_json FROM scheduled_tasks WHERE id=?`, id).Scan(&oldAction) == nil {
+		actionJSON = rulesengine.KeepActionJSON([]byte(oldAction), actionJSON)
+	}
 	if err := rulesengine.ValidateActionJSON(actionJSON); err != nil {
 		return nil, err
 	}
@@ -783,7 +787,7 @@ func (h *Handler) toolListPlaybooks(r *http.Request) (any, error) {
 			continue
 		}
 		out = append(out, map[string]any{
-			"id": id, "name": name, "description": desc, "steps": json.RawMessage(stepsJSON),
+			"id": id, "name": name, "description": desc, "steps": json.RawMessage(rulesengine.MaskStepsRaw([]byte(stepsJSON))),
 			"enabled": enabled == 1, "created_at": createdAt, "updated_at": updatedAt,
 		})
 	}
@@ -803,6 +807,9 @@ func (h *Handler) toolCreatePlaybook(r *http.Request, args map[string]any) (any,
 		return nil, fmt.Errorf("steps est requis (au moins une étape)")
 	}
 	stepsJSON, _ := json.Marshal(steps)
+	if err := rulesengine.ValidateStepsJSON(stepsJSON); err != nil {
+		return nil, err
+	}
 	description, _ := args["description"].(string)
 	enabled := 1
 	if e, ok := args["enabled"].(bool); ok && !e {
@@ -828,6 +835,13 @@ func (h *Handler) toolUpdatePlaybook(r *http.Request, args map[string]any) (any,
 		return nil, fmt.Errorf("steps est requis (au moins une étape)")
 	}
 	stepsJSON, _ := json.Marshal(steps)
+	var oldSteps string
+	if h.DB.QueryRowContext(r.Context(), `SELECT steps_json FROM playbooks WHERE id=?`, id).Scan(&oldSteps) == nil {
+		stepsJSON = rulesengine.KeepStepsSecrets([]byte(oldSteps), stepsJSON)
+	}
+	if err := rulesengine.ValidateStepsJSON(stepsJSON); err != nil {
+		return nil, err
+	}
 	description, _ := args["description"].(string)
 	enabled := 1
 	if e, ok := args["enabled"].(bool); ok && !e {
@@ -923,7 +937,7 @@ func (h *Handler) toolGetPlaybookRun(r *http.Request, runID string) (any, error)
 	}
 	item := map[string]any{
 		"id": runID, "playbook_id": playbookID, "playbook_name": playbookName,
-		"steps": json.RawMessage(stepsJSON), "current_step": step, "status": status,
+		"steps": json.RawMessage(rulesengine.MaskStepsRaw([]byte(stepsJSON))), "current_step": step, "status": status,
 		"log": json.RawMessage(logJSON), "context": json.RawMessage(contextJSON),
 		"started_at": startedAt, "updated_at": updatedAt,
 	}

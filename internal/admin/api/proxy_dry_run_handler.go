@@ -45,6 +45,7 @@ func (h *ProxiesHandler) dryRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusBadRequest, "api.err.json_body")
 		return
 	}
+	body.Config, _ = h.restoreSecrets(r.Context(), body.ID, body.Config)
 	var route router.Route
 	if err := json.Unmarshal(body.Config, &route); err != nil {
 		jsonOK(w, dryRunResponse{Checks: []dryRunCheck{{Check: "syntax", Status: "error", Message: "Config illisible : " + err.Error()}}})

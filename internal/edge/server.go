@@ -100,6 +100,7 @@ type Server struct {
 
 	mu            sync.Mutex
 	tcpPorts      map[string]interface{ Stop() }
+	l4            l4State // rapprochement des écouteurs TCP/UDP avec la table (l4.go)
 	pushedTracing string // endpoint OTLP poussé par Admin (utilisé si cfg.Engine.TracingEndpoint est vide)
 	activeTracing string // endpoint OTLP réellement exporté (démarrage ou poussé par Admin)
 
@@ -461,6 +462,9 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Sync pools discovery depuis les passerelles pairs (LB cross-passerelle)
 	s.startPeerSyncLoop(ctx)
+	// Écouteurs TCP/UDP des routes L4 : suivent la table, et se rouvrent après un redémarrage sans l'Admin.
+	s.table.SetOnChange(s.scheduleL4Sync)
+	s.scheduleL4Sync()
 	s.startQuotaSyncLoop(ctx)
 
 	// Restauration des profils comportementaux WAF depuis le snapshot disque.
@@ -468,7 +472,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Moteur Fail2Ban — autonome, lit les access logs, bans locaux.
 	s.f2bEngine = edgef2b.New()
-	s.f2bEngine.UpdateConfig(edgef2b.LoadConfig(""))
+	s.f2bEngine.UpdateConfig(s.loadF2BConfig())
 	s.f2bEngine.OnBan = s.onF2BBan
 	s.accessLog.SetF2BTap(s.feedF2B)
 	s.f2bEngine.Start(ctx)
@@ -567,6 +571,7 @@ func (s *Server) Stop(ctx context.Context) {
 	if s.clusterGroup != nil {
 		s.clusterGroup.Stop()
 	}
+	s.l4.stop()
 	s.mu.Lock()
 	for _, l := range s.tcpPorts {
 		l.Stop()

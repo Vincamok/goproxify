@@ -4,6 +4,7 @@
 package edge
 
 import (
+	"github.com/vincamok/goproxify/internal/edge/plugins"
 	"bytes"
 	"context"
 	"crypto/subtle"
@@ -116,6 +117,10 @@ type agentContainerPayload struct {
 	CORS           json.RawMessage `json:"cors"`
 	GeoIP          json.RawMessage `json:"geo_ip"`
 	SnippetIDs     []string        `json:"snippet_ids"`
+	Plugins        []router.PluginRef `json:"plugins"`
+	// LabelErrors : labels de sécurité que l'agent n'a pas su lire ; la route est refusée plutôt que servie sans
+	// la protection demandée.
+	LabelErrors []string `json:"label_errors"`
 	AuthProviderID string          `json:"auth_provider_id"`
 	WAF            json.RawMessage `json:"waf"`
 	Bot            json.RawMessage `json:"bot"`
@@ -314,6 +319,24 @@ func (s *Server) handleAgentContainerStart(w http.ResponseWriter, r *http.Reques
 	p.Aliases = filterEmptyStrings(p.Aliases)
 	if p.Host == "" || len(p.Backends) == 0 {
 		http.Error(w, "host et backends requis", http.StatusBadRequest)
+		return
+	}
+	// La sécurité issue des labels est validée avant tout changement : une route ne doit pas être
+	// enregistrée (ni une route existante modifiée) avec un filtre ou un WAF mal configuré.
+	geoDB := ""
+	if s.cfg != nil {
+		geoDB = s.cfg.GeoIP.DBPath
+	}
+	var knownPlugins map[string]plugins.Manifest
+	if s.pluginMgr != nil {
+		knownPlugins = map[string]plugins.Manifest{}
+		for _, info := range s.pluginMgr.List() {
+			knownPlugins[info.Manifest.Name] = info.Manifest
+		}
+	}
+	if errs := discoverySecurityErrors(&p, geoDB, knownPlugins); len(errs) > 0 {
+		s.log.Error("agent: sécurité des labels invalide, route refusée", "host", p.Host, "container", p.ContainerID, "agent", p.AgentName, "errors", strings.Join(errs, " ; "))
+		http.Error(w, "sécurité des labels invalide : "+strings.Join(errs, " ; "), http.StatusUnprocessableEntity)
 		return
 	}
 	// Relay passerelle→Passerelle : après traitement local, propager aux passerelles déléguées qui couvrent ce host.

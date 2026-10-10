@@ -1789,3 +1789,7 @@ Les erreurs suivent le standard JSON-RPC 2.0 :
 | -32002  | Ressource introuvable    |
 
 Les erreurs d'outil (proxy introuvable, backend SQL) sont retournées avec `isError: true` dans le contenu, sans code d'erreur JSON-RPC — le LLM reçoit le message et peut proposer une correction. Les refus d'autorisation (`scope insuffisant`, `accès réservé aux administrateurs`, `outil sans scope déclaré`) suivent le même format, voir [Contrôle d'accès des outils](#contrôle-daccès-des-outils).
+
+**Secrets (Admin `0.135.0`)** : `list_rules`, `export_automation`, les planifications et les playbooks renvoient les secrets des actions (`webhook_signed`, `pagerduty`) et des canaux d'alerte sous la forme `••••••••` ; `import_automation` et les mises à jour conservent la valeur enregistrée quand le secret est omis ou masqué.
+
+`get_proxy` renvoie la configuration de la route avec ses secrets (OIDC, LDAP, URL signées, Basic, plugins…) sous la forme `••••••••` (Admin `0.135.2`).

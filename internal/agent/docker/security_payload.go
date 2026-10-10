@@ -16,20 +16,46 @@ func AttachSecurityPayload(payload map[string]any, spec *ProxySpec) {
 		return
 	}
 
+	// Un label de sécurité présent mais illisible ne doit jamais donner une route sans cette protection :
+	// les erreurs sont envoyées à la passerelle, qui refuse la route (label_errors).
+	var labelErrors []string
+	bad := func(label, value string) {
+		if strings.TrimSpace(value) != "" {
+			labelErrors = append(labelErrors, "goproxify."+label+"="+value+" : valeur illisible")
+		}
+	}
+	offWord := func(v string) bool { // « désactivé » explicite : pas une erreur
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "false", "0", "off", "no", "none", "disabled":
+			return true
+		}
+		return false
+	}
+
 	// Sécurité réseau
 	if rl := labels.ParseRateLimit(spec.RateLimit); rl != nil {
 		payload["rate_limit"] = rl
+	} else {
+		bad("rate_limit", spec.RateLimit)
 	}
 	if ipf := labels.ParseIPFilter(spec.IPFilter); ipf != nil {
 		payload["ip_filter"] = ipf
+	} else {
+		bad("ip_filter", spec.IPFilter)
 	}
 	if cors := labels.ParseCORS(spec.CORS); cors != nil {
 		payload["cors"] = cors
+	} else {
+		bad("cors", spec.CORS)
 	}
 	if geo := labels.ParseGeoIP(spec.GeoIP); geo != nil {
 		payload["geo_ip"] = geo
+	} else {
+		bad("geo_ip", spec.GeoIP)
 	}
-	if waf := labels.ParseWAF(spec.WAF); waf != nil {
+	if waf := labels.ParseWAF(spec.WAF); waf == nil && !offWord(spec.WAF) {
+		bad("waf", spec.WAF)
+	} else if waf != nil {
 		labels.ParseWAFExtended(waf, spec.WAFAnomalyThreshold, spec.WAFMaxBodyMB,
 			spec.WAFBehaviorWindow, spec.WAFBehaviorThreshold,
 			spec.WAFExcludeIDs, spec.WAFTrustedProxies, spec.WAFBehavior)
@@ -38,12 +64,16 @@ func AttachSecurityPayload(payload map[string]any, spec *ProxySpec) {
 	if bot := labels.ParseBot(spec.Bot); bot != nil {
 		labels.ParseBotMode(bot, spec.BotMode)
 		payload["bot"] = bot
+	} else if !offWord(spec.Bot) {
+		bad("bot", spec.Bot)
 	}
 	if spec.LimitConn > 0 {
 		payload["limit_conn"] = map[string]any{"max_per_ip": spec.LimitConn}
 	}
 	if bp := labels.ParseBackpressure(spec.Backpressure); bp != nil {
 		payload["backpressure"] = bp
+	} else {
+		bad("backpressure", spec.Backpressure)
 	}
 
 	// Authentification
@@ -57,15 +87,33 @@ func AttachSecurityPayload(payload map[string]any, spec *ProxySpec) {
 		if jc := labels.ParseJWT(v, spec.JWTIssuer, spec.JWTAudience); jc != nil {
 			payload["jwt"] = jc
 		} else {
-			slog.Warn("label goproxify.jwt ignoré : une URL JWKS (https://…) est attendue, la route n'est PAS protégée", "host", spec.Host)
+			slog.Warn("label goproxify.jwt invalide : une URL JWKS (https://…) est attendue, la route est refusée", "host", spec.Host)
+			bad("jwt", v)
 		}
 	}
 	if v := strings.TrimSpace(spec.MTLS); v != "" {
 		if mc := labels.ParseMTLS(v); mc != nil {
 			payload["mtls"] = mc
 		} else {
-			slog.Warn("label goproxify.mtls ignoré : le chemin d'un fichier CA est attendu, la route n'est PAS protégée", "host", spec.Host)
+			slog.Warn("label goproxify.mtls invalide : le chemin d'un fichier CA est attendu, la route est refusée", "host", spec.Host)
+			bad("mtls", v)
 		}
+	}
+
+	// Plugins WASM : goproxify.plugins=a,b ; goproxify.plugin.a.<clé>=<valeur>.
+	if names := labels.ParseCSVIDs(spec.Plugins); len(names) > 0 {
+		refs := make([]map[string]any, 0, len(names))
+		for _, n := range names {
+			ref := map[string]any{"name": n}
+			if cfg := spec.PluginConfig[n]; len(cfg) > 0 {
+				ref["config"] = cfg
+			}
+			refs = append(refs, ref)
+		}
+		payload["plugins"] = refs
+	}
+	if len(labelErrors) > 0 {
+		payload["label_errors"] = labelErrors
 	}
 
 	// Comportement HTTP

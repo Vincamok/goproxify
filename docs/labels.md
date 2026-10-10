@@ -79,6 +79,10 @@ L'Agent GoProxify détecte automatiquement les conteneurs portant `goproxify.ena
 | `goproxify.geo_ip` | `"allow:FR,DE"` \| `"deny:CN,RU"` | Filtrage géographique par code pays ISO 3166-1. |
 | `goproxify.snippets` | `"waf-default,headers-secure"` | IDs de snippets de sécurité définis dans l'Admin (CSV). |
 | `goproxify.auth_provider` | `"authentik-prod"` | ID du fournisseur d'authentification configuré dans l'Admin. |
+| `goproxify.plugins` | `"geo-headers,audit"` | Plugins WebAssembly installés (CSV, dans l'ordre d'exécution). Voir [plugins.md](plugins.md). |
+| `goproxify.plugin.<nom>.<clé>` | `"X-Geo"`, `"true"`, `"5"` | Configuration du plugin `<nom>` ; `true`/`false` et les nombres gardent leur type. Validée par le manifeste du plugin s'il est installé sur la passerelle. |
+
+> **Un label de sécurité illisible refuse la route.** Si `ip_filter`, `geo_ip`, `waf`, `bot`, `rate_limit`, `cors`, `backpressure`, `jwt` ou `mtls` est présent mais ne peut pas être lu (valeur sans adresse, URL JWKS manquante, mode inconnu…), l'agent le signale et la passerelle répond `422` : la route n'est pas enregistrée, plutôt que servie sans la protection demandée (avant Agent `0.9.3`, certains de ces labels étaient ignorés en silence). `false`, `0`, `off`, `no`, `none` et `disabled` désactivent explicitement `waf` et `bot`. La passerelle valide aussi le contenu (mode, CIDR, code pays, expression WAF) comme le dry-run d'un proxy ; un snippet ou un plugin pas encore poussé par l'Admin n'est pas une erreur (la route refuse le trafic, `503`, jusqu'à son arrivée).
 
 ---
 

@@ -754,6 +754,9 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/api/v1/error-page-templates/", adminOnly(errorPagesH))
 	mux.Handle("/api/v1/portal-page-templates", adminOnly(portalPagesH))
 	mux.Handle("/api/v1/portal-page-templates/", adminOnly(portalPagesH))
+	pluginReposH := &api.PluginReposHandler{DB: s.db, Log: s.log, Plugins: pluginsH}
+	mux.Handle("/api/v1/plugin-repos", adminOnly(pluginReposH))
+	mux.Handle("/api/v1/plugin-repos/", adminOnly(pluginReposH))
 	mux.Handle("/api/v1/plugin-keys", adminOnly(&api.PluginKeysHandler{DB: s.db, Log: s.log}))
 	mux.Handle("/api/v1/plugin-keys/", adminOnly(&api.PluginKeysHandler{DB: s.db, Log: s.log}))
 	mux.Handle("/api/v1/plugins", adminOnly(pluginsH))

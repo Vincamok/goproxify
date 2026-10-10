@@ -47,8 +47,9 @@ func section(id byte, content []byte) []byte {
 }
 
 type Fn struct {
-	Typ  int
-	Body []byte // instructions, sans `end` final
+	Typ    int
+	Body   []byte // instructions, sans `end` final
+	Locals []byte // déclarations de locales déjà encodées (nil = aucune)
 }
 
 type Spec struct {
@@ -58,6 +59,13 @@ type Spec struct {
 	ExportsFn map[string]int
 	DataAt    int
 	Data      []byte
+	Segments  []Segment // segments de données supplémentaires
+}
+
+// Segment est un segment de données actif de la mémoire 0.
+type Segment struct {
+	At   int
+	Data []byte
 }
 
 var (
@@ -71,7 +79,7 @@ func I32(v int32) []byte { return append([]byte{0x41}, sleb(int64(v))...) }
 
 func (s Spec) Build() []byte {
 	b := []byte("\x00asm\x01\x00\x00\x00")
-	b = append(b, section(1, vec(typeAlloc, typeHook, typeLog))...)
+	b = append(b, section(1, vec(typeAlloc, typeHook, typeLog, typeIncr, typeGet, typeSet, typeFetch))...)
 	if len(s.Imports) > 0 {
 		b = append(b, section(2, vec(s.Imports...))...)
 	}
@@ -89,17 +97,29 @@ func (s Spec) Build() []byte {
 	b = append(b, section(7, vec(exps...))...)
 	var bodies [][]byte
 	for _, f := range s.Funcs {
-		Body := append([]byte{0x00}, f.Body...) // aucune déclaration de locale
+		decl := f.Locals
+		if decl == nil {
+			decl = []byte{0x00} // aucune déclaration de locale
+		}
+		Body := append(append([]byte{}, decl...), f.Body...)
 		Body = append(Body, 0x0b)
 		bodies = append(bodies, append(uleb(uint64(len(Body))), Body...))
 	}
 	b = append(b, section(10, vec(bodies...))...)
+	segs := s.Segments
 	if len(s.Data) > 0 {
-		seg := append([]byte{0x00}, I32(int32(s.DataAt))...)
-		seg = append(seg, 0x0b)
-		seg = append(seg, uleb(uint64(len(s.Data)))...)
-		seg = append(seg, s.Data...)
-		b = append(b, section(11, vec(seg))...)
+		segs = append([]Segment{{At: s.DataAt, Data: s.Data}}, segs...)
+	}
+	if len(segs) > 0 {
+		var encoded [][]byte
+		for _, sg := range segs {
+			seg := append([]byte{0x00}, I32(int32(sg.At))...)
+			seg = append(seg, 0x0b)
+			seg = append(seg, uleb(uint64(len(sg.Data)))...)
+			seg = append(seg, sg.Data...)
+			encoded = append(encoded, seg)
+		}
+		b = append(b, section(11, vec(encoded...))...)
 	}
 	return b
 }
@@ -115,8 +135,11 @@ func Static(out string) []byte {
 			{Typ: 0, Body: I32(1024)}, // alloc
 			{Typ: 1, Body: I64(packed)},
 			{Typ: 1, Body: I64(packed)},
+			{Typ: 1, Body: I64(packed)},
+			{Typ: 1, Body: I64(packed)},
+			{Typ: 1, Body: I64(packed)},
 		},
-		ExportsFn: map[string]int{"alloc": 0, "on_request": 1, "on_response": 2},
+		ExportsFn: map[string]int{"alloc": 0, "on_request": 1, "on_response": 2, "on_request_body": 3, "on_response_body": 4, "on_connect": 5},
 		DataAt:    dataAtOffset, Data: []byte(out),
 	}.Build()
 }
@@ -147,7 +170,7 @@ func Log() []byte {
 	return Spec{
 		Imports:   [][]byte{imp},
 		MemMin:    2,
-		Funcs:     []Fn{{Typ: 0, Body: I32(1024)}, {Typ: 1, Body: call}},
-		ExportsFn: map[string]int{"alloc": 1, "on_request": 2},
+		Funcs:     []Fn{{Typ: 0, Body: I32(1024)}, {Typ: 1, Body: call}, {Typ: 1, Body: call}, {Typ: 1, Body: call}, {Typ: 1, Body: call}},
+		ExportsFn: map[string]int{"alloc": 1, "on_request": 2, "on_request_body": 3, "on_response_body": 4, "on_connect": 5},
 	}.Build()
 }

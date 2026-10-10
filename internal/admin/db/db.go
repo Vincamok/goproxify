@@ -175,7 +175,8 @@ func migrate(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_logs_domain    ON logs (domain)`,
 		`CREATE INDEX IF NOT EXISTS idx_logs_ip_ts     ON logs (ip, ts)`,
 		// Prism : accès HTTP (status>0) filtrés par période ± domaine — partial indexes.
-		`CREATE INDEX IF NOT EXISTS idx_logs_access_ts ON logs (ts) WHERE status > 0`,
+		// status dans l'index : les comptages par période (SLO 30 j…) ne lisent pas la table.
+		`CREATE INDEX IF NOT EXISTS idx_logs_access_ts_status ON logs (ts, status) WHERE status > 0`,
 		`CREATE INDEX IF NOT EXISTS idx_logs_access_domain_ts ON logs (domain, ts) WHERE status > 0`,
 		// Bans IP (Fail2Ban, CrowdSec, natif)
 		`CREATE TABLE IF NOT EXISTS security_bans (
@@ -337,6 +338,14 @@ func migrate(db *sql.DB) error {
 			public_key TEXT NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+		// Dépôts de plugins (index JSON d'un serveur HTTPS)
+		`CREATE TABLE IF NOT EXISTS plugin_repos (
+			id            TEXT PRIMARY KEY,
+			name          TEXT NOT NULL,
+			url           TEXT NOT NULL UNIQUE,
+			allow_private INTEGER NOT NULL DEFAULT 0,
+			created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
 		// Profils de filtrage IP (listes publiques avec mise à jour automatique)
 		`CREATE TABLE IF NOT EXISTS ip_profiles (
 			id                TEXT PRIMARY KEY,
@@ -459,7 +468,8 @@ func migrate(db *sql.DB) error {
 		`ALTER TABLE nodes ADD COLUMN environment TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE nodes ADD COLUMN tags        TEXT NOT NULL DEFAULT '[]'`,
 		// Prism : indexes d'accès HTTP (bases déjà migrées avant l'ajout dans stmts).
-		`CREATE INDEX IF NOT EXISTS idx_logs_access_ts ON logs (ts) WHERE status > 0`,
+		`CREATE INDEX IF NOT EXISTS idx_logs_access_ts_status ON logs (ts, status) WHERE status > 0`,
+		`DROP INDEX IF EXISTS idx_logs_access_ts`, // remplacé par idx_logs_access_ts_status (même préfixe)
 		`CREATE INDEX IF NOT EXISTS idx_logs_access_domain_ts ON logs (domain, ts) WHERE status > 0`,
 		// Prism : analytics filtrées par nœud + période (évite full scan quand node_name est renseigné).
 		`CREATE INDEX IF NOT EXISTS idx_logs_analytics_node ON logs (node_name, ts) WHERE status > 0`,

@@ -33,13 +33,13 @@ var actionRegistry = modules.NewRegistry[actionModule]()
 
 // RegisterAction déclare une action.
 //
-// Les actions n'ont pas encore de gestion des secrets : une règle est relue par de nombreux endroits (liste,
-// versions, historique, export, MCP) qui renverraient le secret en clair. Un manifeste qui déclare un champ
-// secret est donc refusé au démarrage ; la gestion des secrets doit d'abord être ajoutée à ces sorties.
+// Un champ secret doit se trouver sous « params. » : toutes les sorties qui relisent une règle, une
+// planification ou un playbook masquent les secrets déclarés par le manifeste (action_secrets.go), et c'est ce
+// préfixe qui garantit qu'aucun champ secret n'a été oublié par la structure Action.
 func RegisterAction(m modules.Manifest, run ActionRun, check ActionCheck) {
 	for _, f := range m.Fields {
-		if f.Secret {
-			panic(fmt.Sprintf("rulesengine: l'action %q déclare le champ secret %q : non pris en charge", m.Type, f.Key))
+		if f.Secret && !strings.HasPrefix(f.Key, "params.") {
+			panic(fmt.Sprintf("rulesengine: l'action %q déclare le champ secret %q hors de params", m.Type, f.Key))
 		}
 	}
 	actionRegistry.Register(m, actionModule{run: run, check: check})
@@ -71,6 +71,11 @@ func (a Action) Validate() error {
 	var cfg map[string]any
 	_ = json.Unmarshal(b, &cfg)
 	delete(cfg, "type")
+	for _, f := range man.Fields {
+		if v, _ := paramsLookup(cfg, f.Key); f.Secret && v == modules.Masque {
+			return fmt.Errorf("action %s : %s est masqué : saisissez la valeur du secret", a.Type, f.Key)
+		}
+	}
 	if err := man.Validate(cfg); err != nil {
 		return fmt.Errorf("action %s : %w", a.Type, err)
 	}
@@ -162,6 +167,8 @@ func init() {
 	RegisterAction(modules.Manifest{Type: string(ActionRunPlaybook), Label: "Enchaîner un playbook",
 		Fields: []modules.Field{fld("playbook_id", "Playbook", modules.KindText, true)}},
 		func(e *Engine, ctx context.Context, ac ActionContext) error { return e.execRunPlaybook(ctx, ac) }, nil)
+
+	registerModuleActions()
 }
 
 // ValidateActionJSON valide une action sérialisée (import, MCP, planification).
@@ -171,4 +178,18 @@ func ValidateActionJSON(raw []byte) error {
 		return fmt.Errorf("action illisible : %w", err)
 	}
 	return a.Validate()
+}
+
+// paramsLookup lit un chemin pointé (« params.secret ») dans une configuration d'action.
+func paramsLookup(cfg map[string]any, path string) (string, bool) {
+	var cur any = cfg
+	for _, k := range strings.Split(path, ".") {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return "", false
+		}
+		cur = m[k]
+	}
+	s, ok := cur.(string)
+	return s, ok
 }

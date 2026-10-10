@@ -2137,12 +2137,14 @@ async function renderSecurityRules() {
   if (ta) ta.innerHTML = `<button class="btn btn-primary btn-sm" onclick="openRuleModal(null)">${t('security.rules.add')}</button>`;
 
   try {
-    const [rules, history, reMetrics, playbooks] = await Promise.all([
+    const [rules, history, reMetrics, playbooks, actTypes] = await Promise.all([
       api('GET', '/rules-engine/rules'),
       api('GET', '/rules-engine/history'),
       api('GET', '/metrics/summary').catch(() => null),
       api('GET', '/playbooks').catch(() => []),
+      api('GET', '/rules-engine/action-types').catch(() => []),
     ]);
+    _reRegisterModuleActs(actTypes);
     window._reRules = rules || [];
     window._pbList = playbooks || [];
     window._reHistory = history || [];
@@ -2315,7 +2317,7 @@ window.openRuleModal = function(ruleId) {
   const act = rule?.action || {};
 
   const condOptions = _COND_TYPES.map(c=>`<option value="${c.value}"${cond.type===c.value?' selected':''}>${c.label}</option>`).join('');
-  const actOptions = _ACTION_TYPES.map(a=>`<option value="${a.value}"${act.type===a.value?' selected':''}>${a.label}</option>`).join('');
+  const actOptions = _ACTION_TYPES.map(a=>`<option value="${a.value}"${act.type===a.value?' selected':''}>${esc(a.label)}</option>`).join('');
 
   const modal = document.createElement('div');
   modal.className = 'modal-overlay';
@@ -2419,7 +2421,33 @@ function _reCondFieldsHTML(type, cond = {}) {
   }
 }
 
+// Les actions fournies par le registre (hors liste ci-dessus) rejoignent _ACTION_TYPES : les éditeurs de
+// règles, de planifications et de playbooks les proposent alors sans code propre à chaque action.
+function _reRegisterModuleActs(types) {
+  window._reModuleActs = (types || []).filter(a => !_ACTION_TYPES.some(b => b.value === a.type && !b.module) && (a.fields || []).length);
+  for (let i = _ACTION_TYPES.length - 1; i >= 0; i--) if (_ACTION_TYPES[i].module) _ACTION_TYPES.splice(i, 1);
+  window._reModuleActs.forEach(a => _ACTION_TYPES.push({ value: a.type, label: a.label, module: true }));
+}
+
+async function _reLoadModuleActs() {
+  try { _reRegisterModuleActs(await api('GET', '/rules-engine/action-types')); } catch (e) { /* liste de base */ }
+}
+
+// Relit les champs d'une action fournie par le registre ; null si le type n'en est pas une, { errors } sinon.
+function _reCollectModuleAction(type) {
+  const mod = _reModuleAct(type);
+  if (!mod) return null;
+  const { config, errors } = ManifestForm.collect('re-mod', mod.fields, { type });
+  return { action: config, errors };
+}
+
+function _reModuleAct(type) {
+  return (window._reModuleActs || []).find(a => a.type === type);
+}
+
 function _reActFieldsHTML(type, act = {}) {
+  const mod = _reModuleAct(type);
+  if (mod) return `<div style="grid-column:span 2">${ManifestForm.render('re-mod', mod.fields, act)}</div>`;
   switch(type) {
     case 'disable_proxy': return `
       <div class="field" style="margin:0;grid-column:span 2"><label class="field-label">Proxy ID (vide = proxy issu de la condition)</label>
@@ -2497,7 +2525,11 @@ window._reCollectRule = function() {
   }
 
   const action = { type: actType };
-  if (actType === 'disable_proxy') {
+  const modAct = _reCollectModuleAction(actType);
+  if (modAct) {
+    if (modAct.errors.length) { toast(modAct.errors[0], 'error'); return null; }
+    Object.assign(action, modAct.action);
+  } else if (actType === 'disable_proxy') {
     action.proxy_id = document.getElementById('re-act-proxy-id')?.value||'';
   } else if (actType === 'ban_ip') {
     action.ban_duration = document.getElementById('re-act-ban-dur')?.value||'';

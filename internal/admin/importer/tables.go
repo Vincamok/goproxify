@@ -30,6 +30,7 @@ var backupTables = []string{
 	"auth_providers",
 	"plugins",
 	"plugin_trusted_keys",
+	"plugin_repos",
 	"ip_profiles",
 	"node_tunnel_configs",
 	"teams",
@@ -62,7 +63,7 @@ var blobColumns = map[string]bool{"error_page_assets.content": true, "plugins.wa
 // clearedColumns : colonnes dont la valeur ne doit jamais sortir de la base.
 var clearedColumns = map[string]bool{"portal_users.invite_token_hash": true}
 
-var secretFragments = []string{"secret", "password", "passwd", "token", "api_key", "apikey", "private_key", "credential", "webhook_url", "authorization"}
+var secretFragments = []string{"secret", "password", "passwd", "token", "api_key", "apikey", "private_key", "credential", "webhook_url", "authorization", "routing_key"}
 
 func isSecretKey(k string) bool {
 	k = strings.ToLower(k)

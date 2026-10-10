@@ -32,6 +32,7 @@ pages['automation-playbooks'] = async function() {
   document.getElementById('topbar-actions').innerHTML =
     `<button class="btn btn-primary btn-sm" onclick="_pbOpenModal()">${t('automation.pb_new')}</button>`;
   content.innerHTML = `<p style="color:var(--text2)">${t('common.loading')}</p>`;
+  await _reLoadModuleActs();
   try { window._pbList = await api('GET', '/playbooks') || []; }
   catch (e) { toast(e.message, 'error'); window._pbList = []; }
   _pbRender();
@@ -145,7 +146,8 @@ window._pbConfirmAddStep = function() {
   const type = window._pbAddingType;
   let step = { type };
   if (type === 'action') {
-    step.action = typeof _pbCollectAction === 'function' ? _pbCollectAction() : { type: document.getElementById('re-act-type')?.value };
+    try { step.action = typeof _pbCollectAction === 'function' ? _pbCollectAction() : { type: document.getElementById('re-act-type')?.value }; }
+    catch (e) { toast(e.message, 'error'); return; }
   } else if (type === 'condition') {
     const condType = document.getElementById('re-cond-type')?.value;
     step.condition = _pbCollectCondition(condType);
@@ -190,6 +192,11 @@ function _pbCollectCondition(condType) {
 function _pbCollectAction() {
   const type = document.getElementById('re-act-type')?.value;
   const action = { type };
+  const mod = _reCollectModuleAction(type);
+  if (mod) {
+    if (mod.errors.length) throw new Error(mod.errors[0]);
+    return mod.action;
+  }
   if (type === 'disable_proxy') action.proxy_id = document.getElementById('re-act-proxy-id')?.value || '';
   else if (type === 'ban_ip') {
     action.ban_duration = document.getElementById('re-act-ban-dur')?.value || '';

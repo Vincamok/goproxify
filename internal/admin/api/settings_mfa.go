@@ -42,7 +42,10 @@ func (h *MFASettingsHandler) getSMS(w http.ResponseWriter, r *http.Request) {
 	raw := admindb.GetSetting(h.DB, "mfa.sms", "{}")
 	var cfg mfa.SMSConfig
 	json.Unmarshal([]byte(raw), &cfg) //nolint:errcheck
-	// Masquer la clé secrète dans la réponse
+	// api_key est le jeton d'authentification Twilio / la clé OVH : secret au même titre que api_secret.
+	if cfg.APIKey != "" {
+		cfg.APIKey = "••••••••"
+	}
 	if cfg.APISecret != "" {
 		cfg.APISecret = "••••••••"
 	}
@@ -55,11 +58,13 @@ func (h *MFASettingsHandler) putSMS(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusBadRequest, "api.err.json")
 		return
 	}
-	// Si le secret est masqué (non modifié), on recharge l'existant
-	if cfg.APISecret == "••••••••" {
-		raw := admindb.GetSetting(h.DB, "mfa.sms", "{}")
-		var existing mfa.SMSConfig
-		json.Unmarshal([]byte(raw), &existing) //nolint:errcheck
+	// Un secret masqué ou omis (non modifié) garde la valeur enregistrée : modifier l'expéditeur ne doit pas l'effacer.
+	var existing mfa.SMSConfig
+	json.Unmarshal([]byte(admindb.GetSetting(h.DB, "mfa.sms", "{}")), &existing) //nolint:errcheck
+	if cfg.APIKey == "" || cfg.APIKey == "••••••••" {
+		cfg.APIKey = existing.APIKey
+	}
+	if cfg.APISecret == "" || cfg.APISecret == "••••••••" {
 		cfg.APISecret = existing.APISecret
 	}
 	b, _ := json.Marshal(cfg)

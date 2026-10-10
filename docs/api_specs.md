@@ -760,6 +760,14 @@ Plugins WebAssembly (voir [plugins.md](plugins.md), ADR 0008). **Admin uniquemen
 
 Chaque changement est poussé à toutes les passerelles (liste complète). Une route référence un plugin par `plugins: [{"name", "config"}]` ; le dry-run refuse un plugin inconnu, en double, ou une configuration qui ne respecte pas son manifeste.
 
+### `/api/v1/plugin-repos`
+
+Dépôts de plugins (voir [plugins.md](plugins.md)). Admin uniquement ; scopes PAT comme `/plugins`.
+
+- `GET` : `[{id, name, url, allow_private, created_at}]`. `POST` `{name, url, allow_private}` : `201`, `409` si l'URL existe, `400` si l'URL n'est pas HTTPS (HTTP seulement avec `allow_private`) ou vise une adresse interne sans `allow_private`. `DELETE /:id` : `204` (les plugins installés restent).
+- `GET /catalog[?repo=id]` : `{entries: [{repo_id, repo_name, name, version, description, homepage, hooks, sha256, signed, installed_version, update_available}], errors: [{repo_id, repo_name, error}]}` ; un dépôt injoignable est signalé sans bloquer les autres. Plus récente version d'abord.
+- `POST /install` `{repo_id, name, version?}` : l'index est relu côté serveur, le module téléchargé, son empreinte et sa signature vérifiées selon la politique de `/plugins` ; `201` (installé) ou `200` (remplacé), `404` (dépôt ou plugin inconnu), `400` (empreinte, signature, module ou manifeste refusés), `502` (dépôt injoignable, entrée incohérente).
+
 ### `/api/v1/plugin-keys`
 
 Clés publiques Ed25519 de confiance pour la signature des plugins. Admin uniquement ; mêmes scopes PAT que `/plugins`.
@@ -1325,6 +1333,8 @@ Liste les actions du moteur de règles, dérivées du registre de modules (ADR 0
 
 **Validation** : `POST`/`PUT /rules-engine/rules`, `POST`/`PUT /scheduled-tasks`, l'import d'automatisation et les outils MCP `create_scheduled_task`/`update_scheduled_task`/`import_automation` valident l'action — type connu, champs requis (`webhook_url` pour `webhook_call`, `playbook_id` pour `run_playbook`), `webhook_url` en http(s), durées lisibles et positives (`ban_duration`, `strict_duration`), gravité `info|warning|critical`, rétention positive — et répondent `400` (`rules_rejected` dans le résumé d'un import). Avant Admin `0.133.0`, une action invalide n'échouait qu'au déclenchement, et une `ban_duration` illisible donnait un ban **permanent**. Seules les règles dont l'action s'exécute sur une passerelle (`disable_proxy`, `ban_ip`, `notify`, `enable_strict`) lui sont poussées.
 
+**Actions à secret (Admin `0.135.0`)** : `webhook_signed` (`params.url`, `params.secret`) et `pagerduty` (`params.routing_key`, `params.severity`, `params.url`). Les secrets sont renvoyés sous la forme `••••••••` par les listes de règles, versions, approbations, planifications, playbooks (étapes et exécutions), l'export et les outils MCP ; les omettre ou renvoyer le masque à `PUT` ou à l'import conserve la valeur enregistrée, et un secret masqué à `POST` est refusé (`400`). L'export d'automatisation masque aussi les secrets des canaux d'alerte.
+
 ### `GET /api/v1/rules-engine/templates`
 
 Store de règles préconfigurées. Réponse : tableau `Template[]` (`id, category, name, description, cooldown_sec, condition, action`).
@@ -1710,3 +1720,19 @@ Codes d'erreur :
 - `GET /api/v1/alert-events?[days&limit&trigger&node]` — alertes déclenchées (30 jours conservés, plus récente d'abord) : `[{id, rule_id, rule_name, trigger, detail, channels, title, body, priority, silenced, fired_at}]` ; `node` filtre sur le nom de passerelle du détail. `silenced=true` : la règle correspondait mais un silence actif (`Automatisation > Alertes > Silences & maintenance`) a bloqué l'envoi — `channels` est alors vide. `POST /api/v1/alert-events/{id}/ack` (acquittement) est réservé aux admins / superadmins.
 - `GET /api/v1/prism/slo/config` → `{target}` ; `PUT /api/v1/prism/slo/config` `{target}` (admin, entre 90 et 99.999) — objectif SLO enregistré (réglage `slo.target`, 99.9 par défaut), utilisé par l'écran, `GET /prism/slo` sans `target`, l'outil MCP `get_prism_slo` et l'alerte `slo_burn`.
 - `GET /api/v1/prism/live-ips` renvoie en plus `city`, `lat`, `lon` (0/0 tant que l'IP n'est pas localisée).
+
+### SMTP (Admin `0.135.4`)
+
+`PUT /api/v1/settings/smtp` : `password` omis ou `••••••••` conserve la valeur enregistrée ; `"password": ""` l'efface.
+
+### SMS MFA (Admin `0.135.3`)
+
+`GET /api/v1/settings/mfa/sms` renvoie `api_key` et `api_secret` sous la forme `••••••••`. `PUT` conserve la valeur enregistrée quand un de ces champs est masqué ou omis.
+
+### Secrets d'une route (Admin `0.135.2`)
+
+Les lectures de route (`GET /api/v1/proxies`, `/{id}`, réponses de `POST`/`PUT`, `revisions/diff`, historique de versions, MCP `get_proxy`) remplacent par `••••••••` les secrets : `client_secret`, `session_secret`, `bind_password`, `challenge_secret`, `challenge_provider_secret`, `key_pem`, `secret` (URL signées), `password` (Basic), `bypass_header`, en-têtes `Authorization`/`Proxy-Authorization`/`X-Api-Key` et champs secrets de la configuration d'un plugin. `PUT` et `POST /proxies/dry-run` rétablissent la valeur de la production quand le masque est renvoyé ; un masque sans valeur d'origine est refusé (`400`).
+
+### Identifiants DNS d'un domaine (Admin `0.135.1`)
+
+`GET /api/v1/domains` et `GET /api/v1/domains/{id}` renvoient `dns_credentials` avec les champs secrets du fournisseur sous la forme `••••••••` (`api_token`, `secret_access_key`…). `PUT` conserve la valeur enregistrée quand un secret est omis ou renvoyé masqué (et quand `dns_credentials` est omis, si le fournisseur est inchangé) ; changer de fournisseur ne reprend aucun secret de l'ancien.

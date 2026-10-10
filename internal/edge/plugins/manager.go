@@ -134,6 +134,9 @@ func errOr(err error, msg string) error {
 
 // Get retourne un plugin chargé.
 func (m *Manager) Get(name string) (*Plugin, bool) {
+	if m == nil {
+		return nil, false
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	p, ok := m.plugins[name]
@@ -148,6 +151,9 @@ type Info struct {
 
 // List retourne les plugins chargés, triés par nom.
 func (m *Manager) List() []Info {
+	if m == nil {
+		return nil
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	out := make([]Info, 0, len(m.plugins))
