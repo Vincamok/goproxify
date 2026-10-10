@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/netip"
+	"sort"
 	"strings"
 
 	"github.com/vincamok/goproxify/internal/admin/asn"
@@ -27,9 +28,58 @@ const (
 type traceMatcher struct {
 	contains func(netip.Addr) bool
 	overlaps func(netip.Prefix) bool
-	// sqlPrefix borne la lecture des logs ; nil = pas de borne (tout l'ASN : le tri se fait en mémoire).
+	// sqlPrefix borne la lecture des logs ; sqlBounds (tout un ASN) la borne par plusieurs plages de la
+	// colonne ip ; sans l'un ni l'autre, scanAll lit toute la période et le tri se fait en mémoire.
 	sqlPrefix *netip.Prefix
+	sqlBounds [][2]string
 	scanAll   bool
+}
+
+// traceMaxBounds plafonne le nombre de plages d'une requête : au-delà, les plages sont regroupées par
+// premier octet (IPv4) ou premier groupe (IPv6), plus larges mais en nombre borné.
+const traceMaxBounds = 1000
+
+// asnLogBounds traduit les plages d'un ASN en bornes de la colonne ip (texte), en les élargissant au
+// préfixe qui les couvre : le surplus est écarté en mémoire par matchIP. ok vaut false si une plage ne
+// se borne pas (préfixe plus large qu'un octet).
+func asnLogBounds(ranges []asn.Range) ([][2]string, bool) {
+	bounds, ok := asnLogBoundsAt(ranges, false)
+	if ok && len(bounds) > traceMaxBounds {
+		bounds, ok = asnLogBoundsAt(ranges, true)
+	}
+	return bounds, ok && len(bounds) > 0
+}
+
+func asnLogBoundsAt(ranges []asn.Range, coarse bool) ([][2]string, bool) {
+	var bounds [][2]string
+	for _, r := range ranges {
+		p := coveringPrefix(r)
+		maxBits := 8
+		if p.Addr().Is6() {
+			maxBits = 16
+		}
+		if coarse && p.Bits() > maxBits {
+			p = netip.PrefixFrom(p.Addr(), maxBits).Masked()
+		}
+		lo, hi, ok := security.TraceIPRange(p)
+		if !ok {
+			return nil, false
+		}
+		bounds = append(bounds, [2]string{lo, hi})
+	}
+	sort.Slice(bounds, func(i, j int) bool { return bounds[i][0] < bounds[j][0] })
+	// Une borne de préfixe (« 14.102. ») englobe celles qui commencent par elle.
+	out := bounds[:0]
+	for _, b := range bounds {
+		if n := len(out); n > 0 {
+			last := out[n-1][0]
+			if b[0] == last || (strings.HasSuffix(last, ".") || strings.HasSuffix(last, ":")) && strings.HasPrefix(b[0], last) {
+				continue
+			}
+		}
+		out = append(out, b)
+	}
+	return out, true
 }
 
 func (m *traceMatcher) matchIP(target netip.Prefix, ip string) bool {
@@ -146,7 +196,8 @@ func ResolveTraceScope(ctx context.Context, db *sql.DB, store *asn.Store, qy *Tr
 		if !found {
 			return fmt.Errorf("%w : aucun ASN ne contient %s (adresse privée, réservée ou absente du jeu de données)", ErrASNUnknown, qy.Target.Addr())
 		}
-		qy.matcher = traceMatcher{contains: entry.Contains, overlaps: entry.Overlaps, scanAll: true}
+		bounds, ok := asnLogBounds(entry.Ranges)
+		qy.matcher = traceMatcher{contains: entry.Contains, overlaps: entry.Overlaps, sqlBounds: bounds, scanAll: !ok}
 		qy.ScopeLabel = fmt.Sprintf("AS%d %s", entry.ASN, entry.Name)
 	}
 
