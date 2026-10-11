@@ -4,7 +4,7 @@
 package edgews
 
 import (
-	"github.com/vincamok/goproxify/internal/admin/rulesengine"
+	edgere "github.com/vincamok/goproxify/internal/edge/rulesengine"
 	"github.com/vincamok/goproxify/internal/edge/plugins"
 	"context"
 	"database/sql"
@@ -76,6 +76,7 @@ type Manager struct {
 	liveMu         sync.RWMutex
 	portalLive     map[string][]portal.LiveSession // instantané par passerelle (node_name)
 	alertEngine    *alerting.Engine
+	automation     AutomationRules
 }
 
 // NewManager crée un Manager WS Admin→Passerelle.
@@ -1929,7 +1930,18 @@ func (m *Manager) PushCrowdSecConfig(ctx context.Context, edgeRef string, cfg an
 	}
 }
 
-// handleRuleFired reçoit un ExecLog de règle automatique depuis passerelle et le persiste en DB.
+// AutomationRules est la part du service d'automatisation qui concerne les passerelles : les flux qu'elles
+// exécutent elles-mêmes, et le journal de ce qu'elles en remontent.
+type AutomationRules interface {
+	EdgeRules(ctx context.Context) ([]edgere.Rule, error)
+	RecordEdgeFired(p edgeWS.RuleFiredPayload)
+}
+
+// SetAutomation branche le service des flux d'automatisation.
+func (m *Manager) SetAutomation(a AutomationRules) { m.automation = a }
+
+// handleRuleFired reçoit le déclenchement d'un flux exécuté par une passerelle : journal du flux, et ban
+// conservé dans security_bans pour l'agrégation.
 func (m *Manager) handleRuleFired(raw json.RawMessage) {
 	if m.db == nil || len(raw) == 0 {
 		return
@@ -1938,101 +1950,54 @@ func (m *Manager) handleRuleFired(raw json.RawMessage) {
 	if err := json.Unmarshal(raw, &p); err != nil || p.RuleID == "" {
 		return
 	}
-	detail, _ := json.Marshal(p.Detail)
-	matched, taken := 0, 0
-	if p.CondResult {
-		matched = 1
+	if m.automation != nil {
+		m.automation.RecordEdgeFired(p)
 	}
-	if p.ActionTaken {
-		taken = 1
-	}
-	m.db.Exec( //nolint:errcheck
-		`INSERT INTO rules_engine_history (rule_id, cond_result, action_taken, detail, error)
-		 VALUES (?, ?, ?, ?, ?)`,
-		p.RuleID, matched, taken, string(detail), p.Error,
-	)
-	if p.CondResult && p.ActionTaken {
-		m.db.Exec( //nolint:errcheck
-			`UPDATE rules_engine_rules SET last_fired_at=CURRENT_TIMESTAMP,
-			 fire_count=fire_count+1 WHERE id=?`, p.RuleID,
-		)
-		// Si l'action est un ban IP, persister dans security_bans pour agrégation.
-		if p.ActionType == "ban_ip" && p.Detail != nil {
-			if ip, _ := p.Detail["ip"].(string); ip != "" {
-				reason, _ := p.Detail["ban_reason"].(string)
-				expiresAt, _ := p.Detail["ban_expires_at"].(string)
-				node := p.NodeName
-				if node == "" {
-					node = "edge"
-				}
-				source := "rules_engine:" + node
-				banID := "re:" + node + ":" + ip
-				if expiresAt != "" {
-					m.db.Exec( //nolint:errcheck
-						`INSERT OR REPLACE INTO security_bans (id, ip, domain, reason, source, expires_at, edge_name)
-						 VALUES (?, ?, '', ?, ?, ?, ?)`,
-						banID, ip, reason, source, expiresAt, p.NodeName,
-					)
-				} else {
-					m.db.Exec( //nolint:errcheck
-						`INSERT OR REPLACE INTO security_bans (id, ip, domain, reason, source, edge_name)
-						 VALUES (?, ?, '', ?, ?, ?)`,
-						banID, ip, reason, source, p.NodeName,
-					)
-				}
-				m.db.Exec( //nolint:errcheck
-					`INSERT INTO security_ban_history (ip, domain, action, reason, source, ban_id, edge_name)
-					 VALUES (?, '', 'banned', ?, ?, ?, ?)`,
-					ip, reason, source, banID, p.NodeName,
-				)
-			}
-		}
-	}
-}
-
-// PushAutoRules envoie toutes les règles automatiques actives à toutes les passerelles.
-func (m *Manager) PushAutoRules(ctx context.Context) {
-	rows, err := m.db.QueryContext(ctx,
-		`SELECT id, name, description, enabled, condition_json, action_json, cooldown_sec
-		 FROM rules_engine_rules ORDER BY created_at`)
-	if err != nil {
-		m.log.Error("edgews/manager: lecture règles automatiques", "err", err)
+	if !p.CondResult || !p.ActionTaken || p.ActionType != "ban_ip" || p.Detail == nil {
 		return
 	}
-	defer rows.Close()
+	ip, _ := p.Detail["ip"].(string)
+	if ip == "" {
+		return
+	}
+	reason, _ := p.Detail["ban_reason"].(string)
+	expiresAt, _ := p.Detail["ban_expires_at"].(string)
+	node := p.NodeName
+	if node == "" {
+		node = "edge"
+	}
+	source := "automation:" + node
+	banID := "re:" + node + ":" + ip
+	if expiresAt != "" {
+		m.db.Exec( //nolint:errcheck
+			`INSERT OR REPLACE INTO security_bans (id, ip, domain, reason, source, expires_at, edge_name)
+			 VALUES (?, ?, '', ?, ?, ?, ?)`,
+			banID, ip, reason, source, expiresAt, p.NodeName,
+		)
+	} else {
+		m.db.Exec( //nolint:errcheck
+			`INSERT OR REPLACE INTO security_bans (id, ip, domain, reason, source, edge_name)
+			 VALUES (?, ?, '', ?, ?, ?)`,
+			banID, ip, reason, source, p.NodeName,
+		)
+	}
+	m.db.Exec( //nolint:errcheck
+		`INSERT INTO security_ban_history (ip, domain, action, reason, source, ban_id, edge_name)
+		 VALUES (?, '', 'banned', ?, ?, ?, ?)`,
+		ip, reason, source, banID, p.NodeName,
+	)
+}
 
-	type ruleRow struct {
-		ID          string          `json:"id"`
-		Name        string          `json:"name"`
-		Description string          `json:"description,omitempty"`
-		Enabled     bool            `json:"enabled"`
-		Condition   json.RawMessage `json:"condition"`
-		Action      json.RawMessage `json:"action"`
-		CooldownSec int             `json:"cooldown_sec"`
+// PushAutoRules envoie à toutes les passerelles la liste complète des flux qu'elles exécutent (elle remplace
+// la précédente). Appelé à la connexion d'une passerelle et à chaque modification d'un de ces flux.
+func (m *Manager) PushAutoRules(ctx context.Context) {
+	if m.automation == nil {
+		return
 	}
-	var rules []ruleRow
-	edgeActions := rulesengine.EdgeActionTypes()
-	for rows.Next() {
-		var r ruleRow
-		var condJSON, actionJSON string
-		var enabled int
-		if err := rows.Scan(&r.ID, &r.Name, &r.Description, &enabled, &condJSON, &actionJSON, &r.CooldownSec); err != nil {
-			continue
-		}
-		r.Enabled = enabled == 1
-		r.Condition = json.RawMessage(condJSON)
-		r.Action = json.RawMessage(actionJSON)
-		// Seules les règles dont l'action s'exécute sur une passerelle lui sont poussées.
-		var act struct {
-			Type string `json:"type"`
-		}
-		if json.Unmarshal([]byte(actionJSON), &act) != nil || !edgeActions[act.Type] {
-			continue
-		}
-		rules = append(rules, r)
-	}
-	if rules == nil {
-		rules = []ruleRow{}
+	rules, err := m.automation.EdgeRules(ctx)
+	if err != nil {
+		m.log.Error("edgews/manager: lecture des flux de passerelle", "err", err)
+		return
 	}
 	for _, e := range m.allEntries() {
 		e := e

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/vincamok/goproxify/internal/admin/db"
 )
@@ -32,5 +33,41 @@ func TestCooldownIsPerNode(t *testing.T) {
 	d.QueryRow(`SELECT COUNT(*) FROM alert_events`).Scan(&n)
 	if n != 2 {
 		t.Fatalf("2 alertes attendues (une par passerelle, doublon filtré), got %d", n)
+	}
+}
+
+func TestSubscribeReceivesEveryEvent(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d.Close() })
+	e := New(d, slog.Default())
+	t.Cleanup(e.Stop)
+	got := make(chan Event, 2)
+	e.Subscribe(func(ev Event) { got <- ev })
+	e.Emit(Event{Trigger: TriggerFail2BanBan, Detail: map[string]any{"ip": "1.2.3.4"}})
+	select {
+	case ev := <-got:
+		if ev.Trigger != TriggerFail2BanBan || ev.Detail["ip"] != "1.2.3.4" {
+			t.Fatalf("événement reçu : %+v", ev)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("abonné non appelé")
+	}
+}
+
+func TestTriggerOutputsOnlyKnownTriggers(t *testing.T) {
+	known := map[TriggerType]bool{}
+	for _, tr := range AllTriggers {
+		known[tr] = true
+		if TriggerLabels[tr] == "" {
+			t.Errorf("%s sans libellé", tr)
+		}
+	}
+	for tr := range TriggerOutputs {
+		if !known[tr] {
+			t.Errorf("TriggerOutputs : %s absent d'AllTriggers", tr)
+		}
 	}
 }

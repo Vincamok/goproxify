@@ -54,7 +54,13 @@ const ManifestForm = (() => {
       return `<div class="field"><label class="field-label" style="display:flex;align-items:center;gap:8px">
         <input type="checkbox" id="${id}" ${value === true ? 'checked' : ''}> ${label}</label></div>`;
     }
-    if (f.kind === 'list') {
+    if (f.kind === 'select') {
+      const opts = (f.options || []).slice();
+      if (value != null && value !== '' && !opts.some(o => o.value === String(value))) opts.push({ value: String(value), label: String(value) });
+      input = `<select id="${id}" class="input"${f.source ? ` data-source="${esc(f.source)}"` : ''}>
+        ${f.required ? '' : '<option value="">—</option>'}
+        ${opts.map(o => `<option value="${esc(o.value)}"${String(value ?? '') === o.value ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}</select>`;
+    } else if (f.kind === 'list') {
       const json = isObjectList(f, value);
       const text = json
         ? (value == null ? '' : JSON.stringify(value, null, 2))
@@ -63,15 +69,55 @@ const ManifestForm = (() => {
     } else if (f.multiline) {
       input = `<textarea id="${id}" class="input" rows="5" placeholder="${ph}">${esc(value ?? '')}</textarea>`;
     } else {
-      const type = f.kind === 'password' ? 'password' : (f.kind === 'number' ? 'number' : 'text');
-      input = `<input id="${id}" class="input" type="${type}" autocomplete="off" placeholder="${ph}" value="${esc(value ?? '')}">`;
+      // Une variable ({{detail.x}}) se saisit aussi dans un champ numérique.
+      const variable = typeof value === 'string' && value.includes('{{');
+      const type = f.kind === 'password' ? 'password' : (f.kind === 'number' && !variable ? 'number' : 'text');
+      const durPh = f.kind === 'duration' && !ph ? '5m, 1h, 30s' : ph;
+      input = `<input id="${id}" class="input" type="${type}" autocomplete="off" placeholder="${durPh}" value="${esc(value ?? '')}">`;
     }
-    return `<div class="field"><label class="field-label">${label}</label>${input}</div>`;
+    const help = f.help ? `<div style="font-size:11.5px;color:var(--text3);margin-top:3px">${esc(f.help)}</div>` : '';
+    return `<div class="field"><label class="field-label">${label}</label>${input}${help}</div>`;
   }
 
-  // Formulaire des champs d'un manifeste, valeurs prises dans `cfg` (configuration existante).
+  // Formulaire des champs d'un manifeste, valeurs prises dans `cfg` (configuration existante) ; un champ
+  // absent reprend la valeur par défaut du manifeste.
   function render(prefix, fields, cfg) {
-    return (fields || []).map(f => fieldHtml(prefix, f, getPath(cfg || {}, f.key))).join('');
+    return (fields || []).map(f => {
+      let v = getPath(cfg || {}, f.key);
+      if (v === undefined && f.default !== undefined) v = f.default;
+      return fieldHtml(prefix, f, v);
+    }).join('');
+  }
+
+  // Complète les listes à source dynamique (data-source) sous `root`. loadOptions(source) est fourni par la
+  // page (ex. FlowCatalog) et retourne une promesse de [{value,label}] ; la valeur choisie est conservée.
+  const optionCache = {};
+  let loadOptions = null;
+  async function hydrate(root) {
+    if (!loadOptions || !root) return;
+    for (const sel of root.querySelectorAll('select[data-source]')) {
+      const src = sel.dataset.source;
+      try {
+        optionCache[src] = optionCache[src] || loadOptions(src);
+        const opts = await optionCache[src];
+        const cur = sel.value;
+        const known = new Map([...sel.options].map(o => [o.value, o]));
+        for (const o of opts || []) {
+          // La valeur enregistrée est rendue avant le chargement, avec elle-même pour libellé.
+          if (known.has(o.value)) { known.get(o.value).textContent = o.label; continue; }
+          sel.insertAdjacentHTML('beforeend', `<option value="${esc(o.value)}">${esc(o.label)}</option>`);
+        }
+        // Un champ requis n'a pas d'option vide : la première valeur affichée doit aussi être celle relue.
+        if (!cur && sel.options.length && !sel.querySelector('option[value=""]')) {
+          sel.value = sel.options[0].value;
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+        } else sel.value = cur;
+      } catch (e) { delete optionCache[src]; }
+    }
+  }
+  function setOptionsLoader(fn) {
+    loadOptions = fn;
+    for (const k of Object.keys(optionCache)) delete optionCache[k];
   }
 
   // Relit les champs. Retourne { config, errors } : `config` repart de `base` (clés hors manifeste
@@ -107,6 +153,6 @@ const ManifestForm = (() => {
     return { config, errors };
   }
 
-  return { render, collect };
+  return { render, collect, hydrate, setOptionsLoader };
 })();
 window.ManifestForm = ManifestForm;

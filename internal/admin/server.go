@@ -27,6 +27,8 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/asn"
 	"github.com/vincamok/goproxify/internal/admin/audit"
 	"github.com/vincamok/goproxify/internal/admin/auth"
+	"github.com/vincamok/goproxify/internal/admin/automation"
+	autometrics "github.com/vincamok/goproxify/internal/admin/automation/metrics"
 	"github.com/vincamok/goproxify/internal/admin/backup"
 	"github.com/vincamok/goproxify/internal/admin/certdeploy"
 	"github.com/vincamok/goproxify/internal/admin/crowdsec"
@@ -41,10 +43,7 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/mcp"
 	"github.com/vincamok/goproxify/internal/admin/mfa"
 	"github.com/vincamok/goproxify/internal/admin/monitor"
-	"github.com/vincamok/goproxify/internal/admin/playbooks"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
-	"github.com/vincamok/goproxify/internal/admin/rulesengine"
-	"github.com/vincamok/goproxify/internal/admin/scheduler"
 	"github.com/vincamok/goproxify/internal/admin/security"
 	"github.com/vincamok/goproxify/internal/admin/setup"
 	"github.com/vincamok/goproxify/internal/admin/ui"
@@ -64,9 +63,7 @@ type Server struct {
 	haManager      *ha.Manager
 	auditor        *audit.Logger
 	alertingEngine *alerting.Engine
-	rulesEngine    *rulesengine.Engine
-	schedEngine    *scheduler.Engine
-	pbEngine       *playbooks.Engine
+	automation     *automation.Service
 	logStore       *logs.Store
 	wsManager      *edgews.Manager // manager WS Admin→Passerelle
 	loginLimit     *loginLimiter
@@ -483,20 +480,30 @@ func (s *Server) Start(ctx context.Context) error {
 	if archStore != nil {
 		securityH.Groups = api.NewGroupResolver(archStore, s.db)
 	}
-	// Moteur de règles : condition → action périodique
-	// pbEngine est assigné juste après reEngine (voir plus bas) : le callback
-	// RunPlaybook capture la variable par référence, pas sa valeur au moment de
-	// la construction de Deps, ce qui évite un cycle d'import rulesengine↔playbooks.
-	var pbEngine *playbooks.Engine
-	reEngine := rulesengine.New(s.db, s.log, rulesengine.Deps{
+	// Flux d'automatisation (règles, planifications, playbooks) : un seul moteur.
+	// Les métriques relevées sur les passerelles alimentent la condition metric_threshold.
+	proxyMetricsH := api.NewProxyMetricsSampler(s.db, s.log)
+	go proxyMetricsH.Run(ctx)
+	metricStore := autometrics.New(api.AutomationMetrics,
+		func() []autometrics.Sample { return toSamples(proxyMetricsH.AutomationSamples()) },
+		func() []autometrics.Sample { return toSamples(api.AdminMetricSamples()) })
+	go metricStore.Run(ctx.Done())
+	var isLeader func() bool
+	if s.haManager != nil {
+		isLeader = s.haManager.IsLeader
+	}
+	autoSvc := automation.New(s.db, s.log, automation.Deps{
 		DisableProxy: func(ctx context.Context, proxyID string) error {
-			_, err := s.db.ExecContext(ctx,
+			res, err := s.db.ExecContext(ctx,
 				`UPDATE proxies SET enabled=0, updated_at=CURRENT_TIMESTAMP WHERE id=?`, proxyID)
 			if err != nil {
 				return err
 			}
+			if n, _ := res.RowsAffected(); n == 0 {
+				return fmt.Errorf("proxy %q introuvable", proxyID)
+			}
 			if manager != nil {
-				go manager.PushRoutes(ctx)
+				go manager.PushRoutes(context.Background())
 			}
 			return nil
 		},
@@ -507,51 +514,34 @@ func (s *Server) Start(ctx context.Context) error {
 			}
 			_, err := s.db.ExecContext(ctx,
 				`INSERT OR IGNORE INTO security_bans (ip, reason, source, expires_at) VALUES (?,?,?,?)`,
-				ip, reason, "rules_engine", expiresAt)
+				ip, reason, "automation", expiresAt)
 			if err == nil {
 				pushBans()
 			}
 			return err
 		},
-		EmitAlert: func(trigger, severity, title, body string, detail map[string]any) {
+		Emit: func(ev alerting.Event) {
 			if s.alertingEngine != nil {
-				sev := alerting.SevWarning
-				if severity == "critical" {
-					sev = alerting.SevCritical
-				} else if severity == "info" {
-					sev = alerting.SevInfo
-				}
-				s.alertingEngine.Emit(alerting.Event{
-					Trigger:   alerting.TriggerType(trigger),
-					Severity:  sev,
-					Component: "admin",
-					Detail:    detail,
-				})
+				s.alertingEngine.Emit(ev)
 			}
 		},
-		GetF2BLastActivity:  f2bEngine.LastActivity,
-		GetCrowdSecLastSync: csBouncer.LastSync,
+		F2BLastActivity:  f2bEngine.LastActivity,
+		CrowdSecLastSync: csBouncer.LastSync,
 		RunBackup: func(_ context.Context, name string, retention int) error {
 			return backupSched.TakeSnapshot(name, "", retention)
 		},
-		RunPlaybook: func(ctx context.Context, playbookID string, detail map[string]any) error {
-			if pbEngine == nil {
-				return fmt.Errorf("playbooks: moteur non initialisé")
-			}
-			_, err := pbEngine.StartRun(ctx, playbookID, detail)
-			return err
-		},
+		Metrics: metricStore,
+	}, automation.Options{
+		IsLeader:          isLeader,
+		OnEdgeRulesChange: func() { go manager.PushAutoRules(context.Background()) },
 	})
-	reEngine.Start()
-	s.rulesEngine = reEngine
-	pbEngine = playbooks.New(s.db, s.log, reEngine)
-	s.pbEngine = pbEngine
-	pbH := &api.PlaybooksHandler{DB: s.db, Log: s.log, Engine: pbEngine}
-	reH := &api.RulesEngineHandler{DB: s.db, Log: s.log, Engine: reEngine}
-	schedEngine := scheduler.New(s.db, s.log, reEngine)
-	schedEngine.Start()
-	s.schedEngine = schedEngine
-	schedH := &api.SchedulerHandler{DB: s.db, Log: s.log, Engine: schedEngine}
+	if s.alertingEngine != nil {
+		s.alertingEngine.Subscribe(autoSvc.OnEvent)
+	}
+	manager.SetAutomation(autoSvc)
+	autoSvc.Start()
+	s.automation = autoSvc
+	automationH := &api.AutomationHandler{Svc: autoSvc}
 	importH := &api.ImportHandler{DB: s.db, Log: s.log, Scheduler: backupSched}
 	prismH := &api.PrismHandler{DB: s.db}
 	ipUpdater := ipprofile.New(s.db, s.log)
@@ -579,8 +569,6 @@ func (s *Server) Start(ctx context.Context) error {
 	workspacesH := &api.WorkspacesHandler{DB: s.db, Log: s.log}
 	discoveredH := &api.DiscoveredContainersHandler{DB: s.db, Log: s.log}
 	backendsHealthH := &api.BackendsHealthHandler{DB: s.db, Log: s.log}
-	proxyMetricsH := api.NewProxyMetricsSampler(s.db, s.log)
-	go proxyMetricsH.Run(ctx)
 	domainsH := &api.DomainsHandler{DB: s.db, Log: s.log, Pusher: manager, OnChange: syncArch}
 	if archStore != nil {
 		domainsH.Groups = api.NewGroupResolver(archStore, s.db)
@@ -816,12 +804,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/api/v1/security/engine-types", adminOnly(api.EngineTypesHandler{}))
 	mux.Handle("/api/v1/security", adminOnly(securityH))
 	mux.Handle("/api/v1/security/", adminOnly(securityH))
-	mux.Handle("/api/v1/rules-engine/", adminOnly(reH))
-	mux.Handle("/api/v1/rules-engine", adminOnly(reH))
-	mux.Handle("/api/v1/scheduled-tasks/", adminOnly(schedH))
-	mux.Handle("/api/v1/scheduled-tasks", adminOnly(schedH))
-	mux.Handle("/api/v1/playbooks/", adminOnly(pbH))
-	mux.Handle("/api/v1/playbooks", adminOnly(pbH))
+	mux.Handle("/api/v1/automation/", adminOnly(automationH))
 	mux.Handle("GET /api/v1/edges/waf-status", protected(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rows, err := s.db.QueryContext(r.Context(),
 			`SELECT key, value FROM settings WHERE key LIKE 'waf_reloaded_at:%'`)
@@ -922,10 +905,8 @@ func (s *Server) Start(ctx context.Context) error {
 		OnUnbanMany:  pushUnbanMany,
 		ASN:          asnStore,
 		OnWhitelistChange: pushIPProfiles,
-		RulesEngine:  s.rulesEngine,
+		Automation:   s.automation,
 		Groups:       banGroups,
-		Scheduler:    s.schedEngine,
-		Playbooks:    s.pbEngine,
 		CertDeployer: certDeployer,
 		InternalCA:   internalCAMgr,
 	}
@@ -996,6 +977,10 @@ func (s *Server) Stop(ctx context.Context) {
 	if s.srv != nil {
 		s.srv.Shutdown(ctx) //nolint:errcheck
 	}
+	// Avant la base : les étapes en cours enregistrent leur avancement.
+	if s.automation != nil {
+		s.automation.Stop()
+	}
 	if s.db != nil {
 		s.db.Close() //nolint:errcheck
 	}
@@ -1004,12 +989,6 @@ func (s *Server) Stop(ctx context.Context) {
 	}
 	if s.alertingEngine != nil {
 		s.alertingEngine.Stop()
-	}
-	if s.rulesEngine != nil {
-		s.rulesEngine.Stop()
-	}
-	if s.schedEngine != nil {
-		s.schedEngine.Stop()
 	}
 }
 
@@ -1037,3 +1016,11 @@ func ResetPassword(cfg *config.AdminConfig, email, newPassword string) error {
 }
 
 func (s *Server) mfaStore() *mfa.Store { return mfa.NewStore(s.db) }
+
+func toSamples(points []api.MetricPoint) []autometrics.Sample {
+	out := make([]autometrics.Sample, len(points))
+	for i, p := range points {
+		out[i] = autometrics.Sample{Key: p.Key, Entity: p.Entity, Value: p.Value}
+	}
+	return out
+}

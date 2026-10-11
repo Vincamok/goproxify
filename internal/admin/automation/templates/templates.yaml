@@ -1,0 +1,260 @@
+# Modèles de flux d'automatisation. Chaque modèle déclare ses paramètres (manifeste de champs, comme un
+# module) et un squelette de flux où « {{param.x}} » est remplacé à l'installation. Les variables
+# d'exécution ({{detail.ip}}…) restent dans le flux installé. Changer un squelette : incrémenter version.
+- id: cve-critical-autodisable
+  category: security
+  version: 1
+  name: Désactiver un proxy sur CVE critique
+  description: Désactive le proxy dont le backend expose une CVE au-dessus du score choisi.
+  params:
+    - {key: cvss, label: Score CVSS minimal, kind: number, default: 9, required: true}
+  flow:
+    trigger: {kind: condition, condition: {type: cve_critical, config: {cvss_threshold: "{{param.cvss}}"}}}
+    guard: {cooldown_sec: 3600}
+    steps:
+      - {id: s1, type: action, action: {type: disable_proxy}}
+
+- id: cve-high-notify
+  category: security
+  version: 1
+  name: Alerter sur CVE élevée
+  description: Notifie l'équipe dès qu'un backend expose une CVE au-dessus du score choisi, sans couper le proxy.
+  params:
+    - {key: cvss, label: Score CVSS minimal, kind: number, default: 7, required: true}
+  flow:
+    trigger: {kind: condition, condition: {type: cve_critical, config: {cvss_threshold: "{{param.cvss}}"}}}
+    guard: {cooldown_sec: 3600}
+    steps:
+      - {id: s1, type: action, action: {type: notify, config: {notify_severity: warning, notify_message: "CVE {{detail.cve_id}} (CVSS {{detail.cvss_score}}) sur {{detail.backend_url}}"}}}
+
+- id: ban-spike-strict-mode
+  category: security
+  version: 1
+  name: Mode strict Fail2Ban sur pic de bans
+  description: Passe Fail2Ban en mode strict temporaire quand les bans s'enchaînent.
+  params:
+    - {key: count, label: Nombre de bans, kind: number, default: 20, required: true}
+    - {key: window, label: Fenêtre, kind: duration, default: 15m, required: true}
+    - {key: duration, label: Durée du mode strict, kind: duration, default: 30m, required: true}
+  flow:
+    trigger: {kind: condition, condition: {type: ban_spike, config: {ban_count: "{{param.count}}", ban_window: "{{param.window}}"}}}
+    guard: {cooldown_sec: 900}
+    steps:
+      - {id: s1, type: action, action: {type: enable_strict, config: {strict_duration: "{{param.duration}}"}}}
+
+- id: ban-spike-notify
+  category: security
+  version: 1
+  name: Alerter sur pic de bans massif
+  description: Notifie en critique quand le nombre de bans dépasse le seuil sur la fenêtre (attaque distribuée probable).
+  params:
+    - {key: count, label: Nombre de bans, kind: number, default: 50, required: true}
+    - {key: window, label: Fenêtre, kind: duration, default: 1h, required: true}
+  flow:
+    trigger: {kind: condition, condition: {type: ban_spike, config: {ban_count: "{{param.count}}", ban_window: "{{param.window}}"}}}
+    guard: {cooldown_sec: 1800}
+    steps:
+      - {id: s1, type: action, action: {type: notify, config: {notify_severity: critical, notify_message: "{{detail.ban_count}} bans en {{detail.window}}"}}}
+
+- id: ban-repeat-notify
+  category: security
+  version: 1
+  name: Alerter sur IP récidiviste
+  description: Notifie l'équipe quand la même IP est bannie plusieurs fois sur la fenêtre.
+  params:
+    - {key: count, label: Nombre de bans de la même IP, kind: number, default: 3, required: true}
+    - {key: window, label: Fenêtre, kind: duration, default: 24h, required: true}
+  flow:
+    trigger: {kind: condition, condition: {type: ban_repeat, config: {repeat_count: "{{param.count}}", repeat_window: "{{param.window}}"}}}
+    guard: {cooldown_sec: 1800}
+    steps:
+      - {id: s1, type: action, action: {type: notify, config: {notify_severity: warning, notify_message: "IP récidiviste : {{detail.ip}} ({{detail.count}} bans)"}}}
+
+- id: ban-repeat-permanent
+  category: security
+  version: 1
+  name: Bannir définitivement un récidiviste
+  description: Bannit sans limite de durée une IP déjà bannie de nombreuses fois.
+  params:
+    - {key: count, label: Nombre de bans de la même IP, kind: number, default: 5, required: true}
+    - {key: window, label: Fenêtre, kind: duration, default: 168h, required: true}
+  flow:
+    trigger: {kind: condition, condition: {type: ban_repeat, config: {repeat_count: "{{param.count}}", repeat_window: "{{param.window}}"}}}
+    guard: {cooldown_sec: 3600}
+    steps:
+      - {id: s1, type: action, action: {type: ban_ip, config: {ban_reason: Récidiviste (ban permanent)}}}
+
+- id: engine-silent-alert
+  category: reliability
+  version: 1
+  name: Alerter si un moteur IPS est silencieux
+  description: Notifie si Fail2Ban ou CrowdSec n'a montré aucune activité depuis longtemps (panne probable).
+  params:
+    - {key: engine, label: Moteur, kind: select, default: fail2ban, required: true, options: [{value: fail2ban, label: Fail2Ban}, {value: crowdsec, label: CrowdSec}]}
+    - {key: minutes, label: Silence depuis (minutes), kind: number, default: 30, required: true}
+  flow:
+    trigger: {kind: condition, condition: {type: engine_silent, config: {engine_type: "{{param.engine}}", silent_minutes: "{{param.minutes}}"}}}
+    guard: {cooldown_sec: 1800}
+    steps:
+      - {id: s1, type: action, action: {type: notify, config: {notify_severity: critical, notify_message: "{{detail.engine_type}} silencieux depuis {{detail.silent_for}}"}}}
+
+- id: error-rate-notify
+  category: reliability
+  version: 1
+  name: Alerter sur taux d'erreur élevé
+  description: Notifie quand une part trop importante des requêtes d'un proxy échoue.
+  params:
+    - {key: threshold, label: Seuil (% de réponses 5xx), kind: number, default: 30, required: true}
+    - {key: window, label: Fenêtre, kind: duration, default: 10m, required: true}
+  flow:
+    trigger: {kind: condition, condition: {type: proxy_error_rate, config: {error_rate_threshold: "{{param.threshold}}", error_rate_window: "{{param.window}}"}}}
+    guard: {cooldown_sec: 900}
+    steps:
+      - {id: s1, type: action, action: {type: notify, config: {notify_severity: warning, notify_message: "{{detail.proxy_name}} : {{detail.error_rate}} % d'erreurs sur {{detail.window}}"}}}
+
+- id: error-rate-disable-approval
+  category: reliability
+  version: 1
+  name: Couper un proxy en échec, après approbation
+  description: Quand un proxy renvoie trop d'erreurs, demande l'accord d'un administrateur avant de le désactiver.
+  params:
+    - {key: threshold, label: Seuil (% de réponses 5xx), kind: number, default: 50, required: true}
+    - {key: window, label: Fenêtre, kind: duration, default: 5m, required: true}
+    - {key: timeout, label: Délai de décision, kind: duration, default: 30m}
+  flow:
+    trigger: {kind: condition, condition: {type: proxy_error_rate, config: {error_rate_threshold: "{{param.threshold}}", error_rate_window: "{{param.window}}"}}}
+    guard: {cooldown_sec: 1800}
+    steps:
+      - {id: s1, type: approval, config: {message: "Désactiver {{detail.proxy_name}} ({{detail.error_rate}} % d'erreurs) ?", timeout: "{{param.timeout}}", on_timeout: reject}}
+      - {id: s2, type: action, action: {type: disable_proxy}}
+      - {id: s3, type: action, action: {type: notify, config: {notify_severity: warning, notify_message: "{{detail.proxy_name}} désactivé (accord de {{steps.s1.actor}})"}}}
+
+- id: latency-metric-notify
+  category: reliability
+  version: 1
+  name: Alerter sur latence P95 élevée
+  description: Surveille la latence P95 de chaque proxy (métriques des passerelles) et notifie au-delà du seuil.
+  params:
+    - {key: ms, label: Seuil (ms), kind: number, default: 800, required: true}
+    - {key: window, label: Fenêtre, kind: duration, default: 5m, required: true}
+  flow:
+    trigger: {kind: condition, interval_sec: 60, condition: {type: metric_threshold, config: {metric: proxy.p95_ms, aggregation: avg, window: "{{param.window}}", operator: ">", value: "{{param.ms}}"}}}
+    guard: {cooldown_sec: 900, cooldown_key: "{{detail.entity}}"}
+    steps:
+      - {id: s1, type: action, action: {type: notify, config: {notify_severity: warning, notify_message: "{{detail.entity}} : P95 {{detail.value}} ms sur {{detail.window}}"}}}
+
+- id: node-offline-notify
+  category: reliability
+  version: 1
+  name: Alerter sur nœud hors ligne
+  description: Notifie dès qu'une passerelle ou un Agent ne donne plus de nouvelles.
+  params:
+    - {key: minutes, label: Sans nouvelles depuis (minutes), kind: number, default: 5, required: true}
+  flow:
+    trigger: {kind: condition, condition: {type: node_offline, config: {offline_minutes: "{{param.minutes}}"}}}
+    guard: {cooldown_sec: 900}
+    steps:
+      - {id: s1, type: action, action: {type: notify, config: {notify_severity: critical, notify_message: "{{detail.node_name}} hors ligne depuis {{detail.last_seen_at}}"}}}
+
+- id: node-offline-long-backup
+  category: reliability
+  version: 1
+  name: Sauvegarde sur nœud hors ligne prolongé
+  description: Prend une sauvegarde quand une passerelle ou un Agent reste longtemps sans nouvelles.
+  params:
+    - {key: minutes, label: Sans nouvelles depuis (minutes), kind: number, default: 30, required: true}
+  flow:
+    trigger: {kind: condition, condition: {type: node_offline, config: {offline_minutes: "{{param.minutes}}"}}}
+    guard: {cooldown_sec: 3600}
+    steps:
+      - {id: s1, type: action, action: {type: run_backup}}
+
+- id: cert-expiring-notify
+  category: compliance
+  version: 1
+  name: Alerter avant expiration de certificat
+  description: Notifie l'équipe quand un certificat TLS approche de son expiration, pour laisser le temps de renouveler.
+  params:
+    - {key: days, label: Jours restants, kind: number, default: 30, required: true}
+    - {key: severity, label: Gravité, kind: select, default: warning, options: [{value: info, label: Info}, {value: warning, label: Avertissement}, {value: critical, label: Critique}]}
+  flow:
+    trigger: {kind: condition, condition: {type: cert_expiring, config: {days_left: "{{param.days}}"}}}
+    guard: {cooldown_sec: 86400}
+    steps:
+      - {id: s1, type: action, action: {type: notify, config: {notify_severity: "{{param.severity}}", notify_message: "Certificat {{detail.domain}} : expiration le {{detail.expires_at}}"}}}
+
+- id: cert-expiring-backup
+  category: compliance
+  version: 1
+  name: Sauvegarde avant expiration de certificat
+  description: Prend une sauvegarde quand un certificat expire bientôt (filet de sécurité avant une intervention manuelle).
+  params:
+    - {key: days, label: Jours restants, kind: number, default: 7, required: true}
+  flow:
+    trigger: {kind: condition, condition: {type: cert_expiring, config: {days_left: "{{param.days}}"}}}
+    guard: {cooldown_sec: 86400}
+    steps:
+      - {id: s1, type: action, action: {type: run_backup}}
+
+- id: event-crowdsec-ban-notify
+  category: security
+  version: 1
+  name: Relayer les décisions CrowdSec critiques
+  description: À chaque décision CrowdSec critique, notifie avec l'IP et le scénario (délai minimum par IP).
+  params:
+    - {key: cooldown, label: Délai minimum par IP (secondes), kind: number, default: 3600}
+  flow:
+    trigger: {kind: event, event: {event: crowdsec_critical}}
+    guard: {cooldown_sec: "{{param.cooldown}}", cooldown_key: "{{detail.ip}}"}
+    steps:
+      - {id: s1, type: action, action: {type: notify, config: {notify_severity: critical, notify_message: "CrowdSec : {{detail.ip}} ({{detail.scenario}})"}}}
+
+- id: schedule-nightly-backup
+  category: maintenance
+  version: 1
+  name: Sauvegarde planifiée
+  description: Prend une sauvegarde à heure fixe et garde les dernières.
+  params:
+    - {key: cron, label: Horaire (cron), kind: text, default: "0 3 * * *", required: true}
+    - {key: retention, label: Sauvegardes conservées (0 = toutes), kind: number, default: 14}
+  flow:
+    trigger: {kind: schedule, schedule: {cron: "{{param.cron}}"}}
+    steps:
+      - {id: s1, type: action, action: {type: run_backup, config: {backup_retention: "{{param.retention}}"}}}
+
+- id: playbook-isolate-proxy
+  category: remediation
+  version: 1
+  name: Isoler un proxy (playbook)
+  description: Playbook lancé à la main ou par un autre flux. Demande une approbation, désactive le proxy, puis prévient l'équipe.
+  params:
+    - {key: severity, label: Gravité de la notification, kind: select, default: critical, options: [{value: warning, label: Avertissement}, {value: critical, label: Critique}]}
+  flow:
+    trigger:
+      kind: manual
+      manual:
+        inputs:
+          - {key: proxy_id, label: Proxy, kind: select, source: proxies, required: true}
+          - {key: reason, label: Raison, kind: text}
+    steps:
+      - {id: s1, type: approval, config: {message: "Isoler le proxy {{detail.proxy_id}} ? {{detail.reason}}", timeout: 1h, on_timeout: reject}}
+      - {id: s2, type: action, action: {type: disable_proxy, config: {proxy_id: "{{detail.proxy_id}}"}}}
+      - {id: s3, type: action, action: {type: notify, config: {notify_severity: "{{param.severity}}", notify_message: "Proxy {{detail.proxy_id}} isolé par {{steps.s1.actor}} : {{detail.reason}}"}}}
+
+- id: playbook-ban-and-notify
+  category: remediation
+  version: 1
+  name: Bannir une IP et prévenir (playbook)
+  description: Playbook qui bannit l'IP donnée pour la durée choisie puis notifie l'équipe.
+  params:
+    - {key: duration, label: Durée du ban, kind: duration, default: 24h}
+  flow:
+    trigger:
+      kind: manual
+      manual:
+        inputs:
+          - {key: ip, label: IP, kind: text, required: true}
+          - {key: reason, label: Motif, kind: text, default: Ban manuel}
+    steps:
+      - {id: s1, type: action, action: {type: ban_ip, config: {ip: "{{detail.ip}}", ban_reason: "{{detail.reason}}", ban_duration: "{{param.duration}}"}}}
+      - {id: s2, type: action, action: {type: notify, config: {notify_severity: warning, notify_message: "{{detail.ip}} bannie ({{detail.reason}})"}}}

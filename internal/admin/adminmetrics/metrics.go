@@ -82,6 +82,42 @@ var RulesEngine = struct {
 	}, []string{"action", "result"}),
 }
 
+// Automation expose les métriques des flux d'automatisation.
+var Automation = struct {
+	EvalsTotal   prometheus.Counter
+	EvalDuration prometheus.Histogram
+	ActiveFlows  *prometheus.GaugeVec
+	RunsTotal    *prometheus.CounterVec
+	ActionsTotal *prometheus.CounterVec
+	EventsDrop   prometheus.Counter
+}{
+	EvalsTotal: promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "gpx", Subsystem: "automation", Name: "evals_total",
+		Help: "Évaluations de conditions de flux.",
+	}),
+	EvalDuration: promauto.NewHistogram(prometheus.HistogramOpts{
+		Namespace: "gpx", Subsystem: "automation", Name: "eval_duration_seconds",
+		Help:    "Durée d'un passage d'évaluation des flux à condition.",
+		Buckets: []float64{.001, .005, .01, .05, .1, .5, 1, 5},
+	}),
+	ActiveFlows: promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "gpx", Subsystem: "automation", Name: "active_flows",
+		Help: "Flux activés, par type de déclencheur.",
+	}, []string{"trigger"}),
+	RunsTotal: promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "gpx", Subsystem: "automation", Name: "runs_total",
+		Help: "Exécutions de flux terminées, par déclencheur et statut.",
+	}, []string{"trigger", "status"}),
+	ActionsTotal: promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "gpx", Subsystem: "automation", Name: "actions_total",
+		Help: "Actions exécutées par les flux.",
+	}, []string{"action", "result"}),
+	EventsDrop: promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "gpx", Subsystem: "automation", Name: "events_dropped_total",
+		Help: "Événements ignorés faute de place dans la file des déclencheurs.",
+	}),
+}
+
 // VulnScan expose les métriques du scanner de vulnérabilités.
 var VulnScan = struct {
 	CVEsDetectedTotal *prometheus.CounterVec

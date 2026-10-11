@@ -10,11 +10,14 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/vincamok/goproxify/internal/admin/automation"
 )
 
 func TestImportedCertCountsAsExpiringOnItsDay(t *testing.T) {
@@ -55,9 +58,10 @@ func TestImportedCertCountsAsExpiringOnItsDay(t *testing.T) {
 
 func TestSilenceToolsStoreDatesComparableToCurrentTimestamp(t *testing.T) {
 	h := setupMCPDB(t)
+	h.Automation = automation.New(h.DB, slog.Default(), automation.Deps{}, automation.Options{})
 	r := httptest.NewRequest(http.MethodPost, "/mcp", nil)
 	ny := time.FixedZone("", -5*3600)
-	if _, err := h.toolCreateSilence(r, map[string]any{
+	if _, err := h.automationTool(r, "create_silence", map[string]any{
 		"name":      "maintenance",
 		"starts_at": time.Now().Add(-time.Minute).In(ny).Format(time.RFC3339),
 		"ends_at":   time.Now().Add(time.Hour).In(ny).Format(time.RFC3339),
@@ -65,7 +69,7 @@ func TestSilenceToolsStoreDatesComparableToCurrentTimestamp(t *testing.T) {
 		t.Fatal(err)
 	}
 	starts := time.Now().Add(-time.Minute).UTC()
-	if _, err := h.toolImportAutomation(r, map[string]any{"yaml": "silences:\n  - name: import\n    starts_at: " +
+	if _, err := h.automationTool(r, "import_automation", map[string]any{"yaml": "version: 2\nsilences:\n  - name: import\n    starts_at: " +
 		starts.Format(time.RFC3339) + "\n    ends_at: " + starts.Add(time.Hour).Format(time.RFC3339) + "\n"}); err != nil {
 		t.Fatal(err)
 	}
@@ -75,12 +79,12 @@ func TestSilenceToolsStoreDatesComparableToCurrentTimestamp(t *testing.T) {
 	if n != 2 {
 		t.Errorf("%d silence actif, attendu 2 (create_silence en UTC-5 et import RFC3339)", n)
 	}
-	list, err := h.toolListSilences(r)
+	list, err := h.automationTool(r, "list_silences", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, s := range list.([]map[string]any) {
-		if s["active"] != true {
+	for _, s := range list.([]automation.Silence) {
+		if !s.Active(time.Now(), "") {
 			t.Errorf("list_silences : %v doit être actif", s)
 		}
 	}

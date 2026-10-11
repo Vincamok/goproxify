@@ -259,7 +259,7 @@ async function renderSecuritySynthese(ctx) {
       api('GET', `/security/threat-config${edgeQ}`).catch(() => null),
       api('GET', '/security/fail2ban').catch(() => null),
       api('GET', '/security/crowdsec').catch(() => null),
-      isAdmin ? api('GET', '/rules-engine/rules').catch(() => []) : Promise.resolve([]),
+      isAdmin ? api('GET', '/automation/flows?trigger=condition,event').catch(() => []) : Promise.resolve([]),
     ]);
     const ov = ovData?.overview || {};
     const headers = filterSecHeaders(ov.headers || [], edgeCtx);
@@ -569,8 +569,7 @@ function smRender() {
 }
 
 function _condLabel(r) {
-  const type = r.condition?.type || "";
-  return _COND_TYPES.find(x => x.value === type)?.label || type;
+  return FlowCatalog.triggerText(r);
 }
 
 window.secEnginesOpen = async function(tab) {
@@ -585,7 +584,7 @@ window.secEnginesOpen = async function(tab) {
     api('GET', '/security/fail2ban').catch(() => ({})),
     api('GET', '/security/crowdsec').catch(() => ({})),
     api('GET', `/security/ips-provider${edgeQ}`).catch(() => ({ provider: 'native' })),
-    mode === 'admin' ? api('GET', '/rules-engine/rules').catch(() => []) : Promise.resolve([]),
+    mode === 'admin' ? api('GET', '/automation/flows?trigger=condition,event').catch(() => []) : Promise.resolve([]),
     api('GET', '/security/vulnscan/config').catch(() => ({})),
     api('GET', '/security/sla-config').catch(() => ({})),
   ]);
@@ -598,7 +597,7 @@ window.secEnginesOpen = async function(tab) {
   _sm.sla = sla || {};
   window._f2bCfg = _sm.f2b;
   window._csCfg = _sm.cs;
-  window._reRules = _sm.rules;
+  if (mode === 'admin') await FlowCatalog.load().catch(() => null);
   smRender();
   document.addEventListener('keydown', smKey);
 };
@@ -703,7 +702,7 @@ window.smProvider = function(p) {
 window.smRule = function(id, enabled) {
   const rule = _sm.rules.find(r => String(r.id) === String(id));
   if (!rule) return;
-  return smSave(async () => { await api('PUT', `/rules-engine/rules/${id}`, { ...rule, enabled }); rule.enabled = enabled; });
+  return smSave(async () => { await api('PATCH', `/automation/flows/${id}`, { enabled }); rule.enabled = enabled; });
 };
 window.smScanPrivate = function(on) {
   return smSave(async () => { await api('PUT', '/security/vulnscan/config', { allow_private: on }); _sm.scan = { ..._sm.scan, allow_private: on }; window._vsConfig = _sm.scan; });

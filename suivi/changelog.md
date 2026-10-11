@@ -9,6 +9,59 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ### Ajouté
 
+- **Flux d'automatisation : règles, planifications et playbooks deviennent un seul objet, construit dans l'éditeur de flux (Admin 0.139.0, passerelle 0.58.13, ADR 0009)**. Ces trois objets avaient chacun leur moteur, leur API et leur éditeur. L'« éditeur de flux » n'était qu'une vue figée d'une règle en quatre nœuds.
+
+  **Le flux** : un déclencheur, un garde-fou et des étapes.
+  - **Déclencheurs** : condition (arbre ET / OU / NON), événement du moteur d'alertes, horaire cron, ou lancement manuel avec paramètres.
+  - **Garde-fou** : délai minimum, délai par valeur (`{{detail.ip}}`), exécutions simultanées, lieu d'exécution.
+  - **Étapes** : action, attente, si/sinon, **approbation**, lancement d'un playbook, arrêt ; variables `{{detail.x}}` et `{{steps.<id>.x}}`.
+  - **Onglets** : Règles, Planifications et Playbooks sont des vues filtrées par déclencheur.
+
+  **L'éditeur** :
+  - les déclencheurs, conditions, actions, types d'étape et métriques viennent du catalogue `GET /api/v1/automation/catalog`, et non plus de listes écrites dans le JavaScript ;
+  - un bouton « + » entre chaque nœud ajoute une étape ; on peut monter, descendre, dupliquer ou supprimer une étape, construire des branches si/sinon et des groupes de conditions, et insérer une variable depuis la liste de celles disponibles ;
+  - un brouillon se simule sans être enregistré, et le parcours est animé ;
+  - les 20 dernières versions sont conservées, avec retour arrière.
+
+  **Les modèles** (18, en YAML, paramétrables) :
+  - ils s'installent avec un formulaire et un aperçu ;
+  - un flux installé se réédite par ses paramètres, ou se détache pour l'éditeur ;
+  - nouveaux modèles : coupure d'un proxy après approbation, latence P95, relais CrowdSec avec délai par IP, sauvegarde planifiée, playbooks « isoler un proxy » et « bannir puis prévenir ».
+
+  **La condition `metric_threshold`** :
+  - elle porte sur une heure de séries relevées toutes les 10 s : trafic, erreurs et latence par proxy et par passerelle, TLS, connexions, pipeline, compteurs de l'Admin ;
+  - agrégations disponibles : moyenne, min, max, dernière valeur, augmentation, débit.
+
+  **Les exécutions** :
+  - elles sont enregistrées étape par étape : attentes et approbations **survivent à un redémarrage de l'Admin** ;
+  - une exécution coupée pendant une étape passe à `interrupted`, sans être relancée d'office ;
+  - le journal unique montre la source (Admin, passerelle, personne, appel) et le détail de chaque étape, avec approbation, annulation et rejeu ;
+  - seul le leader d'un Admin HA exécute ;
+  - un flux ne se redéclenche pas sur sa propre notification.
+
+  **Les passerelles** : un flux simple (condition et action qu'elles savent traiter) leur est renvoyé **à chaque modification**, et plus seulement à la reconnexion. L'Admin ne l'évalue plus lui-même : l'action n'a plus lieu deux fois. Sa notification atteint désormais les canaux (événement `automation_notify`).
+
+  **Remplacements** :
+  - API `/api/v1/automation/*` ; `/rules-engine`, `/scheduled-tasks` et `/playbooks` sont supprimées, avec leurs tables ;
+  - outils MCP `*_flow*` ;
+  - commande `goproxify automation` à la place de `security rules|schedule|playbook` ;
+  - export YAML `version: 2` ;
+  - métriques `gpx_automation_*` à la place de `gpx_rulesengine_*`, et `automation` à la place de `rules_engine` dans `/metrics/summary`.
+
+  `modules.Field` gagne les genres `select` (options fixes ou source dynamique) et `duration`, ainsi que `default` et `help`.
+
+  **Corrigés au passage** :
+  - le message de l'action « Notifier » n'apparaissait pas dans l'alerte envoyée ;
+  - `proxy_error_rate` comparait des dates RFC3339 au format SQLite et comptait toute la journée ;
+  - le modèle « bannir sur taux d'erreur » bannissait une IP que la condition ne fournit pas, et échouait toujours ;
+  - une décision d'approbation pouvait s'exécuter deux fois ;
+  - la passerelle envoyait un second `rule_fired` vide pour chaque notification.
+
+  **Limites** :
+  - les passerelles ignorent encore les mises en sourdine (signalé dans l'interface) ;
+  - une planification manquée pendant un arrêt de l'Admin n'est pas rattrapée ;
+  - les libellés du catalogue sont en français, comme les autres familles de modules.
+
 - **Plugin Coraza : le moteur ModSecurity/SecLang en module WASM, livré avec l'Admin (Admin 0.138.0)** : `examples/plugins/coraza` embarque [Coraza](https://coraza.io) v3.8.1 compilé avec TinyGo (1,2 Mio, tag `no_fs_access` obligatoire : Coraza teste l'accès au disque au démarrage, ce que le module n'a pas) ; les directives `SecRule` du champ `rules` de la route décident du refus (hook `request` : URI, requête, en-têtes ; hook `request_body` : corps jusqu'à 64 Kio). Installable d'un clic comme les quatre autres exemples intégrés. Règles invalides ou absentes : la requête passe, le journal du plugin le dit. Tests `TestCoraza_*` (chemin, argument, en-tête, corps, règles invalides) avec le vrai compilateur. **Coût mesuré** : environ 7,4 ms et 3,2 Mio par appel pour quatre règles (amd64), parce qu'un plugin n'a pas d'état entre deux requêtes et que le moteur est donc reconstruit à chaque appel — un jeu complet comme OWASP CRS dépasserait le délai maximal d'un plugin (1 s) ; le module sert à reprendre un jeu de règles réduit sur des routes précises, le WAF natif restant le choix par défaut. Non couvert : phases de réponse, fichiers de règles (`Include`, `@pmFromFile`), journaux d'audit ; le CRS complet n'a pas été essayé.
 
 - **Plugins : quatre plugins livrés avec l'Admin, installables d'un clic (Admin 0.137.0)** : un Admin neuf n'offrait aucun plugin — le catalogue ne montre que ce que sert un dépôt, et aucun n'est configuré à l'installation, si bien que la page Plugins restait vide malgré le moteur et les exemples du dépôt. `path-guard`, `rate-guard`, `body-redact` et `tcp-allow` sont maintenant embarqués (`internal/admin/pluginlib`, copie exacte des exemples compilés, vérifiée par `TestLibraryMatchesExamples`) et servis comme un dépôt intégré (`repo_id` `builtin`, « Exemples intégrés ») dans `GET /api/v1/plugin-repos/catalog` et `POST /api/v1/plugin-repos/install` ; la page Plugins les affiche sans attendre (ils sont locaux), le bouton interroge en plus les dépôts distants. Ils font confiance au binaire de l'Admin : pas de signature exigée même avec des clés de confiance (le drapeau est interne, un JSON envoyé à `POST /plugins` ne peut pas le poser — test), `signed_by` vaut `builtin`. `token-check` n'est pas intégré : son manifeste doit nommer l'hôte du service de l'utilisateur. Vérifié sur l'image Docker de l'Admin : catalogue de quatre entrées, installations en `201`.

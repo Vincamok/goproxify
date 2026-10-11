@@ -383,69 +383,127 @@ API : `GET /api/v1/security/ip-trace` ; CLI : `goproxify security trace` ; MCP :
 
 ---
 
-## Moteur de règles automatiques
+## Flux d'automatisation
 
-Le moteur de règles (`Admin > Automatisation > Règles automatiques`) permet de définir des **réponses automatiques** à des événements détectés périodiquement (poll toutes les 60 s). Un catalogue de règles préconfigurées est disponible dans `Automatisation > Store de règles`.
+Depuis Admin `0.139.0` (ADR 0009), les règles automatiques, les planifications et les playbooks sont un seul objet, le **flux**. Il se compose d'un déclencheur, d'un garde-fou et d'une suite d'étapes. On le construit dans `Automatisation > Automatisations > Éditeur de flux`, ou on l'installe depuis `Modèles`. Les onglets **Règles**, **Planifications** et **Playbooks** sont des vues des flux, selon leur déclencheur.
 
-### Conditions disponibles
+| Déclencheur | Onglet | Quand |
+|---|---|---|
+| `condition` | Règles | Une condition, ou un arbre ET / OU / NON, évaluée toutes les `interval_sec` secondes (60 par défaut) |
+| `event` | Règles | Un événement du moteur d'alertes (ban Fail2Ban, décision CrowdSec, backend indisponible, budget SLO…), filtré par nœud, domaine, gravité et motifs sur le détail |
+| `schedule` | Planifications | Une expression cron à 5 champs, à l'heure locale de l'Admin |
+| `manual` | Playbooks | Lancé à la main ou par l'étape « lancer un playbook » d'un autre flux, avec des paramètres |
+
+### Conditions
 
 | Type | Description | Paramètres |
 |---|---|---|
-| `cve_critical` | CVE ouverte avec score CVSS ≥ seuil sur un backend | `cvss_threshold` (défaut 9.0), `proxy_id` optionnel |
+| `cve_critical` | CVE ouverte avec score CVSS ≥ seuil sur un backend | `cvss_threshold` (défaut 9), `proxy_id` optionnel |
 | `ban_spike` | Pic de nouveaux bans sur une fenêtre de temps | `ban_count`, `ban_window`, `ban_source` optionnel |
-| `engine_silent` | Fail2Ban ou CrowdSec inactif depuis N minutes | `engine_type` (`fail2ban`\|`crowdsec`), `silent_minutes` |
-| `proxy_error_rate` | Taux d'erreurs 5xx d'un proxy > seuil | `proxy_id` optionnel, `error_rate_threshold`, `error_rate_window` |
+| `engine_silent` | Fail2Ban ou CrowdSec inactif depuis N minutes | `engine_type`, `silent_minutes` |
+| `proxy_error_rate` | Taux d'erreurs 5xx d'un proxy ≥ seuil | `proxy_id` optionnel, `error_rate_threshold`, `error_rate_window` |
 | `ban_repeat` | IP bannie N fois ou plus sur une période | `repeat_count`, `repeat_window` |
-| `node_offline` | Passerelle/Agent sans heartbeat depuis N minutes (`nodes.last_seen_at`) | `node_name` optionnel (vide = tous), `offline_minutes` (défaut 5) |
-| `cert_expiring` | Certificat TLS expirant sous N jours (`certs.expires_at`) | `domain` optionnel (vide = tous), `days_left` (défaut 15) |
+| `node_offline` | Nœud sans nouvelles depuis N minutes | `node_name` optionnel, `offline_minutes` |
+| `cert_expiring` | Certificat TLS expirant sous N jours | `domain` optionnel, `days_left` |
+| `metric_threshold` | Seuil sur une métrique relevée par l'Admin : trafic, erreurs et latence par proxy ou par passerelle, TLS, connexions, pipeline, compteurs de l'Admin | `metric`, `entity`, `aggregation` (avg, min, max, last, increase, rate), `window` (1 h au plus), `operator`, `value`, `min_samples` |
 
-### Actions disponibles
+Le détail produit par une condition (IP, proxy, domaine, valeur mesurée…) est disponible dans les étapes en `{{detail.x}}`. L'éditeur liste les variables disponibles à chaque étape.
 
-| Type | Description | Paramètres |
-|---|---|---|
-| `disable_proxy` | Désactive le proxy lié à la condition | `proxy_id` optionnel (détecté automatiquement pour CVE) |
-| `ban_ip` | Bannit une IP identifiée par la condition | `ban_duration` (vide = permanent), `ban_reason` |
-| `notify` | Émet une alerte via le moteur d'alertes | `notify_severity`, `notify_message` |
-| `enable_strict` | Active le mode strict Fail2Ban (max_errors=5) | `strict_duration` (défaut 30m) |
-| `webhook_call` | POST JSON générique vers une URL externe (`{rule, condition, action, detail, fired_at}`) | `webhook_url` |
-| `webhook_signed` | Même charge utile, signée HMAC-SHA256 (`X-GPX-Timestamp`, `X-GPX-Signature: sha256=…` sur `horodatage.corps`) | `params.url`, `params.secret` |
-| `pagerduty` | Événement PagerDuty Events API v2 (`dedup_key` = identifiant de la règle) | `params.routing_key`, `params.severity`, `params.url` |
-| `run_backup` | Déclenche un snapshot de sauvegarde immédiat | `backup_retention` (0 = pas de purge automatique) |
+### Étapes
 
-### Cooldown
+| Étape | Effet |
+|---|---|
+| `action` | Exécute une action : `disable_proxy`, `ban_ip`, `notify`, `enable_strict`, `webhook_call`, `webhook_signed`, `pagerduty` ou `run_backup` |
+| `wait` | Attend une durée, puis passe à l'étape suivante |
+| `if` | Évalue une condition et suit la branche « alors » ou « sinon » |
+| `approval` | Attend une décision humaine, avec un délai facultatif au bout duquel la décision par défaut s'applique |
+| `call` | Lance un playbook, en attendant sa fin ou non, avec des paramètres (souvent des variables) |
+| `stop` | Termine l'exécution avec un statut et une raison |
 
-Chaque règle dispose d'un cooldown (défaut 5 min) pour éviter les déclenchements en boucle. Le timer repart à chaque exécution.
+Par défaut, l'IP de `ban_ip` et le proxy de `disable_proxy` sont ceux du détail (`{{detail.ip}}`, `{{detail.proxy_id}}`). L'action `notify` publie l'événement `automation_notify`, que les règles de routage d'alertes acheminent vers les canaux. `webhook_call` et `webhook_signed` envoient `{flow, flow_id, run_id, description, detail, fired_at}`. La signature de `webhook_signed` est `X-GPX-Signature: sha256=…`, calculée sur `horodatage.corps`. Une étape en échec arrête l'exécution, sauf si elle est marquée « continuer si cette étape échoue ».
 
-### Test à la demande
+### Garde-fou
 
-Le bouton **Tester maintenant** lance un `dry_run` : la condition est évaluée et le résultat est affiché sans exécuter l'action.
+- **Délai minimum** (`cooldown_sec`) : intervalle minimal entre deux déclenchements automatiques. Il vaut 300 s par défaut pour une condition ou un événement, sinon une condition qui reste vraie relancerait ses actions à chaque évaluation. Il survit à un redémarrage de l'Admin.
+- **Délai par valeur** (`cooldown_key`, par exemple `{{detail.ip}}`) : le délai s'applique séparément à chaque IP plutôt qu'au flux entier.
+- **Exécutions simultanées** (`max_concurrent`, 1 par défaut) : un flux qui attend une approbation ne repart pas tant qu'elle n'est pas décidée.
+- Un lancement manuel ignore ces garde-fous.
 
-### Historique
+### Approbation
 
-Chaque évaluation (condition satisfaite ou non, action effectuée, erreur éventuelle) est stockée dans `rules_engine_history` et consultable depuis `Admin > Automatisation > Journal`. Une entrée en échec (`error` non vide, hors `"silenced"`) peut être **rejouée** (`POST /rules-engine/history/{id}/replay`, bouton **Rejouer** du Journal, `goproxify security rules history replay <id>`, MCP `replay_rule_history`) : l'action est retentée avec le `detail` capturé au moment du déclenchement d'origine, sans réévaluer la condition, et le résultat crée une nouvelle entrée d'historique.
+Une étape **Approbation** suspend l'exécution, qui passe au statut `waiting_approval`, et publie une notification « Approbation requise ».
 
-### Versionnage des règles
+La décision se prend à plusieurs endroits :
+- le bandeau de la vue d'ensemble ;
+- l'historique du flux ;
+- le journal ;
+- `POST /api/v1/automation/runs/{id}/approve|reject` ;
+- `goproxify automation runs approve|reject` ;
+- l'outil MCP `decide_flow_run`.
 
-Chaque création, modification ou restauration d'une règle ajoute un instantané dans `rules_engine_rule_versions` (nom, description, activation, condition, action, cooldown) — les 20 dernières versions par règle sont conservées, les plus anciennes purgées automatiquement. Consultable depuis l'**éditeur de flux** (bouton **Historique des versions**), `GET /rules-engine/rules/{id}/versions`, `goproxify security rules versions list <rule-id>`, ou MCP `list_rule_versions`.
+Chaque décision enregistre son auteur, disponible en `{{steps.<id>.actor}}`. Refuser termine l'exécution (`rejected`). Sans décision dans le délai choisi, l'option « sans décision » s'applique.
 
-**Restaurer** une version (`POST /rules-engine/rules/{id}/versions/{version}/restore`, bouton **Restaurer**, `goproxify security rules versions restore <rule-id> <version>`, MCP `restore_rule_version`) remplace la condition, l'action, le cooldown et l'activation actuels par ceux de la version choisie — la restauration elle-même devient une nouvelle version, pour ne jamais perdre l'état remplacé.
+### Exécutions, reprise et journal
 
-### Silences & maintenance
+Chaque déclenchement crée une exécution, enregistrée après chaque étape avec son curseur et ses variables. Les attentes et les approbations reprennent donc après un redémarrage de l'Admin.
 
-Un **silence** (`Admin > Automatisation > Alertes > Silences & maintenance`, table `automation_silences`) suspend l'exécution des actions sur une fenêtre de temps `[starts_at, ends_at)`, pour toutes les règles ou une liste choisie (`rule_ids`). La table est partagée par les deux moteurs :
+Une étape en cours au moment d'un arrêt n'est jamais relancée d'office, parce qu'une action pourrait agir deux fois : l'exécution passe à `interrupted`, et **Rejouer** la relance avec le même détail.
 
-- **Moteur de règles** (`rules_engine_rules`) : la condition continue d'être évaluée à chaque cycle et journalisée normalement, seule l'action déclenchée est retenue : l'entrée d'historique correspondante a `action_taken=false` et `error="silenced"`. Le cooldown de la règle n'est pas consommé pendant un silence, afin qu'elle puisse se redéclencher normalement dès la fin de la fenêtre. `EvalNow` (bouton **Tester maintenant**, `POST /rules-engine/rules/{id}/run`) reflète le même état via `detail.silenced=true`.
-- **Moteur d'alertes** (`alert_rules`) : quand un événement correspond à une règle silencée, aucun canal n'est notifié, mais l'événement est journalisé dans `alert_events` avec `silenced=1` (visible via `GET /alert-events`, `list_alert_events` et `goproxify alert events`). Le cooldown propre à la règle/passerelle/domaine n'est pas consommé, l'alerte réelle repart dès la fin du silence.
+Le journal (`Automatisation > Journal`) liste toutes les exécutions, quelle que soit leur source :
+- l'Admin ;
+- une passerelle ;
+- une personne ;
+- un autre flux.
 
-Un même identifiant de règle n'existe que dans une seule des deux tables (`rules_engine_rules` ou `alert_rules`), donc `rule_ids` peut librement mélanger des règles des deux moteurs sans ambiguïté ; `rule_ids` vide couvre les deux à la fois.
+Pour chaque exécution, il montre le détail de ses étapes. Les exécutions terminées sont purgées après 30 jours. Seul le leader d'un Admin en haute disponibilité déclenche et fait avancer les flux.
+
+### Simulation et versions
+
+**Simuler** parcourt le flux sans rien exécuter, même un brouillon non enregistré :
+- les conditions sont évaluées pour de vrai, sur les données actuelles ;
+- les actions montrent leur configuration résolue ;
+- les attentes sont sautées et les approbations supposées accordées ;
+- les playbooks appelés sont parcourus.
+
+Chaque enregistrement ajoute une version ; les 20 dernières sont conservées, et **Rétablir** en refait la version courante.
+
+### Flux exécutés par les passerelles
+
+Un flux simple s'exécute **sur chaque passerelle**, sur ses propres données, à deux conditions :
+- son déclencheur est une condition que la passerelle sait évaluer (`ban_spike`, `engine_silent`, `proxy_error_rate`, `ban_repeat`) ;
+- sa seule étape est une action qu'elle sait exécuter (`disable_proxy`, `ban_ip`, `notify`, `enable_strict`).
+
+La passerelle en garde une copie locale chiffrée : le flux continue pendant une coupure de l'Admin, même après un redémarrage de la passerelle (ADR 0006). L'Admin lui envoie la liste à chaque modification, ne l'évalue plus lui-même, journalise ce qu'elle remonte (source `edge:<nœud>`) et achemine ses notifications vers les canaux.
+
+L'éditeur indique où s'exécute chaque flux et pourquoi. Le garde-fou **Toujours sur l'Admin** force l'évaluation sur l'Admin, avec une vue de tout le cluster.
+
+### Modèles
+
+Les modèles (`Automatisation > Automatisations > Modèles`) sont des flux paramétrables : règles, planification de sauvegarde, playbooks d'isolement d'un proxy ou de bannissement.
+
+- **Installation** : le formulaire des paramètres s'accompagne d'un aperçu du flux.
+- **Réédition** : un flux installé depuis un modèle se modifie par ce même formulaire ; il est reconstruit avec la version courante du modèle.
+- **Détachement** : **Personnaliser dans l'éditeur** détache le flux de son modèle ; il garde sa définition et se modifie ensuite dans l'éditeur.
+
+### Mises en sourdine
+
+Une **mise en sourdine** (`Automatisation > Alertes > Mises en sourdine`, table `automation_silences`) suspend, sur une fenêtre de temps, les déclenchements automatiques des flux et l'envoi des notifications des règles d'alerte. Elle s'applique à tout, ou à une liste de flux et de règles d'alerte (`rule_ids`).
+
+- **Flux** : un déclenchement en sourdine est journalisé (`silenced`) sans être exécuté, et ne consomme pas le délai minimum. Un lancement manuel n'est pas concerné.
+- **Moteur d'alertes** : aucun canal n'est notifié, l'événement est journalisé avec `silenced=1`, le délai de rappel n'est pas consommé.
+
+Les flux exécutés par les passerelles ignorent pour l'instant les mises en sourdine. La page le signale ; forcez-les sur l'Admin pour pouvoir les mettre en sourdine.
 
 ### Export / import YAML (GitOps)
 
-`GET /api/v1/rules-engine/export` renvoie en YAML l'intégralité de la configuration d'automatisation : règles (`rules`), canaux d'alerte (`channels`) et silences (`silences`). Les canaux exportent leur config en clair (identifiants, tokens inclus) : ce document doit être traité comme un secret, au même titre qu'une sauvegarde.
+`GET /api/v1/automation/export` renvoie en YAML (`version: 2`) les flux, les canaux d'alerte et les mises en sourdine, avec les secrets masqués.
 
-`POST /api/v1/rules-engine/import` applique un document au même format : règles et canaux sont **upsertés par nom** (mis à jour si une règle/canal du même nom existe déjà, créés sinon) ; les silences sont toujours créés (une fenêtre de temps ne se met pas à jour, elle s'ajoute). La réponse résume les créations/mises à jour.
+`POST /api/v1/automation/import` applique un document au même format :
+- flux et canaux sont mis à jour par nom, en gardant leurs secrets, ou créés ;
+- les playbooks sont importés d'abord, pour que les flux qui les appellent se valident ;
+- les mises en sourdine sont ajoutées.
 
-Accessible depuis `Admin > Automatisation > Vue d'ensemble` (boutons **Exporter en YAML** / **Importer un YAML**), `goproxify security rules export|import`, ou les outils MCP `export_automation` / `import_automation`.
+L'import est disponible depuis la vue d'ensemble, `goproxify automation export|import` et les outils MCP `export_automation` / `import_automation`.
 
 ### Canaux d'alerte
 
@@ -467,39 +525,6 @@ Une règle d'alerte peut définir `group_window_sec` (secondes, défaut 0 = dés
 Une règle d'alerte peut définir `escalation`, une liste de paliers `{ after_sec, channels }` : si l'événement déclenché n'a pas été **acquitté** avant `after_sec` secondes, il est renotifié vers `channels` (vide = les canaux de la règle), avec un titre préfixé `[ESCALADE]` et une sévérité forcée à `critical`. Chaque palier revérifie l'état d'acquittement au moment de se déclencher : un accusé de réception après la programmation d'un palier le rend simplement silencieux, sans avoir besoin de l'annuler.
 
 **Acquitter** un événement (`POST /api/v1/alert-events/{id}/ack`, bouton **Acquitter** dans le tiroir de détail de `Alertes et SLO`, `goproxify alert ack <event-id>`, MCP `ack_alert_event`) enregistre `acked=1`, `acked_by` (l'acteur authentifié) et `acked_at`. Il n'existe pas encore de lien d'accusé cliquable directement depuis l'e-mail ou Slack/Teams/Telegram (pas de webhook entrant) : le corps du message d'escalade renvoie vers `Admin > Automatisation > Alertes` pour acquitter depuis une session authentifiée.
-
-### Planifications (cron)
-
-`Admin > Automatisation > Automatisations > Planifications` déclenche une **action du moteur de règles** (mêmes types qu'une règle : `notify`, `ban_ip`, `disable_proxy`, `enable_strict`, `webhook_call`, `run_backup`) à heure fixe, sans condition à évaluer — utile pour une sauvegarde nocturne, un webhook de rapport périodique, etc.
-
-Table `scheduled_tasks` : `id, name, cron_expr, action_json, enabled, last_run_at`. `cron_expr` est une expression cron standard à **5 champs** (`minute heure jour-du-mois mois jour-de-semaine`), acceptant `*`, une valeur, une liste `a,b,c`, une plage `a-b` et un pas `*/n` ou `a-b/n` — jour-du-mois et jour-de-semaine se combinent en OR (comme cron standard) quand les deux sont restreints. Le planificateur (`internal/admin/scheduler`) évalue les planifications actives chaque minute (alignée sur le début de la minute) et journalise chaque exécution dans `scheduled_task_runs` (30 jours conservés, purge automatique).
-
-**Exécuter maintenant** (`POST /api/v1/scheduled-tasks/{id}/run`, bouton dans l'écran, `goproxify security schedule run <id>`, MCP `run_scheduled_task`) lance l'action indépendamment de l'expression cron. L'historique par planification est consultable via `GET /api/v1/scheduled-tasks/{id}/runs`, bouton **Historique**, `goproxify security schedule history <id>`, ou MCP `list_scheduled_task_runs`.
-
-### Approbation avant action
-
-Une règle du moteur de règles peut cocher **`require_approval`** : quand sa condition est vraie (cooldown passé, pas de silence actif), l'action n'est **pas exécutée** — elle est mise en attente dans `rules_engine_pending_actions` (règle, action, détail capturé, horodatage) et l'historique enregistre `error="pending_approval"`. Le cooldown est consommé normalement (une seule demande en attente par fenêtre).
-
-La **Vue d'ensemble** (`Admin > Automatisation`) affiche un bandeau listant les actions en attente, avec **Approuver** (exécute l'action immédiatement, avec le détail capturé au moment du déclenchement — la condition n'est pas réévaluée) et **Refuser** (l'action ne s'exécutera jamais). Chaque décision enregistre `decided_by` (l'acteur authentifié) et `decided_at`.
-
-API : `GET /rules-engine/pending[?status=pending|approved|rejected]`, `POST /rules-engine/pending/{id}/approve`, `POST /rules-engine/pending/{id}/reject`. CLI : `goproxify security rules pending list|approve|reject`. MCP : `list_pending_actions`, `approve_pending_action`, `reject_pending_action`.
-
-### Playbooks
-
-Un **playbook** (`Admin > Automatisation > Automatisations > Playbooks`, tables `playbooks`/`playbook_runs`) enchaîne plusieurs étapes, contrairement à une règle simple (une condition → une action) :
-
-| Étape | Effet |
-|---|---|
-| `action` | Exécute une action du moteur de règles (mêmes types qu'une règle ou une planification) |
-| `wait` | Attend `wait_sec` secondes avant l'étape suivante |
-| `condition` | Évalue une condition du moteur de règles ; si fausse, le playbook s'arrête (statut `stopped`, pas une erreur) |
-| `approval` | Suspend l'exécution (statut `waiting_approval`) jusqu'à une décision humaine |
-
-Un playbook se déclenche comme une **action** de règle ou de planification (`type: "run_playbook"`, `playbook_id`), ou manuellement (bouton **Exécuter**, `POST /playbooks/{id}/run`). Chaque déclenchement crée un **run** (`playbook_runs`) qui avance de manière asynchrone : les étapes `action`/`condition` s'exécutent immédiatement, une étape `wait` reprogramme la suite après son délai, une étape `approval` suspend jusqu'à `POST /playbooks/runs/{run_id}/approve` ou `.../reject` (visible et actionnable depuis l'historique du playbook). Un run a pour statut `running`, `waiting_approval`, `completed`, `failed` ou `stopped`, et journalise chaque étape (`log`) dans `GET /playbooks/{id}/runs` ou `GET /playbooks/runs/{run_id}` (via l'API REST — l'UI et le CLI utilisent le premier).
-
-> ⚠️ Comme le regroupement anti-bruit et les escalades, l'avancement d'un run (minuteur `wait`, attente `approval`) vit en mémoire : un redémarrage de l'Admin pendant qu'un run est en cours l'interrompt sans le reprendre automatiquement.
-
-API : `GET/POST /playbooks`, `PUT/DELETE /playbooks/{id}`, `POST /playbooks/{id}/run`, `GET /playbooks/{id}/runs`, `GET/POST /playbooks/runs/{run_id}[/approve|reject]`. CLI : `goproxify security playbook list|create|update|delete|run|history|approve|reject`. MCP : `list_playbooks`, `create_playbook`, `update_playbook`, `delete_playbook`, `run_playbook_now`, `list_playbook_runs`, `get_playbook_run`, `approve_playbook_run`, `reject_playbook_run`.
 
 ---
 

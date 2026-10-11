@@ -123,3 +123,35 @@ func TestCheck_ItemFieldsGoTogether(t *testing.T) {
 		}
 	}
 }
+
+func TestValidate_SelectAndDuration(t *testing.T) {
+	m := Manifest{Type: "x", Label: "X", Fields: []Field{
+		{Key: "sev", Label: "Sév", Kind: KindSelect, Options: []Option{{Value: "info", Label: "Info"}, {Value: "critical", Label: "Critique"}}},
+		{Key: "proxy", Label: "Proxy", Kind: KindSelect, Source: "proxies"},
+		{Key: "for", Label: "Durée", Kind: KindDuration},
+	}}
+	if err := m.check(); err != nil {
+		t.Fatal(err)
+	}
+	for name, cfg := range map[string]map[string]any{
+		"valeurs valides":       {"sev": "critical", "proxy": "p1", "for": "5m"},
+		"variable non vérifiée": {"sev": "{{detail.sev}}", "for": "{{detail.window}}"},
+		"champs absents":        {},
+	} {
+		if err := m.Validate(cfg); err != nil {
+			t.Errorf("%s : %v", name, err)
+		}
+	}
+	for name, cfg := range map[string]map[string]any{
+		"option inconnue": {"sev": "boom"},
+		"durée illisible": {"for": "5 minutes"},
+		"durée négative":  {"for": "-1m"},
+	} {
+		if err := m.Validate(cfg); err == nil {
+			t.Errorf("%s : accepté", name)
+		}
+	}
+	if err := (Manifest{Type: "x", Label: "X", Fields: []Field{{Key: "k", Label: "K", Kind: KindSelect}}}).check(); err == nil {
+		t.Error("select sans options ni source accepté")
+	}
+}

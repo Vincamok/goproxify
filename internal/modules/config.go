@@ -6,7 +6,9 @@ package modules
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Les opérations ci-dessous travaillent sur une configuration JSON (map[string]any). Une clé de champ
@@ -106,6 +108,29 @@ func (m Manifest) Validate(cfg map[string]any) error {
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("champs requis manquants : %s", strings.Join(missing, ", "))
+	}
+	for _, f := range m.Fields {
+		v, ok := getPath(cfg, f.Key)
+		if !ok || empty(v) || isVariable(v) {
+			continue
+		}
+		switch f.Kind {
+		case KindNumber:
+			if s, isStr := v.(string); isStr {
+				if _, err := strconv.ParseFloat(strings.TrimSpace(s), 64); err != nil {
+					return fmt.Errorf("%s : %q n'est pas un nombre", f.Key, s)
+				}
+			}
+		case KindDuration:
+			s, _ := v.(string)
+			if d, err := time.ParseDuration(s); err != nil || d < 0 {
+				return fmt.Errorf("%s : durée invalide %v (ex. 30s, 5m, 2h)", f.Key, v)
+			}
+		case KindSelect:
+			if len(f.Options) > 0 && !hasOption(f.Options, fmt.Sprint(v)) {
+				return fmt.Errorf("%s : valeur %v non proposée", f.Key, v)
+			}
+		}
 	}
 	var unknown []string
 	m.walkUnknown("", cfg, &unknown)
@@ -226,4 +251,20 @@ func (m Manifest) keepItemSecrets(f Field, old, out map[string]any) {
 		}
 		delete(item, f.ItemSecret)
 	}
+}
+
+// isVariable reconnaît une valeur résolue seulement à l'exécution (« {{detail.ip}} ») : elle ne peut
+// pas être contrôlée à la saisie, le module la contrôle quand il la reçoit.
+func isVariable(v any) bool {
+	s, ok := v.(string)
+	return ok && strings.Contains(s, "{{")
+}
+
+func hasOption(opts []Option, v string) bool {
+	for _, o := range opts {
+		if o.Value == v {
+			return true
+		}
+	}
+	return false
 }

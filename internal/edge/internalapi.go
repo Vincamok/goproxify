@@ -763,7 +763,7 @@ func (s *Server) addRuleBan(ip, reason string, duration time.Duration) {
 }
 
 // onRuleFired est appelé par le moteur de règles après chaque déclenchement.
-// Il notifie l'Admin via WS pour persistance dans rules_engine_history.
+// Il notifie l'Admin via WS, qui le journalise dans les exécutions du flux.
 func (s *Server) onRuleFired(log edgere.ExecLog) {
 	payload := edgews.RuleFiredPayload{
 		NodeName:    s.cfg.Identity.NodeName,
@@ -781,17 +781,11 @@ func (s *Server) onRuleFired(log edgere.ExecLog) {
 	}
 }
 
-// onRuleNotify est le callback EmitNotify du moteur de règles.
-func (s *Server) onRuleNotify(ruleID, severity, title, message string, detail map[string]any) {
-	log := edgere.ExecLog{
-		RuleID:      ruleID,
-		RuleName:    title,
-		CondResult:  true,
-		ActionTaken: true,
-		Detail:      detail,
-		FiredAt:     time.Now(),
-	}
-	s.onRuleFired(log)
+// onRuleNotify est le callback EmitNotify du moteur de règles. Le déclenchement remonte déjà à l'Admin par
+// onRuleFired (action notify) ; c'est l'Admin qui achemine la notification vers les canaux, avec le message
+// du flux. Un second message ici dupliquait le déclenchement dans le journal.
+func (s *Server) onRuleNotify(ruleID, severity, title, message string, _ map[string]any) {
+	s.log.Info("rulesengine: notification", "rule", ruleID, "severity", severity, "title", title, "message", message)
 }
 
 func (s *Server) handlePushBans(w http.ResponseWriter, r *http.Request) {

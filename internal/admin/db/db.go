@@ -871,109 +871,87 @@ func migrate(db *sql.DB) error {
 		_, _ = db.Exec(s)
 	}
 
-	// Moteur de règles (condition→action périodique)
+	// Automatisation : flux et mises en sourdine. Les tables des anciens moteurs (règles, planifications,
+	// playbooks) sont remplacées par les flux (ADR 0009).
 	for _, s := range []string{
-		`CREATE TABLE IF NOT EXISTS rules_engine_rules (
-			id               TEXT PRIMARY KEY,
-			name             TEXT NOT NULL,
-			description      TEXT NOT NULL DEFAULT '',
-			enabled          INTEGER NOT NULL DEFAULT 1,
-			condition_json   TEXT NOT NULL DEFAULT '{}',
-			action_json      TEXT NOT NULL DEFAULT '{}',
-			cooldown_sec     INTEGER NOT NULL DEFAULT 300,
-			fire_count       INTEGER NOT NULL DEFAULT 0,
-			last_fired_at    DATETIME,
-			require_approval INTEGER NOT NULL DEFAULT 0,
-			created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
-			updated_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+		// Flux d'automatisation (internal/admin/automation) : un déclencheur, un
+		// garde-fou et des étapes, dans definition_json. trigger_kind est aussi en
+		// colonne pour filtrer les onglets Règles / Planifications / Playbooks.
+		`CREATE TABLE IF NOT EXISTS flows (
+			id              TEXT PRIMARY KEY,
+			name            TEXT NOT NULL UNIQUE,
+			description     TEXT NOT NULL DEFAULT '',
+			enabled         INTEGER NOT NULL DEFAULT 1,
+			trigger_kind    TEXT NOT NULL,
+			definition_json TEXT NOT NULL,
+			origin_json     TEXT NOT NULL DEFAULT '{"kind":"manual"}',
+			version         INTEGER NOT NULL DEFAULT 1,
+			created_by      TEXT NOT NULL DEFAULT '',
+			created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
-		// Versionnage des règles : un instantané est ajouté après chaque
-		// création/modification/restauration, pour permettre un retour arrière.
-		`CREATE TABLE IF NOT EXISTS rules_engine_rule_versions (
-			id             INTEGER PRIMARY KEY AUTOINCREMENT,
-			rule_id        TEXT NOT NULL,
-			version        INTEGER NOT NULL,
-			name           TEXT NOT NULL,
-			description    TEXT NOT NULL DEFAULT '',
-			enabled        INTEGER NOT NULL DEFAULT 1,
-			condition_json TEXT NOT NULL DEFAULT '{}',
-			action_json    TEXT NOT NULL DEFAULT '{}',
-			cooldown_sec   INTEGER NOT NULL DEFAULT 300,
-			created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+		`CREATE TABLE IF NOT EXISTS flow_state (
+			flow_id         TEXT PRIMARY KEY,
+			fire_count      INTEGER NOT NULL DEFAULT 0,
+			last_fired_at   DATETIME,
+			last_run_id     TEXT NOT NULL DEFAULT '',
+			last_run_status TEXT NOT NULL DEFAULT ''
 		)`,
-		`CREATE INDEX IF NOT EXISTS idx_re_versions_rule ON rules_engine_rule_versions (rule_id, version DESC)`,
-		// Planifications (cron) : déclenchent une action du moteur de règles à
-		// heure fixe, indépendamment de toute condition.
-		`CREATE TABLE IF NOT EXISTS scheduled_tasks (
-			id           TEXT PRIMARY KEY,
-			name         TEXT NOT NULL,
-			cron_expr    TEXT NOT NULL,
-			action_json  TEXT NOT NULL DEFAULT '{}',
-			enabled      INTEGER NOT NULL DEFAULT 1,
-			last_run_at  DATETIME,
-			created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
-			updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+		`CREATE TABLE IF NOT EXISTS flow_versions (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			flow_id         TEXT NOT NULL,
+			version         INTEGER NOT NULL,
+			name            TEXT NOT NULL,
+			description     TEXT NOT NULL DEFAULT '',
+			enabled         INTEGER NOT NULL DEFAULT 1,
+			definition_json TEXT NOT NULL,
+			origin_json     TEXT NOT NULL DEFAULT '{}',
+			created_by      TEXT NOT NULL DEFAULT '',
+			created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
-		`CREATE TABLE IF NOT EXISTS scheduled_task_runs (
-			id       INTEGER PRIMARY KEY AUTOINCREMENT,
-			task_id  TEXT NOT NULL,
-			success  INTEGER NOT NULL DEFAULT 1,
-			error    TEXT NOT NULL DEFAULT '',
-			ran_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+		`CREATE INDEX IF NOT EXISTS idx_flow_versions_flow ON flow_versions (flow_id, version DESC)`,
+		// Exécutions : definition_json est la copie du flux au lancement (une
+		// modification n'affecte pas une exécution en cours) ; cursor est la
+		// prochaine étape, resume_at la reprise d'une attente ou l'échéance d'une
+		// approbation. Une exécution survit ainsi à un redémarrage de l'Admin.
+		`CREATE TABLE IF NOT EXISTS flow_runs (
+			id              TEXT PRIMARY KEY,
+			flow_id         TEXT NOT NULL,
+			flow_name       TEXT NOT NULL,
+			flow_version    INTEGER NOT NULL DEFAULT 0,
+			definition_json TEXT NOT NULL DEFAULT '{}',
+			source          TEXT NOT NULL DEFAULT '',
+			trigger_kind    TEXT NOT NULL DEFAULT '',
+			status          TEXT NOT NULL,
+			cursor          TEXT NOT NULL DEFAULT '',
+			context_json    TEXT NOT NULL DEFAULT '{}',
+			resume_at       DATETIME,
+			parent_run_id   TEXT NOT NULL DEFAULT '',
+			parent_step_id  TEXT NOT NULL DEFAULT '',
+			depth           INTEGER NOT NULL DEFAULT 0,
+			error           TEXT NOT NULL DEFAULT '',
+			started_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+			finished_at     DATETIME
 		)`,
-		`CREATE INDEX IF NOT EXISTS idx_sched_runs_task ON scheduled_task_runs (task_id, ran_at DESC)`,
-		// Approbation avant action : une règle avec require_approval=1 met son
-		// action en attente au lieu de l'exécuter ; un admin l'approuve ou la refuse.
-		`CREATE TABLE IF NOT EXISTS rules_engine_pending_actions (
-			id          TEXT PRIMARY KEY,
-			rule_id     TEXT NOT NULL,
-			rule_name   TEXT NOT NULL,
-			action_json TEXT NOT NULL DEFAULT '{}',
-			detail_json TEXT NOT NULL DEFAULT '{}',
-			status      TEXT NOT NULL DEFAULT 'pending',
-			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
-			decided_at  DATETIME,
-			decided_by  TEXT NOT NULL DEFAULT ''
+		`CREATE INDEX IF NOT EXISTS idx_flow_runs_flow ON flow_runs (flow_id, started_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_flow_runs_status ON flow_runs (status, resume_at)`,
+		`CREATE TABLE IF NOT EXISTS flow_run_steps (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			run_id      TEXT NOT NULL,
+			step_id     TEXT NOT NULL,
+			step_type   TEXT NOT NULL,
+			status      TEXT NOT NULL,
+			detail      TEXT NOT NULL DEFAULT '',
+			output_json TEXT NOT NULL DEFAULT '',
+			actor       TEXT NOT NULL DEFAULT '',
+			flow        TEXT NOT NULL DEFAULT '',
+			started_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+			finished_at DATETIME
 		)`,
-		`CREATE INDEX IF NOT EXISTS idx_re_pending_status ON rules_engine_pending_actions (status, created_at DESC)`,
-		// Playbooks : enchaînent plusieurs étapes (action, attente, condition,
-		// approbation) — déclenchés comme une action du moteur de règles
-		// (run_playbook) ou manuellement.
-		`CREATE TABLE IF NOT EXISTS playbooks (
-			id          TEXT PRIMARY KEY,
-			name        TEXT NOT NULL,
-			description TEXT NOT NULL DEFAULT '',
-			steps_json  TEXT NOT NULL DEFAULT '[]',
-			enabled     INTEGER NOT NULL DEFAULT 1,
-			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
-			updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
-		)`,
-		`CREATE TABLE IF NOT EXISTS playbook_runs (
-			id            TEXT PRIMARY KEY,
-			playbook_id   TEXT NOT NULL,
-			playbook_name TEXT NOT NULL,
-			steps_json    TEXT NOT NULL DEFAULT '[]',
-			current_step  INTEGER NOT NULL DEFAULT 0,
-			status        TEXT NOT NULL DEFAULT 'running',
-			log_json      TEXT NOT NULL DEFAULT '[]',
-			context_json  TEXT NOT NULL DEFAULT '{}',
-			started_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
-			updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
-			finished_at   DATETIME
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_playbook_runs_playbook ON playbook_runs (playbook_id, started_at DESC)`,
-		`CREATE TABLE IF NOT EXISTS rules_engine_history (
-			id           INTEGER PRIMARY KEY AUTOINCREMENT,
-			rule_id      TEXT NOT NULL,
-			cond_result  INTEGER NOT NULL DEFAULT 0,
-			action_taken INTEGER NOT NULL DEFAULT 0,
-			detail       TEXT NOT NULL DEFAULT '{}',
-			error        TEXT NOT NULL DEFAULT '',
-			fired_at     DATETIME DEFAULT CURRENT_TIMESTAMP
-		)`,
-		// Silences : suspendent temporairement l'exécution des actions du moteur de
-		// règles (la condition est toujours évaluée et journalisée, seule l'action
-		// déclenchée est retenue), sur toutes les règles ou une liste choisie.
+		`CREATE INDEX IF NOT EXISTS idx_flow_run_steps_run ON flow_run_steps (run_id, id)`,
+		// Silences : suspendent temporairement les déclenchements des flux et le
+		// routage des alertes, sur tout ou sur une liste de flux / règles d'alerte.
 		`CREATE TABLE IF NOT EXISTS automation_silences (
 			id         TEXT PRIMARY KEY,
 			name       TEXT NOT NULL,
@@ -1035,15 +1013,14 @@ func migrate(db *sql.DB) error {
 		)`,
 	} {
 		if _, err := db.Exec(s); err != nil {
-			return fmt.Errorf("migration rules_engine: %w", err)
+			return fmt.Errorf("migration automation: %w", err)
 		}
 	}
 
-	// Colonnes additives rules_engine_rules : après le CREATE, sinon l'ALTER échoue sur une base neuve.
-	for _, s := range []string{
-		`ALTER TABLE rules_engine_rules ADD COLUMN require_approval INTEGER NOT NULL DEFAULT 0`,
-	} {
-		_, _ = db.Exec(s)
+	// Tables des anciens moteurs d'automatisation, remplacées par les flux.
+	for _, t := range []string{"rules_engine_rules", "rules_engine_rule_versions", "rules_engine_history",
+		"rules_engine_pending_actions", "scheduled_tasks", "scheduled_task_runs", "playbooks", "playbook_runs"} {
+		_, _ = db.Exec(`DROP TABLE IF EXISTS ` + t)
 	}
 
 	// Dates comparées en SQL à CURRENT_TIMESTAMP / datetime('now', …) mais longtemps écrites en

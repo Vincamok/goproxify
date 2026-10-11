@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/vincamok/goproxify/internal/admin/db"
-	"github.com/vincamok/goproxify/internal/admin/rulesengine"
+	"github.com/vincamok/goproxify/internal/admin/automation"
 )
 
 func TestSavedCertExpiryIsSeenByRenewalAndRules(t *testing.T) {
@@ -29,8 +29,8 @@ func TestSavedCertExpiryIsSeenByRenewalAndRules(t *testing.T) {
 		t.Errorf("à renouveler (≤ 30 j) : %v", got)
 	}
 	// La règle lit expires_at via julianday(), qui renvoie NULL pour un time.Time lié tel quel (t.String()).
-	matched, detail, err := rulesengine.New(d, slog.Default(), rulesengine.Deps{}).EvalCondition(context.Background(),
-		rulesengine.Condition{Type: rulesengine.CondCertExpiring, DaysLeft: 15})
+	matched, detail, err := automation.New(d, slog.Default(), automation.Deps{}, automation.Options{}).EvalCondition(context.Background(),
+		&automation.Cond{Type: "cert_expiring", Config: map[string]any{"days_left": 15}})
 	if err != nil || !matched || detail["domain"] != "a.example" {
 		t.Fatalf("cert_expiring (15 j) doit voir le certificat ACME qui expire dans 10 j : %v %v %v", matched, detail, err)
 	}

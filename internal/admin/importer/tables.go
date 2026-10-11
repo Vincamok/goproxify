@@ -24,7 +24,8 @@ var backupTables = []string{
 	"backup_destinations",
 	"fail2ban_config",
 	"crowdsec_config",
-	"rules_engine_rules",
+	"flows",
+	"flow_state",
 	"domains",
 	"cert_deploy_targets",
 	"auth_providers",
@@ -50,10 +51,8 @@ var backupTables = []string{
 	"portal_users",
 	"portal_groups",
 	"portal_dest_groups",
-	"playbooks",
-	"scheduled_tasks",
 	"automation_silences",
-	"rules_engine_rule_versions",
+	"flow_versions",
 	"portal_page_templates",
 }
 

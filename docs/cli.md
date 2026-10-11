@@ -865,73 +865,83 @@ goproxify security waf set -proxy app.example.fr -file waf.json
 goproxify security cve sla get
 goproxify security cve sla set -file sla.json
 
-# Moteur de règles automatiques
-goproxify security rules list   [-admin-url …] [-token …]
-goproxify security rules get    <id> [-admin-url …] [-token …]
-goproxify security rules create -file <rule.json> [-admin-url …] [-token …]
-goproxify security rules update <id> -file <rule.json> [-admin-url …] [-token …]
-goproxify security rules delete <id> [-y] [-admin-url …] [-token …]
-goproxify security rules run    <id> [-dry-run] [-admin-url …] [-token …]
-
-goproxify security rules silence list   [-admin-url …] [-token …]
-goproxify security rules silence add    -name <nom> -starts <RFC3339> -ends <RFC3339> [-rules <id1,id2>] [-admin-url …] [-token …]
-goproxify security rules silence delete <id> [-y] [-admin-url …] [-token …]
-
-goproxify security rules history list          [-admin-url …] [-token …]
-goproxify security rules history replay <id>   [-admin-url …] [-token …]
-
-goproxify security rules pending list            [-admin-url …] [-token …]
-goproxify security rules pending approve <id>    [-admin-url …] [-token …]
-goproxify security rules pending reject  <id>    [-admin-url …] [-token …]
-
-goproxify security rules export [-out <fichier.yaml>] [-admin-url …] [-token …]
-goproxify security rules import -file <automation.yaml> [-admin-url …] [-token …]
 ```
 
-**`security rules`** — CRUD sur les règles du moteur de règles automatiques. `rules run` déclenche une évaluation immédiate ; `-dry-run` (défaut) affiche le résultat de la condition sans exécuter l'action. `rules silence` gère les fenêtres de silence, communes au moteur de règles et au moteur d'alertes : `add` sans `-rules` s'applique à toutes les règles des deux moteurs ; avec `-rules id1,id2` (IDs `security rules list` et/ou `alert rules list`), seulement à celles-ci. `rules history` consulte le journal d'exécution ; `replay` rejoue l'action d'une entrée en échec sans réévaluer la condition. Une règle créée avec `"require_approval": true` (`rule.json`) met son action en attente au lieu de l'exécuter ; `rules pending list` liste les actions en attente, `approve`/`reject` décident. `rules export`/`import` échangent règles, canaux et silences en un document YAML (GitOps) ; `export` sans `-out` écrit sur la sortie standard ; `import` upserte par nom. `rules versions` consulte les instantanés d'une règle (un par création/modification/restauration, 20 derniers conservés) et permet un retour arrière (`restore`, qui devient lui-même une nouvelle version).
+---
 
-Exemple de fichier règle (`rule.json`) :
+### `goproxify automation`
+
+Flux d'automatisation (Admin 0.139.0). Les règles, planifications et playbooks sont des flux : un déclencheur (`condition`, `event`, `schedule`, `manual`), un garde-fou et des étapes. Cette commande remplace `security rules`, `security schedule` et `security playbook`. Le format JSON d'un flux est décrit dans [api_specs.md](api_specs.md#flux-dautomatisation-admin-01390).
+
+```
+goproxify automation flows list     [-trigger condition,event|schedule|manual] [-json]
+goproxify automation flows get      <id>
+goproxify automation flows create   -file <flux.json>
+goproxify automation flows update   <id> -file <flux.json>
+goproxify automation flows delete   <id> [-y]
+goproxify automation flows enable   <id>
+goproxify automation flows disable  <id>
+goproxify automation flows run      <id> [-dry-run] [-input clé=valeur,…]
+goproxify automation flows simulate -file <flux.json> [-input clé=valeur,…]
+goproxify automation flows versions <id>
+goproxify automation flows restore  <id> <version>
+goproxify automation flows detach   <id>
+goproxify automation flows params   <id> -set clé=valeur,… [-name <nom>]
+
+goproxify automation runs list      [-flow <id>] [-status waiting_approval,…] [-limit N] [-json]
+goproxify automation runs get       <run-id>
+goproxify automation runs approve   <run-id>
+goproxify automation runs reject    <run-id>
+goproxify automation runs cancel    <run-id>
+goproxify automation runs replay    <run-id>
+
+goproxify automation templates list
+goproxify automation templates preview <id> [-set clé=valeur,…]
+goproxify automation templates install <id> [-set clé=valeur,…] [-name <nom>] [-disabled]
+
+goproxify automation catalog [-json]
+goproxify automation silences list
+goproxify automation silences add    -name <nom> -starts <RFC3339> -ends <RFC3339> [-flows <id1,id2>]
+goproxify automation silences delete <id> [-y]
+goproxify automation export [-out <fichier.yaml>]
+goproxify automation import -file <automation.yaml>
+```
+
+Toutes les commandes acceptent `-admin-url` et `-token`.
+
+- **`flows`**
+  - `list` affiche une ligne par flux : état, nom, lieu d'exécution (`edge` : sur les passerelles), déclencheur → étapes, origine (`manual` pour l'éditeur, `template`).
+  - `run` lance un flux à la main, sans garde-fous ; un flux à condition l'évalue d'abord.
+  - `run -dry-run` et `simulate` parcourent le flux sans rien exécuter et affichent la trace étape par étape. `simulate` accepte un fichier non enregistré.
+  - `params` modifie les paramètres d'un flux issu d'un modèle ; `detach` le détache pour l'éditer comme les autres.
+  - `-input` et `-set` prennent des paires `clé=valeur` séparées par des virgules. Un nombre ou un booléen garde son type.
+- **`runs`**
+  - `list` affiche le journal des exécutions : statut, flux, source (`admin`, `edge:<nœud>`, `manual:<acteur>`, `call:<run>`).
+  - `approve` et `reject` décident d'une approbation en attente (`-status waiting_approval` les liste).
+  - `replay` relance un flux avec le détail d'une exécution terminée, par exemple interrompue par un redémarrage.
+- **`catalog`** liste les déclencheurs, conditions, actions, types d'étape et métriques, avec leurs champs.
+- **`export` / `import`** échangent flux, canaux et mises en sourdine en YAML `version: 2` (GitOps). Les secrets sont masqués à l'export et conservés à l'import.
+
+Exemple : la règle « CVE critique → approbation → désactiver le proxy » (`flux.json`).
 
 ```json
 {
-  "name": "CVE critique → désactiver proxy",
+  "name": "CVE critique : couper après accord",
   "enabled": true,
-  "condition": { "type": "cve_critical", "threshold": 9.0 },
-  "action":    { "type": "disable_proxy" },
-  "cooldown_sec": 600
-}
-```
-
-**`security schedule`** — planifications (cron) : exécutent une action du moteur de règles à heure fixe (`notify`, `ban_ip`, `disable_proxy`, `enable_strict`, `webhook_call`, `run_backup`), sans condition à évaluer. `cron_expr` est une expression standard à 5 champs (`minute heure jour-du-mois mois jour-de-semaine`, ex. `0 3 * * *` = tous les jours à 3h). `run` déclenche l'action immédiatement, indépendamment du cron. `history` liste les 100 dernières exécutions.
-
-Exemple de fichier planification (`task.json`) :
-
-```json
-{
-  "name": "Sauvegarde nocturne",
-  "cron_expr": "0 3 * * *",
-  "action": { "type": "run_backup", "backup_retention": 7 },
-  "enabled": true
-}
-```
-
-**`security playbook`** — enchaîne plusieurs étapes (`action`, `wait`, `condition`, `approval`), contrairement à une règle (une condition → une action). Déclenché comme action d'une règle ou d'une planification (`{ "type": "run_playbook", "playbook_id": "…" }`), ou manuellement (`run`). `history` liste les exécutions (`playbook_runs`) avec leur statut (`running`, `waiting_approval`, `completed`, `failed`, `stopped`) et leur journal détaillé ; `approve`/`reject` décident d'une exécution suspendue à une étape `approval` (`<run-id>`, pas l'ID du playbook).
-
-Exemple de fichier playbook (`playbook.json`) :
-
-```json
-{
-  "name": "Incident CVE critique",
+  "trigger": { "kind": "condition", "condition": { "type": "cve_critical", "config": { "cvss_threshold": 9 } } },
+  "guard": { "cooldown_sec": 3600 },
   "steps": [
-    { "type": "action", "action": { "type": "notify", "notify_severity": "critical", "notify_message": "CVE critique détectée" } },
-    { "type": "approval" },
-    { "type": "action", "action": { "type": "disable_proxy" } },
-    { "type": "wait", "wait_sec": 900 },
-    { "type": "condition", "condition": { "type": "cve_critical", "cvss_threshold": 9.0 } },
-    { "type": "action", "action": { "type": "run_backup", "backup_retention": 5 } }
-  ],
-  "enabled": true
+    { "id": "ok", "type": "approval", "config": { "message": "Couper {{detail.proxy_name}} ({{detail.cve_id}}) ?", "timeout": "1h" } },
+    { "id": "off", "type": "action", "action": { "type": "disable_proxy" } },
+    { "id": "say", "type": "action", "action": { "type": "notify", "config": { "notify_message": "{{detail.proxy_name}} coupé par {{steps.ok.actor}}" } } }
+  ]
 }
+```
+
+Exemple : la sauvegarde planifiée, installée depuis un modèle.
+
+```
+goproxify automation templates install schedule-nightly-backup -set "cron=0 2 * * *,retention=7"
 ```
 
 ---
@@ -973,7 +983,7 @@ goproxify me tokens revoke <id> [-admin-url …] [-token …]
 `tokens scopes` liste les scopes disponibles pour votre compte (dépend de votre rôle).
 `tokens create` affiche la valeur du token une seule fois à la création.
 
-Utilisée avec un PAT, une commande d'écriture exige le scope `:write` de sa ressource, un scope de lecture ne suffit pas : `certs:write` pour `cert` et `internal-ca`, `domains:write` pour `domain`, `alerts:write` pour `alert` (canaux, règles, `alert ack`), `logs:write` pour `logs delete` (`gdpr:reveal` pour `logs reveal-ip`), `security:write` pour `security rules`, `security schedule` et `security playbook` (lectures : `audit:read`, compte admin). Voir le tableau complet dans [api_specs.md](api_specs.md#scope-pat-exigé-par-route). Depuis Admin `0.70.0`, un token créé avant doit être recréé avec ces scopes.
+Utilisée avec un PAT, une commande d'écriture exige le scope `:write` de sa ressource, un scope de lecture ne suffit pas : `certs:write` pour `cert` et `internal-ca`, `domains:write` pour `domain`, `alerts:write` pour `alert` (canaux, règles, `alert ack`), `logs:write` pour `logs delete` (`gdpr:reveal` pour `logs reveal-ip`), `security:write` pour `automation` (lectures : `audit:read`, compte admin). Voir le tableau complet dans [api_specs.md](api_specs.md#scope-pat-exigé-par-route). Depuis Admin `0.70.0`, un token créé avant doit être recréé avec ces scopes.
 
 Exemples :
 

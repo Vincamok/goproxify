@@ -12,10 +12,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// evalsWindow : durée sur laquelle on lisse le débit de cycles du moteur de règles.
+// evalsWindow : durée sur laquelle on lisse le débit des évaluations des flux à condition.
 const evalsWindow = 2 * time.Minute
 
-// adminLocal : métriques Prometheus du processus Admin (Fail2Ban, CrowdSec, moteur de règles).
+// adminLocal : métriques Prometheus du processus Admin (Fail2Ban, CrowdSec, flux d'automatisation).
 type adminLocal struct {
 	f2bBans, f2bScans           float64
 	csNew, csDeleted            float64
@@ -33,7 +33,7 @@ func readAdminLocal() adminLocal {
 	}
 	for _, mf := range mfs {
 		name := mf.GetName()
-		if !strings.HasPrefix(name, "gpx_f2b_") && !strings.HasPrefix(name, "gpx_crowdsec_") && !strings.HasPrefix(name, "gpx_rulesengine_") {
+		if !strings.HasPrefix(name, "gpx_f2b_") && !strings.HasPrefix(name, "gpx_crowdsec_") && !strings.HasPrefix(name, "gpx_automation_") {
 			continue
 		}
 		for _, m := range mf.GetMetric() {
@@ -55,14 +55,14 @@ func readAdminLocal() adminLocal {
 						a.csDeleted += m.GetCounter().GetValue()
 					}
 				}
-			case "gpx_rulesengine_evals_total":
+			case "gpx_automation_evals_total":
 				a.evalsTotal, a.hasRulesEval = m.GetCounter().GetValue(), true
-			case "gpx_rulesengine_eval_duration_seconds":
+			case "gpx_automation_eval_duration_seconds":
 				a.evalSumS += m.GetHistogram().GetSampleSum()
 				a.evalCount += float64(m.GetHistogram().GetSampleCount())
-			case "gpx_rulesengine_active_rules":
-				a.activeRules = m.GetGauge().GetValue()
-			case "gpx_rulesengine_actions_total":
+			case "gpx_automation_active_flows":
+				a.activeRules += m.GetGauge().GetValue()
+			case "gpx_automation_actions_total":
 				a.actionsTotal += m.GetCounter().GetValue()
 			}
 		}
@@ -161,11 +161,11 @@ func (s *ProxyMetricsSampler) Summary() map[string]any {
 		out["crowdsec"] = map[string]any{"decisions_new": a.csNew, "decisions_deleted": a.csDeleted}
 	}
 	if a.hasRulesEval {
-		re := map[string]any{"active_rules": a.activeRules, "actions_total": a.actionsTotal, "evals_per_minute": s.evalsPerMinute()}
+		re := map[string]any{"active_flows": a.activeRules, "actions_total": a.actionsTotal, "evals_per_minute": s.evalsPerMinute()}
 		if a.evalCount > 0 {
 			re["avg_duration_ms"] = a.evalSumS / a.evalCount * 1000
 		}
-		out["rules_engine"] = re
+		out["automation"] = re
 	}
 	return out
 }

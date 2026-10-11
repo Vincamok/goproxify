@@ -227,19 +227,17 @@ func TestToolScopesMatchREST(t *testing.T) {
 		{"delete_ip_profile", http.MethodDelete, "/api/v1/ip-profiles/p1"},
 		{"create_snippet", http.MethodPost, "/api/v1/snippets"},
 		{"list_detector_types", http.MethodGet, "/api/v1/detector-types"},
-		{"list_rules", http.MethodGet, "/api/v1/rules-engine/rules"},
-		{"run_rule", http.MethodPost, "/api/v1/rules-engine/rules/r1/run"},
-		{"list_pending_actions", http.MethodGet, "/api/v1/rules-engine/pending"},
-		{"approve_pending_action", http.MethodPost, "/api/v1/rules-engine/pending/p1/approve"},
-		{"list_silences", http.MethodGet, "/api/v1/rules-engine/silences"},
-		{"create_silence", http.MethodPost, "/api/v1/rules-engine/silences"},
-		{"export_automation", http.MethodGet, "/api/v1/rules-engine/export"},
-		{"import_automation", http.MethodPost, "/api/v1/rules-engine/import"},
-		{"list_scheduled_tasks", http.MethodGet, "/api/v1/scheduled-tasks"},
-		{"run_scheduled_task", http.MethodPost, "/api/v1/scheduled-tasks/s1/run"},
-		{"list_playbooks", http.MethodGet, "/api/v1/playbooks"},
-		{"run_playbook_now", http.MethodPost, "/api/v1/playbooks/p1/run"},
-		{"get_playbook_run", http.MethodGet, "/api/v1/playbooks/runs/r1"},
+		{"list_flows", http.MethodGet, "/api/v1/automation/flows"},
+		{"run_flow", http.MethodPost, "/api/v1/automation/flows/f1/run"},
+		{"simulate_flow", http.MethodPost, "/api/v1/automation/simulate"},
+		{"list_flow_runs", http.MethodGet, "/api/v1/automation/runs"},
+		{"decide_flow_run", http.MethodPost, "/api/v1/automation/runs/r1/approve"},
+		{"get_automation_catalog", http.MethodGet, "/api/v1/automation/catalog"},
+		{"install_flow_template", http.MethodPost, "/api/v1/automation/templates/t1/install"},
+		{"list_silences", http.MethodGet, "/api/v1/automation/silences"},
+		{"create_silence", http.MethodPost, "/api/v1/automation/silences"},
+		{"export_automation", http.MethodGet, "/api/v1/automation/export"},
+		{"import_automation", http.MethodPost, "/api/v1/automation/import"},
 	} {
 		want := rbac.RequiredScopeForRequest(httptest.NewRequest(c.method, c.path, nil))
 		if got := rbac.ToolRequiredScope(c.tool); got != want || got == "" {
@@ -250,7 +248,7 @@ func TestToolScopesMatchREST(t *testing.T) {
 
 func TestToolRequiresAdmin(t *testing.T) {
 	for _, tool := range []string{
-		"list_rules", "list_internal_cas", "list_scheduled_tasks", "get_playbook_run", "list_auth_providers",
+		"list_flows", "list_internal_cas", "get_flow_run", "decide_flow_run", "list_auth_providers",
 		"list_security_bans", "list_backups", "list_agents", "get_architecture", "simulate_sentinel_config",
 		"get_portal_config", "push_portal_templates",
 	} {

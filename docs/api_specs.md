@@ -75,7 +75,7 @@ Une requête authentifiée par PAT doit porter le scope de la route (`403 scope 
 | `/api/v1/domains` | `domains:read` | `domains:write` |
 | `/api/v1/certs` (dont `deploy-targets`, `pull-tokens`), `/api/v1/internal-ca`, `/api/v1/ech` | `certs:read` | `certs:write` |
 | `/api/v1/snippets` | `snippets:read` | `snippets:write` |
-| `/api/v1/security`, `/ip-profiles`, `/auth-providers`, `/rules-engine`, `/scheduled-tasks`, `/playbooks` | `audit:read` | `security:write` |
+| `/api/v1/security`, `/ip-profiles`, `/auth-providers`, `/automation` | `audit:read` | `security:write` |
 | `/api/v1/import` | `audit:read` | `import:write` |
 | `/api/v1/portal`, `/portal-page-templates` | `portal:read` | `portal:write` (contenu d'un terminal — rejeu, observation — : `portal:write` même en `GET`) |
 | `/api/v1/prism`, `/metrics/proxies`, `/metrics/summary` | `metrics:read` | idem |
@@ -353,7 +353,7 @@ processus Admin. Une section est **absente** tant que sa source n'a rien publié
 | `pipeline` | `[{stage, blocked_total}]` — requêtes bloquées par étape du pipeline de sécurité |
 | `f2b` | `bans_total`, `scans_total` — Fail2Ban (processus Admin) |
 | `crowdsec` | `decisions_new`, `decisions_deleted` — CrowdSec (processus Admin) |
-| `rules_engine` | `active_rules`, `actions_total`, `avg_duration_ms`, `evals_per_minute` (nul sans deux relevés) — moteur de règles |
+| `automation` | `active_flows`, `actions_total`, `avg_duration_ms`, `evals_per_minute` (nul sans deux relevés) — flux d'automatisation |
 
 ### `GET /api/v1/proxies/:id/revisions`
 
@@ -1022,7 +1022,7 @@ Compteurs globaux : `active_bans`, `active_threats`, `open_cves`, `critical_cves
 
 ### `GET /api/v1/security/bans`
 
-Liste tous les bans correspondant aux filtres, du plus récent au plus ancien. Paramètres : `active=true` (non expirés) ou `active=false` (expirés uniquement), `ip` (sous-chaîne), `domain`, `source` (`native|fail2ban|crowdsec|threat|rules_engine:<nœud>`), `edge` (nom du nœud ou id du token : les bans de cette passerelle **et** les bans globaux). Chaque entrée porte `edge_name`, la passerelle d'origine (vide = ban global : créé depuis l'Admin ou antérieur à cette colonne).
+Liste tous les bans correspondant aux filtres, du plus récent au plus ancien. Paramètres : `active=true` (non expirés) ou `active=false` (expirés uniquement), `ip` (sous-chaîne), `domain`, `source` (`native|fail2ban|crowdsec|threat|automation|automation:<nœud>`), `edge` (nom du nœud ou id du token : les bans de cette passerelle **et** les bans globaux). Chaque entrée porte `edge_name`, la passerelle d'origine (vide = ban global : créé depuis l'Admin ou antérieur à cette colonne).
 
 `GET /security/bans/countries`, `GET /security/bans/export` (CSV ou JSON, colonne `edge_name` ajoutée) et `GET /security/bans/intel/{kpis,by-reason,by-source,timeline,top-ips}` acceptent le même paramètre `edge`. `intel/kpis` renvoie `history_total` (bans posés), `unbanned` (débans), `rotation_ratio` (`unbanned / history_total`) et `recurring_ips`, le nombre d'IP ayant au moins 3 bans ; le nombre de bans actifs est la longueur de `GET /security/bans?active=true`.
 
@@ -1291,163 +1291,125 @@ Quand `record_sessions` est actif dans la politique, la passerelle enregistre la
 
 Les destinations (`/api/v1/portal/destinations`) et les utilisateurs (`/api/v1/portal/users`) suivent la même règle : rattachés au groupe, visibles et modifiables depuis n'importe quel membre. Au démarrage, les données propres aux membres d'avant les groupes sont rattachées au groupe (config du premier membre, destinations en double retirées, un désaccord de config est signalé dans le log, jamais écrasé).
 
-## Moteur de règles automatiques
-
-### `GET /api/v1/rules-engine/rules`
-
-Liste toutes les règles. Réponse : tableau `Rule[]`.
-
-### `POST /api/v1/rules-engine/rules`
-
-Crée une règle. Corps : `{ name, description, enabled, condition, action, cooldown_sec, require_approval }`. `require_approval` (défaut `false`) : si vrai, l'action attend une décision humaine (`GET/POST /rules-engine/pending…`) au lieu de s'exécuter.
-
-### `PUT /api/v1/rules-engine/rules/:id`
-
-Met à jour une règle existante.
-
-### `DELETE /api/v1/rules-engine/rules/:id`
-
-Supprime une règle.
-
-### `POST /api/v1/rules-engine/rules/:id/run`
-
-Déclenche une évaluation immédiate. Paramètre : `?dry_run=true` (défaut). Réponse : `{ matched, action_taken, detail, error }`.
-
-### `GET /api/v1/rules-engine/history`
-
-Historique des exécutions. Paramètre : `limit`.
-
-### `POST /api/v1/rules-engine/history/:id/replay`
-
-Rejoue l'action d'une entrée d'historique en échec, en réutilisant le `detail` capturé au déclenchement d'origine (la condition n'est pas réévaluée). `400` si l'entrée n'a jamais déclenché de tentative d'action ou si la règle a été supprimée depuis. Réponse : `{ ok: true }`.
-
-### `GET /api/v1/rules-engine/rules/:id/versions`
-
-Liste l'historique des versions d'une règle (20 dernières), la plus récente en premier. Réponse : tableau `{ version, name, description, enabled, condition, action, cooldown_sec, created_at }`.
-
-### `POST /api/v1/rules-engine/rules/:id/versions/:version/restore`
-
-Restaure la règle à l'état de la version indiquée (condition, action, cooldown, activation, nom, description). La restauration ajoute elle-même une nouvelle version. `404` si la règle ou la version n'existe pas. Réponse : `{ ok: true }`.
-
-### `GET /api/v1/rules-engine/condition-types`
-
-Liste les descripteurs de types de conditions disponibles (nom, paramètres, descriptions).
-
-### `GET /api/v1/rules-engine/action-types`
-
-Liste les actions du moteur de règles, dérivées du registre de modules (ADR 0007) : `type`, `label`, `params` (clés des champs, format historique), `fields` (manifeste complet : genre, requis) et `edge` (l'action s'exécute sur une passerelle).
-
-**Validation** : `POST`/`PUT /rules-engine/rules`, `POST`/`PUT /scheduled-tasks`, l'import d'automatisation et les outils MCP `create_scheduled_task`/`update_scheduled_task`/`import_automation` valident l'action — type connu, champs requis (`webhook_url` pour `webhook_call`, `playbook_id` pour `run_playbook`), `webhook_url` en http(s), durées lisibles et positives (`ban_duration`, `strict_duration`), gravité `info|warning|critical`, rétention positive — et répondent `400` (`rules_rejected` dans le résumé d'un import). Avant Admin `0.133.0`, une action invalide n'échouait qu'au déclenchement, et une `ban_duration` illisible donnait un ban **permanent**. Seules les règles dont l'action s'exécute sur une passerelle (`disable_proxy`, `ban_ip`, `notify`, `enable_strict`) lui sont poussées.
-
-**Actions à secret (Admin `0.135.0`)** : `webhook_signed` (`params.url`, `params.secret`) et `pagerduty` (`params.routing_key`, `params.severity`, `params.url`). Les secrets sont renvoyés sous la forme `••••••••` par les listes de règles, versions, approbations, planifications, playbooks (étapes et exécutions), l'export et les outils MCP ; les omettre ou renvoyer le masque à `PUT` ou à l'import conserve la valeur enregistrée, et un secret masqué à `POST` est refusé (`400`). L'export d'automatisation masque aussi les secrets des canaux d'alerte.
-
-### `GET /api/v1/rules-engine/templates`
-
-Store de règles préconfigurées. Réponse : tableau `Template[]` (`id, category, name, description, cooldown_sec, condition, action`).
-
-### `POST /api/v1/rules-engine/templates/:id/install`
-
-Installe un template : crée une `Rule` concrète à partir de ses valeurs par défaut. Corps optionnel : `{ name, enabled }` (nom personnalisé, activée par défaut). Réponse : `{ id }` (201).
-
-### `GET /api/v1/rules-engine/silences`
-
-Liste les silences. Réponse : tableau `Silence[]` (`id, name, rule_ids, starts_at, ends_at, created_at`), `rule_ids` vide = toutes les règles des deux moteurs (moteur de règles et moteur d'alertes — voir [docs/security.md](security.md#silences--maintenance)).
-
-### `POST /api/v1/rules-engine/silences`
-
-Crée un silence. Corps : `{ name, starts_at, ends_at, rule_ids }` (`starts_at`/`ends_at` en RFC3339, avec n'importe quel décalage horaire — stockées et renvoyées en UTC ; `rule_ids` optionnel — IDs de `rules_engine_rules` et/ou `alert_rules`, vide = toutes les règles). `400` si `ends_at <= starts_at`. Réponse : `{ id }` (201).
-
-### `DELETE /api/v1/rules-engine/silences/:id`
-
-Supprime un silence (`204`).
-
-### `GET /api/v1/rules-engine/pending?[status=pending|approved|rejected]`
-
-Liste les actions mises en attente par une règle `require_approval` (sans filtre : tous les statuts). Réponse : tableau `{ id, rule_id, rule_name, action, detail, status, created_at, decided_at, decided_by }`.
-
-### `POST /api/v1/rules-engine/pending/:id/approve`
-
-Approuve une action en attente : elle est exécutée immédiatement (avec le détail capturé au déclenchement, la condition n'est pas réévaluée) et le résultat rejoint l'historique de la règle. `400` si l'action n'est plus `pending`. Réponse : `{ ok: true }`.
-
-### `POST /api/v1/rules-engine/pending/:id/reject`
-
-Refuse une action en attente : elle ne sera jamais exécutée. `400` si l'action n'est plus `pending`. Réponse : `{ ok: true }`.
-
-### `GET /api/v1/rules-engine/export`
-
-Exporte en YAML toute la configuration d'automatisation : `{ version, rules[], channels[], silences[] }` (`Content-Type: application/x-yaml`, pièce jointe `automation.yaml`). Les canaux exportent leur `config` en clair.
-
-### `POST /api/v1/rules-engine/import`
-
-Importe un document YAML au format de l'export ci-dessus. Corps : le document YAML brut. Règles et canaux upsertés par nom ; silences toujours créés, dates ramenées en UTC — un silence dont `starts_at` ou `ends_at` n'est pas une date (RFC3339, ou `AAAA-MM-JJ HH:MM:SS` en UTC) est ignoré. Réponse : `{ rules_created, rules_updated, channels_created, channels_updated, silences_created }`.
-
----
-
-## Planifications (cron)
-
-### `GET /api/v1/scheduled-tasks`
-
-Liste les planifications. Réponse : tableau `{ id, name, cron_expr, action, enabled, last_run_at, created_at, updated_at }`.
-
-### `POST /api/v1/scheduled-tasks`
-
-Crée une planification. Corps : `{ name, cron_expr, action, enabled }` (`cron_expr` : expression cron 5 champs, `action` : mêmes types que le moteur de règles — `condition-types`/`action-types`). `400` si `cron_expr` est invalide. Réponse : `{ id }` (201).
-
-### `PUT /api/v1/scheduled-tasks/:id`
-
-Met à jour une planification existante. Même corps que la création.
-
-### `DELETE /api/v1/scheduled-tasks/:id`
-
-Supprime une planification (`204`).
-
-### `POST /api/v1/scheduled-tasks/:id/run`
-
-Exécute immédiatement l'action de la planification, indépendamment de son expression cron. Réponse : `{ ok: true }`.
-
-### `GET /api/v1/scheduled-tasks/:id/runs`
-
-Historique des 100 dernières exécutions (30 jours conservés). Réponse : tableau `{ id, success, error, ran_at }`.
-
----
-
-## Playbooks
-
-### `GET /api/v1/playbooks`
-
-Liste les playbooks. Réponse : tableau `{ id, name, description, steps, enabled, created_at, updated_at }`.
-
-### `POST /api/v1/playbooks`
-
-Crée un playbook. Corps : `{ name, description, steps, enabled }`. `steps` : tableau non vide de `{ type: "action"|"wait"|"condition"|"approval", action?, wait_sec?, condition?, note? }`. `400` si `name` vide ou `steps` vide. Réponse : `{ id }` (201).
-
-### `PUT /api/v1/playbooks/:id`
-
-Met à jour un playbook existant. Même corps que la création.
-
-### `DELETE /api/v1/playbooks/:id`
-
-Supprime un playbook (`204`).
-
-### `POST /api/v1/playbooks/:id/run`
-
-Démarre une exécution depuis la première étape. Réponse : `{ run_id }`.
-
-### `GET /api/v1/playbooks/:id/runs`
-
-Liste les 50 dernières exécutions du playbook. Réponse : tableau `{ id, current_step, status, log, started_at, updated_at, finished_at }` (`status` : `running`, `waiting_approval`, `completed`, `failed`, `stopped`).
-
-### `GET /api/v1/playbooks/runs/:run_id`
-
-Détail d'une exécution : `{ id, playbook_id, playbook_name, steps, current_step, status, log, context, started_at, updated_at, finished_at }`.
-
-### `POST /api/v1/playbooks/runs/:run_id/approve`
-
-Approuve une exécution suspendue à une étape `approval` : reprend à l'étape suivante. `400` si l'exécution n'est pas `waiting_approval`. Réponse : `{ ok: true }`.
-
-### `POST /api/v1/playbooks/runs/:run_id/reject`
-
-Refuse une exécution suspendue à une étape `approval` : l'exécution passe au statut `stopped`. `400` si l'exécution n'est pas `waiting_approval`. Réponse : `{ ok: true }`.
+## Flux d'automatisation (Admin 0.139.0)
+
+Règles, planifications et playbooks sont un seul objet, le **flux** : un déclencheur, un garde-fou et une suite d'étapes (ADR 0009). Toutes les routes sont sous `/api/v1/automation/`, réservées aux admins (`RequireAdmin`), en lecture `audit:read` et en écriture `security:write` pour un PAT. Elles remplacent `/rules-engine`, `/scheduled-tasks` et `/playbooks`, supprimées.
+
+Erreurs : `400` pour une saisie invalide (le corps explique la cause), `404` si l'objet n'existe pas, `409` si on modifie la définition d'un flux issu d'un modèle.
+
+### Format d'un flux
+
+```json
+{
+  "id": "…", "name": "Couper un proxy en échec", "description": "", "enabled": true,
+  "trigger": {
+    "kind": "condition",
+    "condition": { "all": [ { "type": "proxy_error_rate", "config": { "error_rate_threshold": 40 } },
+                            { "not": { "type": "node_offline", "config": {} } } ] },
+    "interval_sec": 60
+  },
+  "guard": { "cooldown_sec": 1800, "cooldown_key": "{{detail.proxy_id}}", "max_concurrent": 1, "placement": "auto" },
+  "steps": [
+    { "id": "s1", "type": "approval", "config": { "message": "Couper {{detail.proxy_name}} ?", "timeout": "30m", "on_timeout": "reject" } },
+    { "id": "s2", "type": "action", "action": { "type": "disable_proxy", "config": {} } },
+    { "id": "s3", "type": "if", "condition": { "type": "cve_critical", "config": {} },
+      "then": [ { "id": "s4", "type": "call", "config": { "flow_id": "…", "wait": true, "inputs": { "proxy_id": "{{detail.proxy_id}}" } } } ],
+      "else": [] }
+  ],
+  "origin": { "kind": "manual" }
+}
+```
+
+- **Déclencheur** (`trigger.kind`) :
+  - `condition` : arbre de conditions (`type` + `config`, ou un groupe `all` / `any` / `not`), évalué toutes les `interval_sec` secondes (60 par défaut, 30 au minimum) ;
+  - `event` : `{ event, nodes, domain_glob, min_severity, match }`, un événement du moteur d'alertes (mêmes déclencheurs que les règles de routage, plus `automation_notify`), filtré par périmètre et par motifs sur le détail ;
+  - `schedule` : `{ cron }`, 5 champs, à l'heure locale de l'Admin ; une exécution manquée pendant un arrêt n'est pas rattrapée ;
+  - `manual` : `{ inputs: [champs de manifeste] }`, paramètres saisis au lancement.
+- **Garde-fou** (`guard`) :
+  - `cooldown_sec` : délai minimum entre deux déclenchements automatiques, 300 s par défaut pour une condition ou un événement ;
+  - `cooldown_key` : délai par valeur, par exemple `{{detail.ip}}` ;
+  - `max_concurrent` : exécutions simultanées (1 par défaut) ;
+  - `placement` : `auto` ou `admin`.
+  Un lancement manuel ignore les garde-fous.
+- **Étapes** (`steps[].type`) :
+  - `action` : `action: { type, config }` ;
+  - `wait` : `{ duration }` ;
+  - `if` : `condition`, branches `then` / `else` ;
+  - `approval` : `{ message, timeout, on_timeout: reject|approve }` ;
+  - `call` : `{ flow_id, wait, inputs }`, lance un flux à déclenchement manuel ;
+  - `stop` : `{ status: stopped|completed|failed, reason }`.
+  `on_error: continue` poursuit l'exécution après une étape en échec. Au plus 50 étapes, 5 niveaux d'imbrication et 5 appels en chaîne ; un appel circulaire est refusé.
+- **Variables** : `{{detail.x}}` (sorties du déclencheur, paramètres d'un playbook), `{{steps.<id>.x}}` (sorties d'une étape exécutée avant), `{{flow.id}}`, `{{flow.name}}`, `{{run.id}}`. Une chaîne réduite à une variable garde le type de la valeur.
+- **Placement** (lecture seule) : `edge` quand la passerelle exécute le flux seule. Il faut une condition simple qu'elle sait évaluer (`ban_spike`, `engine_silent`, `proxy_error_rate`, `ban_repeat`), une seule action qu'elle sait exécuter (`disable_proxy`, `ban_ip`, `notify`, `enable_strict`), aucune autre étape et aucune clé de délai. Ces flux sont envoyés à chaque modification et l'Admin ne les évalue pas ; `placement_reason` explique un placement `admin`.
+- **Secrets** : les champs secrets des actions (`webhook_signed.secret`, `pagerduty.routing_key`…) et les paramètres mot de passe d'un modèle sont renvoyés masqués (`••••••••`). Renvoyer le masque, ou ne pas renseigner le champ, conserve la valeur ; une action est retrouvée par l'identifiant de son étape. Un masque sur une étape nouvelle est refusé (`400`).
+- **Origine** : `manual` (éditeur) ou `template` (`template_id`, `template_version`, `params`).
+
+### Flux
+
+| Méthode | Route | Rôle |
+|---|---|---|
+| `GET` | `/automation/flows?trigger=condition,event` | Liste, filtrée par déclencheur. Chaque flux porte `state` : `fire_count`, `last_fired_at`, `last_run_status`, `next_run_at` (planification), `waiting` |
+| `POST` | `/automation/flows` | Crée un flux de l'éditeur. Réponse : le flux |
+| `GET` | `/automation/flows/{id}` | Un flux |
+| `PUT` | `/automation/flows/{id}` | Remplace la définition (nouvelle version). Pour un flux issu d'un modèle : corps `{ name, description, enabled, origin: { kind: "template", params } }`, qui le reconstruit avec la version courante du modèle ; une définition complète donne `409` |
+| `PATCH` | `/automation/flows/{id}` | `{ enabled }`, sans nouvelle version |
+| `DELETE` | `/automation/flows/{id}` | `204` ; `400` si un autre flux l'appelle |
+| `POST` | `/automation/flows/{id}/run` | `{ inputs, dry_run }`. Un flux à condition l'évalue d'abord (`{ matched: false }` si elle est fausse). Avec `dry_run`, simulation (voir ci-dessous). Réponse : `{ run_id, matched, detail }` |
+| `POST` | `/automation/flows/{id}/detach` | Détache le flux de son modèle : il devient un flux de l'éditeur |
+| `GET` | `/automation/flows/{id}/versions` | 20 dernières versions : `{ version, flow, created_by, created_at }` |
+| `POST` | `/automation/flows/{id}/versions/{v}/restore` | Rétablit une version (nouvelle version) |
+| `POST` | `/automation/simulate` | `{ flow, inputs }` : simule un flux, enregistré ou brouillon |
+
+**Simulation** : les conditions sont évaluées pour de vrai, aucune action n'est exécutée, les attentes sont sautées et les approbations supposées accordées. Un appel de playbook est parcouru lui aussi. Réponse : `{ matched, detail, silenced, placement, placement_reason, trace: [{ step_id, type, status, detail, output, flow }] }`. `output` montre la configuration résolue de l'action, secrets masqués.
+
+### Exécutions
+
+| Méthode | Route | Rôle |
+|---|---|---|
+| `GET` | `/automation/runs?flow_id=&status=a,b&source=edge&since=1h&limit=100` | Journal, le plus récent d'abord (500 au plus). `status=waiting_approval` liste les approbations en attente, avec `pending.message` |
+| `GET` | `/automation/runs/{id}` | Une exécution et le journal de ses étapes (`steps`) |
+| `POST` | `/automation/runs/{id}/approve` · `/reject` | Décide une approbation. L'acteur est enregistré. `400` si l'exécution n'attend pas d'approbation ou si la décision est déjà prise |
+| `POST` | `/automation/runs/{id}/cancel` | Annule une exécution en cours ou en attente, ainsi que les playbooks qu'elle attend |
+| `POST` | `/automation/runs/{id}/replay` | Relance le flux avec le détail d'une exécution terminée |
+
+- **Statuts** :
+  - en cours : `running`, `waiting`, `waiting_approval`, `waiting_child` ;
+  - terminés : `completed`, `stopped`, `failed`, `rejected`, `cancelled`, `silenced` (déclenchement automatique en sourdine), `interrupted` (l'Admin s'est arrêté pendant une étape).
+- **Sources** : `admin`, `edge:<nœud>` (flux exécuté par une passerelle), `manual:<acteur>`, `call:<run>`.
+- **Reprise** : les attentes et les approbations reprennent après un redémarrage de l'Admin. Une étape en cours au moment d'un arrêt n'est jamais relancée d'office : l'exécution passe à `interrupted`, et `replay` la relance à la main. Les exécutions terminées sont purgées après 30 jours.
+
+### Catalogue et valeurs
+
+- `GET /automation/catalog` : `{ triggers, events, conditions, actions, steps, metrics, variables }`.
+  - Chaque brique est un manifeste `{ type, label, fields, attrs }` : `attrs.edge` (la passerelle sait l'exécuter), `attrs.outputs` (variables produites), `attrs.category`.
+  - Les champs suivent `modules.Field`, avec en plus `options` / `source` pour un champ `select`, `default`, `help`, et le genre `duration`.
+- `GET /automation/options/{source}` : valeurs d'un champ à source dynamique, sous forme `[{ value, label }]`. Sources : `proxies`, `nodes`, `domains`, `alert_channels`, `flows:manual`, `events`, `metrics`, `metric_entities`.
+
+**Condition `metric_threshold`** :
+- Champs : `metric`, `entity` (vide = n'importe laquelle), `aggregation` (`avg|max|min|last|increase|rate`), `window` (1 h au plus), `operator`, `value`, `min_samples` (3 par défaut).
+- Séries : une heure d'historique, relevée toutes les 10 s, sur le trafic des proxies et des passerelles (`proxy.rps`, `proxy.error_rate_pct`, `proxy.p95_ms`, `edge.*`, `global.*`), le TLS (`tls.cert_expires_days`, `tls.handshake_p95_ms`, `tls.active_connections`), les connexions, le portail, le WAF, les étapes du pipeline et quelques compteurs de l'Admin.
+- Sans assez de points, la condition est fausse. Le détail porte `value`, `threshold` et `entity`, plus `host`, `proxy_id` et `proxy_name` pour une métrique de proxy.
+
+### Modèles
+
+| Méthode | Route | Rôle |
+|---|---|---|
+| `GET` | `/automation/templates` | `{ id, category, version, name, description, kind, params, flow, installed }` |
+| `POST` | `/automation/templates/{id}/preview` | `{ params }` : le flux rendu, validé, non enregistré |
+| `POST` | `/automation/templates/{id}/install` | `{ name, enabled, params }` : crée le flux (paramètres absents : valeurs par défaut) |
+
+### Mises en sourdine, export, statistiques
+
+- **Mises en sourdine** : `GET`/`POST /automation/silences`, `DELETE /automation/silences/{id}`.
+  - Corps : `{ name, starts_at, ends_at, rule_ids }`, dates RFC3339 avec n'importe quel décalage, stockées en UTC.
+  - `rule_ids` vise des flux et des règles de routage d'alertes ; vide, il couvre tout.
+  - Un déclenchement automatique en sourdine est journalisé (`silenced`) sans être exécuté. Les flux exécutés par les passerelles ne sont pas mis en sourdine.
+- **Export** : `GET /automation/export` renvoie un YAML `version: 2` contenant flux, canaux d'alerte et mises en sourdine, secrets masqués.
+- **Import** : `POST /automation/import` (corps YAML).
+  - Flux et canaux sont mis à jour par nom (secrets conservés) ou créés ; les playbooks sont importés d'abord.
+  - Les mises en sourdine sont ajoutées.
+  - Réponse : `{ flows_created, flows_updated, flows_rejected, channels_created, channels_updated, silences_created, errors }`.
+- **Statistiques** : `GET /automation/stats` renvoie `{ flows (par déclencheur), enabled, runs_24h, failed_24h, waiting_approval, hourly[24], templates }`.
 
 ---
 

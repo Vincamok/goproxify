@@ -37,8 +37,8 @@ Chaque outil exige un scope, le même que sa route REST équivalente. Les outils
 | `certs:read` | `list_certs`, `get_cert_status`, `list_cert_deploy_targets`, `list_cert_deploy_types`, `list_internal_cas` †, `list_internal_certs` †, `get_ech_status` † |
 | `certs:write` | `obtain_cert`, `import_cert`, `trigger_cert_deploy`, `create_internal_ca` †, `issue_internal_cert` †, `revoke_internal_cert` † |
 | `logs:read` | `list_logs`, `get_prism_anomalies`, `get_prism_geo`, `get_prism_tls_fingerprints`, `get_prism_slo`, `simulate_sentinel_config` †, `trace_ip` †, `preview_security_ban` †, `preview_asn_ban` † |
-| `audit:read` | `get_audit_log`, `list_ip_profiles`, `get_security_overview` †, `list_security_bans` †, `list_security_engine_types` †, `list_plugins` †, `lookup_asn` †, `list_ban_whitelist` †, `list_security_threats` †, `list_security_cves` †, `list_auth_providers` †, `list_auth_provider_types` †, `list_rules` †, `list_rule_history` †, `list_rule_versions` †, `list_pending_actions` †, `list_silences` †, `export_automation` †, `list_scheduled_tasks` †, `list_scheduled_task_runs` †, `list_playbooks` †, `list_playbook_runs` †, `get_playbook_run` † |
-| `security:write` | `create_ip_profile`, `delete_ip_profile`, `create_security_ban` †, `delete_security_ban` †, `ban_ip` †, `unban_ip` †, `add_ban_whitelist` †, `remove_ban_whitelist` †, `import_security_bans` †, `ban_asn` †, `unban_asn` †, `create_auth_provider` †, `delete_auth_provider` †, `run_rule` †, `replay_rule_history` †, `restore_rule_version` †, `approve_pending_action` †, `reject_pending_action` †, `create_silence` †, `import_automation` †, `create_scheduled_task` †, `update_scheduled_task` †, `delete_scheduled_task` †, `run_scheduled_task` †, `create_playbook` †, `update_playbook` †, `delete_playbook` †, `run_playbook_now` †, `approve_playbook_run` †, `reject_playbook_run` † |
+| `audit:read` | `get_audit_log`, `list_ip_profiles`, `get_security_overview` †, `list_security_bans` †, `list_security_engine_types` †, `list_plugins` †, `lookup_asn` †, `list_ban_whitelist` †, `list_security_threats` †, `list_security_cves` †, `list_auth_providers` †, `list_auth_provider_types` †, `list_flows` †, `get_flow` †, `list_flow_versions` †, `list_flow_runs` †, `get_flow_run` †, `get_automation_catalog` †, `list_flow_templates` †, `list_silences` †, `export_automation` † |
+| `security:write` | `create_ip_profile`, `delete_ip_profile`, `create_security_ban` †, `delete_security_ban` †, `ban_ip` †, `unban_ip` †, `add_ban_whitelist` †, `remove_ban_whitelist` †, `import_security_bans` †, `ban_asn` †, `unban_asn` †, `create_auth_provider` †, `delete_auth_provider` †, `create_flow` †, `update_flow` †, `set_flow_enabled` †, `delete_flow` †, `run_flow` †, `simulate_flow` †, `restore_flow_version` †, `detach_flow` †, `update_flow_params` †, `decide_flow_run` †, `cancel_flow_run` †, `replay_flow_run` †, `install_flow_template` †, `create_silence` †, `delete_silence` †, `import_automation` † |
 | `portal:read` / `portal:write` | outils Access (`*_portal_*`, `push_portal`) † — voir [GoProxify Access](#goproxify-access-portail) |
 
 Les scopes d'écriture (`proxies:delete`, `nodes:write`, `alerts:write`, `domains:write`, `certs:write`, `security:write`, `import:write`) ainsi que `users:read`, `teams:read` et `portal:*` sont réservés aux rôles admin et superadmin (`proxies:write` et `snippets:write` sont aussi ouverts à un compte `user` qui a un droit d'écriture). Un refus est renvoyé comme erreur d'outil (`isError: true`) :
@@ -752,340 +752,39 @@ Lève le ban d'une IP (supprime de `security_bans`) et tous ses bans sur chaque 
 
 ---
 
-### `list_rules`
-
-Liste les règles automatiques configurées dans le moteur de règles.
-
-Tous les outils du moteur de règles, des planifications, des playbooks et des silences sont réservés au rôle admin, comme `/api/v1/rules-engine`, `/api/v1/scheduled-tasks` et `/api/v1/playbooks` : lecture `audit:read`, action ou modification `security:write`.
-
-**Scope :** `audit:read` + rôle admin  
-**Réponse :** tableau de règles `{ id, name, enabled, condition, action, cooldown_sec, fire_count, last_fired_at }`
-
----
-
-### `run_rule`
-
-Déclenche l'évaluation immédiate d'une règle. Par défaut en `dry_run` (aucune action exécutée). Si un silence actif couvre la règle, `detail.silenced` vaut `true` et l'action n'est pas exécutée même hors dry-run.
-
-| Paramètre | Type    | Requis | Description                                  |
-|-----------|---------|--------|-----------------------------------------------|
-| `id`      | string  | Oui    | ID de la règle                                |
-| `dry_run` | boolean | Non    | `false` pour exécuter réellement l'action (défaut `true`) |
-
-**Scope :** `security:write` + rôle admin (même en `dry_run`, comme `POST /api/v1/rules-engine/rules/:id/run`)  
-**Réponse :** `{ matched, dry_run, detail }`
-
----
-
-### `list_rule_history`
-
-Liste le journal d'exécution du moteur de règles (200 dernières entrées), y compris les non-déclenchements et les entrées silencées.
-
-**Scope :** `audit:read` + rôle admin  
-**Réponse :** tableau `{ id, rule_id, rule_name, cond_result, action_taken, detail, error, fired_at }`
-
----
-
-### `replay_rule_history`
-
-Rejoue l'action d'une entrée d'historique en échec (`list_rule_history`), en réutilisant le `detail` capturé au déclenchement d'origine — la condition n'est pas réévaluée.
-
-| Paramètre    | Type   | Requis | Description                          |
-|--------------|--------|--------|----------------------------------------|
-| `history_id` | number | Oui    | ID de l'entrée d'historique            |
-
-**Scope :** `security:write` + rôle admin  
-**Réponse :** `{ ok: true }`
-
----
-
-### `list_rule_versions`
-
-Liste l'historique des versions d'une règle (20 dernières, la plus récente en premier) — un instantané par création/modification/restauration.
-
-| Paramètre | Type   | Requis | Description       |
-|-----------|--------|--------|---------------------|
-| `rule_id` | string | Oui    | ID de la règle       |
-
-**Scope :** `audit:read` + rôle admin  
-**Réponse :** tableau `{ version, name, description, enabled, condition, action, cooldown_sec, created_at }`
-
----
-
-### `restore_rule_version`
-
-Restaure une règle à une version antérieure (condition, action, cooldown, activation, nom, description). La restauration devient elle-même une nouvelle version.
-
-| Paramètre | Type   | Requis | Description                          |
-|-----------|--------|--------|----------------------------------------|
-| `rule_id` | string | Oui    | ID de la règle                         |
-| `version` | number | Oui    | Numéro de version (`list_rule_versions`) |
-
-**Scope :** `security:write` + rôle admin  
-**Réponse :** `{ ok: true }`
-
----
-
-### `list_scheduled_tasks`
-
-Liste les planifications (cron) : exécutent une action du moteur de règles à heure fixe, indépendamment de toute condition.
-
-**Scope :** `audit:read` + rôle admin  
-**Réponse :** tableau `{ id, name, cron_expr, action, enabled, last_run_at, created_at }`
-
----
-
-### `create_scheduled_task`
-
-Crée une planification.
-
-| Paramètre   | Type    | Requis | Description                                          |
-|-------------|---------|--------|--------------------------------------------------------|
-| `name`      | string  | Oui    | Nom de la planification                                |
-| `cron_expr` | string  | Oui    | Expression cron 5 champs (`minute heure jour-du-mois mois jour-de-semaine`), ex. `"0 3 * * *"` |
-| `action`    | object  | Oui    | Action à exécuter : `{ type, ...paramètres }` (mêmes types que `create_rule`) |
-| `enabled`   | boolean | —      | Activer immédiatement (défaut `true`)                  |
-
-**Scope :** `security:write` + rôle admin  
-**Réponse :** `{ id, name }`
-
----
-
-### `update_scheduled_task`
-
-Met à jour une planification existante. Mêmes paramètres que `create_scheduled_task`, plus `id` (requis).
-
-**Scope :** `security:write` + rôle admin
-
----
-
-### `delete_scheduled_task`
-
-| Paramètre | Type   | Requis | Description                    |
-|-----------|--------|--------|----------------------------------|
-| `id`      | string | Oui    | ID de la planification à supprimer |
-
-**Scope :** `security:write` + rôle admin
-
----
-
-### `run_scheduled_task`
-
-Exécute immédiatement l'action d'une planification, indépendamment de son expression cron.
-
-| Paramètre | Type   | Requis | Description             |
-|-----------|--------|--------|----------------------------|
-| `id`      | string | Oui    | ID de la planification      |
-
-**Scope :** `security:write` + rôle admin  
-**Réponse :** `{ ok: true }`
-
----
-
-### `list_scheduled_task_runs`
-
-Liste les 100 dernières exécutions d'une planification (30 jours conservés).
-
-| Paramètre | Type   | Requis | Description        |
-|-----------|--------|--------|------------------------|
-| `id`      | string | Oui    | ID de la planification |
-
-**Scope :** `audit:read` + rôle admin  
-**Réponse :** tableau `{ id, success, error, ran_at }`
-
----
-
-### `list_pending_actions`
-
-Liste les actions du moteur de règles mises en attente d'approbation humaine (règles avec `require_approval`).
-
-| Paramètre | Type   | Requis | Description                                              |
-|-----------|--------|--------|-------------------------------------------------------------|
-| `status`  | string | —      | `pending` (défaut), `approved`, `rejected`, ou `all`         |
-
-**Scope :** `audit:read` + rôle admin  
-**Réponse :** tableau `{ id, rule_id, rule_name, action, detail, status, created_at, decided_at, decided_by }`
-
----
-
-### `approve_pending_action`
-
-Approuve une action en attente : elle est exécutée immédiatement (détail capturé au déclenchement, condition non réévaluée).
-
-| Paramètre | Type   | Requis | Description                                |
-|-----------|--------|--------|-----------------------------------------------|
-| `id`      | string | Oui    | ID de l'action en attente (`list_pending_actions`) |
-
-**Scope :** `security:write` + rôle admin  
-**Réponse :** `{ ok: true }`
-
----
-
-### `reject_pending_action`
-
-Refuse une action en attente : elle ne sera jamais exécutée.
-
-| Paramètre | Type   | Requis | Description                                |
-|-----------|--------|--------|-----------------------------------------------|
-| `id`      | string | Oui    | ID de l'action en attente (`list_pending_actions`) |
-
-**Scope :** `security:write` + rôle admin  
-**Réponse :** `{ ok: true }`
-
----
-
-### `list_playbooks`
-
-Liste les playbooks (séquences d'étapes déclenchables via une règle, une planification, ou manuellement).
-
-**Scope :** `audit:read` + rôle admin  
-**Réponse :** tableau `{ id, name, description, steps, enabled, created_at, updated_at }`
-
----
-
-### `create_playbook`
-
-Crée un playbook.
-
-| Paramètre     | Type    | Requis | Description                                                       |
-|---------------|---------|--------|---------------------------------------------------------------------|
-| `name`        | string  | Oui    | Nom du playbook                                                     |
-| `steps`       | array   | Oui    | `[{"type":"action","action":{...}}, {"type":"wait","wait_sec":900}, {"type":"condition","condition":{...}}, {"type":"approval"}]` |
-| `description` | string  | —      | Description                                                         |
-| `enabled`     | boolean | —      | Activer immédiatement (défaut `true`)                               |
-
-**Scope :** `security:write` + rôle admin  
-**Réponse :** `{ id, name }`
-
----
-
-### `update_playbook`
-
-Met à jour un playbook existant. Mêmes paramètres que `create_playbook`, plus `id` (requis).
-
-**Scope :** `security:write` + rôle admin
-
----
-
-### `delete_playbook`
-
-| Paramètre | Type   | Requis | Description                |
-|-----------|--------|--------|-------------------------------|
-| `id`      | string | Oui    | ID du playbook à supprimer     |
-
-**Scope :** `security:write` + rôle admin
-
----
-
-### `run_playbook_now`
-
-Démarre l'exécution d'un playbook depuis sa première étape.
-
-| Paramètre | Type   | Requis | Description        |
-|-----------|--------|--------|------------------------|
-| `id`      | string | Oui    | ID du playbook         |
-
-**Scope :** `security:write` + rôle admin  
-**Réponse :** `{ run_id }` — à suivre avec `get_playbook_run`.
-
----
-
-### `list_playbook_runs`
-
-Liste les 50 dernières exécutions d'un playbook.
-
-| Paramètre | Type   | Requis | Description    |
-|-----------|--------|--------|-------------------|
-| `id`      | string | Oui    | ID du playbook      |
-
-**Scope :** `audit:read` + rôle admin  
-**Réponse :** tableau `{ id, current_step, status, log, started_at, updated_at, finished_at }`
-
----
-
-### `get_playbook_run`
-
-Détail d'une exécution : étape courante, statut, journal de chaque étape.
-
-| Paramètre | Type   | Requis | Description       |
-|-----------|--------|--------|----------------------|
-| `run_id`  | string | Oui    | ID de l'exécution     |
-
-**Scope :** `audit:read` + rôle admin  
-**Réponse :** `{ id, playbook_id, playbook_name, steps, current_step, status, log, context, started_at, updated_at, finished_at }`
-
----
-
-### `approve_playbook_run`
-
-Approuve une exécution suspendue à une étape d'approbation : reprend à l'étape suivante.
-
-| Paramètre | Type   | Requis | Description       |
-|-----------|--------|--------|----------------------|
-| `run_id`  | string | Oui    | ID de l'exécution     |
-
-**Scope :** `security:write` + rôle admin  
-**Réponse :** `{ ok: true }`
-
----
-
-### `reject_playbook_run`
-
-Refuse une exécution suspendue à une étape d'approbation : l'exécution s'arrête.
-
-| Paramètre | Type   | Requis | Description       |
-|-----------|--------|--------|----------------------|
-| `run_id`  | string | Oui    | ID de l'exécution     |
-
-**Scope :** `security:write` + rôle admin  
-**Réponse :** `{ ok: true }`
-
----
-
-### `list_silences`
-
-Liste les fenêtres de silence, communes au moteur de règles et au moteur d'alertes (suspendent l'exécution des actions / l'envoi des notifications ; la condition ou l'événement reste évalué et journalisé).
-
-**Scope :** `audit:read` + rôle admin  
-**Réponse :** tableau `{ id, name, rule_ids, starts_at, ends_at, created_at, active }`
-
----
-
-### `create_silence`
-
-Crée une fenêtre de silence, pour toutes les règles des deux moteurs (`rule_ids` omis) ou une liste choisie (IDs issus de `list_rules` et/ou `list_alerts`).
-
-| Paramètre   | Type   | Requis | Description                              |
-|-------------|--------|--------|-------------------------------------------|
-| `name`      | string | Oui    | Nom de la fenêtre de silence               |
-| `starts_at` | string | Oui    | Début, RFC3339 (tout décalage horaire, stocké en UTC) |
-| `ends_at`   | string | Oui    | Fin, RFC3339 (doit être après `starts_at`) |
-| `rule_ids`  | array  | Non    | IDs de règles (moteur de règles et/ou d'alertes) concernées, vide = toutes |
-
-**Scope :** `security:write` + rôle admin  
-**Réponse :** `{ id }`
-
----
-
-### `export_automation`
-
-Exporte en YAML toute la configuration d'automatisation (règles, canaux d'alerte, silences), réimportable telle quelle (GitOps). Les canaux exportent leur config en clair : à traiter comme un secret.
-
-**Scope :** `audit:read` + rôle admin  
-**Réponse :** `{ yaml: "<document>" }`
-
----
-
-### `import_automation`
-
-Importe un document YAML au format de `export_automation`. Règles et canaux sont upsertés par nom (créés ou mis à jour) ; les silences sont toujours créés, dates ramenées en UTC (RFC3339, quotées ou non, ou `AAAA-MM-JJ HH:MM:SS` en UTC) — un silence aux dates illisibles est ignoré.
-
-| Paramètre | Type   | Requis | Description                          |
-|-----------|--------|--------|----------------------------------------|
-| `yaml`    | string | Oui    | Document YAML (voir `export_automation`) |
-
-**Scope :** `security:write` + rôle admin  
-**Réponse :** `{ rules_created, rules_updated, channels_created, channels_updated, silences_created }`
+### Flux d'automatisation (Admin 0.139.0)
+
+Règles, planifications et playbooks sont des **flux** : un déclencheur (`condition`, `event`, `schedule`, `manual`), un garde-fou et des étapes (action, attente, si/sinon, approbation, appel d'un playbook, arrêt). Le format est décrit dans `docs/api_specs.md` (section « Flux d'automatisation »). Les outils ci-dessous remplacent `list_rules`, `run_rule`, les outils `*_scheduled_task*`, `*_playbook*` et `*_pending_action`.
+
+Tous sont réservés au rôle admin, comme `/api/v1/automation`. Scope `audit:read` pour lire, `security:write` pour modifier ou lancer. Les secrets des actions et des paramètres de modèle sont toujours renvoyés masqués ; les renvoyer masqués à `update_flow` les conserve. L'acteur enregistré (lancement, décision) est l'adresse du titulaire du jeton, suivie de `via pat:<id>`.
+
+| Outil | Paramètres | Rôle |
+|---|---|---|
+| `get_automation_catalog` | — | Déclencheurs, événements, conditions, actions, types d'étape (manifestes avec leurs champs) et métriques disponibles. À lire avant `create_flow` |
+| `list_flows` | `trigger` (ex. `condition,event`) | Flux avec état (`fire_count`, `next_run_at`, `waiting`…) et `placement` (`edge` : exécuté par les passerelles) |
+| `get_flow` | `id` | Un flux |
+| `create_flow` | `flow` (objet) | Crée un flux de l'éditeur |
+| `update_flow` | `id`, `flow` | Remplace la définition (nouvelle version). Refusé pour un flux issu d'un modèle : utiliser `update_flow_params`, ou `detach_flow` |
+| `set_flow_enabled` | `id`, `enabled` | Active ou désactive |
+| `delete_flow` | `id` | Supprime (refusé si un autre flux l'appelle) |
+| `run_flow` | `id`, `inputs`, `dry_run` | Lance à la main, sans garde-fous ; un flux à condition l'évalue d'abord. `dry_run` : simulation |
+| `simulate_flow` | `flow`, `inputs` | Simule un flux non enregistré : conditions évaluées, aucune action exécutée. Réponse : `matched`, `trace` étape par étape, `placement` |
+| `list_flow_versions` | `id` | 20 dernières versions |
+| `restore_flow_version` | `id`, `version` | Rétablit une version |
+| `detach_flow` | `id` | Détache un flux de son modèle |
+| `update_flow_params` | `id`, `params`, `name`, `enabled` | Reconstruit un flux issu d'un modèle avec de nouveaux paramètres |
+| `list_flow_templates` | — | Modèles avec leurs paramètres |
+| `install_flow_template` | `template_id`, `params`, `name`, `enabled` | Crée un flux depuis un modèle |
+| `list_flow_runs` | `flow_id`, `status`, `limit` | Journal des exécutions. `status=waiting_approval` : approbations en attente (avec `pending.message`) |
+| `get_flow_run` | `run_id` | Une exécution et ses étapes |
+| `decide_flow_run` | `run_id`, `approve` | Approuve ou refuse |
+| `cancel_flow_run` | `run_id` | Annule une exécution en cours ou en attente |
+| `replay_flow_run` | `run_id` | Relance avec le détail d'une exécution terminée |
+| `list_silences` | — | Mises en sourdine (flux et règles d'alerte) |
+| `create_silence` | `name`, `starts_at`, `ends_at` (RFC3339), `rule_ids` | Met en sourdine des flux et/ou des règles d'alerte (vide = tout) |
+| `delete_silence` | `id` | Supprime une mise en sourdine |
+| `export_automation` | — | YAML `version: 2` : flux, canaux, mises en sourdine (secrets masqués). Réponse : `{ yaml }` |
+| `import_automation` | `yaml` | Flux et canaux mis à jour par nom ou créés, mises en sourdine ajoutées. Réponse : compteurs et `errors` |
 
 ---
 
@@ -1790,6 +1489,6 @@ Les erreurs suivent le standard JSON-RPC 2.0 :
 
 Les erreurs d'outil (proxy introuvable, backend SQL) sont retournées avec `isError: true` dans le contenu, sans code d'erreur JSON-RPC — le LLM reçoit le message et peut proposer une correction. Les refus d'autorisation (`scope insuffisant`, `accès réservé aux administrateurs`, `outil sans scope déclaré`) suivent le même format, voir [Contrôle d'accès des outils](#contrôle-daccès-des-outils).
 
-**Secrets (Admin `0.135.0`)** : `list_rules`, `export_automation`, les planifications et les playbooks renvoient les secrets des actions (`webhook_signed`, `pagerduty`) et des canaux d'alerte sous la forme `••••••••` ; `import_automation` et les mises à jour conservent la valeur enregistrée quand le secret est omis ou masqué.
+**Secrets (Admin `0.135.0`, flux depuis `0.139.0`)** : `list_flows`, `get_flow`, `list_flow_versions`, `export_automation` et les simulations renvoient les secrets des actions (`webhook_signed`, `pagerduty`) et des canaux d'alerte sous la forme `••••••••` ; `import_automation` et les mises à jour conservent la valeur enregistrée quand le secret est omis ou masqué.
 
 `get_proxy` renvoie la configuration de la route avec ses secrets (OIDC, LDAP, URL signées, Basic, plugins…) sous la forme `••••••••` (Admin `0.135.2`).

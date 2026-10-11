@@ -93,3 +93,63 @@ func TestModulePagesHaveNoHardcodedFrench(t *testing.T) {
 		}
 	}
 }
+
+var automationPages = []string{"shared/flow-model.js", "pages/automation-flow.js", "pages/automation-lists.js", "pages/rules-store.js", "pages/automation.js"}
+
+// Les pages des flux d'automatisation : chaque clé flow.* existe dans les quatre langues, y compris les
+// clés construites (statut, source, catégorie…), et aucun texte français n'est écrit en dur.
+func TestAutomationPagesAreFullyTranslated(t *testing.T) {
+	blocks := localeBlocks(t)
+	use := regexp.MustCompile(`\bt\('(flow\.[A-Za-z0-9_.-]+)'`)
+	keys := map[string]bool{}
+	for _, file := range automationPages {
+		b, err := srcFS.ReadFile("src/js/" + file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range use.FindAllStringSubmatch(string(b), -1) {
+			keys[m[1]] = true
+		}
+	}
+	dynamic := map[string][]string{
+		"flow.status_":    {"running", "waiting", "waiting_approval", "waiting_child", "completed", "stopped", "failed", "rejected", "silenced", "interrupted", "cancelled"},
+		"flow.sim_":       {"simulated", "done", "failed", "skipped", "waiting", "approved", "rejected"},
+		"flow.src_":       {"admin", "edge", "manual", "call"},
+		"flow.f_":         {"all", "completed", "failed", "waiting", "stopped", "silenced", "edge"},
+		"flow.cat_":       {"security", "reliability", "compliance", "maintenance", "remediation"},
+		"flow.tab_":       {"rules", "schedules", "playbooks"},
+		"flow.new_":       {"rules", "schedules", "playbooks"},
+		"flow.empty_":     {"rules", "schedules", "playbooks"},
+		"flow.list_hint_": {"rules", "schedules", "playbooks"},
+	}
+	for prefix, suffixes := range dynamic {
+		for _, s := range suffixes {
+			keys[prefix+s] = true
+		}
+	}
+	for key := range keys {
+		if strings.HasSuffix(key, "_") {
+			continue
+		}
+		for lang, block := range blocks {
+			if !strings.Contains(block, "'"+key+"':") {
+				t.Errorf("clé %q absente de la langue %s", key, lang)
+			}
+		}
+	}
+	accent := regexp.MustCompile(`[àâçéèêëîïôûùü]`)
+	for _, file := range automationPages {
+		b, _ := srcFS.ReadFile("src/js/" + file)
+		for i, line := range strings.Split(string(b), "\n") {
+			if trim := strings.TrimSpace(line); strings.HasPrefix(trim, "//") {
+				continue
+			}
+			if idx := strings.Index(line, "//"); idx >= 0 {
+				line = line[:idx]
+			}
+			if accent.MatchString(line) {
+				t.Errorf("%s:%d : texte accentué en dur : %s", file, i+1, strings.TrimSpace(line))
+			}
+		}
+	}
+}

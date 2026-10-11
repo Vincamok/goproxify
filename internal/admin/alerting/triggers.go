@@ -27,6 +27,7 @@ const (
 	TriggerCertDeployFailed       TriggerType = "cert_deploy_failed"        // échec de déploiement d'un certificat
 	TriggerIPProfileRefreshFailed TriggerType = "ip_profile_refresh_failed" // feed d'un profil IP en échec de façon répétée
 	TriggerSLOBurn                TriggerType = "slo_burn"                  // budget d'erreur SLO consommé trop vite ou épuisé
+	TriggerAutomationNotify       TriggerType = "automation_notify"         // action « notifier » d'un flux d'automatisation
 )
 
 // AllTriggers liste tous les déclencheurs disponibles.
@@ -36,7 +37,27 @@ var AllTriggers = []TriggerType{
 	TriggerBackupFailed, TriggerHighErrorRate, TriggerHighLatency,
 	TriggerAdminAuthFailures, TriggerScaleEvent, TriggerHealthEscalation,
 	TriggerSentinelBan, TriggerBackendDown, TriggerCertDeployFailed, TriggerIPProfileRefreshFailed,
-	TriggerSLOBurn,
+	TriggerSLOBurn, TriggerAutomationNotify,
+}
+
+// TriggerOutputs liste les clés de Detail que porte chaque déclencheur : un flux déclenché par
+// l'événement peut s'en servir comme variables ({{detail.ip}}).
+var TriggerOutputs = map[TriggerType][]string{
+	TriggerCertExpiringSoon:       {"days_left"},
+	TriggerFail2BanBan:            {"ip", "reason"},
+	TriggerCrowdSecCritical:       {"ip", "scenario", "origin", "type"},
+	TriggerBackupFailed:           {"title"},
+	TriggerHighErrorRate:          {"domain", "error_rate", "errors", "total", "window_sec"},
+	TriggerHighLatency:            {"domain", "avg_lat_ms", "threshold", "window_sec"},
+	TriggerAdminAuthFailures:      {"email", "ip"},
+	TriggerScaleEvent:             {"event_type", "detail", "container"},
+	TriggerHealthEscalation:       {"event_type", "detail", "container"},
+	TriggerSentinelBan:            {"ip", "reason"},
+	TriggerBackendDown:            {"url"},
+	TriggerCertDeployFailed:       {"target_id", "type", "message"},
+	TriggerIPProfileRefreshFailed: {"profile_id", "profile", "consecutive_failures", "error", "last_updated_at"},
+	TriggerSLOBurn:                {"node_name", "state", "target", "availability", "budget_left", "burn_1h", "burn_6h"},
+	TriggerAutomationNotify:       {"flow_id", "flow_name", "message"},
 }
 
 // TriggerLabels associe chaque déclencheur à son libellé lisible.
@@ -58,6 +79,7 @@ var TriggerLabels = map[TriggerType]string{
 	TriggerCertDeployFailed:       "Échec de déploiement d'un certificat",
 	TriggerIPProfileRefreshFailed: "Mise à jour d'un profil IP en échec répété",
 	TriggerSLOBurn:                "Budget d'erreur SLO consommé trop vite",
+	TriggerAutomationNotify:       "Notification d'un flux d'automatisation",
 }
 
 // Severity classe la sévérité d'une alerte.

@@ -35,17 +35,17 @@ func TestPreviouslyMissingTablesRoundTrip(t *testing.T) {
 	}
 	defer db.Close()
 	db.Exec(`INSERT INTO portal_groups (id, edge_name, name, members_json) VALUES ('g1','gw','Presta','["a@b.c"]')`)
-	db.Exec(`INSERT INTO playbooks (id, name, steps_json) VALUES ('p1','Réponse','[]')`)
-	db.Exec(`INSERT INTO scheduled_tasks (id, name, cron_expr) VALUES ('s1','Nuit','0 3 * * *')`)
+	db.Exec(`INSERT INTO flows (id, name, trigger_kind, definition_json) VALUES ('p1','Réponse','manual','{}')`)
+	db.Exec(`INSERT INTO flow_versions (flow_id, version, name, definition_json) VALUES ('p1',1,'Réponse','{}')`)
 	tables := exportTables(db)
-	for _, want := range []string{"portal_groups", "playbooks", "scheduled_tasks"} {
+	for _, want := range []string{"portal_groups", "flows", "flow_versions"} {
 		if len(tables[want]) != 1 {
 			t.Fatalf("%s non exportée", want)
 		}
 	}
 	db.Exec(`DELETE FROM portal_groups`)
-	db.Exec(`DELETE FROM playbooks`)
-	db.Exec(`DELETE FROM scheduled_tasks`)
+	db.Exec(`DELETE FROM flows`)
+	db.Exec(`DELETE FROM flow_versions`)
 	w, _ := applyTables(db, tables, true, true)
 	if w != 3 {
 		t.Fatalf("lignes restaurées = %d", w)

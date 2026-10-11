@@ -1182,7 +1182,7 @@
           <li data-i18n="f5.p1">WAF — 13 OWASP CRS-4 rule sets, anomaly scoring, response body inspection, hot-reload</li>
           <li data-i18n="f5.p2">Sentinel — immediate ban on signal, anti-DDoS global RPS, behavioural per-IP window</li>
           <li data-i18n="f5.p3">Rate limit (per IP or per authenticated user), GeoIP, CrowdSec, CVE scanner, SSO</li>
-          <li data-i18n="f5.p4">Automated rules engine — condition-driven actions (disable proxy, ban IP, strict mode, alert)</li>
+          <li data-i18n="f5.p4">Automation flows — rules, schedules and playbooks with human approval, built in a visual editor</li>
         </ul>
       </div>
 
@@ -1667,7 +1667,7 @@
         <img src="img/screenshots/automatisation.jpg" alt="GoProxify Admin — Automation" loading="lazy" onclick="landingOpenLightbox(this)">
         <div class="shot-card-body">
           <h3 data-i18n="shot.automation.title">Automation</h3>
-          <p data-i18n="shot.automation.body">Rules, alert channels and a store of ready-to-install presets.</p>
+          <p data-i18n="shot.automation.body">Rules, schedules, playbooks, alert channels and ready-made flow templates.</p>
         </div>
       </div>
       <div class="shot-card fade-in">
@@ -2648,7 +2648,7 @@ volumes:
       'shot.security.title': 'Security',
       'shot.security.body': 'Fail2Ban, CrowdSec and WAF status, bans and posture score per gateway.',
       'shot.automation.title': 'Automation',
-      'shot.automation.body': 'Rules, alert channels and a store of ready-to-install presets.',
+      'shot.automation.body': 'Rules, schedules, playbooks, alert channels and ready-made flow templates.',
       'shot.logs.title': 'Live access logs',
       'shot.logs.body': 'Every request across every proxy, filterable in real time.',
       'shot.proxies.title': 'Proxies',
@@ -2771,7 +2771,7 @@ volumes:
       'f5.p1': 'WAF — 13 OWASP CRS-4 rule sets, anomaly scoring, response body inspection, hot-reload',
       'f5.p2': 'Sentinel — immediate ban on signal, anti-DDoS global RPS, behavioural per-IP window',
       'f5.p3': 'Rate limit (per IP or per authenticated user), GeoIP, CrowdSec, CVE scanner, SSO',
-      'f5.p4': 'Automated rules engine — condition-driven actions (disable proxy, ban IP, strict mode, alert)',
+      'f5.p4': 'Automation flows — rules, schedules and playbooks with human approval, built in a visual editor',
       'f6.p1': 'Live views of traffic across your published sites',
       'f6.p2': 'Clear access logs you can actually read',
       'f6.p3': 'Alerts on several channels when something goes wrong',
@@ -2834,7 +2834,7 @@ volumes:
       'shot.security.title': 'Sécurité',
       'shot.security.body': 'État de Fail2Ban, CrowdSec et du WAF, bans actifs et score de posture par passerelle.',
       'shot.automation.title': 'Automatisation',
-      'shot.automation.body': 'Règles automatiques, canaux d’alerte et store de préréglages prêts à installer.',
+      'shot.automation.body': 'Règles, planifications, playbooks, canaux d’alerte et modèles de flux prêts à l’emploi.',
       'shot.logs.title': 'Logs d’accès en direct',
       'shot.logs.body': 'Chaque requête, sur tous les proxies, filtrable en temps réel.',
       'shot.proxies.title': 'Proxies',
@@ -2957,7 +2957,7 @@ volumes:
       'f5.p1': 'WAF — 13 jeux de règles OWASP CRS-4, scoring anomalies, inspection corps de réponse, hot-reload',
       'f5.p2': 'Sentinel — ban immédiat sur signal, RPS global anti-DDoS, fenêtre comportementale par IP',
       'f5.p3': 'Rate limit (par IP ou par utilisateur authentifié), GeoIP, CrowdSec, scanner CVE, SSO',
-      'f5.p4': 'Moteur de règles automatiques — actions pilotées (désactiver proxy, bannir IP, mode strict, alerte)',
+      'f5.p4': 'Flux d’automatisation — règles, planifications et playbooks avec approbation humaine, construits dans un éditeur visuel',
       'f6.p1': 'Vues en direct du trafic sur vos sites publiés',
       'f6.p2': "Journaux d'accès clairs et lisibles",
       'f6.p3': 'Alertes sur plusieurs canaux quand quelque chose cloche',
@@ -3020,7 +3020,7 @@ volumes:
       'shot.security.title': 'Seguridad',
       'shot.security.body': 'Estado de Fail2Ban, CrowdSec y WAF, baneos activos y puntuación de postura por pasarela.',
       'shot.automation.title': 'Automatización',
-      'shot.automation.body': 'Reglas automáticas, canales de alerta y una tienda de plantillas listas para instalar.',
+      'shot.automation.body': 'Reglas, programaciones, playbooks, canales de alerta y plantillas de flujos listas para usar.',
       'shot.logs.title': 'Logs de acceso en vivo',
       'shot.logs.body': 'Cada petición, en todos los proxies, filtrable en tiempo real.',
       'shot.proxies.title': 'Proxies',
@@ -3143,7 +3143,7 @@ volumes:
       'f5.p1': 'WAF — 13 conjuntos de reglas OWASP CRS-4, puntuación de anomalías, inspección de respuesta, hot-reload',
       'f5.p2': 'Sentinel — ban inmediato por señal, RPS global anti-DDoS, ventana conductual por IP',
       'f5.p3': 'Rate limit (por IP o por usuario autenticado), GeoIP, CrowdSec, escáner CVE, SSO',
-      'f5.p4': 'Motor de reglas automáticas — acciones por condición (deshabilitar proxy, banear IP, modo estricto, alerta)',
+      'f5.p4': 'Flujos de automatización — reglas, programaciones y playbooks con aprobación humana, creados en un editor visual',
       'f6.p1': 'Vistas en vivo del tráfico en tus sitios publicados',
       'f6.p2': 'Registros de acceso claros y legibles',
       'f6.p3': 'Alertas en varios canales cuando algo va mal',
@@ -3206,7 +3206,7 @@ volumes:
       'shot.security.title': 'Sicherheit',
       'shot.security.body': 'Status von Fail2Ban, CrowdSec und WAF, aktive Sperren und Posture-Score pro Gateway.',
       'shot.automation.title': 'Automatisierung',
-      'shot.automation.body': 'Regeln, Alarmkanäle und ein Store mit installationsfertigen Vorlagen.',
+      'shot.automation.body': 'Regeln, Zeitpläne, Playbooks, Alarmkanäle und fertige Flow-Vorlagen.',
       'shot.logs.title': 'Live-Zugriffslogs',
       'shot.logs.body': 'Jede Anfrage, über alle Proxies hinweg, in Echtzeit filterbar.',
       'shot.proxies.title': 'Proxies',
@@ -3329,7 +3329,7 @@ volumes:
       'f5.p1': 'WAF — 13 OWASP CRS-4 Regelwerke, Anomalie-Scoring, Antwort-Inspektion, Hot-Reload',
       'f5.p2': 'Sentinel — Sofortsperre bei Signal, globaler Anti-DDoS-RPS, Verhaltensanalyse pro IP',
       'f5.p3': 'Rate-Limit (pro IP oder authentifiziertem Nutzer), GeoIP, CrowdSec, CVE-Scanner, SSO',
-      'f5.p4': 'Automatische Regelmaschine — bedingungsgesteuerte Aktionen (Proxy deaktivieren, IP sperren, Strict-Modus, Alarm)',
+      'f5.p4': 'Automatisierungs-Flows — Regeln, Zeitpläne und Playbooks mit menschlicher Genehmigung, in einem visuellen Editor gebaut',
       'f6.p1': 'Live-Ansichten des Traffics auf Ihren veröffentlichten Sites',
       'f6.p2': 'Klare, lesbare Access-Logs',
       'f6.p3': 'Alerts auf mehreren Kanälen, wenn etwas schiefläuft',

@@ -39,7 +39,7 @@ Sauvegardées telles quelles (toutes colonnes), avec redaction des secrets.
 | Paramètres | `settings` | Paramètres clé/valeur (dont l'allowlist d'IP du MCP `mcp.allowed_ips`) |
 | Sauvegardes | `backup_schedule` | Planifications |
 | Sécurité | `fail2ban_config`, `crowdsec_config` | Configuration des moteurs IPS |
-| Automatisation | `rules_engine_rules`, `rules_engine_rule_versions`, `playbooks`, `scheduled_tasks`, `automation_silences` | Règles automatiques, leurs versions, playbooks, tâches planifiées, silences (condition, action, cooldown, compteurs) |
+| Automatisation | `flows`, `flow_state`, `flow_versions`, `automation_silences` | Flux d'automatisation (règles, planifications, playbooks), leur état, leurs versions et les mises en sourdine. Les exécutions (`flow_runs`, `flow_run_steps`) font partie de l'historique |
 | Domaines & certificats | `domains`, `cert_deploy_targets` | Domaines, délégation DNS, cibles de déploiement de certificats |
 | Authentification | `auth_providers` | Fournisseurs OIDC / SAML / LDAP… |
 | Réseau | `ip_profiles`, `node_tunnel_configs` | Profils IP (listes, feeds), tunnels de nœuds |
@@ -58,7 +58,7 @@ Les paramètres de Haute Disponibilité (`NodeID`, `Peers`, `RaftPort`, voir [in
 |---|---|
 | Mots de passe (hash), MFA, clés RGPD/ECH, CA interne | Hors section standard ; **inclus dans la section `secrets` chiffrée** (§4 bis) quand `GPX_BACKUP_KEY` est définie |
 | Secrets en clair (voir §4) | Snapshot potentiellement téléchargeable |
-| Logs, journal d'audit, historique de bans, menaces, CVE, alertes émises, événements de nœuds, exécutions de règles et de tâches, déploiements de certificats | Volumineux : **hors snapshot par défaut**, sauvegardés à la demande dans la section `history` chiffrée (§4 quater) |
+| Logs, journal d'audit, historique de bans, menaces, CVE, alertes émises, événements de nœuds, exécutions des flux d'automatisation, déploiements de certificats | Volumineux : **hors snapshot par défaut**, sauvegardés à la demande dans la section `history` chiffrée (§4 quater) |
 | Enregistrements de sessions du portail (`*.cast.gpx`), bases GeoIP, listes de menaces téléchargées, logs d'accès de la passerelle | Volumineux ou re-téléchargeables |
 | Certificats TLS et clés privées de la passerelle | Repris avec l'état de la passerelle (`edge-cache.gpx`, §4 quater) ; ceux de l'Admin (`certs/`, CA interne) sont dans la section `secrets` |
 | Autres snapshots (`backup_snapshots`) et historique des proxies (`proxy_history`) | Éviter la récursivité ; l'historique a son propre mécanisme de restauration |

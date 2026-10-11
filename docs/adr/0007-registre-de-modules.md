@@ -45,3 +45,16 @@ Chaque famille instancie son registre avec sa propre fabrique (`channels.Factory
 ## Secrets dans les actions de règle
 
 Le garde-fou qui interdisait un champ secret dans une action est levé : les secrets d'action vivent sous `params.*`, et toutes les sorties (API, MCP, export, import) passent par `MaskAction*` / `KeepAction*` / `KeepSteps*` (`internal/admin/rulesengine/action_secrets.go`). Un secret masqué n'est jamais accepté à la création. Les actions à secret restent exécutées par l'Admin et ne sont pas poussées aux passerelles.
+
+## Flux d'automatisation (Admin 0.139.0)
+
+Le moteur de règles, le planificateur et les playbooks sont remplacés par les flux d'automatisation (`internal/admin/automation`, ADR 0009).
+
+- **Registres** : actions, conditions (nouveau registre : les sept conditions et `metric_threshold`), types d'étape et déclencheurs sont des manifestes. Le catalogue (`GET /api/v1/automation/catalog`) en découle, et l'éditeur de flux se construit à partir de lui.
+- **Configuration d'une action** : elle est la `config` de son nœud, sans structure intermédiaire. Le préfixe `params.*` des secrets disparaît : `Manifest.Mask` / `KeepSecrets` s'appliquent à la configuration entière. Un secret est retrouvé par l'identifiant de l'étape, plus par sa position.
+- **`modules.Field`**, extension qui ne retire rien :
+  - `Options` et `Source` pour un genre `select` (valeurs fixes, ou valeurs fournies par la famille et chargées par l'interface) ;
+  - le genre `duration` ;
+  - `Default` (pré-rempli et appliqué par le module) ;
+  - `Help`.
+- **Validation** : `Validate` contrôle désormais une durée, une option de `select` et un nombre saisi en texte. Une valeur qui contient une variable (`{{…}}`) n'est contrôlée qu'à l'exécution.

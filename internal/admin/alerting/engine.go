@@ -32,6 +32,9 @@ type Engine struct {
 	groupMu  sync.Mutex
 	groupBuf map[string][]groupedEvent // clé : ruleID, en attente de regroupement
 	groupTmr map[string]*time.Timer
+
+	subMu sync.RWMutex
+	subs  []func(Event)
 }
 
 // groupedEvent est un événement en attente dans le tampon de regroupement d'une règle.
@@ -81,10 +84,23 @@ func (e *Engine) Stop() {
 	e.groupMu.Unlock()
 }
 
+// Subscribe reçoit chaque événement avant le routage des alertes (déclencheurs « événement » des flux
+// d'automatisation). fn est appelée depuis la boucle de traitement : elle ne doit pas bloquer.
+func (e *Engine) Subscribe(fn func(Event)) {
+	e.subMu.Lock()
+	e.subs = append(e.subs, fn)
+	e.subMu.Unlock()
+}
+
 func (e *Engine) loop() {
 	for {
 		select {
 		case ev := <-e.events:
+			e.subMu.RLock()
+			for _, fn := range e.subs {
+				fn(ev)
+			}
+			e.subMu.RUnlock()
 			e.eval(ev)
 		case <-e.stop:
 			return
@@ -492,8 +508,14 @@ func buildMessage(r Rule, ev Event) Message {
 	if label == "" {
 		label = string(ev.Trigger)
 	}
+	if flow, _ := ev.Detail["flow_name"].(string); ev.Trigger == TriggerAutomationNotify && flow != "" {
+		label = flow
+	}
 	title := fmt.Sprintf("[%s] %s", ev.Severity, label)
 	body := label
+	if msg, _ := ev.Detail["message"].(string); msg != "" {
+		body += "\n" + msg
+	}
 	if ev.NodeName != "" {
 		body += "\nNœud : " + ev.NodeName
 	}
@@ -521,3 +543,7 @@ func joinStrings(s []string, sep string) string {
 	}
 	return result
 }
+
+// MatchScope indique si un événement entre dans un périmètre (nœuds, domaine, composants, sévérité
+// minimale), avec la même sémantique que le routage des alertes.
+func MatchScope(s Scope, ev Event) bool { return matchesScope(s, ev) }

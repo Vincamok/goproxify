@@ -25,7 +25,7 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/archstore"
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
-	"github.com/vincamok/goproxify/internal/admin/rulesengine"
+	"github.com/vincamok/goproxify/internal/admin/automation"
 	"github.com/vincamok/goproxify/internal/sqltime"
 )
 
@@ -93,49 +93,48 @@ func TestImportedCertIsSeenByCertExpiringRule(t *testing.T) {
 		t.Fatalf("import : status %d %s", rec.Code, rec.Body)
 	}
 	// La règle lit expires_at via julianday(), qui renvoie NULL pour un time.Time lié tel quel (t.String()).
-	matched, detail, err := rulesengine.New(db, slog.Default(), rulesengine.Deps{}).EvalCondition(context.Background(),
-		rulesengine.Condition{Type: rulesengine.CondCertExpiring, DaysLeft: 15})
+	matched, detail, err := automation.New(db, slog.Default(), automation.Deps{}, automation.Options{}).EvalCondition(context.Background(),
+		&automation.Cond{Type: "cert_expiring", Config: map[string]any{"days_left": 15}})
 	if err != nil || !matched || detail["domain"] != "import.example.com" {
 		t.Fatalf("cert_expiring (15 j) doit voir le certificat importé qui expire dans 10 j : %v %v %v", matched, detail, err)
 	}
 }
 
 func TestSilencesApplyWhateverTheClientOffset(t *testing.T) {
-	db, err := admindb.Open(filepath.Join(t.TempDir(), "admin.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { db.Close() })
-	cond, _ := json.Marshal(rulesengine.Condition{Type: rulesengine.CondBanSpike, BanCount: 1, BanWindow: "1h"})
-	if _, err := db.Exec(`INSERT INTO rules_engine_rules (id, name, enabled, condition_json, action_json) VALUES ('r1', 'pic', 1, ?, '{"type":"notify"}')`, string(cond)); err != nil {
-		t.Fatal(err)
-	}
+	db := openSQLDatesDB(t)
 	if _, err := db.Exec(`INSERT INTO security_bans (id, ip, source) VALUES ('b1', '203.0.113.40', 'fail2ban')`); err != nil {
 		t.Fatal(err)
 	}
-	h := &RulesEngineHandler{DB: db, Log: slog.Default()}
+	svc := automation.New(db, slog.Default(), automation.Deps{}, automation.Options{})
+	h := &AutomationHandler{Svc: svc}
+	flow, err := svc.Create(context.Background(), &automation.Flow{Name: "pic", Enabled: true,
+		Trigger: automation.Trigger{Kind: automation.TriggerCondition, Condition: &automation.Cond{Type: "ban_spike", Config: map[string]any{"ban_count": 1}}},
+		Steps:   []automation.Step{{Type: automation.StepAction, Action: &automation.Node{Type: "notify"}}}}, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
 	// Client à UTC-5 : l'ancien stockage « 2026-10-01 05:59:00 -0500 -0500 » était illisible et comparé
 	// en texte à l'heure UTC, le silence était ignoré.
 	ny := time.FixedZone("", -5*3600)
-	if rec := serve(t, h, http.MethodPost, "/api/v1/rules-engine/silences", map[string]any{
-		"name": "maintenance", "rule_ids": []string{"r1"},
+	if rec := serve(t, h, http.MethodPost, "/api/v1/automation/silences", map[string]any{
+		"name": "maintenance", "rule_ids": []string{flow.ID},
 		"starts_at": time.Now().Add(-time.Minute).In(ny).Format(time.RFC3339),
 		"ends_at":   time.Now().Add(time.Hour).In(ny).Format(time.RFC3339),
-	}); rec.Code != http.StatusCreated {
+	}); rec.Code != http.StatusOK {
 		t.Fatalf("création du silence : status %d %s", rec.Code, rec.Body)
 	}
-	matched, detail, err := rulesengine.New(db, slog.Default(), rulesengine.Deps{}).EvalNow(context.Background(), "r1", true)
-	if err != nil || !matched || detail["silenced"] != true {
-		t.Fatalf("la règle déclenchée doit être silencée : %v %v %v", matched, detail, err)
+	res, err := svc.Simulate(context.Background(), flow, nil)
+	if err != nil || !res.Matched || !res.Silenced {
+		t.Fatalf("le flux déclenché doit être en sourdine : %+v %v", res, err)
 	}
 
-	// Import GitOps : dates RFC3339 (format de l'export), ramenées au format de CURRENT_TIMESTAMP.
+	// Import GitOps : dates de l'export, ramenées au format de CURRENT_TIMESTAMP.
 	starts := time.Now().Add(-time.Minute)
-	doc := "version: 1\nsilences:\n  - name: import\n    starts_at: " + starts.UTC().Format(time.RFC3339) +
+	doc := "version: 2\nsilences:\n  - name: import\n    starts_at: " + starts.UTC().Format(time.RFC3339) +
 		"\n    ends_at: " + starts.Add(time.Hour).UTC().Format(time.RFC3339) + "\n  - name: illisible\n    starts_at: demain\n    ends_at: après-demain\n"
-	rec := serve(t, h, http.MethodPost, "/api/v1/rules-engine/import", doc)
-	var summary map[string]int
-	if err := json.Unmarshal(rec.Body.Bytes(), &summary); err != nil || summary["silences_created"] != 1 {
+	rec := serve(t, h, http.MethodPost, "/api/v1/automation/import", doc)
+	var summary automation.ImportSummary
+	if err := json.Unmarshal(rec.Body.Bytes(), &summary); err != nil || summary.SilencesCreated != 1 {
 		t.Fatalf("import : %s (le silence aux dates illisibles est ignoré)", rec.Body)
 	}
 	var n int

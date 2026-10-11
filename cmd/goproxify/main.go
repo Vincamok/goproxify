@@ -68,6 +68,8 @@ func main() {
 		runDeclared()
 	case "bootstrap":
 		runBootstrap()
+	case "automation":
+		runAutomation()
 	case "security":
 		runSecurity()
 	case "proxy":
@@ -167,6 +169,7 @@ Commandes d'administration (API Admin — -admin-url / -token) :
   containers     Conteneurs Docker découverts par les Agents (lecture seule)
   me             Profil courant + tokens API personnels (PAT)
   security       Sentinel (threat engine), bans, WAF par proxy
+  automation     Flux d'automatisation : règles, planifications, playbooks, approbations
   status    État du cluster
   access    GoProxify Access (config, catalogue, users, templates, audit)
   nodes     Nœuds Infrastructure (list / accept / reject pending)

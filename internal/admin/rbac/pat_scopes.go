@@ -82,8 +82,8 @@ func ScopeCatalog() []ScopeMeta {
 		ScopeLogsRead:      "Lire les logs",
 		ScopeLogsWrite:     "Modifier les réglages des logs (rétention, protection des IP) et effacer des logs (RGPD Art. 17)",
 		ScopeTeamsRead:     "Lister les équipes",
-		ScopeAuditRead:     "Lire le journal d'audit, la sécurité (bans, menaces, CVE, profils IP, fournisseurs d'auth) et l'automatisation (règles, tâches planifiées, playbooks)",
-		ScopeSecurityWrite: "Muter la sécurité (bans, profils IP, fournisseurs d'auth) et piloter l'automatisation (règles, tâches planifiées, playbooks)",
+		ScopeAuditRead:     "Lire le journal d'audit, la sécurité (bans, menaces, CVE, profils IP, fournisseurs d'auth) et l'automatisation (flux : règles, planifications, playbooks)",
+		ScopeSecurityWrite: "Muter la sécurité (bans, profils IP, fournisseurs d'auth) et piloter l'automatisation (flux : règles, planifications, playbooks)",
 		ScopeImportWrite:   "Importer des configurations",
 		ScopePairingRead:   "Lire le secret d'appairage",
 		ScopePortalRead:    "Lire GoProxify Access (config, catalogue, users, templates, audit)",
@@ -115,14 +115,10 @@ var mcpTools = []string{
 	"list_logs", "simulate_sentinel_config", "trace_ip", "preview_security_ban", "preview_asn_ban", "get_prism_anomalies", "get_prism_geo", "get_prism_tls_fingerprints", "get_prism_slo", "list_teams",
 	"get_audit_log", "get_security_overview", "list_security_bans", "list_security_engine_types", "list_plugins", "lookup_asn", "list_security_threats", "list_security_cves",
 	"list_ip_profiles", "list_auth_providers", "list_auth_provider_types",
-	"list_rules", "list_rule_history", "list_pending_actions", "list_rule_versions", "list_silences", "export_automation",
-	"list_scheduled_tasks", "list_scheduled_task_runs", "list_playbooks", "list_playbook_runs", "get_playbook_run",
+	"list_flows", "get_flow", "list_flow_versions", "list_flow_runs", "get_flow_run", "get_automation_catalog", "list_flow_templates", "list_silences", "export_automation",
 	"create_security_ban", "delete_security_ban", "ban_ip", "unban_ip", "list_ban_whitelist", "add_ban_whitelist", "remove_ban_whitelist", "import_security_bans", "ban_asn", "unban_asn",
 	"create_ip_profile", "delete_ip_profile", "create_auth_provider", "delete_auth_provider",
-	"run_rule", "replay_rule_history", "approve_pending_action", "reject_pending_action", "restore_rule_version",
-	"create_silence", "import_automation",
-	"create_scheduled_task", "update_scheduled_task", "delete_scheduled_task", "run_scheduled_task",
-	"create_playbook", "update_playbook", "delete_playbook", "run_playbook_now", "approve_playbook_run", "reject_playbook_run",
+	"create_flow", "update_flow", "set_flow_enabled", "delete_flow", "run_flow", "simulate_flow", "restore_flow_version", "detach_flow", "update_flow_params", "decide_flow_run", "cancel_flow_run", "replay_flow_run", "install_flow_template", "create_silence", "delete_silence", "import_automation",
 	"get_portal_config", "list_portal_destinations", "preview_portal_destinations", "list_portal_destination_groups",
 	"list_portal_users", "list_portal_groups", "list_portal_audit", "list_portal_sessions", "terminate_portal_session", "list_portal_access_requests", "decide_portal_access_request", "get_portal_policy", "set_portal_policy", "list_portal_recordings", "delete_portal_recording", "list_portal_templates", "get_portal_template",
 	"update_portal_config", "push_portal",
@@ -269,18 +265,11 @@ func ToolRequiredScope(tool string) string {
 		"get_security_overview", "list_security_bans", "list_security_engine_types", "list_plugins", "lookup_asn", "list_ban_whitelist",
 		"list_security_threats", "list_security_cves",
 		"list_ip_profiles", "list_auth_providers", "list_auth_provider_types",
-		"list_rules", "list_rule_history", "list_pending_actions", "list_rule_versions",
-		"list_silences", "export_automation",
-		"list_scheduled_tasks", "list_scheduled_task_runs",
-		"list_playbooks", "list_playbook_runs", "get_playbook_run":
+		"list_flows", "get_flow", "list_flow_versions", "list_flow_runs", "get_flow_run", "get_automation_catalog", "list_flow_templates", "list_silences", "export_automation":
 		return ScopeAuditRead
 	case "create_security_ban", "delete_security_ban", "ban_ip", "unban_ip", "add_ban_whitelist", "remove_ban_whitelist", "import_security_bans", "ban_asn", "unban_asn",
 		"create_ip_profile", "delete_ip_profile", "create_auth_provider", "delete_auth_provider",
-		"run_rule", "replay_rule_history", "approve_pending_action", "reject_pending_action",
-		"restore_rule_version", "create_silence", "import_automation",
-		"create_scheduled_task", "update_scheduled_task", "delete_scheduled_task", "run_scheduled_task",
-		"create_playbook", "update_playbook", "delete_playbook", "run_playbook_now",
-		"approve_playbook_run", "reject_playbook_run":
+		"create_flow", "update_flow", "set_flow_enabled", "delete_flow", "run_flow", "simulate_flow", "restore_flow_version", "detach_flow", "update_flow_params", "decide_flow_run", "cancel_flow_run", "replay_flow_run", "install_flow_template", "create_silence", "delete_silence", "import_automation":
 		return ScopeSecurityWrite
 	case "get_portal_config", "list_portal_destinations", "preview_portal_destinations", "list_portal_destination_groups",
 		"list_portal_users", "list_portal_groups", "list_portal_audit", "list_portal_sessions", "list_portal_access_requests", "get_portal_policy", "list_portal_recordings", "list_portal_templates", "get_portal_template":
@@ -312,14 +301,8 @@ func ToolRequiresAdmin(tool string) bool {
 		"create_security_ban", "delete_security_ban", "ban_ip", "unban_ip", "simulate_sentinel_config", "trace_ip", "preview_security_ban", "preview_asn_ban", "list_ban_whitelist", "add_ban_whitelist", "remove_ban_whitelist", "import_security_bans", "ban_asn", "unban_asn",
 		"list_auth_providers", "list_auth_provider_types", "create_auth_provider", "delete_auth_provider",
 		"list_internal_cas", "list_internal_certs", "get_ech_status", "create_internal_ca", "issue_internal_cert", "revoke_internal_cert",
-		"list_rules", "run_rule", "list_rule_history", "replay_rule_history",
-		"list_pending_actions", "approve_pending_action", "reject_pending_action",
-		"list_rule_versions", "restore_rule_version",
-		"list_silences", "create_silence", "export_automation", "import_automation",
-		"list_scheduled_tasks", "create_scheduled_task", "update_scheduled_task", "delete_scheduled_task",
-		"run_scheduled_task", "list_scheduled_task_runs",
-		"list_playbooks", "create_playbook", "update_playbook", "delete_playbook", "run_playbook_now",
-		"list_playbook_runs", "get_playbook_run", "approve_playbook_run", "reject_playbook_run":
+		"list_flows", "get_flow", "list_flow_versions", "list_flow_runs", "get_flow_run", "get_automation_catalog", "list_flow_templates", "list_silences", "export_automation",
+		"create_flow", "update_flow", "set_flow_enabled", "delete_flow", "run_flow", "simulate_flow", "restore_flow_version", "detach_flow", "update_flow_params", "decide_flow_run", "cancel_flow_run", "replay_flow_run", "install_flow_template", "create_silence", "delete_silence", "import_automation":
 		return true
 	}
 	return false
@@ -402,7 +385,7 @@ func RequiredScopeForRequest(r *http.Request) string {
 		return ScopeGDPRReveal
 	case strings.HasPrefix(path, "/api/v1/logs"):
 		if method == http.MethodGet {
-		return ScopeLogsRead
+			return ScopeLogsRead
 		}
 		return ScopeLogsWrite
 	case strings.HasPrefix(path, "/api/v1/teams"):
@@ -418,9 +401,7 @@ func RequiredScopeForRequest(r *http.Request) string {
 		strings.HasPrefix(path, "/api/v1/plugins"),
 		strings.HasPrefix(path, "/api/v1/plugin-keys"),
 		strings.HasPrefix(path, "/api/v1/plugin-repos"),
-		strings.HasPrefix(path, "/api/v1/rules-engine"),
-		strings.HasPrefix(path, "/api/v1/scheduled-tasks"),
-		strings.HasPrefix(path, "/api/v1/playbooks"):
+		strings.HasPrefix(path, "/api/v1/automation"):
 		if method == http.MethodGet {
 			return ScopeAuditRead
 		}

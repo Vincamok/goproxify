@@ -21,7 +21,17 @@ const (
 	KindNumber   = "number"
 	KindList     = "list"
 	KindBool     = "bool"
+	// KindSelect : une valeur parmi Options, ou parmi les valeurs que la famille fournit pour Source.
+	KindSelect = "select"
+	// KindDuration : une durée Go (« 30s », « 5m », « 2h »).
+	KindDuration = "duration"
 )
+
+// Option est une valeur proposée par un champ select.
+type Option struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
 
 // Masque est la valeur affichée à la place d'un secret.
 const Masque = "••••••••"
@@ -46,6 +56,15 @@ type Field struct {
 	// Env : variable d'environnement qui fournit la valeur par défaut du champ (repli quand la
 	// configuration saisie ne le renseigne pas). Optionnel.
 	Env string `json:"env,omitempty"`
+	// Options : valeurs proposées par un champ select.
+	Options []Option `json:"options,omitempty"`
+	// Source : nom d'une liste de valeurs fournie à l'exécution par la famille (proxies, nœuds…) ;
+	// l'interface la charge à la place d'Options. Le registre ne l'interprète pas.
+	Source string `json:"source,omitempty"`
+	// Default : valeur pré-remplie par le formulaire, appliquée par le module quand le champ est absent.
+	Default any `json:"default,omitempty"`
+	// Help : aide affichée sous le champ.
+	Help string `json:"help,omitempty"`
 }
 
 // Manifest décrit un module.
@@ -157,7 +176,11 @@ func (m Manifest) check() error {
 		}
 		seen[f.Key] = true
 		switch f.Kind {
-		case KindText, KindPassword, KindNumber, KindList, KindBool:
+		case KindText, KindPassword, KindNumber, KindList, KindBool, KindDuration:
+		case KindSelect:
+			if len(f.Options) == 0 && f.Source == "" {
+				return fmt.Errorf("%s : le champ select %q n'a ni options ni source", m.Type, f.Key)
+			}
 		default:
 			return fmt.Errorf("%s : champ %q de genre inconnu %q", m.Type, f.Key, f.Kind)
 		}
