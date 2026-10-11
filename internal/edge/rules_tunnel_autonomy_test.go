@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/vincamok/goproxify/internal/config"
 	edgecache "github.com/vincamok/goproxify/internal/edge/cache"
@@ -51,6 +52,23 @@ func TestAutoRulesSurviveRestartWithoutAdmin(t *testing.T) {
 	got := restarted.rulesEngine.Rules()
 	if len(got) != 1 || got[0].ID != "r1" || got[0].CooldownSec != 60 {
 		t.Fatalf("règles après redémarrage sans Admin : %+v", got)
+	}
+}
+
+// Une mise en sourdine décidée avant la coupure s'applique encore après un redémarrage sans Admin.
+func TestSilenceWindowsSurviveRestartWithoutAdmin(t *testing.T) {
+	dir := t.TempDir()
+	starts := time.Date(2026, 10, 11, 22, 0, 0, 0, time.UTC)
+	s := newAutonomyGateway(t, dir)
+	s.applyAutoRules([]edgere.Rule{{ID: "r1", Name: "maintenance", Enabled: true,
+		SilenceWindows: []edgere.SilenceWindow{{Starts: starts, Ends: starts.Add(2 * time.Hour)}}}})
+
+	restarted := newAutonomyGateway(t, dir)
+	restarted.loadAutoRulesFromDisk()
+	got := restarted.rulesEngine.Rules()
+	if len(got) != 1 || len(got[0].SilenceWindows) != 1 || !got[0].SilenceWindows[0].Starts.Equal(starts) ||
+		!got[0].SilenceWindows[0].Ends.Equal(starts.Add(2*time.Hour)) {
+		t.Fatalf("mises en sourdine après redémarrage sans Admin : %+v", got)
 	}
 }
 

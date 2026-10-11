@@ -103,6 +103,7 @@ type RuleFiredPayload struct {
 	ActionType  string         `json:"action_type,omitempty"` // ban_ip | disable_proxy | notify | enable_strict_f2b
 	CondResult  bool           `json:"cond_result"`
 	ActionTaken bool           `json:"action_taken"`
+	Silenced    bool           `json:"silenced,omitempty"` // déclenchement ignoré : mise en sourdine
 	Detail      map[string]any `json:"detail,omitempty"`
 	Error       string         `json:"error,omitempty"`
 	FiredAt     string         `json:"fired_at"` // RFC3339

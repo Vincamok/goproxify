@@ -492,7 +492,7 @@ Une **mise en sourdine** (`Automatisation > Alertes > Mises en sourdine`, table 
 - **Flux** : un déclenchement en sourdine est journalisé (`silenced`) sans être exécuté, et ne consomme pas le délai minimum. Un lancement manuel n'est pas concerné.
 - **Moteur d'alertes** : aucun canal n'est notifié, l'événement est journalisé avec `silenced=1`, le délai de rappel n'est pas consommé.
 
-Les flux exécutés par les passerelles ignorent pour l'instant les mises en sourdine. La page le signale ; forcez-les sur l'Admin pour pouvoir les mettre en sourdine.
+Les flux exécutés par les passerelles sont aussi mis en sourdine : l'Admin envoie à chaque passerelle, avec chaque flux, les fenêtres en cours ou à venir qui le visent, et renvoie la liste à chaque création ou suppression d'une mise en sourdine. La passerelle les garde dans sa copie locale chiffrée (`auto-rules.gpx`) et les applique seule, y compris redémarrée pendant une coupure de l'Admin. Un déclenchement ignoré remonte au journal comme `silenced` (au plus un par délai minimum, une minute au moins).
 
 ### Export / import YAML (GitOps)
 

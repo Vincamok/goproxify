@@ -896,7 +896,7 @@ goproxify automation runs cancel    <run-id>
 goproxify automation runs replay    <run-id>
 
 goproxify automation templates list
-goproxify automation templates preview <id> [-set clé=valeur,…]
+goproxify automation templates preview <id> [-set clé=valeur,…] [-flow <id>]
 goproxify automation templates install <id> [-set clé=valeur,…] [-name <nom>] [-disabled]
 
 goproxify automation catalog [-json]
@@ -910,15 +910,17 @@ goproxify automation import -file <automation.yaml>
 Toutes les commandes acceptent `-admin-url` et `-token`.
 
 - **`flows`**
-  - `list` affiche une ligne par flux : état, nom, lieu d'exécution (`edge` : sur les passerelles), déclencheur → étapes, origine (`manual` pour l'éditeur, `template`).
+  - `list` affiche une ligne par flux : état, nom, lieu d'exécution (`edge` : sur les passerelles), déclencheur → étapes, origine (`manual` pour l'éditeur, `template`), suivie de « modèle mis à jour » ou « modèle supprimé » le cas échéant.
   - `run` lance un flux à la main, sans garde-fous ; un flux à condition l'évalue d'abord.
   - `run -dry-run` et `simulate` parcourent le flux sans rien exécuter et affichent la trace étape par étape. `simulate` accepte un fichier non enregistré.
   - `params` modifie les paramètres d'un flux issu d'un modèle ; `detach` le détache pour l'éditer comme les autres.
+  - `versions` liste les versions et, sous chacune, ce qui a changé depuis la précédente (étapes ajoutées, retirées, modifiées, déplacées, déclencheur, garde-fou, paramètres).
   - `-input` et `-set` prennent des paires `clé=valeur` séparées par des virgules. Un nombre ou un booléen garde son type.
 - **`runs`**
   - `list` affiche le journal des exécutions : statut, flux, source (`admin`, `edge:<nœud>`, `manual:<acteur>`, `call:<run>`).
   - `approve` et `reject` décident d'une approbation en attente (`-status waiting_approval` les liste).
   - `replay` relance un flux avec le détail d'une exécution terminée, par exemple interrompue par un redémarrage.
+- **`templates preview -flow <id>`** affiche aussi ce que l'enregistrement de ces paramètres changerait sur un flux issu du modèle, nouvelle version du modèle comprise.
 - **`catalog`** liste les déclencheurs, conditions, actions, types d'étape et métriques, avec leurs champs.
 - **`export` / `import`** échangent flux, canaux et mises en sourdine en YAML `version: 2` (GitOps). Les secrets sont masqués à l'export et conservés à l'import.
 

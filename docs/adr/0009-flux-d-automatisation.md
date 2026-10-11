@@ -58,7 +58,7 @@ Un flux est exécuté par les passerelles (`placement: edge`) quand toutes ces c
 
 Dans ce cas :
 - l'Admin le traduit dans le format de règle des passerelles, sans nouvelle version de la passerelle ;
-- il l'envoie à chaque modification ;
+- il l'envoie à chaque modification, avec les fenêtres des mises en sourdine qui le visent (renvoyées à chaque création ou suppression d'une mise en sourdine) : la passerelle les applique seule ;
 - il **ne l'évalue plus** lui-même ;
 - il journalise ce que les passerelles remontent et achemine leurs notifications (`automation_notify`).
 
@@ -70,7 +70,6 @@ Tout le reste — attente, approbation, si/sinon, appels, conditions sur les don
 - **Import / export** : le document passe en `version: 2`.
 - **Mises en sourdine** : la table `automation_silences` est conservée et partagée avec le moteur d'alertes.
 - **Limites connues** :
-  - les passerelles ignorent encore les mises en sourdine ; l'interface le signale ;
   - `metric_threshold` n'est évaluée que sur l'Admin ;
   - une exécution planifiée manquée pendant un arrêt de l'Admin n'est pas rattrapée ;
   - les libellés du catalogue sont en français, comme les autres familles de modules.

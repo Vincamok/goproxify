@@ -100,8 +100,10 @@ function _feRender() {
       <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="_feDelete()">${t('common.delete')}</button>` : ''}
     </div>
     <input class="input" style="height:30px;margin-bottom:12px;font-size:12.5px" value="${esc(f.description || '')}" placeholder="${esc(t('flow.description_ph'))}" onchange="_fe.flow.description=this.value" ${_fe.ro ? 'disabled' : ''}>
-    ${_fe.ro ? `<div class="au-banner" style="border-color:var(--accent)"><span>◆</span><div style="flex:1">${t('flow.from_template', { name: esc(FlowTemplates.name(tpl)) })}</div>
-      <button class="btn btn-primary btn-sm" onclick="FlowTemplates.open('${esc(tpl)}','${esc(f.id)}')">${t('flow.edit_params')}</button>
+    ${_fe.ro ? `<div class="au-banner" style="border-color:var(--accent)"><span>◆</span><div style="flex:1">${t('flow.from_template', { name: esc(FlowTemplates.name(tpl)) })}
+        ${f.template?.outdated ? `<div class="fl-help" style="color:var(--yellow)">${t('flow.template_outdated', { from: f.origin.template_version || 0, to: f.template.current_version })}</div>` : ''}
+        ${f.template?.missing ? `<div class="fl-help" style="color:var(--red)">${t('flow.template_missing')}</div>` : ''}</div>
+      ${f.template?.missing ? '' : `<button class="btn btn-primary btn-sm" onclick="FlowTemplates.open('${esc(tpl)}','${esc(f.id)}')">${t('flow.edit_params')}</button>`}
       <button class="btn btn-ghost btn-sm" onclick="_feDetach()">${t('flow.detach')}</button></div>` : ''}
     <div class="fl-canvas${_fe.ro ? ' fl-ro' : ''}" id="flow-canvas">
       ${_feTriggerNode()}
@@ -442,7 +444,7 @@ window._feInsertVar = function(v) {
 function _fePayload() {
   _feSyncAll();
   const f = _feClone(_fe.flow);
-  ['state', 'placement', 'placement_reason', 'created_at', 'updated_at', 'created_by', 'version'].forEach(k => delete f[k]);
+  ['state', 'template', 'placement', 'placement_reason', 'created_at', 'updated_at', 'created_by', 'version'].forEach(k => delete f[k]);
   return f;
 }
 
@@ -546,6 +548,7 @@ window._feVersions = async function() {
             <b>v${v.version}</b>${i === 0 ? ` <span class="tag tag-green" style="font-size:10px">${t('flow.version_current')}</span>` : ''}
             <div style="font-size:11.5px;color:var(--text2)">${fmtDate(v.created_at)}${v.created_by ? ' · ' + esc(v.created_by) : ''}</div>
             <div style="font-size:11.5px;color:var(--text3)">${esc(FlowCatalog.triggerText(v.flow))} → ${esc(FlowCatalog.stepsText(v.flow?.steps))}</div>
+            ${flowChangesHTML(v.changes)}
           </div>
           ${i === 0 ? '' : `<button class="btn btn-ghost btn-sm" onclick="_feRestore(${v.version})">${t('flow.restore')}</button>`}
         </div>`).join('')}</div>`

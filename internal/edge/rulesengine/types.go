@@ -12,7 +12,7 @@ import "time"
 type ConditionType string
 
 const (
-	CondCVECritical    ConditionType = "cve_critical"    // non évaluable en passerelle (toujours false)
+	CondCVECritical    ConditionType = "cve_critical"     // non évaluable en passerelle (toujours false)
 	CondBanSpike       ConditionType = "ban_spike"        // > N bans dans une fenêtre de temps
 	CondEngineSilent   ConditionType = "engine_silent"    // moteur IPS sans activité depuis > X min
 	CondProxyErrorRate ConditionType = "proxy_error_rate" // taux d'erreurs HTTP > seuil
@@ -74,8 +74,26 @@ type Rule struct {
 	Condition   Condition `json:"condition"`
 	Action      Action    `json:"action"`
 	CooldownSec int       `json:"cooldown_sec"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	// SilenceWindows sont les mises en sourdine de l'Admin qui visent la règle, en cours ou à venir : la
+	// passerelle les applique seule, y compris pendant une coupure de l'Admin.
+	SilenceWindows []SilenceWindow `json:"silence_windows,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
+}
+
+// SilenceWindow est une fenêtre pendant laquelle les déclenchements d'une règle sont ignorés.
+type SilenceWindow struct {
+	Starts time.Time `json:"starts"`
+	Ends   time.Time `json:"ends"`
+}
+
+func (r Rule) silenced(t time.Time) bool {
+	for _, w := range r.SilenceWindows {
+		if !t.Before(w.Starts) && !t.After(w.Ends) {
+			return true
+		}
+	}
+	return false
 }
 
 // ExecLog est un enregistrement d'exécution d'une règle, transmis à l'Admin via WS.
@@ -85,6 +103,7 @@ type ExecLog struct {
 	ActionType  string         `json:"action_type,omitempty"`
 	CondResult  bool           `json:"cond_result"`
 	ActionTaken bool           `json:"action_taken"`
+	Silenced    bool           `json:"silenced,omitempty"`
 	Detail      map[string]any `json:"detail,omitempty"`
 	Error       string         `json:"error,omitempty"`
 	FiredAt     time.Time      `json:"fired_at"`

@@ -1342,7 +1342,7 @@ Erreurs : `400` pour une saisie invalide (le corps explique la cause), `404` si 
 - **Variables** : `{{detail.x}}` (sorties du déclencheur, paramètres d'un playbook), `{{steps.<id>.x}}` (sorties d'une étape exécutée avant), `{{flow.id}}`, `{{flow.name}}`, `{{run.id}}`. Une chaîne réduite à une variable garde le type de la valeur.
 - **Placement** (lecture seule) : `edge` quand la passerelle exécute le flux seule. Il faut une condition simple qu'elle sait évaluer (`ban_spike`, `engine_silent`, `proxy_error_rate`, `ban_repeat`), une seule action qu'elle sait exécuter (`disable_proxy`, `ban_ip`, `notify`, `enable_strict`), aucune autre étape et aucune clé de délai. Ces flux sont envoyés à chaque modification et l'Admin ne les évalue pas ; `placement_reason` explique un placement `admin`.
 - **Secrets** : les champs secrets des actions (`webhook_signed.secret`, `pagerduty.routing_key`…) et les paramètres mot de passe d'un modèle sont renvoyés masqués (`••••••••`). Renvoyer le masque, ou ne pas renseigner le champ, conserve la valeur ; une action est retrouvée par l'identifiant de son étape. Un masque sur une étape nouvelle est refusé (`400`).
-- **Origine** : `manual` (éditeur) ou `template` (`template_id`, `template_version`, `params`).
+- **Origine** : `manual` (éditeur) ou `template` (`template_id`, `template_version`, `params`). En lecture, un flux issu d'un modèle porte `template` : `{ name, current_version, outdated, missing }`. `outdated` signale un modèle changé depuis l'installation, que réenregistrer les paramètres applique ; `missing` signale un modèle qui n'existe plus (seul le détachement permet alors de modifier le flux) (Admin 0.141.0).
 
 ### Flux
 
@@ -1356,7 +1356,7 @@ Erreurs : `400` pour une saisie invalide (le corps explique la cause), `404` si 
 | `DELETE` | `/automation/flows/{id}` | `204` ; `400` si un autre flux l'appelle |
 | `POST` | `/automation/flows/{id}/run` | `{ inputs, dry_run }`. Un flux à condition l'évalue d'abord (`{ matched: false }` si elle est fausse). Avec `dry_run`, simulation (voir ci-dessous). Réponse : `{ run_id, matched, detail }` |
 | `POST` | `/automation/flows/{id}/detach` | Détache le flux de son modèle : il devient un flux de l'éditeur |
-| `GET` | `/automation/flows/{id}/versions` | 20 dernières versions : `{ version, flow, created_by, created_at }` |
+| `GET` | `/automation/flows/{id}/versions` | 20 dernières versions : `{ version, flow, created_by, created_at, changes }`. `changes` liste les différences avec la version précédente : `{ kind, step_id, detail }`, avec `kind` parmi `name`, `description`, `enabled`, `trigger_kind`, `trigger`, `guard`, `origin`, `params`, `step_added`, `step_removed`, `step_changed`, `step_moved`, ou `created` / `earliest_kept` pour la plus ancienne. Les valeurs ne sont pas reprises (Admin 0.141.0) |
 | `POST` | `/automation/flows/{id}/versions/{v}/restore` | Rétablit une version (nouvelle version) |
 | `POST` | `/automation/simulate` | `{ flow, inputs }` : simule un flux, enregistré ou brouillon |
 
@@ -1395,7 +1395,7 @@ Erreurs : `400` pour une saisie invalide (le corps explique la cause), `404` si 
 | Méthode | Route | Rôle |
 |---|---|---|
 | `GET` | `/automation/templates` | `{ id, category, version, name, description, kind, params, flow, installed }` |
-| `POST` | `/automation/templates/{id}/preview` | `{ params }` : le flux rendu, validé, non enregistré |
+| `POST` | `/automation/templates/{id}/preview` | `{ params, flow_id }` : le flux rendu, validé, non enregistré. Avec `flow_id` (un flux issu de ce modèle), la réponse porte aussi `changes`, ce que l'enregistrement de ces paramètres changerait, version courante du modèle comprise (Admin 0.141.0) |
 | `POST` | `/automation/templates/{id}/install` | `{ name, enabled, params }` : crée le flux (paramètres absents : valeurs par défaut) |
 
 ### Mises en sourdine, export, statistiques
@@ -1403,7 +1403,7 @@ Erreurs : `400` pour une saisie invalide (le corps explique la cause), `404` si 
 - **Mises en sourdine** : `GET`/`POST /automation/silences`, `DELETE /automation/silences/{id}`.
   - Corps : `{ name, starts_at, ends_at, rule_ids }`, dates RFC3339 avec n'importe quel décalage, stockées en UTC.
   - `rule_ids` vise des flux et des règles de routage d'alertes ; vide, il couvre tout.
-  - Un déclenchement automatique en sourdine est journalisé (`silenced`) sans être exécuté. Les flux exécutés par les passerelles ne sont pas mis en sourdine.
+  - Un déclenchement automatique en sourdine est journalisé (`silenced`) sans être exécuté, y compris sur les passerelles : chaque création ou suppression renvoie aux passerelles leurs flux avec les fenêtres qui les visent (`silence_windows` du message `push_auto_rules`) ; une passerelle remonte un déclenchement ignoré par `rule_fired` avec `silenced: true`.
 - **Export** : `GET /automation/export` renvoie un YAML `version: 2` contenant flux, canaux d'alerte et mises en sourdine, secrets masqués.
 - **Import** : `POST /automation/import` (corps YAML).
   - Flux et canaux sont mis à jour par nom (secrets conservés) ou créés ; les playbooks sont importés d'abord.

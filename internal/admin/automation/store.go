@@ -181,6 +181,9 @@ type Version struct {
 	Flow      *Flow     `json:"flow"`
 	CreatedBy string    `json:"created_by,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
+	// Changes : différences avec la version précédente (« created » pour la première, « earliest_kept » quand
+	// la précédente a été purgée).
+	Changes []Change `json:"changes"`
 }
 
 func (s *Service) queryVersions(ctx context.Context, flowID string, version int) ([]Version, error) {

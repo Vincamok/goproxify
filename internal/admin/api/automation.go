@@ -290,9 +290,10 @@ func (h *AutomationHandler) templates(w http.ResponseWriter, r *http.Request, p 
 	case len(p) == 2 && p[1] == "preview" && r.Method == http.MethodPost:
 		var body struct {
 			Params map[string]any `json:"params"`
+			FlowID string         `json:"flow_id"`
 		}
 		if decode(w, r, &body) {
-			f, err := h.Svc.Preview(ctx, p[0], body.Params)
+			f, err := h.Svc.Preview(ctx, p[0], body.Params, body.FlowID)
 			h.reply(w, r, f, err)
 		}
 	case len(p) == 2 && p[1] == "install" && r.Method == http.MethodPost:

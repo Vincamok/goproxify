@@ -25,3 +25,16 @@ func TestFlowSummary(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestChangeText(t *testing.T) {
+	for want, c := range map[string]map[string]any{
+		"étape s2 ajoutée : notify":        {"kind": "step_added", "step_id": "s2", "detail": "notify"},
+		"flux désactivé":                   {"kind": "enabled", "detail": "false"},
+		"garde-fou modifié (cooldown_sec)": {"kind": "guard", "detail": "cooldown_sec"},
+		"plus ancienne version conservée":  {"kind": "earliest_kept"},
+	} {
+		if got := changeText(c); got != want {
+			t.Errorf("%v : %q", c, got)
+		}
+	}
+}

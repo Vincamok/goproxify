@@ -134,3 +134,13 @@ function flowRunStatusTag(status) {
     stopped: 'tag-neutral', silenced: 'tag-neutral', running: 'tag-blue', waiting: 'tag-blue', waiting_approval: 'tag-accent', waiting_child: 'tag-blue' }[status] || 'tag-neutral';
   return `<span class="tag ${cls}" style="font-size:10px">${esc(t('flow.status_' + status))}</span>`;
 }
+
+// Différences entre deux versions d'un flux (champ changes des versions et de l'aperçu d'un modèle).
+function flowChangesHTML(changes) {
+  if (!changes?.length) return `<div class="fl-help">${t('flow.ch_none')}</div>`;
+  const what = d => FlowCatalog.find('actions', d)?.label || FlowCatalog.find('steps', d)?.label || d || '';
+  const key = c => c.kind === 'enabled' ? 'flow.ch_enabled_' + c.detail : 'flow.ch_' + c.kind;
+  return `<ul class="fl-changes">${changes.map(c => `<li>${esc(t(key(c), {
+    step: c.step_id || '', what: what(c.detail), detail: c.detail || '',
+  }))}</li>`).join('')}</ul>`;
+}

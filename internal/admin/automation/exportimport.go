@@ -52,7 +52,7 @@ func (s *Service) Export(ctx context.Context) ([]byte, error) {
 	}
 	for _, f := range flows {
 		m := normalizeJSON(maskFlow(f))
-		for _, k := range []string{"state", "placement", "placement_reason", "created_at", "updated_at", "created_by", "version"} {
+		for _, k := range []string{"state", "template", "placement", "placement_reason", "created_at", "updated_at", "created_by", "version"} {
 			delete(m, k)
 		}
 		doc.Flows = append(doc.Flows, m)

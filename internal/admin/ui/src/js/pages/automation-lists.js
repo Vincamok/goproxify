@@ -72,6 +72,8 @@ function _flTile(f) {
           <span style="font-weight:600;font-size:14px">${esc(f.name)}</span>
           <span class="tag ${f.enabled ? 'tag-green' : 'tag-neutral'}" style="font-size:10px">${f.enabled ? t('flow.enabled') : t('flow.disabled')}</span>
           <span class="tag tag-neutral" style="font-size:10px" title="${esc(tpl ? FlowTemplates.name(f.origin.template_id) : '')}">${tpl ? t('flow.origin_template') : t('flow.origin_editor')}</span>
+          ${f.template?.outdated ? `<span class="tag tag-yellow" style="font-size:10px" title="${esc(t('flow.template_outdated', { from: f.origin.template_version || 0, to: f.template.current_version }))}">${t('flow.template_updated')}</span>` : ''}
+          ${f.template?.missing ? `<span class="tag tag-red" style="font-size:10px" title="${esc(t('flow.template_missing'))}">${t('flow.template_gone')}</span>` : ''}
           ${kind === 'condition' ? flowPlacementBadge(f) : ''}
           ${FlowCatalog.hasApproval(f) ? `<span class="tag tag-accent" style="font-size:10px">${t('flow.with_approval')}</span>` : ''}
         </div>
@@ -94,7 +96,7 @@ const _flFind = id => (window._flList || []).find(f => f.id === id);
 
 window._flEdit = function(id) {
   const f = _flFind(id);
-  if (f?.origin?.kind === 'template') { FlowTemplates.open(f.origin.template_id, id); return; }
+  if (f?.origin?.kind === 'template' && !f.template?.missing) { FlowTemplates.open(f.origin.template_id, id); return; }
   window._flowSel = id;
   navigate('automation-flow');
 };

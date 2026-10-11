@@ -77,6 +77,10 @@ func (s *Service) EdgeRules(ctx context.Context) ([]edgere.Rule, error) {
 	if err != nil {
 		return nil, err
 	}
+	silences, err := s.querySilences(ctx, true)
+	if err != nil {
+		return nil, err
+	}
 	out := []edgere.Rule{}
 	for _, f := range flows {
 		if p, _ := placement(f); p != PlacementEdge {
@@ -97,9 +101,21 @@ func (s *Service) EdgeRules(ctx context.Context) ([]edgere.Rule, error) {
 		act.Type = edgere.ActionType(f.Steps[0].Action.Type)
 		cooldown := int(cooldownOf(f) / time.Second)
 		out = append(out, edgere.Rule{ID: f.ID, Name: f.Name, Description: f.Description, Enabled: f.Enabled,
-			Condition: cond, Action: act, CooldownSec: cooldown, CreatedAt: f.CreatedAt, UpdatedAt: f.UpdatedAt})
+			Condition: cond, Action: act, CooldownSec: cooldown, SilenceWindows: silenceWindows(silences, f.ID),
+			CreatedAt: f.CreatedAt, UpdatedAt: f.UpdatedAt})
 	}
 	return out, nil
+}
+
+// silenceWindows retourne les fenêtres des mises en sourdine (en cours ou à venir) qui visent le flux.
+func silenceWindows(list []Silence, flowID string) []edgere.SilenceWindow {
+	var out []edgere.SilenceWindow
+	for _, sl := range list {
+		if sl.Covers(flowID) {
+			out = append(out, edgere.SilenceWindow{Starts: sl.StartsAt, Ends: sl.EndsAt})
+		}
+	}
+	return out
 }
 
 // RecordEdgeFired journalise un déclenchement remonté par une passerelle, et achemine sa notification : la
@@ -115,7 +131,10 @@ func (s *Service) RecordEdgeFired(p edgews.RuleFiredPayload) {
 	}
 	now := s.now()
 	status, errMsg := RunCompleted, p.Error
-	if !p.ActionTaken {
+	switch {
+	case p.Silenced:
+		status = RunSilenced
+	case !p.ActionTaken:
 		status = RunFailed
 	}
 	node := p.NodeName
@@ -130,6 +149,10 @@ func (s *Service) RecordEdgeFired(p edgews.RuleFiredPayload) {
 	}
 	if err := s.insertRun(ctx, r); err != nil {
 		s.log.Warn("automation: déclenchement de passerelle non journalisé", "flow", f.Name, "err", err)
+		return
+	}
+	if p.Silenced {
+		s.recordFired(f.ID, r.ID, status, false)
 		return
 	}
 	stepID, typ := "", p.ActionType

@@ -112,15 +112,17 @@ func TestAutomationPagesAreFullyTranslated(t *testing.T) {
 		}
 	}
 	dynamic := map[string][]string{
-		"flow.status_":    {"running", "waiting", "waiting_approval", "waiting_child", "completed", "stopped", "failed", "rejected", "silenced", "interrupted", "cancelled"},
-		"flow.sim_":       {"simulated", "done", "failed", "skipped", "waiting", "approved", "rejected"},
-		"flow.src_":       {"admin", "edge", "manual", "call"},
-		"flow.f_":         {"all", "completed", "failed", "waiting", "stopped", "silenced", "edge"},
-		"flow.cat_":       {"security", "reliability", "compliance", "maintenance", "remediation"},
-		"flow.tab_":       {"rules", "schedules", "playbooks"},
-		"flow.new_":       {"rules", "schedules", "playbooks"},
-		"flow.empty_":     {"rules", "schedules", "playbooks"},
-		"flow.list_hint_": {"rules", "schedules", "playbooks"},
+		"flow.status_":     {"running", "waiting", "waiting_approval", "waiting_child", "completed", "stopped", "failed", "rejected", "silenced", "interrupted", "cancelled"},
+		"flow.sim_":        {"simulated", "done", "failed", "skipped", "waiting", "approved", "rejected"},
+		"flow.src_":        {"admin", "edge", "manual", "call"},
+		"flow.f_":          {"all", "completed", "failed", "waiting", "stopped", "silenced", "edge"},
+		"flow.cat_":        {"security", "reliability", "compliance", "maintenance", "remediation"},
+		"flow.tab_":        {"rules", "schedules", "playbooks"},
+		"flow.new_":        {"rules", "schedules", "playbooks"},
+		"flow.empty_":      {"rules", "schedules", "playbooks"},
+		"flow.list_hint_":  {"rules", "schedules", "playbooks"},
+		"flow.ch_":         {"none", "created", "earliest_kept", "name", "description", "trigger_kind", "trigger", "guard", "origin", "params", "step_added", "step_removed", "step_changed", "step_moved"},
+		"flow.ch_enabled_": {"true", "false"},
 	}
 	for prefix, suffixes := range dynamic {
 		for _, s := range suffixes {

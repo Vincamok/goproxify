@@ -61,6 +61,17 @@ type Flow struct {
 	UpdatedAt       time.Time  `json:"updated_at"`
 	CreatedBy       string     `json:"created_by,omitempty"`
 	State           *FlowState `json:"state,omitempty"`
+	// Template (lecture seule) : état du modèle d'un flux qui en est issu.
+	Template *TemplateStatus `json:"template,omitempty"`
+}
+
+// TemplateStatus compare le modèle d'un flux à la version installée. Outdated : le modèle a changé depuis ;
+// réenregistrer les paramètres applique sa version courante. Missing : le modèle n'existe plus.
+type TemplateStatus struct {
+	Name           string `json:"name,omitempty"`
+	CurrentVersion int    `json:"current_version,omitempty"`
+	Outdated       bool   `json:"outdated,omitempty"`
+	Missing        bool   `json:"missing,omitempty"`
 }
 
 // FlowState est l'état d'exécution d'un flux (lecture seule, non versionné).
@@ -244,9 +255,11 @@ type Silence struct {
 
 // Active indique si le silence couvre l'instant t pour le flux flowID.
 func (s Silence) Active(t time.Time, flowID string) bool {
-	if t.Before(s.StartsAt) || t.After(s.EndsAt) {
-		return false
-	}
+	return !t.Before(s.StartsAt) && !t.After(s.EndsAt) && s.Covers(flowID)
+}
+
+// Covers indique si le silence vise le flux flowID, quelle que soit sa fenêtre.
+func (s Silence) Covers(flowID string) bool {
 	if len(s.RuleIDs) == 0 {
 		return true
 	}

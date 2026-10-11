@@ -21,7 +21,7 @@ func automationTools() []map[string]any {
 		"steps:[{id, type: action|wait|if|approval|call|stop, action:{type, config}, condition:{…}, then:[…], else:[…], config:{…}, on_error: stop|continue}]}. " +
 		"Types et champs : get_automation_catalog. Variables : {{detail.x}}, {{steps.<id>.x}}, {{flow.name}}."
 	return []map[string]any{
-		{"name": "list_flows", "description": "Liste les flux d'automatisation : règles (déclencheur condition ou événement), planifications (schedule) et playbooks (manual), avec leur état (déclenchements, prochaine exécution, attentes) et où ils s'exécutent (Admin ou passerelles).",
+		{"name": "list_flows", "description": "Liste les flux d'automatisation : règles (déclencheur condition ou événement), planifications (schedule) et playbooks (manual), avec leur état (template.outdated : modèle changé depuis l'installation ; déclenchements, prochaine exécution, attentes) et où ils s'exécutent (Admin ou passerelles).",
 			"inputSchema": schema(opt("trigger", "string", "Filtre : condition, event, schedule, manual (plusieurs séparés par des virgules)"))},
 		{"name": "get_flow", "description": "Détail d'un flux (secrets masqués).", "inputSchema": schema(req("id", "string", "ID du flux"))},
 		{"name": "create_flow", "description": "Crée un flux. " + flowDoc, "inputSchema": schema(req("flow", "object", "Le flux"))},
@@ -34,7 +34,7 @@ func automationTools() []map[string]any {
 			"inputSchema": schema(req("id", "string", "ID du flux"), opt("inputs", "object", "Paramètres (playbook) ou détail"), opt("dry_run", "boolean", "Simuler sans agir"))},
 		{"name": "simulate_flow", "description": "Simule un flux non enregistré : conditions évaluées pour de vrai, actions jamais exécutées. " + flowDoc,
 			"inputSchema": schema(req("flow", "object", "Le flux à simuler"), opt("inputs", "object", "Détail ou paramètres"))},
-		{"name": "list_flow_versions", "description": "Historique des versions d'un flux (20 dernières).", "inputSchema": schema(req("id", "string", "ID du flux"))},
+		{"name": "list_flow_versions", "description": "Historique des versions d'un flux (20 dernières), chacune avec ses changements par rapport à la précédente (changes : kind, step_id, detail).", "inputSchema": schema(req("id", "string", "ID du flux"))},
 		{"name": "restore_flow_version", "description": "Rétablit une version d'un flux (crée une nouvelle version).",
 			"inputSchema": schema(req("id", "string", "ID du flux"), req("version", "number", "Version à rétablir"))},
 		{"name": "detach_flow", "description": "Détache un flux de son modèle : il devient modifiable dans l'éditeur.", "inputSchema": schema(req("id", "string", "ID du flux"))},

@@ -38,7 +38,9 @@ type Engine struct {
 	mu        sync.RWMutex
 	rules     []Rule
 	cooldowns map[string]time.Time
+	noted     map[string]time.Time // dernier déclenchement en sourdine journalisé, par règle
 	deps      Deps
+	now       func() time.Time
 	interval  time.Duration
 	log       logger
 
@@ -61,6 +63,8 @@ func New(log logger, deps Deps) *Engine {
 		deps:      deps,
 		interval:  defaultInterval,
 		cooldowns: map[string]time.Time{},
+		noted:     map[string]time.Time{},
+		now:       time.Now,
 		log:       log,
 		stop:      make(chan struct{}),
 		done:      make(chan struct{}),
@@ -138,18 +142,22 @@ func (e *Engine) evalRule(rule Rule) {
 		return
 	}
 
-	// cooldown
+	now := e.now()
 	cooldown := time.Duration(rule.CooldownSec) * time.Second
 	if cooldown == 0 {
 		cooldown = 5 * time.Minute
 	}
+	if rule.silenced(now) {
+		e.noteSilenced(rule, detail, now, cooldown)
+		return
+	}
 	e.mu.Lock()
 	last := e.cooldowns[rule.ID]
-	if time.Since(last) < cooldown {
+	if now.Sub(last) < cooldown {
 		e.mu.Unlock()
 		return
 	}
-	e.cooldowns[rule.ID] = time.Now()
+	e.cooldowns[rule.ID] = now
 	e.mu.Unlock()
 
 	actionErr := e.execAction(ActionContext{Rule: rule, Detail: detail})
@@ -157,7 +165,7 @@ func (e *Engine) evalRule(rule Rule) {
 		RuleID: rule.ID, RuleName: rule.Name,
 		ActionType: string(rule.Action.Type),
 		CondResult: true, ActionTaken: actionErr == nil,
-		Detail: detail, FiredAt: time.Now(),
+		Detail: detail, FiredAt: e.now(),
 	}
 	if actionErr != nil {
 		log.Error = actionErr.Error()
@@ -166,6 +174,24 @@ func (e *Engine) evalRule(rule Rule) {
 		e.log.Info("rulesengine: règle déclenchée", "rule", rule.Name, "action", rule.Action.Type)
 	}
 	e.emit(log)
+}
+
+// noteSilenced remonte un déclenchement ignoré (mise en sourdine), au plus un par délai minimum (au moins
+// une minute) comme l'Admin, pour ne pas remplir le journal à chaque évaluation.
+func (e *Engine) noteSilenced(rule Rule, detail map[string]any, now time.Time, every time.Duration) {
+	if every < time.Minute {
+		every = time.Minute
+	}
+	e.mu.Lock()
+	if now.Sub(e.noted[rule.ID]) < every {
+		e.mu.Unlock()
+		return
+	}
+	e.noted[rule.ID] = now
+	e.mu.Unlock()
+	e.log.Info("rulesengine: règle en sourdine", "rule", rule.Name)
+	e.emit(ExecLog{RuleID: rule.ID, RuleName: rule.Name, ActionType: string(rule.Action.Type),
+		CondResult: true, Silenced: true, Detail: detail, FiredAt: now})
 }
 
 func (e *Engine) evalCondition(c Condition) (bool, map[string]any, error) {

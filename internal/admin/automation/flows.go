@@ -34,7 +34,19 @@ func (s *Service) decorate(ctx context.Context, f *Flow) *Flow {
 	}
 	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM flow_runs WHERE flow_id=? AND status IN (?,?,?)`,
 		f.ID, string(RunWaiting), string(RunWaitingApproval), string(RunWaitingChild)).Scan(&out.State.Waiting)
+	out.Template = templateStatus(f.Origin)
 	return out
+}
+
+func templateStatus(o Origin) *TemplateStatus {
+	if o.Kind != OriginTemplate {
+		return nil
+	}
+	tpl, ok := templateByID(o.TemplateID)
+	if !ok {
+		return &TemplateStatus{Missing: true}
+	}
+	return &TemplateStatus{Name: tpl.Name, CurrentVersion: tpl.Version, Outdated: tpl.Version > o.TemplateVersion}
 }
 
 // List retourne les flux, filtrés par type de déclencheur (vide = tous).
@@ -179,6 +191,19 @@ func (s *Service) Versions(ctx context.Context, id string) ([]Version, error) {
 	}
 	list, err := s.queryVersions(ctx, id, 0)
 	for i := range list {
+		switch {
+		case i+1 < len(list):
+			list[i].Changes = diffFlows(list[i+1].Flow, list[i].Flow)
+		case list[i].Version == 1:
+			list[i].Changes = []Change{{Kind: "created"}}
+		default:
+			list[i].Changes = []Change{{Kind: "earliest_kept"}}
+		}
+		if list[i].Changes == nil {
+			list[i].Changes = []Change{}
+		}
+	}
+	for i := range list {
 		list[i].Flow = maskFlow(list[i].Flow)
 	}
 	if list == nil {
@@ -306,22 +331,55 @@ func (s *Service) Install(ctx context.Context, templateID string, u TemplateUpda
 }
 
 // Preview rend un modèle avec des paramètres, sans l'enregistrer.
-func (s *Service) Preview(ctx context.Context, templateID string, params map[string]any) (*Flow, error) {
+// Avec flowID (un flux issu du modèle), Changes liste ce que l'enregistrement de ces paramètres changerait,
+// version courante du modèle comprise.
+func (s *Service) Preview(ctx context.Context, templateID string, params map[string]any, flowID string) (*PreviewResult, error) {
 	tpl, ok := templateByID(templateID)
 	if !ok {
 		return nil, ErrNotFound
+	}
+	var cur *Flow
+	if flowID != "" {
+		f, err := s.getFlow(ctx, flowID)
+		if err != nil {
+			return nil, err
+		}
+		if f.Origin.Kind != OriginTemplate || f.Origin.TemplateID != templateID {
+			return nil, invalid("ce flux n'est pas issu du modèle %s", templateID)
+		}
+		cur = f
+		if man, ok := templateParamsManifest(f.Origin); ok {
+			params = man.KeepSecrets(f.Origin.Params, normalizeJSON(params))
+		}
 	}
 	f, _, err := tpl.render(params)
 	if err != nil {
 		return nil, err
 	}
 	f.ID = "preview"
+	res := &PreviewResult{}
+	if cur != nil {
+		f.ID, f.Name, f.Description, f.Enabled = cur.ID, cur.Name, cur.Description, cur.Enabled
+		keepSecrets(cur, f)
+	}
 	if err := s.check(ctx, f); err != nil {
 		return nil, err
 	}
-	out := maskFlow(f)
-	out.Placement, out.PlacementReason = placement(f)
-	return out, nil
+	if cur != nil {
+		res.Changes = diffFlows(cur, f)
+		if res.Changes == nil {
+			res.Changes = []Change{}
+		}
+	}
+	res.Flow = maskFlow(f)
+	res.Placement, res.PlacementReason = placement(f)
+	return res, nil
+}
+
+// PreviewResult est le flux rendu d'un modèle, et ses différences avec le flux existant le cas échéant.
+type PreviewResult struct {
+	*Flow
+	Changes []Change `json:"changes,omitempty"`
 }
 
 // TemplateInfo est un modèle tel que listé, avec le nombre de flux qui en sont issus.
@@ -475,6 +533,7 @@ func (s *Service) CreateSilence(ctx context.Context, sl Silence) (*Silence, erro
 		sl.ID, sl.Name, ids, sqltime.Format(sl.StartsAt), sqltime.Format(sl.EndsAt), sqltime.Format(sl.CreatedAt)); err != nil {
 		return nil, err
 	}
+	s.edgeChanged()
 	return &sl, nil
 }
 
@@ -487,6 +546,7 @@ func (s *Service) DeleteSilence(ctx context.Context, id string) error {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
 	}
+	s.edgeChanged()
 	return nil
 }
 

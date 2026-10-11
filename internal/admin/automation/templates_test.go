@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	edgere "github.com/vincamok/goproxify/internal/edge/rulesengine"
 	edgews "github.com/vincamok/goproxify/internal/edge/ws"
@@ -132,6 +133,74 @@ func TestEdgePlacementAndRules(t *testing.T) {
 	runs, _ = e.s.Runs(context.Background(), RunFilter{FlowID: f.ID})
 	if len(runs) != 1 || runs[0].Source != "edge:paris-01" || runs[0].Status != RunCompleted {
 		t.Fatalf("remontée de passerelle : %+v", runs)
+	}
+}
+
+// Une mise en sourdine part aux passerelles avec le flux qu'elle vise : la passerelle l'applique seule, et
+// ce qu'elle a ignoré est journalisé « en sourdine » sans conséquence (ni ban conservé, ni notification).
+func TestEdgeFlowSilence(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	ban := Step{ID: "s1", Type: StepAction, Action: &Node{Type: "ban_ip", Config: map[string]any{"ban_duration": "1h"}}}
+	f := e.create(&Flow{Name: "récidive", Enabled: true, Trigger: Trigger{Kind: TriggerCondition, Condition: &Cond{Type: "ban_repeat"}},
+		Steps: []Step{ban}})
+	other := e.create(&Flow{Name: "pic", Enabled: true, Trigger: Trigger{Kind: TriggerCondition, Condition: &Cond{Type: "ban_spike"}},
+		Steps: []Step{ban}})
+	pushes := 0
+	e.s.opts.OnEdgeRulesChange = func() { pushes++ }
+
+	now := e.clock.now()
+	sl, err := e.s.CreateSilence(ctx, Silence{Name: "maintenance", RuleIDs: []string{f.ID}, StartsAt: now.Add(time.Hour), EndsAt: now.Add(2 * time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pushes != 1 {
+		t.Fatalf("mise en sourdine non poussée aux passerelles (%d)", pushes)
+	}
+	rules, _ := e.s.EdgeRules(ctx)
+	windows := map[string][]edgere.SilenceWindow{}
+	for _, r := range rules {
+		windows[r.ID] = r.SilenceWindows
+	}
+	if w := windows[f.ID]; len(w) != 1 || !w[0].Starts.Equal(sl.StartsAt) || !w[0].Ends.Equal(sl.EndsAt) {
+		t.Fatalf("fenêtre du flux visé : %+v", w)
+	}
+	if len(windows[other.ID]) != 0 {
+		t.Fatalf("fenêtre envoyée à un flux non visé : %+v", windows[other.ID])
+	}
+
+	e.s.RecordEdgeFired(edgews.RuleFiredPayload{NodeName: "paris-01", RuleID: f.ID, ActionType: "ban_ip", CondResult: true, Silenced: true,
+		Detail: map[string]any{"ip": "9.9.9.9"}})
+	runs, _ := e.s.Runs(ctx, RunFilter{FlowID: f.ID})
+	if len(runs) != 1 || runs[0].Status != RunSilenced || runs[0].Source != "edge:paris-01" {
+		t.Fatalf("déclenchement en sourdine remonté : %+v", runs)
+	}
+
+	if err := e.s.DeleteSilence(ctx, sl.ID); err != nil {
+		t.Fatal(err)
+	}
+	if pushes != 2 {
+		t.Fatalf("suppression non poussée aux passerelles (%d)", pushes)
+	}
+	rules, _ = e.s.EdgeRules(ctx)
+	for _, r := range rules {
+		if len(r.SilenceWindows) != 0 {
+			t.Fatalf("fenêtre restée après suppression : %+v", r)
+		}
+	}
+
+	// Sans flux visé, la mise en sourdine couvre tous les flux ; une mise en sourdine terminée n'est plus envoyée.
+	if _, err := e.s.CreateSilence(ctx, Silence{Name: "tout", StartsAt: now.Add(-3 * time.Hour), EndsAt: now.Add(-2 * time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.CreateSilence(ctx, Silence{Name: "tout", EndsAt: now.Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	rules, _ = e.s.EdgeRules(ctx)
+	for _, r := range rules {
+		if len(r.SilenceWindows) != 1 {
+			t.Fatalf("mise en sourdine globale : %+v", r)
+		}
 	}
 }
 

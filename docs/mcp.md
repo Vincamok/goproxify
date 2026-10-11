@@ -761,7 +761,7 @@ Tous sont réservés au rôle admin, comme `/api/v1/automation`. Scope `audit:re
 | Outil | Paramètres | Rôle |
 |---|---|---|
 | `get_automation_catalog` | — | Déclencheurs, événements, conditions, actions, types d'étape (manifestes avec leurs champs) et métriques disponibles. À lire avant `create_flow` |
-| `list_flows` | `trigger` (ex. `condition,event`) | Flux avec état (`fire_count`, `next_run_at`, `waiting`…) et `placement` (`edge` : exécuté par les passerelles) |
+| `list_flows` | `trigger` (ex. `condition,event`) | Flux avec état (`fire_count`, `next_run_at`, `waiting`…), `placement` (`edge` : exécuté par les passerelles) et, pour un flux issu d'un modèle, `template.outdated` / `template.missing` |
 | `get_flow` | `id` | Un flux |
 | `create_flow` | `flow` (objet) | Crée un flux de l'éditeur |
 | `update_flow` | `id`, `flow` | Remplace la définition (nouvelle version). Refusé pour un flux issu d'un modèle : utiliser `update_flow_params`, ou `detach_flow` |
@@ -769,7 +769,7 @@ Tous sont réservés au rôle admin, comme `/api/v1/automation`. Scope `audit:re
 | `delete_flow` | `id` | Supprime (refusé si un autre flux l'appelle) |
 | `run_flow` | `id`, `inputs`, `dry_run` | Lance à la main, sans garde-fous ; un flux à condition l'évalue d'abord. `dry_run` : simulation |
 | `simulate_flow` | `flow`, `inputs` | Simule un flux non enregistré : conditions évaluées, aucune action exécutée. Réponse : `matched`, `trace` étape par étape, `placement` |
-| `list_flow_versions` | `id` | 20 dernières versions |
+| `list_flow_versions` | `id` | 20 dernières versions, chacune avec `changes` : ce qui a changé depuis la précédente (Admin 0.141.0) |
 | `restore_flow_version` | `id`, `version` | Rétablit une version |
 | `detach_flow` | `id` | Détache un flux de son modèle |
 | `update_flow_params` | `id`, `params`, `name`, `enabled` | Reconstruit un flux issu d'un modèle avec de nouveaux paramètres |

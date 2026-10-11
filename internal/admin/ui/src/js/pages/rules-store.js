@@ -27,6 +27,7 @@ const FlowTemplates = (() => {
     window._tplCtx = { tpl, flow };
     modal(esc(tpl.name), `
       <p style="margin:0 0 12px;font-size:12.5px;color:var(--text2)">${esc(tpl.description)}</p>
+      ${flow?.template?.outdated ? `<div class="au-banner" style="padding:8px 12px"><span>⚠</span><div style="flex:1;font-size:12.5px">${t('flow.template_outdated', { from: flow.origin.template_version || 0, to: tpl.version })}</div></div>` : ''}
       <div class="field"><label class="field-label">${t('flow.name')}</label>
         <input id="tpl-name" class="input" value="${esc(flow?.name || tpl.name)}"></div>
       <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;margin-bottom:10px">
@@ -52,8 +53,10 @@ const FlowTemplates = (() => {
     const { config, errors } = collect();
     if (errors.length) { el.textContent = errors[0]; return; }
     try {
-      const f = await api('POST', `/automation/templates/${window._tplCtx.tpl.id}/preview`, { params: config });
-      el.innerHTML = `${flowPlacementBadge(f)} ${esc(FlowCatalog.triggerText(f))} → ${esc(FlowCatalog.stepsText(f.steps))}`;
+      const { tpl, flow } = window._tplCtx;
+      const f = await api('POST', `/automation/templates/${tpl.id}/preview`, { params: config, flow_id: flow?.id || '' });
+      el.innerHTML = `${flowPlacementBadge(f)} ${esc(FlowCatalog.triggerText(f))} → ${esc(FlowCatalog.stepsText(f.steps))}`
+        + (flow ? `<div class="fl-sub" style="margin-top:8px">${t('flow.changes_on_save')}</div>${flowChangesHTML(f.changes)}` : '');
     } catch (e) { el.textContent = e.message; }
   }
 

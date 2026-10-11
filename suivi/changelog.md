@@ -9,6 +9,26 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ### Ajouté
 
+- **Flux d'automatisation : ce qui change d'une version à l'autre, et un modèle mis à jour depuis l'installation (Admin 0.141.0)**.
+
+  **Versions** :
+  - La fenêtre Versions de l'éditeur liste maintenant, pour chaque version, ses changements par rapport à la précédente : nom, activation, déclencheur, garde-fou, paramètres du modèle, et chaque étape ajoutée, retirée, modifiée ou déplacée. Jusqu'ici, elle ne montrait qu'un résumé.
+  - Ce qui est comparé : une étape est retrouvée par son identifiant. Une étape insérée ne fait pas paraître « déplacées » celles qui la suivent. Le contenu d'une branche n'est pas compté comme une modification du « si » qui la porte.
+  - Ce qui est exposé : seule la nature des changements, jamais les valeurs, puisqu'une version porte des secrets.
+  - Disponible aussi dans l'API (champ `changes` de `GET /automation/flows/{id}/versions`), le CLI (`goproxify automation flows versions`) et le MCP (`list_flow_versions`).
+
+  **Modèle mis à jour** :
+  - Un flux installé depuis un modèle indique si celui-ci a changé depuis l'installation (`template.outdated`, avec sa version courante) ou s'il n'existe plus (`template.missing`). Rien ne le signalait jusqu'ici.
+  - Où c'est visible : badge sur la tuile, avertissement dans l'éditeur et dans le formulaire des paramètres, mention dans `goproxify automation flows list`.
+  - Le formulaire affiche la liste des changements qu'apportera l'enregistrement, y compris ceux dus à la nouvelle version du modèle (`POST /automation/templates/{id}/preview` avec `flow_id`, CLI `templates preview -flow`).
+  - Un modèle supprimé ouvre l'éditeur, où le flux se détache.
+
+- **Les mises en sourdine s'appliquent aussi aux flux exécutés par les passerelles (Admin 0.140.0, passerelle 0.59.0)**. Jusqu'ici, une mise en sourdine n'arrêtait que les flux évalués par l'Admin ; la page « Mises en sourdine » affichait « passerelles non mises en sourdine ».
+  - l'Admin envoie chaque flux de passerelle avec les fenêtres des mises en sourdine, en cours ou à venir, qui le visent (`silence_windows`), et renvoie la liste à chaque création, suppression ou import d'une mise en sourdine ;
+  - la passerelle garde ces fenêtres dans sa copie locale chiffrée (`auto-rules.gpx`) : une mise en sourdine programmée avant une coupure de l'Admin s'applique encore, même après un redémarrage de la passerelle ;
+  - un déclenchement ignoré remonte par `rule_fired` avec `silenced: true` et apparaît au journal comme exécution « en sourdine », au plus une fois par délai minimum ; ni action, ni notification, ni ban enregistré ;
+  - une passerelle antérieure à 0.59.0 ignore ces fenêtres.
+
 - **Flux d'automatisation : règles, planifications et playbooks deviennent un seul objet, construit dans l'éditeur de flux (Admin 0.139.0, passerelle 0.58.13, ADR 0009)**. Ces trois objets avaient chacun leur moteur, leur API et leur éditeur. L'« éditeur de flux » n'était qu'une vue figée d'une règle en quatre nœuds.
 
   **Le flux** : un déclencheur, un garde-fou et des étapes.

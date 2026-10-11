@@ -191,7 +191,6 @@ pages['automation-silences'] = async function() {
 function _asRender() {
   const now = new Date();
   const name = id => (window._asFlows || []).find(r => r.id === id)?.name || (window._asAlertRules || []).find(r => r.id === id)?.name || id;
-  const edgeIds = new Set((window._asFlows || []).filter(f => f.placement === 'edge').map(f => f.id));
   const rows = window._asSilences || [];
   document.getElementById('content').innerHTML = `
     <p style="margin:0 0 14px;font-size:13px;color:var(--text2)">${t('flow.silences_hint')}</p>
@@ -202,13 +201,11 @@ function _asRender() {
       const label = { active: t('automation.silence_active'), pending: t('automation.silence_pending'), past: t('automation.silence_past') }[st];
       const ids = s.rule_ids || [];
       const scope = ids.length ? ids.map(name).join(', ') : t('flow.silence_all');
-      const edge = ids.length ? ids.some(id => edgeIds.has(id)) : edgeIds.size > 0;
       return `<div class="card blueprint" style="padding:14px 16px;display:flex;align-items:flex-start;gap:12px">
         <div style="flex:1;min-width:0">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
             <span style="font-weight:600;font-size:13.5px">${esc(s.name)}</span>
             <span class="tag ${tag}" style="font-size:10px">${label}</span>
-            ${edge && st !== 'past' ? `<span class="tag tag-yellow" style="font-size:10px" title="${esc(t('flow.silence_edge_hint'))}">${t('flow.silence_edge')}</span>` : ''}
           </div>
           <div style="font-size:11.5px;color:var(--text2);margin-top:6px">${fmtDate(s.starts_at)} → ${fmtDate(s.ends_at)}</div>
           <div style="font-size:11.5px;color:var(--text3);margin-top:2px">${t('automation.silence_scope')}: ${esc(scope)}</div>

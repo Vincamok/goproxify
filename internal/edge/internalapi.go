@@ -772,6 +772,7 @@ func (s *Server) onRuleFired(log edgere.ExecLog) {
 		ActionType:  log.ActionType,
 		CondResult:  log.CondResult,
 		ActionTaken: log.ActionTaken,
+		Silenced:    log.Silenced,
 		Detail:      log.Detail,
 		Error:       log.Error,
 		FiredAt:     log.FiredAt.UTC().Format(time.RFC3339),

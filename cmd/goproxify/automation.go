@@ -39,7 +39,7 @@ goproxify automation runs cancel    <run-id>
 goproxify automation runs replay    <run-id>
 
 goproxify automation templates list
-goproxify automation templates preview <id> [-set clé=valeur,…]
+goproxify automation templates preview <id> [-set clé=valeur,…] [-flow <id>]
 goproxify automation templates install <id> [-set clé=valeur,…] [-name <nom>] [-disabled]
 
 goproxify automation catalog [-json]
@@ -208,7 +208,13 @@ func runAutomationFlows(action string) {
 				status = "✗"
 			}
 			origin, _ := f["origin"].(map[string]any)
-			fmt.Printf("[%s] %-36s  %-28s %-6s %s  (%s)\n", status, str(f, "id"), str(f, "name"), str(f, "placement"), flowSummary(f), str(origin, "kind"))
+			kind := str(origin, "kind")
+			if tpl, _ := f["template"].(map[string]any); tpl["outdated"] == true {
+				kind += ", modèle mis à jour"
+			} else if tpl["missing"] == true {
+				kind += ", modèle supprimé"
+			}
+			fmt.Printf("[%s] %-36s  %-28s %-6s %s  (%s)\n", status, str(f, "id"), str(f, "name"), str(f, "placement"), flowSummary(f), kind)
 		}
 	case "get":
 		id, _, client := autoArgs(4, "goproxify automation flows get <id>")
@@ -254,6 +260,7 @@ func runAutomationFlows(action string) {
 		for _, v := range vs {
 			f, _ := v["flow"].(map[string]any)
 			fmt.Printf("v%-4v %s  %s  %s\n", v["version"], str(v, "created_at"), str(v, "created_by"), flowSummary(f))
+			printChanges(v["changes"])
 		}
 	case "restore":
 		id, _, client := autoArgs(4, "goproxify automation flows restore <id> <version>")
@@ -374,10 +381,15 @@ func runAutomationTemplates(action string) {
 			fmt.Printf("%-12s %-30s %-9s %s  [%s]  installé %v fois\n", str(t, "category"), str(t, "id"), str(t, "kind"), str(t, "name"), strings.Join(params, ", "), t["installed"])
 		}
 	case "preview":
-		id, args, client := autoArgs(4, "goproxify automation templates preview <id> [-set k=v,…]")
+		id, args, client := autoArgs(4, "goproxify automation templates preview <id> [-set k=v,…] [-flow <id>]")
 		var f map[string]any
-		call(client, "POST", "/api/v1/automation/templates/"+id+"/preview", map[string]any{"params": keyValues(flagValue(args, "-set", ""))}, &f, "templates preview")
+		call(client, "POST", "/api/v1/automation/templates/"+id+"/preview",
+			map[string]any{"params": keyValues(flagValue(args, "-set", "")), "flow_id": flagValue(args, "-flow", "")}, &f, "templates preview")
 		fmt.Printf("%s (%s)\n%s\n", str(f, "name"), str(f, "placement"), flowSummary(f))
+		if _, ok := f["changes"]; ok {
+			fmt.Println("Changements à l'enregistrement :")
+			printChanges(f["changes"])
+		}
 	case "install":
 		id, args, client := autoArgs(4, "goproxify automation templates install <id> [-set k=v,…] [-name <nom>] [-disabled]")
 		_, disabled := args["-disabled"]
@@ -493,5 +505,55 @@ func runAutomationImport() {
 		for _, e := range errs {
 			fmt.Printf("  ! %v\n", e)
 		}
+	}
+}
+
+// changeText décrit une différence entre deux versions d'un flux (champ changes de l'API).
+func changeText(c map[string]any) string {
+	step, detail := str(c, "step_id"), str(c, "detail")
+	switch str(c, "kind") {
+	case "created":
+		return "création du flux"
+	case "earliest_kept":
+		return "plus ancienne version conservée"
+	case "name":
+		return "nom modifié"
+	case "description":
+		return "description modifiée"
+	case "enabled":
+		if detail == "true" {
+			return "flux activé"
+		}
+		return "flux désactivé"
+	case "trigger_kind":
+		return "déclencheur remplacé (" + detail + ")"
+	case "trigger":
+		return "réglages du déclencheur modifiés"
+	case "guard":
+		return "garde-fou modifié (" + detail + ")"
+	case "origin":
+		return "origine modifiée (" + detail + ")"
+	case "params":
+		return "paramètres du modèle modifiés (" + detail + ")"
+	case "step_added":
+		return "étape " + step + " ajoutée : " + detail
+	case "step_removed":
+		return "étape " + step + " retirée : " + detail
+	case "step_changed":
+		return "étape " + step + " modifiée : " + detail
+	case "step_moved":
+		return "étape " + step + " déplacée : " + detail
+	}
+	return str(c, "kind")
+}
+
+func printChanges(v any) {
+	list, _ := v.([]any)
+	if len(list) == 0 {
+		fmt.Println("      (aucun changement)")
+	}
+	for _, e := range list {
+		c, _ := e.(map[string]any)
+		fmt.Println("      - " + changeText(c))
 	}
 }
