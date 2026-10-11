@@ -218,14 +218,18 @@ Les paths `/api/v1/health`, `/api/v1/logs/live` et `/internal/v1/` sont inclus d
 
 ---
 
-## Moteur de règles (`gpx_rulesengine_*`)
+## Flux d'automatisation (`gpx_automation_*`)
+
+Exposées par l'Admin. Seul le leader d'un Admin HA exécute les flux : sur les autres membres, ces compteurs restent à zéro. Les flux exécutés par les passerelles (ADR 0009) ne sont pas comptés ici ; leurs déclenchements apparaissent dans le journal des exécutions.
 
 | Métrique | Type | Labels | Description |
 |---|---|---|---|
-| `gpx_rulesengine_evals_total` | Counter | — | Cycles d'évaluation du moteur de règles |
-| `gpx_rulesengine_eval_duration_seconds` | Histogram | — | Durée d'un cycle complet d'évaluation des règles |
-| `gpx_rulesengine_active_rules` | Gauge | — | Nombre de règles activées dans le moteur |
-| `gpx_rulesengine_actions_total` | Counter | `action`, `result` | Actions déclenchées (`disable_proxy`, `ban_ip`, `notify`, `enable_strict`) × (`success`, `error`) |
+| `gpx_automation_evals_total` | Counter | — | Passages d'évaluation des flux à condition (un toutes les 10 s) |
+| `gpx_automation_eval_duration_seconds` | Histogram | — | Durée d'un passage d'évaluation des flux à condition |
+| `gpx_automation_active_flows` | Gauge | `trigger` | Flux activés, par déclencheur (`condition`, `event`, `schedule`, `manual`) |
+| `gpx_automation_runs_total` | Counter | `trigger`, `status` | Exécutions terminées, par déclencheur et statut (`completed`, `failed`, `cancelled`, `rejected`, `stopped`, `silenced`…) |
+| `gpx_automation_actions_total` | Counter | `action`, `result` | Actions exécutées par les étapes, par type d'action × (`success`, `error`) |
+| `gpx_automation_events_dropped_total` | Counter | — | Événements ignorés faute de place dans la file des déclencheurs (256) |
 
 Buckets : 1 ms → 5 s.
 

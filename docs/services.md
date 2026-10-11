@@ -20,7 +20,7 @@ GoProxify est composé de trois processus indépendants qui communiquent via Web
 | **Audit Logger** | Journalise chaque action admin (création/suppression/modification) dans la table SQLite `audit_log`. |
 | **Fail2Ban** | Analyse la table `logs` toutes les 30 s, bannit automatiquement les IPs abusives (4xx répétés). |
 | **CrowdSec Bouncer** | Synchronise les décisions de la LAPI CrowdSec toutes les 60 s vers `security_bans`. |
-| **Rules Engine** | Évalue des règles automatiques toutes les 60 s (pic de bans, CVE critique, moteur silencieux, taux d'erreur). |
+| **Automatisation** | Exécute les flux (règles, planifications, playbooks) : conditions évaluées à l'intervalle de chaque flux (60 s par défaut), événements du moteur d'alertes, cron, lancements manuels ; attentes et approbations reprises après redémarrage. Seul le leader HA exécute. Les flux simples tournent sur les passerelles (ADR 0009). |
 | **VulnScan** | Sonde les en-têtes HTTP des backends toutes les 6 h et interroge NVD pour détecter les CVEs. |
 | **Alerting** | Envoie des notifications (webhook, email, Slack) quand un seuil ou une règle est franchi. |
 | **ACME / Let's Encrypt** | Renouvelle automatiquement les certificats TLS via DNS-01 ou HTTP-01. |

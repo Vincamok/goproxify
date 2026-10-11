@@ -48,40 +48,6 @@ var CrowdSec = struct {
 	}, []string{"result"}),
 }
 
-// RulesEngine expose les métriques du moteur de règles.
-var RulesEngine = struct {
-	EvalsTotal    prometheus.Counter
-	EvalDuration  prometheus.Histogram
-	ActiveRules   prometheus.Gauge
-	ActionsTotal  *prometheus.CounterVec
-}{
-	EvalsTotal: promauto.NewCounter(prometheus.CounterOpts{
-		Namespace: "gpx",
-		Subsystem: "rulesengine",
-		Name:      "evals_total",
-		Help:      "Nombre total de cycles d'évaluation du moteur de règles.",
-	}),
-	EvalDuration: promauto.NewHistogram(prometheus.HistogramOpts{
-		Namespace: "gpx",
-		Subsystem: "rulesengine",
-		Name:      "eval_duration_seconds",
-		Help:      "Durée d'un cycle complet d'évaluation des règles.",
-		Buckets:   []float64{.001, .005, .01, .05, .1, .5, 1, 5},
-	}),
-	ActiveRules: promauto.NewGauge(prometheus.GaugeOpts{
-		Namespace: "gpx",
-		Subsystem: "rulesengine",
-		Name:      "active_rules",
-		Help:      "Nombre de règles activées dans le moteur.",
-	}),
-	ActionsTotal: promauto.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "gpx",
-		Subsystem: "rulesengine",
-		Name:      "actions_total",
-		Help:      "Actions déclenchées par le moteur de règles.",
-	}, []string{"action", "result"}),
-}
-
 // Automation expose les métriques des flux d'automatisation.
 var Automation = struct {
 	EvalsTotal   prometheus.Counter
@@ -93,7 +59,7 @@ var Automation = struct {
 }{
 	EvalsTotal: promauto.NewCounter(prometheus.CounterOpts{
 		Namespace: "gpx", Subsystem: "automation", Name: "evals_total",
-		Help: "Évaluations de conditions de flux.",
+		Help: "Passages d'évaluation des flux à condition.",
 	}),
 	EvalDuration: promauto.NewHistogram(prometheus.HistogramOpts{
 		Namespace: "gpx", Subsystem: "automation", Name: "eval_duration_seconds",
