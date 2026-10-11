@@ -4,6 +4,7 @@
 package agent
 
 import (
+	"github.com/vincamok/goproxify/internal/httpx"
 	"bufio"
 	"context"
 	"crypto/subtle"
@@ -105,12 +106,12 @@ func (a *internalAPI) Start(ctx context.Context) {
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	a.srv = &http.Server{
+	a.srv = httpx.Harden(&http.Server{
 		Addr:         fmt.Sprintf(":%d", a.port),
 		Handler:      mux,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 30 * time.Second,
-	}
+	})
 	a.log.Info("agent: API interne démarrée", "port", a.port)
 	go func() {
 		if err := a.srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

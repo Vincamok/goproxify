@@ -18,11 +18,22 @@ spec:
       labels:
         app.kubernetes.io/name: {{ include "goproxify.name" . }}
         app.kubernetes.io/component: admin
-        {{- with .Values.podAnnotations }}
-        annotations: {{- toYaml . | nindent 8 }}
-        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations: {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       serviceAccountName: {{ include "goproxify.serviceAccountName" . }}
+      {{- if .Values.security.adminRunAsUser }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ .Values.security.adminRunAsUser }}
+        runAsGroup: {{ .Values.security.adminRunAsUser }}
+        # Le volume de données est écrit par cet utilisateur.
+        fsGroup: {{ .Values.security.adminRunAsUser }}
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      {{- end }}
       containers:
         - name: admin
           image: "{{ .Values.global.image.registry }}/admin:{{ .Values.admin.image.tag }}"
@@ -38,17 +49,32 @@ spec:
               value: {{ .Values.admin.config.listenAddr | quote }}
             - name: GPX_SERVER_API_PORT
               value: {{ .Values.admin.config.apiPort | quote }}
-            - name: GPX_AUTH_TOKEN
+            - name: GPX_PAIRING_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ include "goproxify.fullname" . }}-secret
-                  key: auth-token
+                  key: pairing-secret
+            - name: GPX_AGENT_PAIRING_ROOT
+              value: {{ .Values.security.agentPairingWithRootSecret | default false | quote }}
             {{- if .Values.admin.config.jwtSecret }}
-            - name: GPX_JWT_SECRET
+            - name: GPX_SECURITY_JWT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ include "goproxify.fullname" . }}-secret
                   key: jwt-secret
+            {{- end }}
+            {{- $endpoints := list }}
+            {{- if and .Values.edge.enabled (eq .Values.edge.kind "Deployment") }}
+            {{- $endpoints = append $endpoints (printf "%s-edge=http://%s-edge-internal:%v" (include "goproxify.fullname" .) (include "goproxify.fullname" .) .Values.edge.config.internalAPIPort) }}
+            {{- end }}
+            {{- range .Values.admin.edgeEndpoints }}
+            {{- $endpoints = append $endpoints (printf "%s=%s" .name .url) }}
+            {{- end }}
+            {{- if $endpoints }}
+            # L'Admin joint chaque passerelle à une adresse qu'il doit connaître : il ne la devine pas (une passerelle
+            # par nœud n'a pas de nom DNS).
+            - name: GPX_EDGE_EXTRA_ENDPOINTS
+              value: {{ join "," $endpoints | quote }}
             {{- end }}
             - name: GPX_VULNSCAN_ALLOW_PRIVATE
               value: {{ .Values.admin.config.vulnscanAllowPrivate | default false | quote }}
@@ -64,8 +90,15 @@ spec:
             - name: data
               # Doit correspondre à storage.base_path / sqlite_dsn de services/admin/config.json
               mountPath: /etc/goproxify
+            - name: tmp
+              mountPath: /tmp
           resources:
             {{- toYaml .Values.admin.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: {{ .Values.security.adminReadOnlyRootFilesystem }}
+            capabilities:
+              drop: ["ALL"]
           livenessProbe:
             httpGet:
               path: /api/v1/health
@@ -79,6 +112,8 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
       volumes:
+        - name: tmp
+          emptyDir: {}
         - name: data
           {{- if .Values.admin.persistence.enabled }}
           persistentVolumeClaim:

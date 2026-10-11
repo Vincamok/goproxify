@@ -291,13 +291,12 @@ Full reference → **[docs/cli.md](docs/cli.md)**
 
 ## Environment variables
 
-`GPX_*` variables take priority over JSON config files.  
+`GPX_*` variables are read when a component first starts, to generate its `admin.json` / `edge.json` / `agent.json`; once the file exists, **the JSON wins** (only `cluster.*`, `engine.metrics_disabled`, `engine.access_log_disabled` and `identity.node_name` can still come from the environment when absent from the JSON).  
 See `.env.example` for the full list.
 
 | Variable | Component | Description |
 |----------|-----------|-------------|
 | `GPX_SECURITY_JWT_SECRET` | Admin | JWT signing key (required) |
-| `GPX_SECURITY_CLUSTER_SYNC_KEY` | Admin | Cluster sync key |
 | `GPX_PAIRING_SECRET` | Admin / Edge / Agent | Shared secret for automatic pairing (HMAC WebSocket) |
 | `GPX_EDGE_TOKEN` | Edge | Explicit token (alternative to shared secret) |
 | `GPX_TRUSTED_PROXIES` | Edge / Admin | CSV of IPs/CIDRs of trusted front proxies (e.g. Cloudflare ranges) whose `X-Forwarded-For` / `CF-Connecting-IP` / `X-Real-IP` are honored. Loopback and private ranges are always trusted; `*` trusts everything (legacy, spoofable). |
@@ -322,7 +321,7 @@ See `.env.example` for the full list.
 | Edge persistence | Proxies: **YAML** files (`proxies/*.yaml`, `proxies-revisions/*.yaml`) · AES-256-GCM local cache (certs) |
 | Configuration | `GPX_*` environment variables + optional JSON |
 | Discovery | Docker Engine API via Unix socket (read-only) |
-| Metrics | Prometheus `/metrics`, OpenTelemetry (OTLP) |
+| Metrics | Prometheus on the Edge internal API (`:8000/metrics`, bearer token; public `/metrics` only with `GPX_METRICS_PUBLIC=1`), OpenTelemetry (OTLP) |
 | Security | OWASP CRS-4 WAF (13 rule sets, request + response inspection), behavioral Sentinel, native Fail2Ban, CrowdSec, **automatic rules engine**, step-by-step **IP / CIDR trace** over long periods, rate limiting, Geo-IP, ECDSA P-256 JWT, HMAC-SHA256 WS, CVE scanner with KEV/EPSS enrichment and configurable remediation SLA |
 | Deployment | Single binary · Docker Compose · systemd |
 

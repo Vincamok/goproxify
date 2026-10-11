@@ -4,6 +4,8 @@
 package api
 
 import (
+	"github.com/vincamok/goproxify/internal/pairing"
+	"github.com/vincamok/goproxify/internal/ssrf"
 	"bytes"
 	"context"
 	"database/sql"
@@ -337,7 +339,7 @@ func fetchNodesFromEdge(ctx context.Context, edgeEndpoint, token, edgeName strin
 		return nil
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := internalClient.Do(req)
 	if err != nil {
 		slog.Warn("nodes: Passerelle injoignable pour liste agents", "edge", edgeName, "endpoint", edgeEndpoint, "err", err)
 		return nil
@@ -653,7 +655,7 @@ func (h *NodesHandler) relayToAgent(ctx context.Context, nodeID string, payload 
 		}
 		req.Header.Set("Authorization", "Bearer "+c.token)
 		req.Header.Set("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := internalClient.Do(req)
 		if err != nil {
 			h.Log.Warn("nodes: relay — passerelle injoignable", "edge", c.endpoint, "err", err)
 			continue
@@ -732,10 +734,11 @@ func (h *NodesHandler) pushToAgent(ctx context.Context, endpoint string, payload
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if secret := os.Getenv("GPX_PAIRING_SECRET"); secret != "" {
-		req.Header.Set("Authorization", "Bearer "+secret)
+	// La clé dérivée, pas le secret racine : cette adresse vient d'un heartbeat, donc d'un nœud.
+	if key := pairing.AgentKey(os.Getenv("GPX_PAIRING_SECRET")); key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := internalClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -909,9 +912,23 @@ func (h *HeartbeatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusBadRequest, "api.err.json")
 		return
 	}
-	if hb.NodeName == "" {
-		http.Error(w, "node_name requis", http.StatusBadRequest)
+	if hb.NodeName == "" || len(hb.NodeName) > 128 {
+		http.Error(w, "node_name requis (128 caractères au plus)", http.StatusBadRequest)
 		return
+	}
+	if hb.Role != "edge" && hb.Role != "agent" {
+		hb.Role = "edge" // même repli que l'appairage : un rôle libre n'a pas de sens dans la table des nœuds
+	}
+	if len(hb.Version) > 64 {
+		hb.Version = hb.Version[:64]
+	}
+	if len(hb.ContainerRuntimes) > 8 {
+		hb.ContainerRuntimes = hb.ContainerRuntimes[:8]
+	}
+	// L'Admin appelle cette adresse avec le secret d'appairage : lien local et métadonnées du cloud sont exclus,
+	// et une valeur illisible ne doit pas être enregistrée. Le heartbeat reste accepté sans endpoint.
+	if hb.Endpoint != "" && ssrf.ValidateHTTPURL(hb.Endpoint, true) != nil {
+		hb.Endpoint = ""
 	}
 
 	// Remplace les IPs Docker bridge (172.16.0.0/12) par l'IP source réelle.
@@ -1085,7 +1102,7 @@ func (h *NodeEventsHandler) fetchEventsFromEdges(ctx context.Context, nodeFilter
 				return
 			}
 			req.Header.Set("Authorization", "Bearer "+tok)
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := internalClient.Do(req)
 			if err != nil {
 				h.Log.Warn("node_events: Passerelle injoignable", "edge", ep, "err", err)
 				return

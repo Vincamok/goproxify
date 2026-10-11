@@ -50,7 +50,7 @@ GoProxify est composé de trois processus indépendants qui communiquent via Web
 | **Internal API** | Sert les endpoints `POST /internal/v1/` : push config depuis Admin, métriques, scores LB. |
 | **Gateway Peers** | Synchronise les scores adaptatifs et les profils WAF avec les autres nœuds passerelle (cluster). |
 | **Portal** | Gère les sessions UUID one-shot/multi pour l'accès terminal/web aux conteneurs via la passerelle. |
-| **Metrics Exporter** | Expose `/metrics` (Prometheus) et `/internal/v1/metrics/summary` (JSON résumé par proxy). |
+| **Metrics Exporter** | Expose les métriques Prometheus (`GET /internal/v1/metrics`, jeton de la passerelle ; `/metrics` public seulement avec `GPX_METRICS_PUBLIC=1`) et `/internal/v1/metrics/summary` (JSON résumé par proxy). |
 
 ---
 

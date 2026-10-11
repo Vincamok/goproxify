@@ -5,6 +5,7 @@
 package landing
 
 import (
+	"github.com/vincamok/goproxify/internal/httpx"
 	"context"
 	"embed"
 	"fmt"
@@ -45,12 +46,12 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/", http.FileServer(http.FS(static)))
 
 	addr := fmt.Sprintf("%s:%d", s.cfg.Server.ListenAddr, s.cfg.Server.Port)
-	s.http = &http.Server{
+	s.http = httpx.Harden(&http.Server{
 		Addr:         addr,
 		Handler:      mux,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
-	}
+	})
 
 	s.logger.Info("landing: démarrage", "addr", addr, "version", s.siteVersion())
 

@@ -5,6 +5,7 @@
 package mfa
 
 import (
+	"crypto/subtle"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha1"
@@ -38,7 +39,7 @@ func TOTPVerify(secret, code string) bool {
 		if err != nil {
 			continue
 		}
-		if candidate == strings.TrimSpace(code) {
+		if subtle.ConstantTimeCompare([]byte(candidate), []byte(strings.TrimSpace(code))) == 1 {
 			return true
 		}
 	}

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/vincamok/goproxify/internal/admin/acme"
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
 )
@@ -312,6 +313,10 @@ func (h *DomainsHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.DNSCredentials = keepDNSCreds(req.DNSProvider, req.DNSProvider, "{}", req.DNSCredentials)
+	if err := acme.ValidateDNSParams(req.DNSProvider, asCredMap(req.DNSCredentials)); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	credJSON := "{}"
 	if req.DNSCredentials != nil {
 		if b, err := json.Marshal(req.DNSCredentials); err == nil {
@@ -394,6 +399,10 @@ func (h *DomainsHandler) update(w http.ResponseWriter, r *http.Request, id strin
 	var oldProvider, oldCreds string
 	if err := h.DB.QueryRowContext(r.Context(), `SELECT dns_provider, dns_credentials FROM domains WHERE id=?`, id).Scan(&oldProvider, &oldCreds); err == nil {
 		req.DNSCredentials = keepDNSCreds(oldProvider, req.DNSProvider, oldCreds, req.DNSCredentials)
+	}
+	if err := acme.ValidateDNSParams(req.DNSProvider, asCredMap(req.DNSCredentials)); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 	credJSON := "{}"
 	if req.DNSCredentials != nil {

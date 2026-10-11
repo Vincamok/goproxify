@@ -4,6 +4,8 @@
 package portal
 
 import (
+	"github.com/vincamok/goproxify/internal/edge/middleware"
+	"github.com/vincamok/goproxify/internal/httpx"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -41,6 +43,7 @@ type HTTPServer struct {
 	challenges        *MFAChallengeStore
 	sendEmailOTP      func(email, code string) error
 	pageTemplates     *TemplateStore
+	loginLimit        *middleware.AuthFailLimiter // essais de mot de passe du formulaire de connexion
 }
 
 type portalToken struct {
@@ -65,6 +68,7 @@ func NewHTTPServer(cfg *Config, store *Store, sessions *SessionManager, log *slo
 		audit:         audit,
 		challenges:    NewMFAChallengeStore(),
 		pageTemplates: NewTemplateStore(),
+		loginLimit:    middleware.NewAuthFailLimiter(),
 	}
 }
 
@@ -112,7 +116,7 @@ func (h *HTTPServer) Handler() http.Handler {
 
 // Start écoute sur addr.
 func (h *HTTPServer) Start(addr string) error {
-	h.srv = &http.Server{Addr: addr, Handler: h.Handler()}
+	h.srv = httpx.Harden(&http.Server{Addr: addr, Handler: h.Handler()})
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
@@ -259,6 +263,10 @@ func (h *HTTPServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "username + password requis", http.StatusBadRequest)
 		return
 	}
+	// Le formulaire de connexion du portail se devinait sans limite (mot de passe, annuaire LDAP, coffre chiffré).
+	if h.loginLimit != nil && !h.loginLimit.Guard(w, r, body.Username) {
+		return
+	}
 
 	v := h.viewFor(r)
 	// 1) Auth provider (basic / LDAP) si configuré
@@ -283,6 +291,7 @@ func (h *HTTPServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 				sealed, _ := SealVault(key, VaultPayload{})
 				_ = h.store.SetVaultBlob(u.ID, sealed)
 			}
+			h.loginOK(r, body.Username)
 			h.finishLogin(w, u, key, "provider", v)
 			return
 		}
@@ -290,10 +299,15 @@ func (h *HTTPServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// 2) Compte local (fallback)
 	u, ok := h.store.FindUserByUsername(body.Username)
+	if !ok || u.PasswordHash == "" {
+		middleware.SpendBcryptTime(body.Password) // même durée qu'un mot de passe faux : la réponse ne révèle pas qui existe
+	}
 	if !ok || u.PasswordHash == "" || !CheckPassword(u.PasswordHash, body.Password) {
+		h.loginFailed(r, body.Username)
 		http.Error(w, "identifiants invalides", http.StatusUnauthorized)
 		return
 	}
+	h.loginOK(r, body.Username)
 	if u.Status == UserStatusDisabled {
 		http.Error(w, "compte désactivé", http.StatusForbidden)
 		return
@@ -885,4 +899,16 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func (h *HTTPServer) loginFailed(r *http.Request, user string) {
+	if h.loginLimit != nil {
+		h.loginLimit.RecordFail(r, user)
+	}
+}
+
+func (h *HTTPServer) loginOK(r *http.Request, user string) {
+	if h.loginLimit != nil {
+		h.loginLimit.RecordSuccess(r, user)
+	}
 }

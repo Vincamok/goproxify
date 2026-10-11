@@ -6,6 +6,7 @@
 package edgepush
 
 import (
+	"github.com/vincamok/goproxify/internal/ssrf"
 	"github.com/vincamok/goproxify/internal/edge/plugins"
 	"bytes"
 	"context"
@@ -37,7 +38,7 @@ func New(db *sql.DB, log *slog.Logger) *Pusher {
 	return &Pusher{
 		db:     db,
 		log:    log,
-		client: &http.Client{Timeout: 10 * time.Second},
+		client: ssrf.SelfHostedClient(10 * time.Second),
 	}
 }
 

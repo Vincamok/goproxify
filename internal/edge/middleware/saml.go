@@ -21,6 +21,7 @@ import (
 	"github.com/crewjam/saml/samlsp"
 	"github.com/vincamok/goproxify/internal/edge/metrics"
 	"github.com/vincamok/goproxify/internal/edge/router"
+	"github.com/vincamok/goproxify/internal/ssrf"
 )
 
 const samlSessionCookie = "_gpx_saml"
@@ -85,7 +86,16 @@ func (h *samlHandler) handleACS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "SAML: formulaire invalide", http.StatusBadRequest)
 		return
 	}
-	assertion, err := h.sp.ServiceProvider.ParseResponse(r, nil)
+	// Les identifiants des requêtes que CE navigateur a lancées (cookie de suivi posé par HandleStartAuthFlow) : la
+	// réponse doit y répondre (InResponseTo). Sans eux, ParseResponse(r, nil) refusait toute réponse — la connexion SAML
+	// ne pouvait jamais aboutir — et, si l'on avait autorisé le mode initié par l'IdP pour y remédier, n'importe quelle
+	// réponse capturée aurait été rejouable depuis n'importe quel navigateur.
+	tracked := h.sp.RequestTracker.GetTrackedRequests(r)
+	possibleIDs := make([]string, 0, len(tracked))
+	for _, tr := range tracked {
+		possibleIDs = append(possibleIDs, tr.SAMLRequestID)
+	}
+	assertion, err := h.sp.ServiceProvider.ParseResponse(r, possibleIDs)
 	if err != nil {
 		metrics.Auth.AttemptsTotal.WithLabelValues(r.Host, "saml", "failure").Inc()
 		http.Error(w, "SAML: assertion invalide — "+err.Error(), http.StatusForbidden)
@@ -123,7 +133,16 @@ func (h *samlHandler) handleACS(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	http.Redirect(w, r, "/", http.StatusFound)
+	// Retour à la page demandée au départ (RelayState = index de la requête suivie), et la requête suivie est close :
+	// une même réponse ne s'utilise qu'une fois dans ce navigateur.
+	dest := "/"
+	if relay := r.Form.Get("RelayState"); relay != "" {
+		if tr, err := h.sp.RequestTracker.GetTrackedRequest(r, relay); err == nil {
+			dest = SafeLocalRedirect(tr.URI)
+			_ = h.sp.RequestTracker.StopTrackingRequest(w, r, relay)
+		}
+	}
+	http.Redirect(w, r, dest, http.StatusFound)
 }
 
 func (h *samlHandler) sessionUser(r *http.Request) string {
@@ -222,9 +241,18 @@ func newSAMLSP(cfg *router.SAMLConfig) (*samlsp.Middleware, error) {
 	if cfg.IDPMetadataURL != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		idpMeta, err := samlsp.FetchMetadata(ctx, &http.Client{
-			Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}},
-		}, *must(url.Parse(cfg.IDPMetadataURL)))
+		// L'IdP est souvent sur le réseau interne (Keycloak, ADFS) : les adresses privées restent permises, pas le
+		// link-local ni les métadonnées du cloud, ni un schéma autre que http(s).
+		if err := ssrf.ValidateHTTPURL(cfg.IDPMetadataURL, true); err != nil {
+			return nil, fmt.Errorf("idp_metadata_url refusée : %w", err)
+		}
+		metaURL, err := url.Parse(cfg.IDPMetadataURL)
+		if err != nil {
+			return nil, fmt.Errorf("idp_metadata_url invalide : %w", err)
+		}
+		client := ssrf.SelfHostedClient(10 * time.Second)
+		client.Transport.(*http.Transport).TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		idpMeta, err := samlsp.FetchMetadata(ctx, client, *metaURL)
 		if err != nil {
 			return nil, fmt.Errorf("métadonnées IdP : %w", err)
 		}
@@ -242,4 +270,3 @@ func newSAMLSP(cfg *router.SAMLConfig) (*samlsp.Middleware, error) {
 	return samlsp.New(opts)
 }
 
-func must(u *url.URL, _ error) *url.URL { return u }

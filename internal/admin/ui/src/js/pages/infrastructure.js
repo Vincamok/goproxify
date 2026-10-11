@@ -125,6 +125,7 @@ const _wiz = {
   edgeList: [],
   declaredNodes: [],
   pairingSecret: '',
+  agentKey: '',
 };
 
 /** Endpoint Admin→Passerelle à partir d'un hôte saisi (évite :8000 en double). */
@@ -290,7 +291,7 @@ function _buildAddAgentOpts({ name, edgeURL, docker, dockerSock, portainer, port
   const envVars = [
     { k: 'GPX_IDENTITY_AGENT_NODE_NAME',    v: name },
     { k: 'GPX_CONTROL_PLANE_EDGE_ENDPOINT', v: edgeURL },
-    { k: 'GPX_PAIRING_SECRET',              v: pairingSecret || '' },
+    { k: 'GPX_AGENT_PAIRING_KEY',           v: _wiz.agentKey || '' },
     docker ? { k: 'GPX_DOCKER_ENABLED',  v: 'true' } : { k: 'GPX_DOCKER_ENABLED', v: 'false' },
     docker ? { k: 'GPX_DOCKER_RUNTIME',  v: 'auto' } : null,
     portainer                 ? { k: 'GPX_PORTAINER_ENABLED',  v: 'true' }         : null,
@@ -310,6 +311,7 @@ window.openAddAgentModal = async function() {
     const sec = await api('GET', '/pairing-secret').catch(() => null);
     pairingSecret = sec?.secret || '';
     _wiz.pairingSecret = pairingSecret;
+    _wiz.agentKey = sec?.agent_key || '';
   }
 
   const edgeOptions = edges.length

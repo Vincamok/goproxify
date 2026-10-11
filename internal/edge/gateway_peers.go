@@ -257,7 +257,17 @@ func mergeRemoteBackends(existing, remote []router.Backend, peerEndpoint string)
 		}
 		out = append(out, b)
 	}
-	out = append(out, remote...)
+	seen := make(map[string]struct{}, len(out))
+	for _, b := range out {
+		seen[b.URL] = struct{}{}
+	}
+	for _, b := range remote {
+		if _, dup := seen[b.URL]; dup {
+			continue
+		}
+		seen[b.URL] = struct{}{}
+		out = append(out, b)
+	}
 	return out
 }
 

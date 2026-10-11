@@ -1,4 +1,7 @@
 {{- if .Values.agent.enabled -}}
+{{- if not (has .Values.agent.config.runtime (list "none" "docker" "podman")) }}
+{{- fail (printf "agent.config.runtime : %q invalide (none, docker ou podman)" .Values.agent.config.runtime) }}
+{{- end }}
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -17,8 +20,14 @@ spec:
       labels:
         app.kubernetes.io/name: {{ include "goproxify.name" . }}
         app.kubernetes.io/component: agent
+      {{- with .Values.podAnnotations }}
+      annotations: {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       serviceAccountName: {{ include "goproxify.serviceAccountName" . }}
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       {{- if .Values.security.agentHostPID }}
       hostPID: true
       {{- end }}
@@ -29,30 +38,52 @@ spec:
           env:
             - name: TZ
               value: {{ .Values.global.timezone | default "Europe/Paris" | quote }}
-            - name: GPX_CONTROL_PLANE_EDGE_ENDPOINT
-              value: http://{{ include "goproxify.fullname" . }}-edge:{{ .Values.edge.service.internalPort }}
-            - name: GPX_CONTROL_PLANE_AUTH_TOKEN
+            # Clé dérivée, jamais le secret racine : l'Agent tourne sur une machine d'application.
+            - name: GPX_AGENT_PAIRING_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ include "goproxify.fullname" . }}-secret
-                  key: auth-token
+                  key: agent-pairing-key
+            {{- if .Values.security.edgeHostNetwork }}
+            # La passerelle de ce nœud écoute sur l'hôte (hostNetwork) : l'Agent la joint par l'adresse du nœud.
+            - name: GPX_HOST_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: GPX_CONTROL_PLANE_EDGE_ENDPOINT
+              value: http://$(GPX_HOST_IP):{{ .Values.edge.config.internalAPIPort }}
+            {{- else }}
+            - name: GPX_CONTROL_PLANE_EDGE_ENDPOINT
+              value: http://{{ include "goproxify.fullname" . }}-edge-internal:{{ .Values.edge.config.internalAPIPort }}
+            {{- end }}
+            {{- if eq .Values.agent.config.runtime "none" }}
+            - name: GPX_DOCKER_ENABLED
+              value: "false"
+            {{- else }}
             - name: GPX_DOCKER_RUNTIME
               value: {{ .Values.agent.config.runtime | quote }}
+            {{- end }}
             - name: GPX_KUBERNETES_ENABLED
               value: {{ .Values.agent.config.kubernetes.enabled | quote }}
             - name: GPX_KUBERNETES_NAMESPACE
               value: {{ .Values.agent.config.kubernetes.namespace | quote }}
-            - name: GPX_IDENTITY_NODE_NAME
+            - name: GPX_IDENTITY_AGENT_NODE_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
           volumeMounts:
-            - name: docker-sock
+            - name: data
+              # agent.json et agent-node-id : l'identité de l'Agent doit survivre à un redémarrage du pod.
+              mountPath: /etc/goproxify
+            {{- if eq .Values.agent.config.runtime "docker" }}
+            - name: runtime-sock
               mountPath: /var/run/docker.sock
               readOnly: {{ .Values.security.agentDockerSockReadOnly }}
-            - name: podman-sock
+            {{- else if eq .Values.agent.config.runtime "podman" }}
+            - name: runtime-sock
               mountPath: /run/podman/podman.sock
               readOnly: {{ .Values.security.agentDockerSockReadOnly }}
+            {{- end }}
           resources:
             {{- toYaml .Values.agent.resources | nindent 12 }}
           securityContext:
@@ -64,18 +95,32 @@ spec:
               drop: ["ALL"]
             {{- end }}
       volumes:
-        - name: docker-sock
+        - name: data
+          {{- if .Values.agent.persistence.hostPath }}
+          hostPath:
+            path: {{ .Values.agent.persistence.hostPath | quote }}
+            type: DirectoryOrCreate
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- if eq .Values.agent.config.runtime "docker" }}
+        # type Socket : le pod ne démarre pas sur un nœud sans socket, au lieu de laisser le noyau créer un fichier vide
+        # à sa place (FileOrCreate) que le démon Docker trouverait ensuite à l'emplacement de son socket.
+        - name: runtime-sock
           hostPath:
             path: /var/run/docker.sock
-            type: FileOrCreate
-        - name: podman-sock
+            type: Socket
+        {{- else if eq .Values.agent.config.runtime "podman" }}
+        - name: runtime-sock
           hostPath:
             path: /run/podman/podman.sock
-            type: FileOrCreate
+            type: Socket
+        {{- end }}
       {{- with .Values.tolerations }}
       tolerations: {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.nodeSelector }}
+      {{- $selector := merge (deepCopy (default (dict) .Values.agent.nodeSelector)) (default (dict) .Values.nodeSelector) }}
+      {{- with $selector }}
       nodeSelector: {{- toYaml . | nindent 8 }}
       {{- end }}
 {{- end }}

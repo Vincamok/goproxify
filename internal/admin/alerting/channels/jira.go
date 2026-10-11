@@ -58,7 +58,7 @@ func (s *JiraSender) Send(ctx context.Context, msg Message) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(s.Username+":"+s.Token)))
-	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	resp, err := selfHostedClient(15 * time.Second).Do(req)
 	if err != nil {
 		return fmt.Errorf("jira: %w", err)
 	}

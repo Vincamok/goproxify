@@ -92,6 +92,10 @@ func (h *ACMEProvidersHandler) create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if err := acme.ValidateDNSParams(body.Type, paramsAny(body.Params)); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	id, err := h.Store.Create(body.Name, body.Type, body.Params)
 	if err != nil {
 		h.Log.Error("acme_providers: create", "err", err)
@@ -132,6 +136,10 @@ func (h *ACMEProvidersHandler) update(w http.ResponseWriter, r *http.Request, id
 		params = man.KeepSecrets(paramsAny(old.Params), params)
 	}
 	if err := man.Validate(params); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := acme.ValidateDNSParams(body.Type, params); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

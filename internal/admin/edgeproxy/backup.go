@@ -4,6 +4,7 @@
 package edgeproxy
 
 import (
+	"github.com/vincamok/goproxify/internal/ssrf"
 	"context"
 	"net/http"
 	"time"
@@ -25,7 +26,7 @@ type BackupResult struct {
 
 // NewBackupClient : client à délai long (l'état d'une passerelle peut peser plusieurs dizaines de Mo).
 func NewBackupClient() *Client {
-	return &Client{HTTP: &http.Client{Timeout: 10 * time.Minute}}
+	return &Client{HTTP: ssrf.SelfHostedClient(10 * time.Minute)}
 }
 
 // BackupExport récupère l'état persisté de la passerelle.

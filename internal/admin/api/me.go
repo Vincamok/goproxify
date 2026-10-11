@@ -21,6 +21,9 @@ type MeHandler struct {
 	DB       *sql.DB
 	Log      *slog.Logger
 	OnChange func() // appelé après changement email/mot de passe
+
+	// JWTSecret sert à rendre une session neuve après un changement de mot de passe (les autres sont révoquées).
+	JWTSecret string
 }
 
 func (h *MeHandler) notifyChange() {
@@ -218,8 +221,20 @@ func (h *MeHandler) changePassword(w http.ResponseWriter, r *http.Request, userI
 		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
 		return
 	}
-	h.DB.ExecContext(r.Context(), `UPDATE users SET password_hash=? WHERE id=?`, newHash, userID) //nolint:errcheck
+	if _, err := h.DB.ExecContext(r.Context(), `UPDATE users SET password_hash=? WHERE id=?`, newHash, userID); err != nil {
+		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
+		return
+	}
+	// Toute session émise avant ce changement est révoquée (une session volée ne survit pas au nouveau mot de passe) ;
+	// l'appelant en reçoit une neuve pour ne pas être déconnecté.
+	_ = adminauth.RevokeSessions(r.Context(), h.DB, userID)
 	_ = admindb.WriteAudit(h.DB, userID, "change_password", "user:"+userID, "")
 	h.notifyChange()
+	if adminauth.AuthKindFromContext(r.Context()) == adminauth.AuthKindJWT && h.JWTSecret != "" {
+		if tok, err := adminauth.SignJWT(userID, h.JWTSecret, 24*time.Hour); err == nil {
+			jsonOK(w, map[string]string{"token": tok})
+			return
+		}
+	}
 	w.WriteHeader(http.StatusNoContent)
 }

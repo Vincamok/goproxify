@@ -34,7 +34,7 @@ func (s *GotifySender) Send(ctx context.Context, msg Message) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	resp, err := selfHostedClient(10 * time.Second).Do(req)
 	if err != nil {
 		return fmt.Errorf("gotify: %w", err)
 	}

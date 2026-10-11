@@ -4,10 +4,12 @@
 package edge
 
 import (
+	"github.com/vincamok/goproxify/internal/edge/middleware"
+	"github.com/vincamok/goproxify/internal/pairing"
+	"github.com/vincamok/goproxify/internal/ssrf"
 	"github.com/vincamok/goproxify/internal/edge/plugins"
 	"bytes"
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -54,6 +56,11 @@ func (s *Server) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		s.purgeDockerRoutesForAgent(hb.NodeName)
 	}
 
+	// La passerelle appelle cette adresse pour relayer des commandes : lien local et métadonnées du cloud exclus.
+	if hb.Endpoint != "" && ssrf.ValidateHTTPURL(hb.Endpoint, true) != nil {
+		hb.Endpoint = ""
+	}
+
 	s.nodeStore.Upsert(edgeagent.NodeInfo{
 		NodeName:          hb.NodeName,
 		Role:              hb.Role,
@@ -78,13 +85,24 @@ func hasRuntime(runtimes []string, names ...string) bool {
 	return false
 }
 
+// La découverte Kubernetes réutilise l'identifiant « docker-host: » des routes : sans ce test, le heartbeat d'un Agent
+// qui n'a que le runtime « kubernetes » les supprimerait dès la seconde suivante.
+func hasKubernetesBackend(rt *router.Route) bool {
+	for _, b := range rt.Backends {
+		if strings.HasPrefix(b.ContainerID, "k8s:") {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) purgeDockerRoutesForAgent(agentName string) {
 	changed := false
 	for _, rt := range s.table.All() {
 		if rt.AgentName != agentName {
 			continue
 		}
-		if strings.HasPrefix(rt.ID, "docker:") || strings.HasPrefix(rt.ID, "docker-host:") {
+		if (strings.HasPrefix(rt.ID, "docker:") || strings.HasPrefix(rt.ID, "docker-host:")) && !hasKubernetesBackend(rt) {
 			if s.table.Delete(rt.ID) {
 				changed = true
 			}
@@ -966,6 +984,11 @@ func (s *Server) handleListAgentContainers(w http.ResponseWriter, r *http.Reques
 		containerIDs := make([]string, 0, len(rt.Backends))
 		seenCID := map[string]struct{}{}
 		for _, b := range rt.Backends {
+			// Un backend appris d'une autre passerelle n'est pas à nous : l'exporter le ferait revenir chez son
+			// propriétaire (et chez les autres pairs) comme un backend « distant », et chaque synchronisation en ajouterait.
+			if b.OwnerEdgeEndpoint != "" {
+				continue
+			}
 			backends = append(backends, b.URL)
 			if b.ContainerID == "" {
 				continue
@@ -1181,10 +1204,19 @@ func (s *Server) handleEdgePair(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "pairing non configuré", http.StatusServiceUnavailable)
 		return
 	}
-	if len(configuredSecret) != len(req.Secret) ||
-		subtle.ConstantTimeCompare([]byte(configuredSecret), []byte(req.Secret)) != 1 {
+	// L'API interne est joignable depuis le réseau des applications : sans limite, le secret se devine à volonté.
+	if !pairAttempts.Guard(w, r, "edge-pair") {
+		return
+	}
+	ok, viaRoot := pairing.ServerAcceptsAgent(configuredSecret, req.Secret)
+	if !ok {
+		pairAttempts.RecordFail(r, "edge-pair")
 		http.Error(w, "secret invalide", http.StatusForbidden)
 		return
+	}
+	pairAttempts.RecordSuccess(r, "edge-pair")
+	if viaRoot {
+		s.log.Warn("edge: Agent appairé avec le secret racine — lui donner GPX_AGENT_PAIRING_KEY, puis refuser la racine avec GPX_AGENT_PAIRING_ROOT=false", "node", req.NodeName)
 	}
 	nodeName := req.NodeName
 	if nodeName == "" {
@@ -1345,10 +1377,14 @@ func (s *Server) handleAgentCommandRelay(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(resp.StatusCode)
 }
 
-// setAgentInternalAuth pose le Bearer partagé (GPX_PAIRING_SECRET) pour l'API Agent :8001.
+// pairAttempts limite les essais de secret sur /internal/v1/pair.
+var pairAttempts = middleware.NewAuthFailLimiter()
+
+// setAgentInternalAuth pose le Bearer de l'API Agent :8001 : la clé d'appairage dérivée, jamais le secret racine (un
+// Agent compromis ou une adresse d'Agent falsifiée l'aurait reçu).
 func setAgentInternalAuth(req *http.Request) {
-	if secret := os.Getenv("GPX_PAIRING_SECRET"); secret != "" {
-		req.Header.Set("Authorization", "Bearer "+secret)
+	if key := pairing.AgentKey(os.Getenv("GPX_PAIRING_SECRET")); key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
 	}
 }
 

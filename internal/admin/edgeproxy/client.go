@@ -5,6 +5,7 @@
 package edgeproxy
 
 import (
+	"github.com/vincamok/goproxify/internal/ssrf"
 	"bytes"
 	"context"
 	"database/sql"
@@ -66,7 +67,7 @@ type Client struct {
 }
 
 func NewClient() *Client {
-	return &Client{HTTP: &http.Client{Timeout: 15 * time.Second}}
+	return &Client{HTTP: ssrf.SelfHostedClient(15 * time.Second)}
 }
 
 type listResponse struct {

@@ -94,7 +94,7 @@ Le WAF applique les règles OWASP passerelle Rule Set (CRS) sur les requêtes HT
 |---|---|---|
 | `goproxify.waf` | `"block"` \| `"detect"` \| `"true"` | Active le WAF. `block` bloque les requêtes malveillantes, `detect` journalise sans bloquer. |
 | `goproxify.waf.anomaly_threshold` | `"10"` | Score d'anomalie cumulatif avant blocage (défaut : `5`). Augmenter réduit les faux positifs. |
-| `goproxify.waf.max_body_mb` | `"10"` | Taille maximale du corps analysé par le WAF en Mo (défaut : `8`). |
+| `goproxify.waf.max_body_mb` | `"10"` | Taille maximale du corps analysé par le WAF en Mo (défaut : 128 Kio). Le reste du corps est transmis sans analyse ; plus la limite est haute, plus une requête volumineuse coûte de CPU. |
 | `goproxify.waf.exclude_ids` | `"942100,941100"` | IDs de règles OWASP CRS à désactiver pour ce proxy (CSV). |
 | `goproxify.waf.behavior` | `"true"` | Active l'analyse comportementale par IP (score cumulatif sur une fenêtre glissante). |
 | `goproxify.waf.behavior.window` | `"60"` | Fenêtre d'observation en secondes (défaut : `60`). |
@@ -179,10 +179,11 @@ Le Sentinel est le moteur global de détection de menaces de la passerelle. Il s
 
 | Label | Valeurs | Description |
 |---|---|---|
-| `goproxify.scale.min` | `"1"` | Nombre minimum d'instances. |
-| `goproxify.scale.max` | `"5"` | Nombre maximum d'instances. |
-| `goproxify.scale.cpu_threshold` | `"80"` | Seuil CPU (%) déclenchant un scale-out. |
-| `goproxify.scale.cooldown` | `"120s"` | Délai minimum entre deux décisions de scaling. |
+| `goproxify.scale.service` | `"web"` | Nom logique du service : les conteneurs qui portent le même nom forment un groupe d'instances. |
+| `goproxify.scale.min` | `"1"` | Nombre minimum d'instances (défaut `1`). |
+| `goproxify.scale.max` | `"5"` | Nombre maximum d'instances. Défaut `1` : **pas de scaling** tant que `max` n'est pas supérieur à `min` et à `1`. |
+
+Les **seuils CPU et le délai entre deux décisions ne se règlent pas par label** : ils viennent de la section `autoscale` de `agent.json` (`enabled`, `check_interval_s` — 30 par défaut —, `cpu_scale_up_pct` — 80 —, `cpu_scale_down_pct` — 20 —, `cooldown_s` — 120, anti-battement). L'auto-scaling est désactivé tant que `autoscale.enabled` n'est pas vrai. Le déclencheur est le CPU moyen des instances du groupe : plus haut que le seuil de montée, une instance est ajoutée ; plus bas que celui de descente, la dernière est arrêtée.
 
 ---
 

@@ -716,6 +716,8 @@ Envoie un message de test. `DELETE /api/v1/alert-channels/{id}` supprime le cana
 
 Lecture pour tout compte authentifié ; création, modification, suppression et `refresh` réservés aux admins / superadmins.
 
+> **Sources (Admin `0.135.5`)** : `feed_urls` doit être en http(s) et ne viser aucune adresse interne (`GPX_IPPROFILE_ALLOW_PRIVATE=1` pour l'autoriser) ; 10 sources au plus ; `feed_format` ∈ `plain`, `json-aws`, `json-gcp`, `json-fastly`, `tsv-dshield` ; `refresh_interval_h` dans [0, 8760]. La connexion vers une adresse interne est aussi refusée au moment de lire la source (rebinding DNS).
+
 ### `GET /api/v1/ip-profiles` · `GET /api/v1/ip-profiles/:id`
 
 Liste / détail des profils IP (`id`, `name`, `profile_type`, `mode`, `feed_urls`, `feed_format`, `refresh_interval_h`, `cidrs`, `enabled`, `last_updated_at`…). Champs d'état du rafraîchissement automatique :
@@ -923,11 +925,11 @@ Liste les nœuds déclarés via le wizard architecture (pas encore connectés, o
 
 ### `POST /api/v1/declared-nodes`
 
-Déclare un nœud (`role`: `edge`|`agent`, `name`, `region`, `environment`, `config`). Upsert par `(role, name)`.
+Réservé aux administrateurs (`403` sinon, depuis Admin `0.135.18` ; aucun contrôle de rôle avant). Déclare un nœud (`role`: `edge`|`agent`, `name`, `region`, `environment`, `config`). Upsert par `(role, name)`.
 
 ### `DELETE /api/v1/declared-nodes/:id`
 
-Supprime un nœud déclaré.
+Supprime un nœud déclaré. Réservé aux administrateurs.
 
 ### `GET /api/v1/architecture` `[AUTH]`
 
@@ -974,7 +976,7 @@ Rôle admin requis. Remet en place une version conservée, réaligne la base des
 
 ### `POST /api/v1/bootstrap-tickets` `[AUTH]`
 
-Crée un ticket one-shot pour intégrer un hôte (QR + lien + script).
+Crée un ticket one-shot pour intégrer un hôte (QR + lien + script). Réservé aux administrateurs (`403` sinon, depuis Admin `0.135.18`).
 
 **Body :**
 ```json
@@ -1493,6 +1495,12 @@ Catalogue des scopes PAT avec les outils MCP couverts par chacun, pour référen
 
 *Ces endpoints ne sont pas exposés publiquement. Authentification par token d'appairage.*
 
+**Secret d'appairage et clé des Agents (Admin `0.135.20`, passerelle `0.58.9`, Agent `0.9.6`)** : `GET /api/v1/pairing-secret` renvoie `{ "secret": "…", "agent_key": "…" }` ; `agent_key` = SHA-256 de `goproxify/agent-pairing/v1:` suivi du secret. `POST /internal/v1/pair` (Admin) : une passerelle (`role: edge`) présente le secret racine ; un Agent (`role: agent`) présente `agent_key` — ou le secret racine tant que `GPX_AGENT_PAIRING_ROOT` n'est pas `false`. Sur la passerelle, `POST /internal/v1/pair` suit la même règle et, sauf pour le bon secret, compte les échecs par adresse (5 échecs : `429` pendant 15 minutes). L'Admin et la passerelle appellent les Agents avec `agent_key` en Bearer, jamais avec le secret racine. Le WebSocket `/ws/admin` n'est signé qu'avec le secret racine.
+
+**Rôle du jeton (passerelle `0.58.8`)** : un jeton d'**Agent** n'ouvre que `POST /internal/v1/agent/heartbeat`, `/agent/events`, `/agent/logs`, `/agent/containers`, `DELETE /internal/v1/agent/containers` et `DELETE /internal/v1/routes/{id}` pour une route issue de la découverte (identifiant commençant par `docker:`, `docker-host:`, `k8s:`, `portainer:` ou `podman:`) ; tout autre appel répond `403`. Un jeton d'administration ouvre toute l'API.
+
+**Lots envoyés à l'Admin (`0.135.19`)** : `POST /internal/v1/security/bans` et `/security/threats` acceptent 1 000 entrées au plus (`413` sinon) ; une entrée dont l'adresse est illisible, plus large que `/16` (IPv4) ou `/32` (IPv6), couverte par la liste blanche des bans, ou dont `expires_at` n'est pas RFC 3339, est ignorée sans faire échouer le lot. `/logs` et `/security/cves` : 5 000 entrées au plus ; les champs libres sont tronqués à 2 048 octets. `POST /internal/v1/heartbeat` : `endpoint` ignoré s'il n'est pas une URL http(s) publique ou privée hors lien local et métadonnées du cloud.
+
 ### `POST /internal/v1/register`
 
 Enregistrement d'une passerelle ou Agent.
@@ -1720,6 +1728,26 @@ Codes d'erreur :
 - `GET /api/v1/alert-events?[days&limit&trigger&node]` — alertes déclenchées (30 jours conservés, plus récente d'abord) : `[{id, rule_id, rule_name, trigger, detail, channels, title, body, priority, silenced, fired_at}]` ; `node` filtre sur le nom de passerelle du détail. `silenced=true` : la règle correspondait mais un silence actif (`Automatisation > Alertes > Silences & maintenance`) a bloqué l'envoi — `channels` est alors vide. `POST /api/v1/alert-events/{id}/ack` (acquittement) est réservé aux admins / superadmins.
 - `GET /api/v1/prism/slo/config` → `{target}` ; `PUT /api/v1/prism/slo/config` `{target}` (admin, entre 90 et 99.999) — objectif SLO enregistré (réglage `slo.target`, 99.9 par défaut), utilisé par l'écran, `GET /prism/slo` sans `target`, l'outil MCP `get_prism_slo` et l'alerte `slo_burn`.
 - `GET /api/v1/prism/live-ips` renvoie en plus `city`, `lat`, `lon` (0/0 tant que l'IP n'est pas localisée).
+
+### Changement de mot de passe (Admin `0.135.14`)
+
+`POST /api/v1/me/change-password` révoque toutes les sessions (JWT) émises avant l'appel et répond `200 { "token": "…" }` — une session neuve pour l'appelant — quand l'appel est fait avec une session ; avec un jeton API la réponse reste `204`. Même révocation quand un administrateur définit le mot de passe d'un autre compte.
+
+### Inscription d'une clé de sécurité (Admin `0.135.12`)
+
+`POST /api/v1/auth/mfa/webauthn/register/begin` renvoie `{ "options": <PublicKeyCredentialCreationOptions>, "challenge_id": "…" }` ; `POST …/register/finish?challenge=<challenge_id>` consomme ce défi (lié à l'utilisateur, à usage unique, 5 minutes). Les codes de secours se saisissent avec ou sans tirets, en majuscules ou en minuscules.
+
+### Second facteur : envois de codes et canal push (Admin `0.135.17`)
+
+`email/setup`, `sms/setup`, `push/setup` et `push/verify` : 3 envois par compte et par 10 minutes, 60 par heure au total — `429` avec `Retry-After` au-delà. `sms/setup` exige un numéro au format international (`^\+[1-9][0-9]{7,14}$`), `400` sinon. `push/setup` : `url` en http(s) ne visant ni le lien local ni les métadonnées du cloud (adresses privées permises), `topic` ntfy en `[A-Za-z0-9_-]{1,64}`, `400` sinon ; `502 push injoignable` sans détail. `email/verify` et `sms/verify` : 5 codes faux verrouillent 15 minutes (`429`), sans effet sur la connexion.
+
+### Second facteur : ce que la réponse ne contient plus, clés clonées (Admin `0.135.16`)
+
+`methods` (réponse `202` de `POST /api/v1/auth/login` et `GET /api/v1/auth/mfa`) ne liste que `id`, `user_id`, `method`, `enabled`, `verified`. Le champ `config` — qui contenait le secret TOTP — n'est plus jamais renvoyé : avant cette version, le mot de passe seul donnait de quoi calculer le code. Le compteur de signatures d'une clé de sécurité est enregistré à chaque connexion ; un compteur qui n'augmente pas (clé clonée) est refusé avec `401`, comme un mauvais code.
+
+### Second facteur à la connexion (Admin `0.135.11`)
+
+`POST /api/v1/auth/mfa/challenge` et `/api/v1/auth/mfa/webauthn/login/finish` : 5 échecs sur un compte (toutes méthodes confondues) le verrouillent 15 minutes — réponse `429` avec `Retry-After`, y compris pour le bon code. Un code TOTP accepté ne peut plus être rejoué dans sa fenêtre de validité.
 
 ### SMTP (Admin `0.135.4`)
 

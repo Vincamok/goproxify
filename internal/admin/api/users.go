@@ -351,6 +351,7 @@ func (h *UsersHandler) update(w http.ResponseWriter, r *http.Request, id string)
 		hash, err := adminauth.HashPassword(req.Password)
 		if err == nil {
 			h.DB.ExecContext(r.Context(), `UPDATE users SET password_hash=? WHERE id=?`, hash, id) //nolint:errcheck
+			_ = adminauth.RevokeSessions(r.Context(), h.DB, id)
 		}
 	}
 
@@ -492,7 +493,7 @@ func (h *UsersHandler) changePassword(w http.ResponseWriter, r *http.Request, id
 	}
 
 	res, err := h.DB.ExecContext(r.Context(),
-		`UPDATE users SET password_hash=? WHERE id=?`, hash, id)
+		`UPDATE users SET password_hash=?, tokens_valid_after=? WHERE id=?`, hash, time.Now().Unix(), id)
 	if err != nil {
 		if !isCtxErr(err) {
 			h.Log.Error("users: changePassword", "err", err)
@@ -538,6 +539,18 @@ func (h *UsersHandler) delete(w http.ResponseWriter, r *http.Request, id string)
 	h.DB.ExecContext(r.Context(), `DELETE FROM user_scopes WHERE user_id=?`, id)     //nolint:errcheck
 	h.DB.ExecContext(r.Context(), `DELETE FROM team_members WHERE user_id=?`, id) //nolint:errcheck
 	h.DB.ExecContext(r.Context(), `DELETE FROM user_permissions WHERE user_id=?`, id) //nolint:errcheck
+	// Ce qui authentifie ou rétablit l'accès du compte ne lui survit pas : jetons API, méthodes MFA, codes de secours,
+	// appareils de confiance, défis en cours.
+	for _, q := range []string{
+		`DELETE FROM user_api_token_scopes WHERE token_id IN (SELECT id FROM user_api_tokens WHERE user_id=?)`,
+		`DELETE FROM user_api_tokens WHERE user_id=?`,
+		`DELETE FROM user_mfa WHERE user_id=?`,
+		`DELETE FROM user_mfa_challenges WHERE user_id=?`,
+		`DELETE FROM user_backup_codes WHERE user_id=?`,
+		`DELETE FROM user_trusted_devices WHERE user_id=?`,
+	} {
+		h.DB.ExecContext(r.Context(), q, id) //nolint:errcheck
+	}
 
 	actor := adminauth.UserIDFromContext(r.Context())
 	_ = admindb.WriteAudit(h.DB, actor, "delete", "user:"+id, "")

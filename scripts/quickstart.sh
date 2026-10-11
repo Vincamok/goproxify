@@ -79,6 +79,11 @@ banner() {
   echo ""
 }
 
+# Clé d'appairage des Agents : dérivée du secret racine (même calcul que internal/pairing.AgentKey).
+agent_key() {
+  printf '%s' "goproxify/agent-pairing/v1:$1" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -d' ' -f1
+}
+
 hex32() {
   if command -v openssl >/dev/null 2>&1; then
     openssl rand -hex 32
@@ -298,8 +303,9 @@ services:
     environment:
       - TZ=${TZ:-Europe/Paris}
 
-      # ── OBLIGATOIRE — même valeur que l'Admin et la passerelle ─────────────
-      - GPX_PAIRING_SECRET=${GPX_PAIRING_SECRET}
+      # ── OBLIGATOIRE — clé dérivée du secret racine (jamais le secret lui-même) ──
+      # L'Agent tourne sur une machine d'application : il ne doit pas pouvoir se faire passer pour l'Admin.
+      - GPX_AGENT_PAIRING_KEY=${GPX_AGENT_PAIRING_KEY}
 
       # ── Connexion à la passerelle (mono-machine : réseau Docker suffit) ────
       - GPX_CONTROL_PLANE_EDGE_ENDPOINT=http://goproxify-edge:8000
@@ -355,6 +361,7 @@ write_env() {
   cp "$ENV_EXAMPLE" "$ENV_FILE"
   set_env_key GPX_JWT_SECRET "$jwt"
   set_env_key GPX_PAIRING_SECRET "$pairing"
+  set_env_key GPX_AGENT_PAIRING_KEY "$(agent_key "$pairing")"
   set_env_key GPX_FIRST_ADMIN_EMAIL "$email"
   set_env_key GPX_FIRST_ADMIN_PASSWORD "$password"
   set_env_key GOPROXIFY_ADMIN_TAG "$TAG_ADMIN"
@@ -400,7 +407,9 @@ if [ "$DO_PRINT_SECRETS" = true ]; then
   echo -e "${BOLD}Secrets hex-32 (openssl rand -hex 32)${RESET}"
   echo ""
   echo "GPX_JWT_SECRET=$(hex32)"
-  echo "GPX_PAIRING_SECRET=$(hex32)"
+  P="$(hex32)"
+  echo "GPX_PAIRING_SECRET=$P"
+  echo "GPX_AGENT_PAIRING_KEY=$(agent_key "$P")"
   echo ""
   echo -e "${DIM}Copiez dans Portainer (stack.env) ou .env — ne les committez pas.${RESET}"
   exit 0
@@ -512,6 +521,6 @@ success "Conteneurs running : ${running}"
 
 echo ""
 echo -e "${GREEN}${BOLD}Prêt.${RESET} Ouvrez ${BOLD}http://localhost:${ADMIN_PORT}${RESET}"
-echo -e "  Appairage passerelle/Agent : automatique via ${BOLD}GPX_PAIRING_SECRET${RESET} (même .env)."
+echo -e "  Appairage passerelle/Agent : automatique via ${BOLD}GPX_PAIRING_SECRET${RESET} (passerelle) et ${BOLD}GPX_AGENT_PAIRING_KEY${RESET} (Agent), même .env."
 echo -e "  ${DIM}Ne committez pas .env — secrets à usage unique affichés uniquement à la génération.${RESET}"
 echo ""

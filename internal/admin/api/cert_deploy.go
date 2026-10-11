@@ -419,9 +419,18 @@ func (h *CertBundleHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	password := r.URL.Query().Get("password")
 
-	// Incrémente l'usage
-	_, _ = h.DB.ExecContext(r.Context(),
-		`UPDATE cert_pull_tokens SET uses=uses+1 WHERE id=?`, tokenID)
+	// Réservation atomique : lire « uses » puis l'incrémenter laissait deux requêtes simultanées emporter toutes
+	// deux la clé privée d'un jeton à usage unique.
+	res, err := h.DB.ExecContext(r.Context(),
+		`UPDATE cert_pull_tokens SET uses=uses+1 WHERE id=? AND (max_uses<=0 OR uses<max_uses)`, tokenID)
+	if err != nil {
+		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		http.Error(w, "token épuisé", http.StatusUnauthorized)
+		return
+	}
 
 	bundle, err := certformat.Convert(domain, []byte(certPEM), []byte(keyPEM), certformat.Format(format), password)
 	if err != nil {

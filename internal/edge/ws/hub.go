@@ -163,8 +163,12 @@ func (h *Hub) ServeAdmin(w http.ResponseWriter, r *http.Request) {
 
 	h.log.Info("ws/admin: connexion établie", "node", nodeID)
 	defer func() {
+		// Une reconnexion de l'Admin remplace l'entrée avant que l'ancienne connexion ne se termine : sans cette
+		// comparaison, la fermeture de l'ancienne effaçait la nouvelle et la passerelle n'envoyait plus rien à l'Admin.
 		h.mu.Lock()
-		delete(h.adminConns, nodeID)
+		if h.adminConns[nodeID] == ac {
+			delete(h.adminConns, nodeID)
+		}
 		h.mu.Unlock()
 		metrics.WSConnectionsActive.WithLabelValues("admin").Dec()
 		conn.Close(websocket.StatusNormalClosure, "")

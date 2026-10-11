@@ -98,7 +98,7 @@ Quand le score comportemental dépasse `behavior_threshold`, l'IP est bannie imm
 ```yaml
 goproxify.waf: "block"                      # true|block|detect
 goproxify.waf.anomaly_threshold: "10"       # 0 = premier match bloque
-goproxify.waf.max_body_mb: "10"             # taille max du corps analysé
+goproxify.waf.max_body_mb: "1"              # taille max du corps analysé (défaut : 128 Kio ; le coût croît avec elle)
 goproxify.waf.exclude_ids: "942100,941100"  # IDs à désactiver (CSV)
 goproxify.waf.behavior: "true"              # analyse comportementale
 goproxify.waf.behavior.window: "60"         # fenêtre en secondes
@@ -615,7 +615,7 @@ Le masquage du fingerprint serveur (`Server`, `X-Powered-By`) est activable ind�
 
 ## Métriques et observabilité
 
-Tous les moteurs exposent des métriques Prometheus sur `/metrics` :
+Tous les moteurs exposent des métriques Prometheus. Sur une passerelle, elles sont servies par l'API interne — `GET /metrics` (ou `/internal/v1/metrics`) sur le port interne, avec le jeton de la passerelle (`authorization: { credentials: <jeton> }` côté Prometheus) — et **pas** sur les ports publics ; `GPX_METRICS_PUBLIC=1` sert `/metrics` sur les ports publics (à réserver à un accès filtré par le réseau : les métriques listent hôtes, backends et compteurs de sécurité). L'Agent sert `:9191/metrics` (CPU et mémoire de l'hôte).
 
 ```
 # WAF

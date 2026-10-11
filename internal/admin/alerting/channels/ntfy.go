@@ -42,7 +42,7 @@ func (s *NtfySender) Send(ctx context.Context, msg Message) error {
 		req.Header.Set("Authorization", "Bearer "+s.Token)
 	}
 
-	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	resp, err := selfHostedClient(10 * time.Second).Do(req)
 	if err != nil {
 		return fmt.Errorf("ntfy: %w", err)
 	}

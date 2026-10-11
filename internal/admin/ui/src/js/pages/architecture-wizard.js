@@ -365,6 +365,7 @@ function _archLoad() {
     const portalEdges = portalEnabled?.edges || {};
     _arch.pairingSecret = sec?.secret || '';
     _wiz.pairingSecret = _arch.pairingSecret;
+    _wiz.agentKey = sec?.agent_key || '';
     if (!_arch.jwtSecret) {
       const arr = new Uint8Array(32);
       (typeof crypto !== 'undefined' && crypto.getRandomValues) ? crypto.getRandomValues(arr) : arr.forEach((_,i,a) => a[i] = Math.floor(Math.random()*256));

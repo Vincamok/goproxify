@@ -20,12 +20,18 @@ spec:
       labels:
         app.kubernetes.io/name: {{ include "goproxify.name" . }}
         app.kubernetes.io/component: edge
+      {{- with .Values.podAnnotations }}
+      annotations: {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       {{- if .Values.security.edgeHostNetwork }}
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
       {{- end }}
       serviceAccountName: {{ include "goproxify.serviceAccountName" . }}
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: edge
           image: "{{ .Values.global.image.registry }}/edge:{{ .Values.edge.image.tag }}"
@@ -49,17 +55,38 @@ spec:
           env:
             - name: TZ
               value: {{ .Values.global.timezone | default "Europe/Paris" | quote }}
-            - name: GPX_CONTROL_PLANE_ADMIN_ENDPOINT
-              value: {{ if .Values.edge.config.adminEndpoint }}{{ .Values.edge.config.adminEndpoint }}{{ else }}http://{{ include "goproxify.fullname" . }}-admin:{{ .Values.admin.service.apiPort }}{{ end }}
-            - name: GPX_CONTROL_PLANE_AUTH_TOKEN
+            - name: GPX_PAIRING_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ include "goproxify.fullname" . }}-secret
-                  key: auth-token
+                  key: pairing-secret
+            - name: GPX_AGENT_PAIRING_ROOT
+              value: {{ .Values.security.agentPairingWithRootSecret | default false | quote }}
+            # Une passerelle par nœud : sans nom propre, toutes se nommeraient « goproxify-edge » et partageraient
+            # la même identité (jeton, routes) auprès de l'Admin.
+            - name: GPX_IDENTITY_EDGE_NODE_NAME
+              {{- if eq .Values.edge.kind "Deployment" }}
+              value: {{ include "goproxify.fullname" . }}-edge
+              {{- else }}
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+              {{- end }}
+            # Adresse sous laquelle l'Admin joint cette passerelle (API interne).
+            - name: GPX_NETWORK_API_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
             - name: GPX_NETWORK_HTTP_PORT
               value: {{ .Values.edge.config.httpPort | quote }}
             - name: GPX_NETWORK_HTTPS_PORT
               value: {{ .Values.edge.config.httpsPort | quote }}
+            - name: GPX_NETWORK_INTERNAL_API_PORT
+              value: {{ .Values.edge.config.internalAPIPort | quote }}
+          volumeMounts:
+            - name: data
+              # edge.json (identité), certificats chiffrés, routes, bans : doivent survivre à un redémarrage du pod.
+              mountPath: /etc/goproxify
           resources:
             {{- toYaml .Values.edge.resources | nindent 12 }}
           securityContext:
@@ -69,10 +96,66 @@ spec:
               drop: ["ALL"]
               {{- end }}
               add: ["NET_BIND_SERVICE"]
+      volumes:
+        - name: data
+          {{- if .Values.edge.persistence.hostPath }}
+          hostPath:
+            path: {{ .Values.edge.persistence.hostPath | quote }}
+            type: DirectoryOrCreate
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
       {{- with .Values.tolerations }}
       tolerations: {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector: {{- toYaml . | nindent 8 }}
       {{- end }}
+---
+# Trafic public (80/443) : utile quand la passerelle n'est pas en hostNetwork.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "goproxify.fullname" . }}-edge
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "goproxify.labels" . | nindent 4 }}
+    app.kubernetes.io/component: edge
+spec:
+  type: {{ .Values.edge.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.edge.service.httpPort }}
+      targetPort: http
+      {{- if eq .Values.edge.service.type "NodePort" }}
+      nodePort: {{ .Values.edge.service.nodePortHTTP }}
+      {{- end }}
+    - name: https
+      port: {{ .Values.edge.service.httpsPort }}
+      targetPort: https
+      {{- if eq .Values.edge.service.type "NodePort" }}
+      nodePort: {{ .Values.edge.service.nodePortHTTPS }}
+      {{- end }}
+  selector:
+    app.kubernetes.io/name: {{ include "goproxify.name" . }}
+    app.kubernetes.io/component: edge
+---
+# API interne (Admin, Agents) : ClusterIP uniquement, jamais exposée hors du cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "goproxify.fullname" . }}-edge-internal
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "goproxify.labels" . | nindent 4 }}
+    app.kubernetes.io/component: edge
+spec:
+  type: ClusterIP
+  ports:
+    - name: internal
+      port: {{ .Values.edge.config.internalAPIPort }}
+      targetPort: internal
+  selector:
+    app.kubernetes.io/name: {{ include "goproxify.name" . }}
+    app.kubernetes.io/component: edge
 {{- end }}

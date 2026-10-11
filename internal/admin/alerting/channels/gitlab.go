@@ -42,7 +42,7 @@ func (s *GitLabSender) Send(ctx context.Context, msg Message) error {
 	}
 	req.Header.Set("PRIVATE-TOKEN", s.Token)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	resp, err := selfHostedClient(15 * time.Second).Do(req)
 	if err != nil {
 		return fmt.Errorf("gitlab: %w", err)
 	}

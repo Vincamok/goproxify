@@ -97,7 +97,7 @@ func (h *DiscoveredContainersHandler) fetchContainersFromEdge(ctx context.Contex
 		return nil
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := internalClient.Do(req)
 	if err != nil {
 		warn("discovered-containers: Passerelle injoignable", "endpoint", edgeEndpoint, "err", err)
 		return nil

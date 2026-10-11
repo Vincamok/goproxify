@@ -490,3 +490,53 @@ func TestDockerLabelsReachRoute(t *testing.T) {
 		t.Fatalf("slow_start_sec = %d", rt.SlowStartSec)
 	}
 }
+
+func TestPurgeDockerRoutesKeepsKubernetesRoutes(t *testing.T) {
+	s := testEdgeServer()
+	post := func(host, cid string) {
+		b, _ := json.Marshal(map[string]any{
+			"id": cid, "host": host, "backends": []string{"http://10.0.0.1:80"},
+			"container_id": cid, "agent_name": "node-a",
+		})
+		rr := httptest.NewRecorder()
+		s.handleAgentContainerStart(rr, httptest.NewRequest(http.MethodPost, "/internal/v1/agent/containers", bytes.NewReader(b)))
+		if rr.Code != http.StatusNoContent {
+			t.Fatalf("status = %d", rr.Code)
+		}
+	}
+	post("k8s.example.fr", "k8s:default/demo")
+	post("docker.example.fr", "abc123def456")
+
+	s.purgeDockerRoutesForAgent("node-a")
+
+	if _, ok := s.table.ByHost("k8s.example.fr"); !ok {
+		t.Fatal("la route Kubernetes a été purgée par un Agent sans runtime Docker")
+	}
+	if _, ok := s.table.ByHost("docker.example.fr"); ok {
+		t.Fatal("la route Docker devait être purgée")
+	}
+}
+
+func TestKubernetesAnnouncementsDoNotMultiplyBackends(t *testing.T) {
+	s := testEdgeServer()
+	for i := 0; i < 5; i++ {
+		for _, agent := range []string{"node-a", "node-b"} {
+			b, _ := json.Marshal(map[string]any{
+				"host": "k8s.example.fr", "backends": []string{"http://10.96.0.10:80"},
+				"container_id": "k8s:default/demo", "agent_name": agent, "source": "k8s",
+			})
+			rr := httptest.NewRecorder()
+			s.handleAgentContainerStart(rr, httptest.NewRequest(http.MethodPost, "/internal/v1/agent/containers", bytes.NewReader(b)))
+			if rr.Code != http.StatusNoContent {
+				t.Fatalf("status = %d", rr.Code)
+			}
+		}
+	}
+	rt, ok := s.table.ByHost("k8s.example.fr")
+	if !ok {
+		t.Fatal("route absente")
+	}
+	if len(rt.Backends) != 1 {
+		t.Fatalf("%d backends pour un seul Service annoncé %d fois : %+v", len(rt.Backends), 10, rt.Backends)
+	}
+}

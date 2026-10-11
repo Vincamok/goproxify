@@ -32,7 +32,7 @@ De zéro à l'application fonctionnelle, toutes méthodes.
 | Ports ouverts | 80, 443, 9443 en entrée ; 8000 accessible depuis les Agents si multi-hôtes |
 | DNS | Un domaine ou sous-domaine pointant vers l'IP du serveur (pour les certificats ACME) |
 
-Pour la méthode CLI : Go 1.22+ ou le binaire pré-compilé depuis [les releases](https://github.com/Vincamok/goproxify/releases).
+Pour la méthode CLI : Go 1.25+ ou le binaire pré-compilé depuis [les releases](https://github.com/Vincamok/goproxify/releases).
 
 ---
 
@@ -66,7 +66,15 @@ Navigateur Admin
 - **Home lab** — 1 Admin · 1 passerelle · 1 Agent sur une machine : sections 3 à 6.
 - **Entreprise redondé** — 1 Admin · 2 passerelles (derrière un DNS round-robin ou une IP virtuelle) · 4 hôtes internes avec un Agent chacun : Admin + Passerelle 1 comme le home lab, puis section 7 (seconde passerelle) et section 8 (un Agent par hôte). Le trafic se lit de haut en bas : Internet → passerelles → Agents (proxies HTTP(S) par labels) ou hôtes (proxies TCP/UDP). L'Admin est le lien de gestion des passerelles.
 
-**Secret de couplage (`GPX_PAIRING_SECRET`)** : les trois services partagent la même valeur. C'est le seul mécanisme d'authentification au démarrage. Générez-le aléatoirement, ne le réutilisez jamais entre environnements.
+**Secret de couplage (`GPX_PAIRING_SECRET`)** : l'Admin et la passerelle partagent la même valeur. C'est le seul mécanisme d'authentification au démarrage, et il signe le WebSocket Admin → passerelle : qui le possède peut se faire passer pour l'Admin auprès de toutes les passerelles. Générez-le aléatoirement, ne le réutilisez jamais entre environnements.
+
+**Clé d'appairage des Agents (`GPX_AGENT_PAIRING_KEY`)** : les Agents tournent sur des machines d'application (accès au socket du runtime) et ne reçoivent **pas** le secret racine, mais une clé qui en est dérivée. Elle suffit à s'appairer et à authentifier les appels de l'Admin et de la passerelle vers l'Agent ; elle ne permet pas de remonter au secret ni de signer le WebSocket Admin. Calcul :
+
+```bash
+printf %s "goproxify/agent-pairing/v1:$GPX_PAIRING_SECRET" | sha256sum | cut -d' ' -f1
+```
+
+L'écran *Infrastructure → Ajouter un Agent*, `GET /api/v1/pairing-secret` (`agent_key`), `scripts/quickstart.sh` et le chart Helm la fournissent. **Migration** : un Agent qui n'a que `GPX_PAIRING_SECRET` continue de fonctionner (la passerelle et l'Admin acceptent encore le secret racine d'un Agent) mais journalise un avertissement ; une fois tous les Agents passés à `GPX_AGENT_PAIRING_KEY`, posez `GPX_AGENT_PAIRING_ROOT=false` sur l'Admin et les passerelles pour refuser le secret racine côté Agent (le chart le fait par défaut). Pour retirer un secret racine déjà copié sur des hôtes d'application, **changez-le** (Admin, passerelles), puis redistribuez la clé dérivée du nouveau secret : l'ancienne clé est invalide.
 
 ---
 
@@ -164,7 +172,7 @@ services:
     command: ["agent"]
     environment:
       - TZ=${TZ:-Europe/Paris}
-      - GPX_PAIRING_SECRET=${GPX_PAIRING_SECRET}
+      - GPX_AGENT_PAIRING_KEY=${GPX_AGENT_PAIRING_KEY}   # dérivée de GPX_PAIRING_SECRET, voir plus haut
       - GPX_CONTROL_PLANE_EDGE_ENDPOINT=http://goproxify-edge:8000
       - GPX_CONTROL_PLANE_ADMIN_ENDPOINT=http://goproxify-admin:9443
       - GPX_IDENTITY_AGENT_NODE_NAME=${AGENT_NODE_NAME:-goproxify-agent}
@@ -286,7 +294,7 @@ services:
     command: ["agent"]
     environment:
       - TZ=Europe/Paris
-      - GPX_PAIRING_SECRET=CHANGE_ME_PAIRING_HEX32
+      - GPX_AGENT_PAIRING_KEY=CHANGE_ME_CLE_DERIVEE   # sha256 de goproxify/agent-pairing/v1:<secret>
       - GPX_CONTROL_PLANE_EDGE_ENDPOINT=http://goproxify-edge:8000
       - GPX_IDENTITY_AGENT_NODE_NAME=goproxify-agent
     volumes:
@@ -499,7 +507,7 @@ Sur le serveur Agent :
 ```bash
 # GPX_CONTROL_PLANE_EDGE_ENDPOINT pointe vers l'IP ou domaine de la passerelle, pas localhost
 export GPX_CONTROL_PLANE_EDGE_ENDPOINT=http://<IP_DU_EDGE>:8000
-export GPX_PAIRING_SECRET=<même valeur que la passerelle>
+export GPX_AGENT_PAIRING_KEY=<clé dérivée du secret de la passerelle — pas le secret lui-même>
 export GPX_IDENTITY_AGENT_NODE_NAME=agent-prod-1  # nom unique par agent
 ```
 
@@ -520,7 +528,7 @@ services:
     restart: unless-stopped
     command: ["agent"]
     environment:
-      - GPX_PAIRING_SECRET=<PAIRING_SECRET_DU_EDGE>
+      - GPX_AGENT_PAIRING_KEY=<CLE_DERIVEE_DU_SECRET_DU_EDGE>
       - GPX_CONTROL_PLANE_EDGE_ENDPOINT=http://<IP_DU_EDGE>:8000
       - GPX_CONTROL_PLANE_ADMIN_ENDPOINT=http://<IP_DU_EDGE>:9443
       - GPX_IDENTITY_AGENT_NODE_NAME=agent-prod-1
@@ -630,12 +638,12 @@ curl -I http://localhost/
 
 ### L'Agent n'apparaît pas dans l'Admin
 
-Cause la plus fréquente : `GPX_PAIRING_SECRET` différent entre l'Agent et la passerelle.
+Cause la plus fréquente : `GPX_AGENT_PAIRING_KEY` de l'Agent qui n'est pas la clé dérivée du `GPX_PAIRING_SECRET` de la passerelle.
 
 ```bash
-# Comparer — les deux valeurs doivent être identiques
-docker exec goproxify-edge  env | grep GPX_PAIRING_SECRET
-docker exec goproxify-agent env | grep GPX_PAIRING_SECRET
+# Calculer la clé attendue à partir du secret de la passerelle, puis la comparer à celle de l'Agent
+docker exec goproxify-edge sh -c 'printf %s "goproxify/agent-pairing/v1:$GPX_PAIRING_SECRET" | sha256sum | cut -d" " -f1'
+docker exec goproxify-agent env | grep GPX_AGENT_PAIRING_KEY
 
 # Logs de l'agent — chercher status=401
 docker logs goproxify-agent | grep -i "401\|heartbeat\|refused"
@@ -740,3 +748,32 @@ volumes:
   goproxify_edge_data:
     name: goproxify_core_data
 ```
+
+---
+
+## Kubernetes (chart Helm)
+
+```bash
+helm install goproxify ./helm/goproxify \
+  --namespace goproxify --create-namespace \
+  --set global.pairingSecret=$(openssl rand -hex 32)
+```
+
+`global.pairingSecret` est **obligatoire** : c'est le `GPX_PAIRING_SECRET` que partagent l'Admin et la passerelle (l'ancien `global.authToken` est encore lu). Les Agents n'en reçoivent pas : le chart leur donne `GPX_AGENT_PAIRING_KEY`, dérivée dans le secret `agent-pairing-key` ; `security.agentPairingWithRootSecret: true` ré-accepte le secret racine d'un Agent (anciennes installations). Le chart crée :
+
+| Objet | Rôle |
+|---|---|
+| `Deployment` Admin + `Service` + `PersistentVolumeClaim` | Administration, base SQLite sur le volume (`admin.persistence`) ; `ingress` facultatif |
+| `DaemonSet` passerelle (`hostNetwork`, ports 80/443 de l'hôte) | Une passerelle par nœud, nommée d'après le nœud (`spec.nodeName`) et jointe par l'Admin à son adresse de pod |
+| `Service` `…-edge` (80/443) et `…-edge-internal` (API interne, **ClusterIP** seulement) | Le trafic public, et l'API interne qui ne doit jamais sortir du cluster |
+| `DaemonSet` Agent + `ClusterRole` en lecture | Découverte Kubernetes (`agent.config.kubernetes.*`) et, si `agent.config.runtime` vaut `docker` ou `podman`, des conteneurs du nœud ; il joint la passerelle de son nœud |
+
+Les passerelles et les Agents gardent leur identité, leurs certificats chiffrés et leur état dans `/etc/goproxify`, monté depuis un dossier de l'hôte (`edge.persistence.hostPath`, `agent.persistence.hostPath`) : sans lui, chaque redémarrage de pod donnerait une nouvelle identité. Mettre la valeur à vide les passe en `emptyDir` (tests seulement).
+
+**Sécurité du chart.** L'Admin s'exécute en utilisateur non privilégié (`security.adminRunAsUser`, 10001), sans capacité ni élévation de privilèges, avec le profil seccomp du runtime. L'Agent ne reçoit **aucun socket de conteneurs par défaut** (`agent.config.runtime: none`) : `docker` ou `podman` monte le socket de l'hôte, ce qui donne à l'Agent le contrôle de l'hôte — limitez-le aux nœuds concernés avec `agent.nodeSelector`. Monter un socket « en lecture seule » n'empêche pas d'y envoyer des requêtes d'écriture.
+
+**Joindre les passerelles.** L'Admin ne devine pas l'adresse d'une passerelle : déclarez-les avec `admin.edgeEndpoints` (`--set "admin.edgeEndpoints[0].name=<nœud>" --set "admin.edgeEndpoints[0].url=http://<IP du nœud>:8000"`). Le nom est celui du nœud Kubernetes (`kubectl get nodes`), l'adresse celle du nœud (hostNetwork). Avec `edge.kind=Deployment`, la passerelle est déclarée automatiquement.
+
+**Découverte Kubernetes.** Annotez un `Service` ou un `Ingress` : label `goproxify.enabled=true` (sélection) et annotation `goproxify.host=app.example.com` ; l'Agent du nœud annonce la route à sa passerelle.
+
+Limites : le chart a été installé sur un cluster kind (un plan de contrôle, deux nœuds de travail) : Admin en utilisateur 10001, appairage de chaque Agent à la passerelle de son nœud, Admin ↔ passerelles, découverte d'un `Service` et d'un `Ingress` annotés (route créée puis retirée à la suppression), trafic jusqu'au pod par chaque nœud, identité conservée à la suppression des pods, mode `Deployment`. Choisissez `DaemonSet` ou `Deployment` à l'installation : en changer plus tard laisse les Agents avec le jeton de l'ancienne passerelle. Non éprouvé : un runtime Docker/Podman, un vrai cloud (stockage, LoadBalancer).

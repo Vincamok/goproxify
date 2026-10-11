@@ -61,10 +61,11 @@ func LookupPAT(ctx context.Context, db *sql.DB, plain string) (userID, tokenID s
 	hash := HashPAT(plain)
 	var expires sql.NullTime
 	var revoked int
+	// La jointure sur users : le jeton d'un compte supprimé ne doit plus ouvrir aucune porte (rien ne le révoquait).
 	err = db.QueryRowContext(ctx, `
-		SELECT id, user_id, revoked, expires_at
-		FROM user_api_tokens
-		WHERE token_hash = ?`, hash).Scan(&tokenID, &userID, &revoked, &expires)
+		SELECT t.id, t.user_id, t.revoked, t.expires_at
+		FROM user_api_tokens t JOIN users u ON u.id = t.user_id
+		WHERE t.token_hash = ?`, hash).Scan(&tokenID, &userID, &revoked, &expires)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("PAT inconnu")
 	}
@@ -157,9 +158,18 @@ func authenticateBearer(ctx context.Context, secret string, db *sql.DB, tokenStr
 		ctx = context.WithValue(ctx, ctxPATScopes, scopes)
 		return ctx, nil
 	}
-	userID, err := VerifyJWT(tokenStr, secret)
+	userID, issued, err := VerifyJWTIssued(tokenStr, secret)
 	if err != nil {
 		return nil, err
+	}
+	// Un JWT vaut 24 h : sans cette vérification, un compte supprimé gardait sa session jusqu'à l'échéance, et une
+	// session volée survivait à un changement de mot de passe.
+	var validAfter int64
+	if err := db.QueryRowContext(ctx, `SELECT tokens_valid_after FROM users WHERE id = ?`, userID).Scan(&validAfter); err != nil {
+		return nil, errors.New("utilisateur inconnu")
+	}
+	if issued.Unix() < validAfter {
+		return nil, errors.New("session révoquée")
 	}
 	ctx = context.WithValue(ctx, ctxUserID, userID)
 	ctx = context.WithValue(ctx, ctxAuthKind, AuthKindJWT)
@@ -196,4 +206,12 @@ func ActorFromContext(ctx context.Context) string {
 		return uid + " via pat:" + PATIDFromContext(ctx)
 	}
 	return uid
+}
+
+// RevokeSessions révoque les sessions (JWT) déjà émises pour l'utilisateur : celles dont la date d'émission précède
+// maintenant sont refusées. Appelée à chaque changement de mot de passe. Les jetons API (PAT) ne sont pas touchés :
+// ils se révoquent un par un.
+func RevokeSessions(ctx context.Context, db *sql.DB, userID string) error {
+	_, err := db.ExecContext(ctx, `UPDATE users SET tokens_valid_after = ? WHERE id = ?`, time.Now().Unix(), userID)
+	return err
 }

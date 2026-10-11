@@ -4,6 +4,7 @@
 package edge
 
 import (
+	"os"
 	"bufio"
 	"crypto/rand"
 	"encoding/hex"
@@ -38,10 +39,28 @@ type cachedDispatch struct {
 // --- Mux HTTP ------------------------------------------------------------
 
 func (s *Server) httpMux() http.Handler {
+	return rejectTrace(s.newMux(metricsPublic()))
+}
+
+// metricsPublic : GPX_METRICS_PUBLIC=1 expose /metrics sur les ports publics. Par défaut les métriques ne sont
+// servies que par l'API interne (GET /internal/v1/metrics, jeton de la passerelle) : sur le port public, elles
+// livraient à n'importe quel client les hôtes, les URL de backends et les compteurs de sécurité, et le chemin
+// /metrics masquait celui des applications derrière la passerelle.
+func metricsPublic() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("GPX_METRICS_PUBLIC"))) {
+	case "1", "true", "yes":
+		return true
+	}
+	return false
+}
+
+func (s *Server) newMux(publicMetrics bool) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.dispatch)
-	mux.Handle("/metrics", promhttp.Handler())
-	return rejectTrace(mux)
+	if publicMetrics {
+		mux.Handle("/metrics", promhttp.Handler())
+	}
+	return mux
 }
 
 // rejectTrace refuse TRACE/TRACK : aucun usage légitime derrière un reverse proxy (écho des en-têtes,

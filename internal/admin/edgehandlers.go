@@ -4,6 +4,8 @@
 package admin
 
 import (
+	"github.com/vincamok/goproxify/internal/pairing"
+	"fmt"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -43,10 +45,28 @@ func (s *Server) handlePair(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "pairing non configuré", http.StatusServiceUnavailable)
 		return
 	}
-	if !auth.SecureEqual(configuredSecret, req.Secret) {
+	// Le secret d'appairage se devine sans limite sinon : l'endpoint est public. Un nœud mal configuré réessaie
+	// en boucle, d'où un seuil plus large que celui d'une connexion.
+	pairKey := "pair|" + limiterIP(r)
+	if blocked, wait := s.loginLimit.blocked(pairKey); blocked {
+		w.Header().Set("Retry-After", fmt.Sprintf("%d", int(wait.Seconds())+1))
+		http.Error(w, "trop de tentatives — réessayez plus tard", http.StatusTooManyRequests)
+		return
+	}
+	// Une passerelle présente le secret racine ; un Agent peut se contenter de la clé dérivée.
+	var valid bool
+	if req.Role == "agent" {
+		// Selon GPX_AGENT_PAIRING_ROOT, le secret racine reste ou non accepté d'un Agent.
+		valid, _ = pairing.ServerAcceptsAgent(configuredSecret, req.Secret)
+	} else {
+		valid = auth.SecureEqual(configuredSecret, req.Secret)
+	}
+	if !valid {
+		s.loginLimit.failN(pairKey, pairMaxFails)
 		http.Error(w, "secret invalide", http.StatusForbidden)
 		return
 	}
+	s.loginLimit.success(pairKey)
 
 	role := req.Role
 	if role != "edge" && role != "agent" {

@@ -5,8 +5,11 @@ package acme
 
 import (
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 
+	"github.com/vincamok/goproxify/internal/edge/plugins"
 	"github.com/vincamok/goproxify/internal/modules"
 )
 
@@ -95,4 +98,29 @@ func ProviderConfigFromEnv(dnsType string) ProviderConfig {
 		}
 	}
 	return ProviderConfig{Type: dnsType, Params: params}
+}
+
+// ValidateDNSParams contrôle ce que le manifeste ne sait pas dire : l'endpoint OVH est une URL libre, vers laquelle
+// partent la clé d'application et la clé consommateur ; il doit désigner une API en HTTPS, pas un service interne.
+func ValidateDNSParams(typ string, params map[string]any) error {
+	if typ != "ovh" {
+		return nil
+	}
+	ep, _ := params["endpoint"].(string)
+	ep = strings.TrimSpace(ep)
+	if ep == "" {
+		return nil
+	}
+	if _, named := ovhEndpoints[strings.ToLower(ep)]; named {
+		return nil
+	}
+	u, err := url.Parse(ep)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" {
+		return fmt.Errorf("endpoint OVH %q : un nom (ovh-eu, ovh-ca, ovh-us) ou une URL https est requis", ep)
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") || plugins.BlockedHost(host) {
+		return fmt.Errorf("endpoint OVH %q : adresse interne refusée", ep)
+	}
+	return nil
 }

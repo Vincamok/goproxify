@@ -166,7 +166,9 @@ pages.profile = async function() {
     if (!cur || !next) { msg.textContent = t('account.password_fill'); msg.style.color='var(--red)'; msg.style.display=''; return; }
     if (next !== conf) { msg.textContent = t('setup.err.match'); msg.style.color='var(--red)'; msg.style.display=''; return; }
     try {
-      await api('POST', '/me/change-password', { current_password: cur, new_password: next });
+      const res = await api('POST', '/me/change-password', { current_password: cur, new_password: next });
+      // Les autres sessions sont révoquées ; celle-ci reçoit un jeton neuf pour rester ouverte.
+      if (res && res.token) { state.token = res.token; localStorage.setItem('gpx_token', res.token); }
       msg.textContent = t('account.password_updated'); msg.style.color='var(--text2)'; msg.style.display='';
       document.getElementById('pw-current').value = '';
       document.getElementById('pw-new').value = '';
@@ -241,8 +243,7 @@ pages.profile = async function() {
       toast(t('account.mfa_webauthn_unavailable'), 'error'); return;
     }
     try {
-      const { options } = await api('POST', '/auth/mfa/webauthn/register/begin');
-      const challengeID = options.publicKey?.challenge;
+      const { options, challenge_id: challengeID } = await api('POST', '/auth/mfa/webauthn/register/begin');
 
       const pk = options.publicKey;
       pk.challenge = b64url(pk.challenge);

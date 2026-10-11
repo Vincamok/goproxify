@@ -160,3 +160,83 @@ func TestBootstrapEdgeTokenIDStableAcrossManyRestarts(t *testing.T) {
 		}
 	}
 }
+
+func readDoc(t *testing.T, path string) map[string]any {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	return doc
+}
+
+// Les variables que posent le chart Helm et la documentation sont lues : GPX_JWT_SECRET (alias), GPX_SERVER_LISTEN_ADDR.
+func TestBootstrapAdminHonoursDocumentedEnv(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "admin.json")
+	t.Setenv("GPX_SECURITY_JWT_SECRET", "")
+	t.Setenv("GPX_JWT_SECRET", "secret-du-chart")
+	t.Setenv("GPX_SERVER_LISTEN_ADDR", "127.0.0.1")
+	if err := BootstrapAdmin(path); err != nil {
+		t.Fatal(err)
+	}
+	doc := readDoc(t, path)
+	if got := doc["security"].(map[string]any)["jwt_secret"]; got != "secret-du-chart" {
+		t.Errorf("jwt_secret = %v", got)
+	}
+	if got := doc["server"].(map[string]any)["listen_addr"]; got != "127.0.0.1" {
+		t.Errorf("listen_addr = %v", got)
+	}
+
+	// GPX_SECURITY_JWT_SECRET prime sur l'alias ; sans variable, l'adresse d'écoute reste 0.0.0.0.
+	path2 := filepath.Join(t.TempDir(), "admin2.json")
+	t.Setenv("GPX_SECURITY_JWT_SECRET", "officiel")
+	t.Setenv("GPX_SERVER_LISTEN_ADDR", "")
+	if err := BootstrapAdmin(path2); err != nil {
+		t.Fatal(err)
+	}
+	doc = readDoc(t, path2)
+	if doc["security"].(map[string]any)["jwt_secret"] != "officiel" || doc["server"].(map[string]any)["listen_addr"] != "0.0.0.0" {
+		t.Errorf("priorité ou défaut inattendus : %v", doc)
+	}
+}
+
+// La découverte Kubernetes s'active par GPX_KUBERNETES_ENABLED (chart Helm), à la création comme à la migration.
+func TestBootstrapAgentHonoursKubernetesEnv(t *testing.T) {
+	t.Setenv("GPX_KUBERNETES_ENABLED", "true")
+	t.Setenv("GPX_KUBERNETES_NAMESPACE", "prod")
+	path := filepath.Join(t.TempDir(), "agent.json")
+	if err := BootstrapAgent(path); err != nil {
+		t.Fatal(err)
+	}
+	k := readDoc(t, path)["kubernetes"].(map[string]any)
+	if k["enabled"] != true || k["namespace"] != "prod" {
+		t.Errorf("kubernetes = %v", k)
+	}
+
+	// Un agent.json existant sans section kubernetes la reçoit (mise à jour transparente).
+	old := filepath.Join(t.TempDir(), "old.json")
+	if err := os.WriteFile(old, []byte(`{"docker":{"enabled":true},"portainer":{"enabled":false}}`), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := BootstrapAgent(old); err != nil {
+		t.Fatal(err)
+	}
+	if k := readDoc(t, old)["kubernetes"].(map[string]any); k["enabled"] != true {
+		t.Errorf("migration : kubernetes = %v", k)
+	}
+
+	// Sans variable, rien n'est ajouté à un fichier existant.
+	t.Setenv("GPX_KUBERNETES_ENABLED", "")
+	same := filepath.Join(t.TempDir(), "same.json")
+	_ = os.WriteFile(same, []byte(`{"docker":{"enabled":true},"portainer":{"enabled":false}}`), 0o640)
+	if err := BootstrapAgent(same); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := readDoc(t, same)["kubernetes"]; ok {
+		t.Error("sans GPX_KUBERNETES_ENABLED, le fichier existant reste intact")
+	}
+}

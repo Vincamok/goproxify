@@ -26,7 +26,9 @@ The product comes in **three complementary personalities**:
 | WebSocket | HTTP → WS upgrade handled natively; when the route defines `cors.allowed_origins`, an upgrade whose `Origin` is not listed (or is `null`) gets `403` (anti cross-site WebSocket hijacking); requests without `Origin` pass |
 | gRPC | Transparent proxy over HTTP/2 |
 | TCP L4 | Pure stream: local port → remote host:port, native SSL passthrough, L4 load balancing |
-| UDP L4 | Pure tunnel, bytes in/out metrics |
+| TCP L4 idle timeout | `idle_timeout_sec` on a `tcp` route closes connections silent in both directions for that long (0 = never, the default; max 86400); one timer for both directions, re-armed on every byte |
+| TCP/UDP L4 backends | Connections and UDP sessions are spread over all backends (round-robin, or weighted with `lb: weighted`); a failing backend is set aside for 10 s and the connection retried on the next one; `health_check` adds active TCP connect probes; UDP uses ICMP "port unreachable" where the platform reports it |
+| UDP L4 | Tunnel with one session per client (stable source toward the backend, any number of replies, idle expiry, session cap), bytes in/out metrics |
 
 ### TLS
 
@@ -94,7 +96,7 @@ The Edge can operate **autonomously** if the Admin is temporarily unreachable:
 | Access destination groups | Bundle catalog machines (SSH / Docker) into named groups per gateway (**Access Catalog › Groups**). A portal entry offers every destination of its groups on top of its own list. Groups are expanded when the Admin pushes the config, so the gateway keeps working from its encrypted local copy without the Admin. Deleting a destination removes it from its groups. REST API, CLI (`access destination-groups`) and MCP tools. User groups are managed from **Settings › Access › Users Access**. |
 | Bans page | One page for the Admin (all Edges) and for each Edge menu (that Edge's bans plus global bans): KPIs, 48 h timeline, origin by country, breakdown by source / Edge (domain on an Edge) / reason, then an Active / History / CrowdSec list filterable by search, source, duration (expiring within 1 h, temporary, permanent, repeat offenders) and Edge. Row actions as icons (Prism, IP history, extend 24 h, make permanent, lift), bulk actions on a selection, CSV export, mobile card layout. Each ban records the Edge that reported it (`edge_name`, empty = global); `goproxify security bans list -edge …` and the MCP tool `list_security_bans` take the same `edge` filter |
 | Automatic rules engine | Event-driven conditions (critical CVE, ban spike, silent engine, error rate, repeat offender IP, node offline, cert expiring) → actions (disable proxy, ban IP, alert, strict mode, webhook call, trigger backup); cooldown, dry-run, history — see [docs/security.md](security.md#automatic-rules-engine) |
-| SSO | GitHub OAuth2, LDAP/Active Directory, SAML 2.0, OIDC (Google, Microsoft/Entra, Auth0, Okta, Keycloak, Zitadel, Casdoor, Dex, Authentik, Authelia) |
+| SSO | GitHub OAuth2, LDAP/Active Directory, SAML 2.0, OIDC (Google, Microsoft/Entra, Auth0, Okta, Keycloak, Zitadel, Casdoor, Dex, Authentik, Authelia) — OIDC et SAML éprouvés de bout en bout contre Keycloak 26, les autres fournisseurs ne l'ont été que par leurs tests unitaires |
 | JWT validation | JWKS : RSA (RS256/384/512), EC (ES256/384/512) and Ed25519 (EdDSA); `none` and HS* refused; `header_name: Authorization` accepts `Bearer <token>` |
 
 ### Request transformation pipeline
@@ -147,7 +149,7 @@ Edge A (client)          Edge B (server)
 
 - **Async JSON access log**: client IP, domain, method, HTTP code, duration, upstream, HTTP version
 - **Structured JSON system log** for all components, with rotation
-- **Prometheus metrics** exposed on `/metrics` — full instrumentation of all services: `gpx_edge_*`, `gpx_backend_*`, `gpx_backend_up`, `gpx_peer_sync_duration_seconds`, `gpx_waf_profiles_active`, `gpx_portal_sessions_active`, `gpx_pipeline_*`, `gpx_tls_*`, `gpx_auth_*`, `gpx_ratelimit_*`, `gpx_traffic_*`, `gpx_routing_*`, `gpx_f2b_*`, `gpx_crowdsec_*`, `gpx_rulesengine_*`, `gpx_vulnscan_*`, `gpx_admin_http_*` — see `docs/services.md`
+- **Prometheus metrics** exposed on `/internal/v1/metrics` (gateway token; public `/metrics` only with `GPX_METRICS_PUBLIC=1`) — full instrumentation of all services: `gpx_edge_*`, `gpx_backend_*`, `gpx_backend_up`, `gpx_peer_sync_duration_seconds`, `gpx_waf_profiles_active`, `gpx_portal_sessions_active`, `gpx_pipeline_*`, `gpx_tls_*`, `gpx_auth_*`, `gpx_ratelimit_*`, `gpx_traffic_*`, `gpx_routing_*`, `gpx_f2b_*`, `gpx_crowdsec_*`, `gpx_rulesengine_*`, `gpx_vulnscan_*`, `gpx_admin_http_*` — see `docs/services.md`
 - **OpenTelemetry tracing** (OTLP/HTTP, W3C Trace Context): one server span per request continuing an incoming `traceparent`, a client span per backend call (`traceparent` forwarded to the backend, so the trace spans caller → Edge → backend), Sentinel / ban decisions as span events (`sentinel.signal`, `ban.blocked`, no IP recorded) and route attributes (`gpx.route.id`, `gpx.route.host`). `X-Trace-Id` is returned to the client. Enable with `engine.tracing_endpoint` (`host:port` for plain HTTP, or a full `https://…` URL) or from Admin (`tracing_endpoint`, pushed to Edges; applied live); `engine.tracing_sample_ratio` (default `1`) samples new traces while honoring the caller's decision. Without an endpoint the Edge stays transparent: an incoming `traceparent` is still forwarded, nothing is exported. `/metrics` is not traced
 - **JSON audit log**: full traceability of all operations
 
@@ -200,7 +202,7 @@ Endpoints on `:9443` — two families:
 | Security | Bans, CrowdSec threats, CVE, Fail2Ban, overview |
 | Access | Destination catalogue, SMTP user invite, HTML templates, portal options per Edge, audit |
 
-**Write roles (UI session and PAT alike):** certificates (incl. deploy targets and pull tokens), domains, alert channels / rules / acknowledgements and IP profiles are readable by every account but writable by `admin`/`superadmin` only; snippets are writable by admins and by `user` accounts holding at least one `write` grant. The web UI hides those actions from accounts that cannot perform them (Admin `0.70.2`).
+**Write roles (UI session and PAT alike):** certificates (incl. deploy targets and pull tokens), domains, alert channels / rules / acknowledgements, IP profiles and declared nodes are readable by every account but writable by `admin`/`superadmin` only (bootstrap tickets: admins only, Admin `0.135.18`); snippets are writable by admins and by `user` accounts holding at least one `write` grant. The web UI hides those actions from accounts that cannot perform them (Admin `0.70.2`).
 
 ### MCP server
 
@@ -467,12 +469,12 @@ Docker/Podman, Portainer and Kubernetes are **modules** of a common registry (`i
 
 ### Horizontal auto-scaling
 
-- Configurable triggers: container CPU (Agent telemetry) and/or request rate / P95 latency (Edge metrics)
-- Coordinated decision by Admin (min/max instance rules)
-- Instance creation/deletion via `docker compose up --scale` or `docker run`
-- Hot-add to Edge routing table without interruption
+- Trigger: average CPU of the service's containers (the Agent reads it from Docker stats); no request-rate or latency trigger
+- Decided **by the Agent alone**, so it keeps working when the Admin is unreachable (ADR 0006); `goproxify.scale.service` / `scale.min` / `scale.max` labels select the group and its bounds, the thresholds and cooldown come from the `autoscale` section of `agent.json`
+- Scale-up clones the service's container through the Docker API; scale-down stops the last instances (not `docker compose up --scale`)
+- New instances are announced to the Edge like any other container, so they join the routing table through discovery
 - Compatible with resource-weighted adaptive load balancing
-- Configurable cooldown between decisions (anti-flapping)
+- Configurable cooldown between decisions (anti-flapping, 120 s by default)
 
 ### Health escalation
 

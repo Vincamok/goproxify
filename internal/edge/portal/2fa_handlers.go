@@ -184,7 +184,7 @@ func (h *HTTPServer) handle2FAVerify(w http.ResponseWriter, r *http.Request) {
 	switch body.Method {
 	case "totp":
 		if !u.TOTPEnabled || !TOTPVerify(u.TOTPSecret, body.Code) {
-			http.Error(w, "code TOTP invalide", http.StatusUnauthorized)
+			h.challengeFailed(w, ch.ID, "code TOTP invalide")
 			return
 		}
 	case "email":
@@ -193,7 +193,7 @@ func (h *HTTPServer) handle2FAVerify(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if HashEmailOTP(body.Code) != ch.EmailOTPHash {
-			http.Error(w, "code OTP invalide", http.StatusUnauthorized)
+			h.challengeFailed(w, ch.ID, "code OTP invalide")
 			return
 		}
 	}
@@ -211,4 +211,13 @@ func (h *HTTPServer) handle2FAVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"token": tok, "username": u.Username})
+}
+
+// challengeFailed répond à un code faux ; au cinquième le défi est détruit (410) et le mot de passe est à redonner.
+func (h *HTTPServer) challengeFailed(w http.ResponseWriter, id, msg string) {
+	if h.challenges.Fail(id) {
+		http.Error(w, "trop de codes faux — reconnectez-vous", http.StatusGone)
+		return
+	}
+	http.Error(w, msg, http.StatusUnauthorized)
 }

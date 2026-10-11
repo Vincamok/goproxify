@@ -4,6 +4,7 @@
 package admin
 
 import (
+	"github.com/vincamok/goproxify/internal/admin/security"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -41,7 +42,15 @@ func (s *Server) handleAgentLogs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "JSON invalide", http.StatusBadRequest)
 		return
 	}
+	if tooLargeBatch(w, len(batch), maxInternalBatch) {
+		return
+	}
 	for _, item := range batch {
+		item.Message = clip(item.Message, maxInternalString)
+		item.Path = clip(item.Path, maxInternalString)
+		item.Referrer = clip(item.Referrer, maxInternalString)
+		item.Domain = clip(item.Domain, 253)
+		item.NodeName = clip(item.NodeName, 128)
 		ts, _ := time.Parse(time.RFC3339Nano, item.Ts)
 		if ts.IsZero() {
 			ts, _ = time.Parse(time.RFC3339, item.Ts)
@@ -84,19 +93,32 @@ func (s *Server) handleInternalBans(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "JSON invalide", http.StatusBadRequest)
 		return
 	}
+	if tooLargeBatch(w, len(batch), maxInternalBans) {
+		return
+	}
 	edgeName := s.callerNodeName(r)
+	whitelist := security.LoadWhitelist(s.db)
 	for _, b := range batch {
-		src := b.Source
+		ip, ok := internalBanTarget(whitelist, b.IP)
+		if !ok {
+			continue
+		}
+		src := clip(b.Source, 64)
 		if src == "" {
 			src = "agent"
 		}
 		var exp any
 		if b.ExpiresAt != "" {
-			exp = b.ExpiresAt
+			n, err := security.NormalizeBanExpiry(b.ExpiresAt)
+			if err != nil {
+				continue
+			}
+			exp = *n
 		}
+		domain := clip(b.Domain, 253)
 		s.db.Exec( //nolint:errcheck
 			`INSERT OR IGNORE INTO security_bans (id, ip, domain, reason, source, expires_at, edge_name) VALUES (?,?,?,?,?,?,?)`,
-			fmt.Sprintf("%s-%s-%s", b.IP, b.Domain, b.Source), b.IP, b.Domain, b.Reason, src, exp, edgeName,
+			fmt.Sprintf("%s-%s-%s", ip, domain, src), ip, domain, clip(b.Reason, 500), src, exp, edgeName,
 		)
 	}
 	if s.wsManager != nil {
@@ -117,12 +139,21 @@ func (s *Server) handleInternalThreats(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "JSON invalide", http.StatusBadRequest)
 		return
 	}
+	if tooLargeBatch(w, len(batch), maxInternalBans) {
+		return
+	}
 	edgeName := s.callerNodeName(r)
+	whitelist := security.LoadWhitelist(s.db)
 	changed := false
 	for _, t := range batch {
-		if t.IP == "" {
+		ip, ok := internalBanTarget(whitelist, t.IP)
+		if !ok {
 			continue
 		}
+		t.IP = ip
+		t.Scenario = clip(t.Scenario, 200)
+		t.Origin = clip(t.Origin, 64)
+		t.Duration = clip(t.Duration, 32)
 		typ := nvlStr(t.Type, "ban")
 		res, err := s.db.Exec(
 			`INSERT INTO security_threats (ip, scenario, origin, type, duration, edge_name) VALUES (?,?,?,?,?,?)
@@ -179,8 +210,14 @@ func (s *Server) handleInternalCVEs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "JSON invalide", http.StatusBadRequest)
 		return
 	}
+	if tooLargeBatch(w, len(batch), maxInternalBatch) {
+		return
+	}
 	edgeName := s.callerNodeName(r)
 	for _, c := range batch {
+		c.BackendURL = clip(c.BackendURL, maxInternalString)
+		c.CVEID = clip(c.CVEID, 64)
+		c.Description = clip(c.Description, maxInternalString)
 		s.db.Exec( //nolint:errcheck
 			`INSERT INTO security_cves (backend_url, cve_id, cvss_score, description, edge_name) VALUES (?,?,?,?,?)
 			 ON CONFLICT (backend_url, cve_id) DO UPDATE SET edge_name = excluded.edge_name`,

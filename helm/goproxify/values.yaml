@@ -4,8 +4,11 @@ global:
   image:
     registry: ghcr.io/vincamok/goproxify
     pullPolicy: IfNotPresent
-  # Secret partagé entre Admin, Passerelle et Agent pour l'appairage
-  authToken: ""  # À remplacer par un token sécurisé
+  # Secret de couplage partagé par l'Admin, la passerelle et l'Agent (GPX_PAIRING_SECRET) : obligatoire.
+  # Générez-le : openssl rand -hex 32. Ne le réutilisez pas entre environnements.
+  pairingSecret: ""
+  # Ancien nom de pairingSecret, encore lu s'il est renseigné.
+  authToken: ""
   # Fuseau horaire des pods (crons, logs locaux, horloge admin)
   timezone: "Europe/Paris"
 
@@ -25,6 +28,10 @@ admin:
     enabled: true
     storageClass: ""
     size: 2Gi
+  # Passerelles que l'Admin doit joindre : [{name: <nom de la passerelle>, url: http://<adresse>:8000}].
+  # Avec edge.kind=Deployment c'est automatique ; avec un DaemonSet, le nom est celui du nœud (spec.nodeName) et
+  # l'adresse celle du nœud (hostNetwork) — à déclarer ici ou depuis l'Admin (Infrastructure).
+  edgeEndpoints: []
   config:
     listenAddr: "0.0.0.0"
     apiPort: 8080
@@ -64,10 +71,18 @@ edge:
     httpPort: 80
     httpsPort: 443
     internalAPIPort: 8000
+  # La passerelle garde son identité, ses certificats chiffrés et ses routes dans /etc/goproxify : sans volume
+  # persistant elle repartirait de zéro (nouvelle identité) à chaque redémarrage du pod. Un dossier de l'hôte par nœud.
+  persistence:
+    hostPath: /var/lib/goproxify/edge
 
 # ── Agent ─────────────────────────────────────────────────────────────────────
 agent:
   enabled: true
+  # Nœuds qui reçoivent un Agent (par exemple ceux qui exécutent Docker) ; s'ajoute à nodeSelector global.
+  nodeSelector: {}
+  persistence:
+    hostPath: /var/lib/goproxify/agent
   # DaemonSet : un Agent par nœud K8s
   image:
     tag: "preview"
@@ -75,7 +90,13 @@ agent:
     requests: { cpu: "50m", memory: "64Mi" }
     limits:   { cpu: "200m", memory: "256Mi" }
   config:
-    runtime: "auto"           # auto | docker | podman
+    # Socket du runtime de conteneurs de l'hôte, monté dans l'Agent pour découvrir et piloter ses conteneurs.
+    #   none   : aucun socket (défaut) — découverte Kubernetes seulement ; rien du nœud n'est monté
+    #   docker : monte /var/run/docker.sock   (le nœud DOIT l'avoir, sinon le pod ne démarre pas)
+    #   podman : monte /run/podman/podman.sock (idem)
+    # Un socket de runtime donne le contrôle de l'hôte : ne l'activez que sur les nœuds qui en ont besoin
+    # (agent.nodeSelector), pas sur tout le cluster.
+    runtime: "none"
     labelPrefix: "goproxify."
     kubernetes:
       enabled: true           # Activer la découverte K8s in-cluster
@@ -103,7 +124,17 @@ agent:
 security:
   edgeHostNetwork: true
   agentHostPID: false
+  # « readOnly » sur un socket n'empêche PAS d'écrire : on se connecte au socket et on envoie n'importe quelle
+  # requête. Ce réglage ne protège donc pas l'hôte ; il ne fait que décrire l'intention du montage.
   agentDockerSockReadOnly: true
+  # Accepter qu'un Agent s'appaire avec le secret racine (anciennes installations qui le lui ont donné). Défaut false :
+  # l'Agent reçoit la clé dérivée (secret agent-pairing-key), qui ne permet pas de se faire passer pour l'Admin.
+  agentPairingWithRootSecret: false
+  # Admin : utilisateur non privilégié (l'image n'en déclare pas, elle tournait en root), profil seccomp du runtime,
+  # aucune capacité. 0 = revenir à root. readOnlyRootFilesystem n'est pas activé par défaut : à tester avec vos
+  # usages (sauvegardes, GeoIP) ; /tmp est déjà un volume.
+  adminRunAsUser: 10001
+  adminReadOnlyRootFilesystem: false
   allowPrivilegeEscalation: false
   dropAllCapabilities: true
 

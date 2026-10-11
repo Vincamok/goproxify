@@ -25,7 +25,8 @@ func GenerateBackupCodes() (plain []string, hashes []string, err error) {
 		code := formatBackupCode(hex.EncodeToString(b))
 		plain = append(plain, code)
 
-		h, err := bcrypt.GenerateFromPassword([]byte(strings.ReplaceAll(code, "-", "")), bcrypt.DefaultCost)
+		// Le code est haché sous la forme que CheckBackupCode compare : sans tirets et en minuscules.
+		h, err := bcrypt.GenerateFromPassword([]byte(normalizeBackupCode(code)), bcrypt.DefaultCost)
 		if err != nil {
 			return nil, nil, fmt.Errorf("backup codes: hash : %w", err)
 		}
@@ -34,11 +35,20 @@ func GenerateBackupCodes() (plain []string, hashes []string, err error) {
 	return plain, hashes, nil
 }
 
+func normalizeBackupCode(code string) string {
+	return strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(code, "-", ""), " ", ""))
+}
+
 // CheckBackupCode vérifie un code de secours contre un hash bcrypt.
-// Le code est normalisé (tirets supprimés, minuscules).
+// Le code est normalisé (tirets supprimés, minuscules). Les codes générés avant Admin 0.135.12 étaient hachés en
+// majuscules alors que la vérification comparait des minuscules : aucun ne se validait jamais. La forme en majuscules
+// est donc aussi essayée, pour que les codes déjà remis aux utilisateurs fonctionnent.
 func CheckBackupCode(hash, code string) bool {
-	normalized := strings.ToLower(strings.ReplaceAll(code, "-", ""))
-	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(normalized)) == nil
+	normalized := normalizeBackupCode(code)
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(normalized)) == nil {
+		return true
+	}
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(strings.ToUpper(normalized))) == nil
 }
 
 // formatBackupCode formate 12 hex chars en XXXX-XXXX-XXXX.

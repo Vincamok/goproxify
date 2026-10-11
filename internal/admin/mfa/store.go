@@ -41,7 +41,9 @@ type UserMFA struct {
 	ID       string          `json:"id"`
 	UserID   string          `json:"user_id"`
 	Method   Method          `json:"method"`
-	Config   json.RawMessage `json:"config"`
+	// Jamais sérialisée : pour un TOTP elle contient le secret, que la réponse de connexion (202, avant le second
+	// facteur) et la liste des méthodes remettraient à qui connaît seulement le mot de passe ou détient une session.
+	Config   json.RawMessage `json:"-"`
 	Enabled  bool            `json:"enabled"`
 	Verified bool            `json:"verified"`
 }
@@ -162,18 +164,30 @@ func (s *Store) VerifyChallenge(ctx context.Context, userID string, method Metho
 	if err != nil {
 		return "", false
 	}
-	defer rows.Close()
+	matched := ""
 	for rows.Next() {
 		var id, hash string
 		if err := rows.Scan(&id, &hash); err != nil {
 			continue
 		}
 		if bcrypt.CompareHashAndPassword([]byte(hash), []byte(code)) == nil {
-			s.db.ExecContext(ctx, `UPDATE user_mfa_challenges SET used=1 WHERE id=?`, id) //nolint:errcheck
-			return id, true
+			matched = id
+			break
 		}
 	}
-	return "", false
+	rows.Close()
+	if matched == "" {
+		return "", false
+	}
+	// Consommation atomique : si deux requêtes présentent le même code en même temps, une seule l'obtient.
+	res, err := s.db.ExecContext(ctx, `UPDATE user_mfa_challenges SET used=1 WHERE id=? AND used=0`, matched)
+	if err != nil {
+		return "", false
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return "", false
+	}
+	return matched, true
 }
 
 // CreateWebAuthnChallenge stocke les données de session WebAuthn.
@@ -191,20 +205,24 @@ func (s *Store) CreateWebAuthnChallenge(ctx context.Context, userID string, sess
 	return id, err
 }
 
-// GetWebAuthnChallenge lit et consomme les données de session WebAuthn.
-func (s *Store) GetWebAuthnChallenge(ctx context.Context, challengeID string, dest any) error {
-	var data string
-	err := s.db.QueryRowContext(ctx,
-		`SELECT data FROM user_mfa_challenges WHERE id=? AND used=0 AND expires_at > CURRENT_TIMESTAMP`,
-		challengeID,
-	).Scan(&data)
-	if err == sql.ErrNoRows {
-		return fmt.Errorf("mfa: challenge expiré ou introuvable")
-	}
+// GetWebAuthnChallenge lit et consomme les données de session WebAuthn d'un utilisateur. Le défi doit avoir été
+// créé pour cet utilisateur, être de la méthode webauthn, non expiré, et ne sert qu'une fois : la consommation est
+// atomique (une seule requête réussit si deux arrivent en même temps).
+func (s *Store) GetWebAuthnChallenge(ctx context.Context, userID, challengeID string, dest any) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE user_mfa_challenges SET used=1
+		 WHERE id=? AND user_id=? AND method='webauthn' AND used=0 AND expires_at > CURRENT_TIMESTAMP`,
+		challengeID, userID)
 	if err != nil {
 		return err
 	}
-	s.db.ExecContext(ctx, `UPDATE user_mfa_challenges SET used=1 WHERE id=?`, challengeID) //nolint:errcheck
+	if n, _ := res.RowsAffected(); n != 1 {
+		return fmt.Errorf("mfa: challenge expiré, déjà utilisé ou introuvable")
+	}
+	var data string
+	if err := s.db.QueryRowContext(ctx, `SELECT data FROM user_mfa_challenges WHERE id=?`, challengeID).Scan(&data); err != nil {
+		return err
+	}
 	return json.Unmarshal([]byte(data), dest)
 }
 
@@ -239,23 +257,33 @@ func (s *Store) VerifyBackupCode(ctx context.Context, userID, code string) bool 
 	if err != nil {
 		return false
 	}
-	defer rows.Close()
 	normalized := code
 	for _, c := range []string{"-", " "} {
 		normalized = replaceAll(normalized, c, "")
 	}
+	matched := ""
 	for rows.Next() {
 		var id, hash string
 		if err := rows.Scan(&id, &hash); err != nil {
 			continue
 		}
 		if CheckBackupCode(hash, normalized) {
-			s.db.ExecContext(ctx, //nolint:errcheck
-				`UPDATE user_backup_codes SET used=1, used_at=CURRENT_TIMESTAMP WHERE id=?`, id)
-			return true
+			matched = id
+			break
 		}
 	}
-	return false
+	rows.Close()
+	if matched == "" {
+		return false
+	}
+	// Atomique : un code de secours ne sert qu'une fois, même présenté deux fois en même temps.
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE user_backup_codes SET used=1, used_at=CURRENT_TIMESTAMP WHERE id=? AND used=0`, matched)
+	if err != nil {
+		return false
+	}
+	n, _ := res.RowsAffected()
+	return n == 1
 }
 
 // BackupCodesLeft retourne le nombre de codes non utilisés restants.

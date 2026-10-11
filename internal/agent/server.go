@@ -6,6 +6,7 @@
 package agent
 
 import (
+	"github.com/vincamok/goproxify/internal/pairing"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -203,16 +204,34 @@ func (a *Agent) resolveAuthToken() string {
 	return strings.TrimSpace(string(data))
 }
 
-// pairWithEdge obtient un token Agent auprès de la passerelle locale via GPX_PAIRING_SECRET.
+// pairingCredential : la clé d'appairage de l'Agent (GPX_AGENT_PAIRING_KEY), ou à défaut le secret racine d'une
+// installation qui n'a pas migré — l'Agent le détient alors, ce qu'on évite : voir le paquet pairing.
+func (a *Agent) pairingCredential() string {
+	cred, legacyRoot := pairing.AgentCredential()
+	if legacyRoot && cred != "" {
+		a.log.Warn("agent: GPX_PAIRING_SECRET (secret racine) est présent sur cet hôte — utilisez GPX_AGENT_PAIRING_KEY, une clé dérivée qui ne permet pas de se faire passer pour l'Admin")
+	}
+	return cred
+}
+
+// setInternalAuth déclare les Bearer que l'API interne de l'Agent accepte : la clé d'appairage et sa dérivée (ce que
+// l'Admin et la passerelle envoient), plus le jeton de la passerelle.
+func (a *Agent) setInternalAuth(token string) {
+	cred, _ := pairing.AgentCredential()
+	accepted := append(pairing.AgentAccepts(cred), token)
+	a.internalAPI.setAuthTokens(accepted...)
+}
+
+// pairWithEdge obtient un token Agent auprès de la passerelle locale avec la clé d'appairage.
 // Évite de contacter l'Admin, particulièrement utile sur les hôtes distants.
 func (a *Agent) pairWithEdge(ctx context.Context) (string, error) {
 	if a.cfg.ControlPlane.EdgeEndpoint == "" {
 		return "", fmt.Errorf("GPX_CONTROL_PLANE_EDGE_ENDPOINT non défini")
 	}
-	// GPX_PAIRING_SECRET est obligatoire (fail-closed côté passerelle/Admin).
-	secret := os.Getenv("GPX_PAIRING_SECRET")
+	// La clé d'appairage est obligatoire (fail-closed côté passerelle/Admin).
+	secret := a.pairingCredential()
 	if secret == "" {
-		return "", fmt.Errorf("GPX_PAIRING_SECRET non défini")
+		return "", fmt.Errorf("GPX_AGENT_PAIRING_KEY non défini")
 	}
 
 	nodeName := a.cfg.Identity.NodeName
@@ -261,17 +280,17 @@ func (a *Agent) pairWithEdge(ctx context.Context) (string, error) {
 		a.log.Warn("agent: impossible de persister le token passerelle", "err", err)
 	}
 	a.cfg.ControlPlane.AuthToken = result.Token
-	a.internalAPI.setAuthTokens(os.Getenv("GPX_PAIRING_SECRET"), result.Token)
+	a.setInternalAuth(result.Token)
 	a.log.Info("agent: appairage passerelle réussi — token obtenu et persisté", "node", nodeName)
 	return result.Token, nil
 }
 
-// pairWithAdmin obtient un token Agent auprès de l'Admin via GPX_PAIRING_SECRET.
+// pairWithAdmin obtient un token Agent auprès de l'Admin avec la clé d'appairage.
 // Le token est persisté dans agentTokenPath et stocké dans cfg pour la session.
 func (a *Agent) pairWithAdmin(ctx context.Context) (string, error) {
-	secret := os.Getenv("GPX_PAIRING_SECRET")
+	secret := a.pairingCredential()
 	if secret == "" {
-		return "", fmt.Errorf("GPX_PAIRING_SECRET non défini")
+		return "", fmt.Errorf("GPX_AGENT_PAIRING_KEY non défini")
 	}
 	if a.cfg.ControlPlane.AdminEndpoint == "" {
 		return "", fmt.Errorf("GPX_CONTROLPLANE_ADMIN_ENDPOINT non défini")
@@ -337,7 +356,7 @@ func (a *Agent) pairWithAdmin(ctx context.Context) (string, error) {
 			a.log.Warn("agent: impossible de persister le token d'appairage", "err", err)
 		}
 		a.cfg.ControlPlane.AuthToken = result.Token
-		a.internalAPI.setAuthTokens(os.Getenv("GPX_PAIRING_SECRET"), result.Token)
+		a.setInternalAuth(result.Token)
 		a.log.Info("agent: appairage réussi — token obtenu et persisté", "node", nodeName)
 		return result.Token, nil
 	}
@@ -527,7 +546,7 @@ func (a *Agent) Start(ctx context.Context) error {
 		a.cfg.InternalAPI.Port = 8001
 	}
 	internalEndpoint := fmt.Sprintf("http://%s:%d", externalIP(a.cfg.ControlPlane.EdgeEndpoint), a.cfg.InternalAPI.Port)
-	a.internalAPI.setAuthTokens(os.Getenv("GPX_PAIRING_SECRET"), a.cfg.ControlPlane.AuthToken)
+	a.setInternalAuth(a.cfg.ControlPlane.AuthToken)
 	a.internalAPI.Start(ctx)
 
 	// Amorçage via GPX_AGENT_TOKEN : toujours écrire le token (permet la rotation sans vider le volume).
@@ -552,7 +571,7 @@ func (a *Agent) Start(ctx context.Context) error {
 		}
 	}
 	if token != "" {
-		a.internalAPI.setAuthTokens(os.Getenv("GPX_PAIRING_SECRET"), token)
+		a.setInternalAuth(token)
 	}
 
 	// Détection des runtimes actifs

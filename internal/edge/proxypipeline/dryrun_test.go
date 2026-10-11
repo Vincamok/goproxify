@@ -249,3 +249,42 @@ func TestValidatePlugins_HooksMustMatchRouteType(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateTrafficSettings(t *testing.T) {
+	ok := &router.Route{LB: router.LBWeighted, Backends: []router.Backend{{URL: "http://a", Weight: 3}, {URL: "http://b"}},
+		HealthCheck: &router.HealthCheckConfig{Path: "/health"}, Retry: &router.RetryConfig{InitialWait: 1}, CircuitBreaker: &router.CBConfig{Threshold: 5, Timeout: 1}}
+	if errs := validateTrafficSettings(ok); len(errs) != 0 {
+		t.Fatalf("config valide refusée : %v", errs)
+	}
+	if errs := validateTrafficSettings(&router.Route{}); len(errs) != 0 {
+		t.Fatalf("config vide refusée : %v", errs)
+	}
+	bad := map[string]*router.Route{
+		"lb inconnu":        {LB: "least_conn"},
+		"poids négatif":     {Backends: []router.Backend{{URL: "http://a", Weight: -1}}},
+		"poids énorme":      {Backends: []router.Backend{{URL: "http://a", Weight: 2_000_000}}},
+		"chemin de sonde":   {HealthCheck: &router.HealthCheckConfig{Path: "health"}},
+		"intervalle":        {HealthCheck: &router.HealthCheckConfig{Interval: -1}},
+		"seuil":             {HealthCheck: &router.HealthCheckConfig{HealthyThreshold: -2}},
+		"attente de relance": {Retry: &router.RetryConfig{MaxWait: -1}},
+		"disjoncteur":       {CircuitBreaker: &router.CBConfig{Timeout: -1}},
+	}
+	for name, r := range bad {
+		if errs := validateTrafficSettings(r); len(errs) == 0 {
+			t.Errorf("%s : acceptée", name)
+		}
+	}
+}
+
+func TestValidateTrafficSettings_IdleTimeout(t *testing.T) {
+	for _, n := range []int{0, 1, 86400} {
+		if errs := validateTrafficSettings(&router.Route{IdleTimeoutSec: n}); len(errs) != 0 {
+			t.Errorf("%d s refusé : %v", n, errs)
+		}
+	}
+	for _, n := range []int{-1, 86401} {
+		if errs := validateTrafficSettings(&router.Route{IdleTimeoutSec: n}); len(errs) == 0 {
+			t.Errorf("%d s accepté", n)
+		}
+	}
+}

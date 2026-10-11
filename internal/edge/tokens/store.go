@@ -153,6 +153,25 @@ func (s *Store) Validate(rawToken string) (bool, error) {
 	return true, nil
 }
 
+// RoleOf retourne le rôle d'un token valide (non révoqué, non expiré) ; ok est faux sinon.
+func (s *Store) RoleOf(rawToken string) (role Role, ok bool, err error) {
+	var revoked int
+	var expiresAt *time.Time
+	err = s.db.QueryRow(
+		`SELECT role, revoked, expires_at FROM tokens WHERE token_hash=?`, hash(rawToken),
+	).Scan(&role, &revoked, &expiresAt)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if revoked != 0 || (expiresAt != nil && time.Now().After(*expiresAt)) {
+		return "", false, nil
+	}
+	return role, true, nil
+}
+
 // List retourne tous les tokens (sans les valeurs en clair).
 func (s *Store) List() ([]Token, error) {
 	rows, err := s.db.Query(

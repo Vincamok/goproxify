@@ -129,10 +129,10 @@ Ces chiffres sont une base : à mesurer avec votre propre module et votre trafic
 
 ## Coût d'un vrai module
 
-Le plugin d'exemple (TinyGo, `encoding/json`, 427 Kio non optimisé) coûte environ **0,54 ms et 270 Kio par appel** en amd64 (1,9 ms en 386 interprété), soit dix fois le module assemblé à la main ci-dessus : l'instanciation et le décodage JSON dominent. Pour un plugin sur le chemin chaud, préférez une analyse minimale de l'entrée plutôt qu'`encoding/json`, optimisez avec `wasm-opt`, et mesurez avec votre module.
+Le plugin d'exemple en TinyGo avec `encoding/json` (412 Kio) coûtait environ **0,5 ms et 270 Kio par appel** en amd64 (1,9 ms en 386 interprété), dix fois le module assemblé à la main ci-dessus ; le même plugin en Rust avec `serde_json` (57 Kio) coûte environ **0,24 ms et 390 Kio**. L'exemple livré, en TinyGo avec une lecture manuelle de l'entrée (8 Kio), coûte environ **75 µs et 180 Kio** : la réflexion d'`encoding/json` et la taille du module dominent, pas le moteur. Sur le chemin chaud, préférez une analyse minimale de l'entrée (et testez-la contre des entrées piégées). Pour un plugin sur le chemin chaud, préférez une analyse minimale de l'entrée plutôt qu'`encoding/json`, optimisez avec `wasm-opt`, et mesurez avec votre module.
 
 ## Limites
 
 - Pas d'état partagé entre passerelles (le `kv` est local à une passerelle).
-- Pas de compilateur fourni : produisez le WASM avec la chaîne de votre langage (Rust `wasm32-unknown-unknown`, TinyGo `wasm-unknown`). `examples/plugins/path-guard` est un plugin Go compilé avec TinyGo 0.43 (`tinygo build -target=wasm-unknown -no-debug -scheduler=none`), exécuté par la suite de tests ; un plugin Rust n'a pas été essayé.
+- Pas de compilateur fourni : produisez le WASM avec la chaîne de votre langage (Rust `wasm32-unknown-unknown`, TinyGo `wasm-unknown`). `examples/plugins/path-guard` est un plugin Go compilé avec TinyGo 0.43 (`tinygo build -target=wasm-unknown -no-debug -scheduler=none`) et `examples/plugins/path-guard-rs` le même plugin en Rust 1.99 (`cargo build --release --target wasm32-unknown-unknown`) ; la suite de tests exécute les deux. En Rust, la pile par défaut de 1 Mio fait dépasser `memory_pages` (16 par défaut) : réduisez-la avec `-C link-arg=-zstack-size=65536` (voir le README de l'exemple).
 - Pas de mesure en charge réelle (seulement le micro-benchmark ci-dessus).

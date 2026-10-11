@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/vincamok/goproxify/internal/pairing"
 )
 
 func TestValidateAdminHMACEmptySecret(t *testing.T) {
@@ -37,5 +39,20 @@ func TestValidateAdminHMACBadSig(t *testing.T) {
 	req.Header.Set(hmacHeader, BuildAdminSignature("other", http.MethodGet, "/ws/admin"))
 	if err := ValidateAdminHMAC(req, "secret"); err == nil {
 		t.Fatal("mauvaise signature doit être refusée")
+	}
+}
+
+// Le secret racine signe le WebSocket Admin → passerelle ; la clé remise aux Agents, qui en est dérivée, ne doit pas
+// permettre de se faire passer pour l'Admin.
+func TestValidateAdminHMACRejectsAgentDerivedKey(t *testing.T) {
+	const root = "secret-racine-0123456789abcdef"
+	req := httptest.NewRequest(http.MethodGet, "/ws/admin", nil)
+	req.Header.Set(hmacHeader, BuildAdminSignature(pairing.AgentKey(root), http.MethodGet, "/ws/admin"))
+	if err := ValidateAdminHMAC(req, root); err == nil {
+		t.Fatal("une signature faite avec la clé d'Agent ne doit pas ouvrir /ws/admin")
+	}
+	req.Header.Set(hmacHeader, BuildAdminSignature(root, http.MethodGet, "/ws/admin"))
+	if err := ValidateAdminHMAC(req, root); err != nil {
+		t.Fatalf("le secret racine doit rester valide : %v", err)
 	}
 }

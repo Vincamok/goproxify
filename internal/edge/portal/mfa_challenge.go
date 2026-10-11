@@ -21,6 +21,7 @@ type MFAChallenge struct {
 	Expires         time.Time
 	EmailOTPHash    string
 	EmailOTPExpires time.Time
+	Failures        int // codes faux déjà présentés
 }
 
 // MFAChallengeStore challenges en mémoire (non persistés).
@@ -57,6 +58,27 @@ func (s *MFAChallengeStore) Update(c MFAChallenge) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.byID[c.ID] = c
+}
+
+// MaxChallengeFailures : codes faux qu'un défi accepte avant d'être détruit (il faut alors redonner le mot de passe).
+const MaxChallengeFailures = 5
+
+// Fail enregistre un code faux et détruit le défi au-delà du seuil ; retourne true s'il a été détruit. Sans cela un
+// code TOTP ou un code reçu par courriel se devinait à volonté pendant la durée de vie du défi.
+func (s *MFAChallengeStore) Fail(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.byID[id]
+	if !ok {
+		return true
+	}
+	c.Failures++
+	if c.Failures >= MaxChallengeFailures {
+		delete(s.byID, id)
+		return true
+	}
+	s.byID[id] = c
+	return false
 }
 
 func (s *MFAChallengeStore) Delete(id string) {

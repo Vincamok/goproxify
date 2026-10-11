@@ -4,6 +4,7 @@
 package raft
 
 import (
+	"github.com/vincamok/goproxify/internal/httpx"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -34,7 +35,7 @@ func (s *Server) Start() error {
 	if err != nil {
 		return fmt.Errorf("raft server: listen: %w", err)
 	}
-	s.httpSrv = &http.Server{Handler: mux}
+	s.httpSrv = httpx.Harden(&http.Server{Handler: mux})
 	go func() {
 		if err := s.httpSrv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			s.log.Error("raft server: serve error", "err", err)

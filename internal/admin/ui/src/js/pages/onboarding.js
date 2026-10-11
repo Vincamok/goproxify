@@ -775,7 +775,8 @@ function _onbCompose() {
     restart: unless-stopped
     command: ["agent"]
     environment:
-      - GPX_PAIRING_SECRET=\${GPX_PAIRING_SECRET}
+      # Clé dérivée du secret racine : l'Agent ne reçoit jamais GPX_PAIRING_SECRET lui-même
+      - GPX_AGENT_PAIRING_KEY=\${GPX_AGENT_PAIRING_KEY}
       - GPX_CONTROL_PLANE_EDGE_ENDPOINT=http://goproxify-edge:8000
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -871,7 +872,10 @@ function _onbEnv() {
 # ── SÉCURITÉ (REQUIS) ─────────────────────────────────────────────────
 GPX_JWT_SECRET=
 GPX_PAIRING_SECRET=
-
+${!onb.withAgent ? '' : `# Clé d'appairage de l'Agent, dérivée du secret ci-dessus (l'Agent ne reçoit pas le secret lui-même) :
+#   printf %s "goproxify/agent-pairing/v1:$GPX_PAIRING_SECRET" | sha256sum | cut -d' ' -f1
+GPX_AGENT_PAIRING_KEY=
+`}
 # ── COMPTE ADMINISTRATEUR INITIAL ─────────────────────────────────────
 GPX_FIRST_ADMIN_EMAIL=admin@example.com
 GPX_FIRST_ADMIN_PASSWORD=
@@ -936,7 +940,9 @@ type: Opaque
 stringData:
   GPX_JWT_SECRET: "<openssl rand -hex 32>"
   GPX_PAIRING_SECRET: "<openssl rand -hex 32>"
-  GPX_FIRST_ADMIN_PASSWORD: "<mot_de_passe>"
+${!onb.withAgent ? '' : `  # Agent : sha256 de "goproxify/agent-pairing/v1:<GPX_PAIRING_SECRET>" — jamais le secret lui-même
+  GPX_AGENT_PAIRING_KEY: "<printf %s goproxify/agent-pairing/v1:\${SECRET} | sha256sum>"
+`}  GPX_FIRST_ADMIN_PASSWORD: "<mot_de_passe>"
 
 ---
 # ── ConfigMap Admin ────────────────────────────────────────────────────

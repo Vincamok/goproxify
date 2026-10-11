@@ -20,6 +20,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/vincamok/goproxify/internal/ssrf"
 )
 
 // Types de destination externe.
@@ -39,7 +41,9 @@ type Driver interface {
 	Delete(ctx context.Context, name string) error
 }
 
-var httpClient = &http.Client{Timeout: 10 * time.Minute}
+// Les destinations WebDAV et S3 sont souvent sur le LAN (NAS, MinIO) : le réseau privé reste joignable, pas les
+// métadonnées cloud ni le link-local.
+var httpClient = ssrf.SelfHostedClient(10 * time.Minute)
 
 // NewDriver construit le pilote d'une destination à partir de sa configuration.
 func NewDriver(d Destination) (Driver, error) {

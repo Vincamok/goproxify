@@ -86,6 +86,12 @@ func SignJWT(userID, secret string, ttl time.Duration) (string, error) {
 // VerifyJWT valide un JWT de session et retourne l'identifiant utilisateur.
 // Les tokens MFA intermédiaires (claim mfa_pending=true) sont rejetés.
 func VerifyJWT(tokenStr, secret string) (string, error) {
+	userID, _, err := VerifyJWTIssued(tokenStr, secret)
+	return userID, err
+}
+
+// VerifyJWTIssued est VerifyJWT et retourne aussi la date d'émission du jeton (zéro si le jeton n'en porte pas).
+func VerifyJWTIssued(tokenStr, secret string) (string, time.Time, error) {
 	parsed, err := jwt.ParseWithClaims(tokenStr, &jwtClaims{}, func(t *jwt.Token) (interface{}, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("méthode de signature inattendue : %v", t.Header["alg"])
@@ -93,19 +99,23 @@ func VerifyJWT(tokenStr, secret string) (string, error) {
 		return []byte(secret), nil
 	})
 	if err != nil {
-		return "", fmt.Errorf("jwt verify : %w", err)
+		return "", time.Time{}, fmt.Errorf("jwt verify : %w", err)
 	}
 	claims, ok := parsed.Claims.(*jwtClaims)
 	if !ok || !parsed.Valid {
-		return "", errors.New("jwt: claims invalides")
+		return "", time.Time{}, errors.New("jwt: claims invalides")
 	}
 	if claims.Pending {
-		return "", errors.New("jwt: token MFA pending non autorisé")
+		return "", time.Time{}, errors.New("jwt: token MFA pending non autorisé")
 	}
 	if claims.UserID == "" {
-		return "", errors.New("jwt: uid manquant")
+		return "", time.Time{}, errors.New("jwt: uid manquant")
 	}
-	return claims.UserID, nil
+	var issued time.Time
+	if claims.IssuedAt != nil {
+		issued = claims.IssuedAt.Time
+	}
+	return claims.UserID, issued, nil
 }
 
 // mfaPendingClaims est la structure des claims du token MFA intermédiaire.

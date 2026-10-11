@@ -88,6 +88,7 @@ func validateRouteBasics(route *router.Route) []string {
 			errs = append(errs, fmt.Sprintf("backends[%d]: %v", i, err))
 		}
 	}
+	errs = append(errs, validateTrafficSettings(route)...)
 	errs = append(errs, middleware.ValidateRequestSchemaConfig(route.RequestSchema)...)
 	errs = append(errs, middleware.ValidateOpenAPIConfig(route.OpenAPI)...)
 	if gerrs, _ := grpctrans.Validate(route.GRPCTranscode); len(gerrs) > 0 {
@@ -217,6 +218,48 @@ func validateRefs(route *router.Route, opts DryRunOptions) []string {
 		if !opts.KnownAuthProviders[route.AuthProviderID] {
 			errs = append(errs, fmt.Sprintf("auth_provider_id inconnu %q", route.AuthProviderID))
 		}
+	}
+	return errs
+}
+
+// maxBackendWeight borne le poids d'un backend : la somme des poids sert de modulo à l'algorithme pondéré, et une
+// somme qui déborde donnerait un diviseur nul ou négatif.
+const maxBackendWeight = 1_000_000
+
+// validateTrafficSettings contrôle la répartition de charge, les sondes, les relances et le disjoncteur. Une valeur
+// inconnue ou négative n'échouait pas : l'algorithme retombait en silence sur le tourniquet (une faute de frappe
+// dans « lb » faisait perdre la pondération) et les durées négatives étaient remplacées par les valeurs par défaut.
+func validateTrafficSettings(route *router.Route) []string {
+	var errs []string
+	switch route.LB {
+	case "", router.LBRoundRobin, router.LBWeighted, router.LBAdaptive:
+	default:
+		errs = append(errs, fmt.Sprintf("lb invalide %q (round_robin, weighted ou adaptive)", route.LB))
+	}
+	for i, b := range route.Backends {
+		if b.Weight < 0 || b.Weight > maxBackendWeight {
+			errs = append(errs, fmt.Sprintf("backends[%d].weight doit être dans [0,%d]", i, maxBackendWeight))
+		}
+	}
+	if route.IdleTimeoutSec < 0 || route.IdleTimeoutSec > 86400 {
+		errs = append(errs, "idle_timeout_sec doit être dans [0,86400]")
+	}
+	if hc := route.HealthCheck; hc != nil {
+		if hc.Path != "" && !strings.HasPrefix(hc.Path, "/") {
+			errs = append(errs, "health_check.path doit commencer par /")
+		}
+		if hc.Interval < 0 || hc.Timeout < 0 {
+			errs = append(errs, "health_check : interval et timeout ne peuvent pas être négatifs")
+		}
+		if hc.HealthyThreshold < 0 || hc.UnhealthyThreshold < 0 {
+			errs = append(errs, "health_check : les seuils ne peuvent pas être négatifs")
+		}
+	}
+	if rt := route.Retry; rt != nil && (rt.InitialWait < 0 || rt.MaxWait < 0) {
+		errs = append(errs, "retry : initial_wait et max_wait ne peuvent pas être négatifs")
+	}
+	if cb := route.CircuitBreaker; cb != nil && (cb.Threshold < 0 || cb.Timeout < 0) {
+		errs = append(errs, "circuit_breaker : threshold et timeout ne peuvent pas être négatifs")
 	}
 	return errs
 }

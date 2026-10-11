@@ -408,6 +408,8 @@ func migrate(db *sql.DB) error {
 		`ALTER TABLE geoip_cache ADD COLUMN lon REAL`,
 		`ALTER TABLE geoip_cache ADD COLUMN city TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE geoip_cache ADD COLUMN region TEXT NOT NULL DEFAULT ''`,
+		// Les sessions (JWT) émises avant cette date (secondes Unix) sont refusées : changement de mot de passe
+		`ALTER TABLE users ADD COLUMN tokens_valid_after INTEGER NOT NULL DEFAULT 0`,
 		// Clé de confiance qui a signé le plugin ('' = non signé)
 		`ALTER TABLE plugins ADD COLUMN signed_by TEXT NOT NULL DEFAULT ''`,
 	} {

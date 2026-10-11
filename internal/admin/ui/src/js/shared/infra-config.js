@@ -248,7 +248,7 @@ function _buildAgentOpts(d) {
     { k:'GPX_IDENTITY_AGENT_NODE_NAME',          v: name },
     { k:'GPX_CONTROL_PLANE_EDGE_ENDPOINT',       v: edgeURL },
     adminURL ? { k:'GPX_CONTROL_PLANE_ADMIN_ENDPOINT', v: adminURL } : null,
-    { k:'GPX_PAIRING_SECRET',                    v: _wiz.pairingSecret || '' },
+    { k:'GPX_AGENT_PAIRING_KEY',                 v: _wiz.agentKey || '' },
     d.wa_region ? { k:'GPX_IDENTITY_REGION',  v: d.wa_region } : null,
     useContainerRuntime ? { k:'GPX_DOCKER_ENABLED',  v: 'true' } : null,
     useContainerRuntime ? { k:'GPX_DOCKER_RUNTIME', v: runtime } : null,

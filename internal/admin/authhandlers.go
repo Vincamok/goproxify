@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/vincamok/goproxify/internal/admin/alerting"
@@ -58,12 +57,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ip := clientIP(r.RemoteAddr)
-	if xf := r.Header.Get("X-Forwarded-For"); xf != "" {
-		ip = strings.TrimSpace(strings.Split(xf, ",")[0])
-	}
+	ip := limiterIP(r)
 	key := loginKey(ip, req.Email)
-	if blocked, wait := s.loginLimit.blocked(key); blocked {
+	account := accountKey(req.Email)
+	if blocked, wait := s.loginLimit.blocked(key, account); blocked {
 		w.Header().Set("Retry-After", fmt.Sprintf("%d", int(wait.Seconds())+1))
 		http.Error(w, "trop de tentatives — réessayez plus tard", http.StatusTooManyRequests)
 		return
@@ -75,6 +72,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	).Scan(&id, &hash)
 	if err != nil || !auth.CheckPassword(hash, req.Password) {
 		s.loginLimit.fail(key)
+		s.loginLimit.failN(account, loginMaxFailsPerAccount)
 		s.auditor.Log(r.Context(), audit.Event{
 			Action: "login_failed", Actor: req.Email, IP: audit.IPFrom(r), Severity: audit.Warning,
 		})
@@ -86,7 +84,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.loginLimit.success(key)
+	s.loginLimit.success(key, account)
 
 	s.auditor.Log(r.Context(), audit.Event{
 		Action: "login", Actor: req.Email, UserID: id, IP: audit.IPFrom(r), Severity: audit.Info,

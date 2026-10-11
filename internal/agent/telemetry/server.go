@@ -4,6 +4,7 @@
 package telemetry
 
 import (
+	"github.com/vincamok/goproxify/internal/httpx"
 	"context"
 	"fmt"
 	"log/slog"
@@ -71,12 +72,12 @@ func NewServer(port, scrapeMS int, nodeLabel string, log *slog.Logger) *Server {
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	s.srv = &http.Server{
+	s.srv = httpx.Harden(&http.Server{
 		Addr:         fmt.Sprintf(":%d", port),
 		Handler:      mux,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
-	}
+	})
 	return s
 }
 

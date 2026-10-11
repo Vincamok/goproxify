@@ -5,6 +5,8 @@
 package admin
 
 import (
+	"github.com/vincamok/goproxify/internal/pairing"
+	"github.com/vincamok/goproxify/internal/httpx"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -684,7 +686,7 @@ func (s *Server) Start(ctx context.Context) error {
 		OnChange:  syncUsers,
 	}
 
-	meH := &api.MeHandler{DB: s.db, Log: s.log, OnChange: syncUsers}
+	meH := &api.MeHandler{DB: s.db, Log: s.log, OnChange: syncUsers, JWTSecret: jwtSecret}
 
 	// OpenAPI spec + Scalar UI
 	openapiH := &api.OpenAPIHandler{}
@@ -784,12 +786,12 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/api/v1/internal-ca/", adminOnly(internalCAH))
 	mux.Handle("/api/v1/nodes", protected(nodesH))
 	mux.Handle("/api/v1/nodes/", protected(nodesH))
-	mux.Handle("/api/v1/declared-nodes", protected(declaredNodesH))
-	mux.Handle("/api/v1/declared-nodes/", protected(declaredNodesH))
+	mux.Handle("/api/v1/declared-nodes", adminWrites(declaredNodesH))
+	mux.Handle("/api/v1/declared-nodes/", adminWrites(declaredNodesH))
 	mux.Handle("/api/v1/architecture", adminOnly(architectureH))
 	mux.Handle("GET /api/v1/architecture/groups", protected(architectureH))
 	mux.Handle("/api/v1/architecture/", adminOnly(architectureH))
-	mux.Handle("POST /api/v1/bootstrap-tickets", protected(http.HandlerFunc(bootstrapH.ServeCreate)))
+	mux.Handle("POST /api/v1/bootstrap-tickets", adminOnly(http.HandlerFunc(bootstrapH.ServeCreate)))
 	mux.Handle("/api/v1/node-events", protected(nodeEventsH))
 	mux.Handle("/api/v1/discovered-containers", protected(discoveredH))
 	mux.Handle("/api/v1/backends/health", protected(backendsHealthH))
@@ -854,7 +856,8 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("GET /api/v1/pairing-secret", adminOnly(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		secret := os.Getenv("GPX_PAIRING_SECRET")
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"secret": secret}) //nolint:errcheck
+		// secret : pour les passerelles ; agent_key : pour les Agents, qui ne doivent pas détenir le secret racine.
+		json.NewEncoder(w).Encode(map[string]string{"secret": secret, "agent_key": pairing.AgentKey(secret)}) //nolint:errcheck
 	})))
 
 	// Profil utilisateur connecté
@@ -933,16 +936,16 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/internal/v1/events", auth.RequireBearerToken(s.db)(nodeEventsH))
 
 	addr := fmt.Sprintf("%s:%d", s.cfg.Server.ListenAddr, s.cfg.Server.APIPort)
-	var handler http.Handler = s.logMiddleware(mux)
+	var handler http.Handler = limitRequestBodies(s.logMiddleware(mux))
 	if s.haManager != nil {
 		handler = s.haManager.ForwardOrHandle(handler)
 	}
-	s.srv = &http.Server{
+	s.srv = httpx.Harden(&http.Server{
 		Addr:         addr,
 		Handler:      handler,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
-	}
+	})
 
 	tlsCert := strings.TrimSpace(os.Getenv("GPX_ADMIN_TLS_CERT"))
 	tlsKey := strings.TrimSpace(os.Getenv("GPX_ADMIN_TLS_KEY"))
@@ -967,12 +970,12 @@ func (s *Server) Start(ctx context.Context) error {
 	// Utile si Sentinel ou une règle de sécurité bloque l'accès proxifié.
 	if s.cfg.Server.LocalPort > 0 {
 		localAddr := fmt.Sprintf("0.0.0.0:%d", s.cfg.Server.LocalPort)
-		localSrv := &http.Server{
+		localSrv := httpx.Harden(&http.Server{
 			Addr:         localAddr,
-			Handler:      s.logMiddleware(mux), // sans HA forward
+			Handler:      limitRequestBodies(s.logMiddleware(mux)), // sans HA forward
 			ReadTimeout:  30 * time.Second,
 			WriteTimeout: 30 * time.Second,
-		}
+		})
 		go func() {
 			s.log.Info("administration (port local direct)", "addr", localAddr)
 			if err := localSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -1021,7 +1024,7 @@ func ResetPassword(cfg *config.AdminConfig, email, newPassword string) error {
 	if err != nil {
 		return err
 	}
-	res, err := db.Exec(`UPDATE users SET password_hash=? WHERE email=?`, hash, email)
+	res, err := db.Exec(`UPDATE users SET password_hash=?, tokens_valid_after=? WHERE email=?`, hash, time.Now().Unix(), email)
 	if err != nil {
 		return err
 	}

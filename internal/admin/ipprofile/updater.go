@@ -140,9 +140,7 @@ func New(db *sql.DB, log *slog.Logger) *Updater {
 	return &Updater{
 		db:  db,
 		log: log,
-		client: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		client: feedClient(30 * time.Second),
 	}
 }
 

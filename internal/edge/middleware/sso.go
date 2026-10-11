@@ -44,8 +44,24 @@ func SSOAuth(cfg *router.SSOConfig) func(http.Handler) http.Handler {
 		if !ok {
 			return failClosed(cfg.Provider, "fournisseur d'authentification inconnu")
 		}
-		return f(cfg, next)
+		inner := f(cfg, next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Un client ne doit jamais pouvoir se présenter sous l'identité de son choix. Les fournisseurs ne posent que
+			// X-Remote-User (et, pour LDAP, Name et Email quand l'annuaire les rend) : sans ce retrait, un utilisateur
+			// authentifié pouvait ajouter X-Remote-Groups: admins ou Remote-Email: … et un backend qui s'y fie le croyait.
+			stripHeaders(r.Header, identityHeaders)
+			inner.ServeHTTP(w, r)
+		})
 	}
+}
+
+// identityHeaders : en-têtes d'identité que les backends derrière un SSO ont l'habitude de croire.
+var identityHeaders = []string{
+	"X-Remote-User", "X-Remote-Name", "X-Remote-Email", "X-Remote-Groups",
+	"Remote-User", "Remote-Name", "Remote-Email", "Remote-Groups",
+	"X-Forwarded-User", "X-Forwarded-Email", "X-Forwarded-Groups", "X-Forwarded-Preferred-Username",
+	"X-Auth-Request-User", "X-Auth-Request-Email", "X-Auth-Request-Groups", "X-Auth-Request-Preferred-Username",
+	"X-Webauth-User", "X-Webauth-Email", "X-Webauth-Name", "X-Webauth-Groups",
 }
 
 // forwardAuthMiddleware délègue l'authentification à un service externe
@@ -190,16 +206,30 @@ func basicAuthMiddleware(cfg *router.SSOConfig, next http.Handler) http.Handler 
 			http.Error(w, "401 Unauthorized", http.StatusUnauthorized)
 			return
 		}
+		if !basicLimiter.Guard(w, r, user) {
+			return
+		}
 		stored, exists := users[user]
+		if !exists {
+			SpendBcryptTime(pass) // même durée qu'un mot de passe faux : la réponse ne révèle pas qui existe
+		}
 		if !exists || !MatchBasicPassword(stored, pass) {
+			basicLimiter.RecordFail(r, user)
 			w.Header().Set("WWW-Authenticate", `Basic realm="`+realm+`"`)
 			http.Error(w, "401 Unauthorized", http.StatusUnauthorized)
 			return
 		}
+		basicLimiter.RecordSuccess(r, user)
 		r.Header.Set("X-Remote-User", user)
 		next.ServeHTTP(w, r)
 	})
 }
+
+// basicLimiter et ldapLimiter limitent les essais de mot de passe (voir authlimit.go).
+var (
+	basicLimiter = NewAuthFailLimiter()
+	ldapLimiter  = NewAuthFailLimiter()
+)
 
 func parseBasicAuth(r *http.Request) (user, pass string, ok bool) {
 	auth := r.Header.Get("Authorization")

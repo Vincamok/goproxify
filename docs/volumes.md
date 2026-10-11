@@ -28,8 +28,8 @@ Chaque service persiste ses données dans `/etc/goproxify` via un volume Docker 
 | `edge-tokens.db` | Base SQLite des tokens d'authentification des nœuds (Admin → passerelle) |
 | `agent-states/` | Fichiers d'état des Agents approuvés, copiés par chaque Agent (rendus à un Agent au volume perdu) |
 | `edge-node-id` | Identité stable du nœud passerelle |
-| `geoip/GeoLite2-Country.mmdb` | Base GeoIP téléchargée automatiquement (si `GPX_GEOIP_AUTO_DOWNLOAD=true`) |
-| `geoip/GeoLite2-City.mmdb` | Base GeoIP ville de l'Admin (carte Prism), téléchargée automatiquement (si `GPX_GEOIP_AUTO_DOWNLOAD=true`) ; sans elle, repli sur ip-api.com |
+| `geoip/GeoLite2-Country.mmdb` | Base GeoIP téléchargée automatiquement (clé `geoip.auto_download` de `edge.json`, activée par défaut) |
+| `geoip/GeoLite2-City.mmdb` | Base GeoIP ville de l'Admin (carte Prism), téléchargée automatiquement (clé `geoip.auto_download` de `admin.json`, activée par défaut) ; sans elle, repli sur ip-api.com |
 | `bans/` | Bannissements IP persistés |
 | `threat-lists/` | Listes de menaces téléchargées (IPs malveillantes, etc.) |
 | `threat-config.gpx` | Copie chiffrée de la configuration Sentinel reçue de l'Admin, rechargée au démarrage sans l'Admin |

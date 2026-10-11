@@ -159,6 +159,10 @@ func (h *IPProfilesHandler) create(w http.ResponseWriter, r *http.Request) {
 	if body.ProfileType == "" {
 		body.ProfileType = "custom"
 	}
+	if err := validateProfileFeed(body.FeedURLs, body.FeedFormat, body.RefreshIntervalH); err != nil {
+		jsonErrF(w, err, http.StatusBadRequest)
+		return
+	}
 	cidrs, err := manualCIDRs(body.FeedURLs, body.CIDRs)
 	if err != nil {
 		jsonErrF(w, err, http.StatusBadRequest)
@@ -226,6 +230,10 @@ func (h *IPProfilesHandler) update(w http.ResponseWriter, r *http.Request, id st
 		jsonErrF(w, err, http.StatusBadRequest)
 		return
 	}
+	if err := validateProfileFeed(body.FeedURLs, body.FeedFormat, body.RefreshIntervalH); err != nil {
+		jsonErrF(w, err, http.StatusBadRequest)
+		return
+	}
 	if body.FeedURLs == nil {
 		body.FeedURLs = []string{}
 	}
@@ -285,6 +293,13 @@ func (h *IPProfilesHandler) refresh(w http.ResponseWriter, r *http.Request, id s
 
 // manualCIDRs valide les CIDR saisis à la main. Ils ne se combinent pas avec un feed : le
 // rafraîchissement remplacerait la liste.
+func validateProfileFeed(urls []string, format string, intervalH int) error {
+	if intervalH < 0 || intervalH > ipprofile.MaxRefreshIntervalH {
+		return fmt.Errorf("refresh_interval_h doit être dans [0,%d]", ipprofile.MaxRefreshIntervalH)
+	}
+	return ipprofile.ValidateFeed(urls, format, ipprofile.AllowPrivateFeeds())
+}
+
 func manualCIDRs(feedURLs, cidrs []string) ([]string, error) {
 	if len(cidrs) == 0 {
 		return []string{}, nil

@@ -1,6 +1,6 @@
 # GoProxify — Référence des métriques Prometheus
 
-Toutes les métriques sont exposées au format Prometheus sur le port interne de la passerelle (`/metrics`).  
+Toutes les métriques sont exposées au format Prometheus sur le port interne de la passerelle (`/metrics`, ou `/internal/v1/metrics`), derrière le jeton de la passerelle.  
 Préfixes : `gpx_*` (data plane) · `goproxify_*` (plan de contrôle).
 
 ---
@@ -280,7 +280,7 @@ GET http://<edge-internal-host>:8000/metrics
 Authorization: Bearer <token>
 ```
 
-Le scraping sans authentification peut être activé via la config réseau de la passerelle.
+Côté Prometheus : `authorization: { credentials: <jeton> }`. Les ports publics (80/443) ne servent **pas** `/metrics` (les métriques listent hôtes, backends et compteurs de sécurité) ; `GPX_METRICS_PUBLIC=1` les y expose, pour un accès filtré par le réseau.
 
 ## Résumé JSON (usage Admin UI)
 

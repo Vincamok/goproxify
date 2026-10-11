@@ -33,7 +33,7 @@ func (s *GLPISender) Send(ctx context.Context, msg Message) error {
 	}
 	sesReq.Header.Set("App-Token", s.AppToken)
 	sesReq.Header.Set("Authorization", "user_token "+s.UserToken)
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := selfHostedClient(15 * time.Second)
 	sesResp, err := client.Do(sesReq)
 	if err != nil {
 		return fmt.Errorf("glpi: init session : %w", err)

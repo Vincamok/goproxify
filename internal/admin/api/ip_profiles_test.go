@@ -104,3 +104,39 @@ func TestIPProfilesManualCIDRs(t *testing.T) {
 		t.Fatalf("feed_urls d'un profil manuel = %q, attendu []", feeds)
 	}
 }
+
+// Une source de profil est lue par l'Admin : une URL vers le réseau interne, un schéma exotique ou un format
+// inconnu est refusé à l'enregistrement, à la création comme à la modification.
+func TestIPProfilesRefuseDangerousFeeds(t *testing.T) {
+	db, err := admindb.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := &api.IPProfilesHandler{DB: db}
+	do := func(method, path, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(method, path, strings.NewReader(body)))
+		return rec
+	}
+	for name, body := range map[string]string{
+		"métadonnées":   `{"name":"a","feed_urls":["http://169.254.169.254/latest/meta-data/"]}`,
+		"loopback":      `{"name":"b","feed_urls":["http://127.0.0.1:2375/containers/json"]}`,
+		"file":          `{"name":"c","feed_urls":["file:///etc/passwd"]}`,
+		"format inconnu": `{"name":"d","feed_urls":["https://example.org/x"],"feed_format":"json-awss"}`,
+		"intervalle":    `{"name":"e","feed_urls":["https://example.org/x"],"refresh_interval_h":-4}`,
+	} {
+		if rec := do(http.MethodPost, "/api/v1/ip-profiles", body); rec.Code != http.StatusBadRequest {
+			t.Errorf("création, %s : HTTP %d, attendu 400", name, rec.Code)
+		}
+	}
+	rec := do(http.MethodPost, "/api/v1/ip-profiles", `{"name":"ok","feed_urls":["https://example.org/list.txt"],"enabled":false}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("source valide : HTTP %d %s", rec.Code, rec.Body)
+	}
+	var created struct{ ID string }
+	json.Unmarshal(rec.Body.Bytes(), &created) //nolint:errcheck
+	if rec := do(http.MethodPut, "/api/v1/ip-profiles/"+created.ID, `{"name":"ok","mode":"deny","feed_urls":["http://10.0.0.5/list"]}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("modification vers une source interne : HTTP %d, attendu 400", rec.Code)
+	}
+}

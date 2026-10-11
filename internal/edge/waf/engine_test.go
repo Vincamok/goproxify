@@ -400,7 +400,7 @@ func TestReadBody_LargeBodyForwardedIntact(t *testing.T) {
 		}
 		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(full))
 		r.Header.Set("Content-Type", ct)
-		readBody(r, 1)
+		readBody(r, 1<<20)
 		got, err := io.ReadAll(r.Body)
 		if err != nil || string(got) != full {
 			t.Fatalf("%s : corps tronqué (%d/%d octets, err=%v)", ct, len(got), len(full), err)
@@ -415,7 +415,7 @@ func TestRouteCustomRulesInspectIsolated(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := httptest.NewRequest(http.MethodGet, "/?q=LAB-FORBIDDEN-WORD", nil)
-	if m := e.inspect(r, 1, rules, nil); len(m) == 0 || m[0].RuleID != 990001 {
+	if m := e.inspect(r, 1<<20, rules, nil); len(m) == 0 || m[0].RuleID != 990001 {
 		t.Fatalf("route rule should match, got %#v", m)
 	}
 	if m := e.Inspect(r, 1); len(m) != 0 {

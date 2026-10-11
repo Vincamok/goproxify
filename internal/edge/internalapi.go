@@ -4,6 +4,8 @@
 package edge
 
 import (
+	"github.com/vincamok/goproxify/internal/httpx"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/vincamok/goproxify/internal/edge/plugins"
 	"context"
 	"encoding/json"
@@ -25,6 +27,7 @@ import (
 	edgere "github.com/vincamok/goproxify/internal/edge/rulesengine"
 	"github.com/vincamok/goproxify/internal/edge/threat"
 	"github.com/vincamok/goproxify/internal/edge/waf/behavior"
+	edgetokens "github.com/vincamok/goproxify/internal/edge/tokens"
 	edgews "github.com/vincamok/goproxify/internal/edge/ws"
 )
 
@@ -94,6 +97,9 @@ func (s *Server) startInternalAPI() error {
 	mux.HandleFunc("GET /internal/v1/health", s.handleInternalHealth)
 	mux.HandleFunc("GET /internal/v1/backends/health", s.handleBackendsHealth)
 	mux.HandleFunc("GET /internal/v1/metrics/summary", s.handleMetricsSummary)
+	mux.Handle("GET /internal/v1/metrics", promhttp.Handler())
+	// Chemin par défaut d'un scrape Prometheus ; protégé par le jeton comme le reste de l'API interne.
+	mux.Handle("GET /metrics", promhttp.Handler())
 
 	// Endpoints Agent → passerelle
 	mux.HandleFunc("POST /internal/v1/agent/heartbeat", s.handleAgentHeartbeat)
@@ -114,7 +120,7 @@ func (s *Server) startInternalAPI() error {
 	// Appairage local Agent → passerelle (protégé par GPX_PAIRING_SECRET, fail-closed)
 	mux.HandleFunc("POST /internal/v1/pair", s.handleEdgePair)
 
-	s.intSrv = &http.Server{Addr: addr, Handler: s.authMiddleware(mux)}
+	s.intSrv = httpx.Harden(&http.Server{Addr: addr, Handler: limitInternalBodies(s.authMiddleware(mux))})
 	go func() {
 		if err := s.intSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			s.log.Error("internal api", "err", err)
@@ -139,9 +145,13 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			http.Error(w, "401 Unauthorized", http.StatusUnauthorized)
 			return
 		}
-		ok, err := s.tokenStore.Validate(bearer)
+		role, ok, err := s.tokenStore.RoleOf(bearer)
 		if err != nil || !ok {
 			http.Error(w, "401 Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if role == edgetokens.RoleAgent && !agentTokenMayCall(r.Method, r.URL.Path) {
+			http.Error(w, "403 Forbidden", http.StatusForbidden)
 			return
 		}
 		next.ServeHTTP(w, r)

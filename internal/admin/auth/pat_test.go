@@ -189,3 +189,88 @@ func TestLookupPATExpired(t *testing.T) {
 		t.Fatal("expiré devrait échouer")
 	}
 }
+
+// Le jeton API et la session d'un compte supprimé ne servent plus : rien ne les révoquait, et un JWT vaut 24 h.
+func TestDeletedUserSessionAndPATAreRejected(t *testing.T) {
+	db, err := admindb.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO users (id, email, password_hash, role) VALUES ('u9', 'u9@test.local', 'x', 'viewer')`); err != nil {
+		t.Fatal(err)
+	}
+	secret := "test-secret"
+	jwt, _ := auth.SignJWT("u9", secret, time.Hour)
+	plain := auth.GeneratePAT()
+	if _, err := db.Exec(`INSERT INTO user_api_tokens (id, user_id, label, token_hash, token_prefix) VALUES ('p9','u9','t',?,?)`, auth.HashPAT(plain), auth.PATPreview(plain)); err != nil {
+		t.Fatal(err)
+	}
+	call := func(token string) int {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/x", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		auth.RequireAuth(secret, db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })).ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if call(jwt) != 200 || call(plain) != 200 {
+		t.Fatal("un compte existant doit s'authentifier")
+	}
+	if _, err := db.Exec(`DELETE FROM users WHERE id='u9'`); err != nil {
+		t.Fatal(err)
+	}
+	if code := call(jwt); code != http.StatusUnauthorized {
+		t.Errorf("JWT d'un compte supprimé : %d (attendu 401)", code)
+	}
+	if code := call(plain); code != http.StatusUnauthorized {
+		t.Errorf("PAT d'un compte supprimé : %d (attendu 401)", code)
+	}
+	if _, _, _, err := auth.LookupPAT(context.Background(), db, plain); err == nil {
+		t.Error("LookupPAT d'un compte supprimé doit échouer (MCP)")
+	}
+}
+
+// Une session émise avant tokens_valid_after est refusée ; celle émise à cet instant ou après passe.
+func TestJWTRevokedByTokensValidAfter(t *testing.T) {
+	db, err := admindb.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO users (id, email, password_hash, role) VALUES ('u7', 'u7@test.local', 'x', 'viewer')`); err != nil {
+		t.Fatal(err)
+	}
+	secret := "test-secret"
+	jwt, _ := auth.SignJWT("u7", secret, time.Hour)
+	call := func() int {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/x", nil)
+		req.Header.Set("Authorization", "Bearer "+jwt)
+		auth.RequireAuth(secret, db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })).ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if call() != http.StatusOK {
+		t.Fatal("session valide refusée")
+	}
+	future := time.Now().Add(time.Hour).Unix() // la session a été émise avant
+	if _, err := db.Exec(`UPDATE users SET tokens_valid_after=? WHERE id='u7'`, future); err != nil {
+		t.Fatal(err)
+	}
+	if call() != http.StatusUnauthorized {
+		t.Error("une session émise avant la révocation doit être refusée")
+	}
+	if _, err := db.Exec(`UPDATE users SET tokens_valid_after=? WHERE id='u7'`, time.Now().Add(-time.Hour).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	if call() != http.StatusOK {
+		t.Error("une session émise après la date de révocation passe")
+	}
+	if err := auth.RevokeSessions(context.Background(), db, "u7"); err != nil {
+		t.Fatal(err)
+	}
+	var v int64
+	db.QueryRow(`SELECT tokens_valid_after FROM users WHERE id='u7'`).Scan(&v) //nolint:errcheck
+	if d := time.Now().Unix() - v; d < 0 || d > 2 {
+		t.Errorf("RevokeSessions doit poser la date courante : %d", v)
+	}
+}

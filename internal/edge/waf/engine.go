@@ -263,11 +263,11 @@ func (e *Engine) reload(cfg *router.WAFConfig) {
 // Inspect analyse une requête et retourne les correspondances.
 // excludeIDs additionnels (par route) sont fusionnés avec ceux du moteur.
 func (e *Engine) Inspect(r *http.Request, maxBodyMB int, excludeIDs ...int) []Match {
-	return e.inspect(r, maxBodyMB, nil, excludeIDs)
+	return e.inspect(r, int64(maxBodyMB)<<20, nil, excludeIDs)
 }
 
 // inspect applique les règles globales puis routeRules (règles custom propres à une route).
-func (e *Engine) inspect(r *http.Request, maxBodyMB int, routeRules []Rule, excludeIDs []int) []Match {
+func (e *Engine) inspect(r *http.Request, maxBody int64, routeRules []Rule, excludeIDs []int) []Match {
 	e.mu.RLock()
 	rules := e.rules
 	baseExclude := e.exclude
@@ -291,26 +291,54 @@ func (e *Engine) inspect(r *http.Request, maxBodyMB int, routeRules []Rule, excl
 	args := extractArgs(r)
 	headers := extractHeaders(r)
 	cookies := extractCookies(r)
-	body, bodyVals := readBody(r, maxBodyMB)
+	body, bodyVals := readBody(r, maxBody)
 
+	// Les règles voient aussi les formes décodées : une charge encodée dans le chemin (%3Cscript%3E, ..%2f..%2f) ou
+	// envoyée sous un type de contenu que le WAF ne décode pas (text/plain) est lue par de nombreux backends.
 	targetValues := map[Target][]string{
-		TargetURI:     {uri},
+		TargetURI:     append([]string{uri}, decodedVariants(uri, maxDecodeBytes)...),
 		TargetArgs:    append(args, bodyVals...),
 		TargetHeaders: headers,
 		TargetCookies: cookies,
-		TargetBody:    {body},
+		TargetBody:    append([]string{body}, decodedVariants(body, maxDecodeBytes)...),
+	}
+
+	// Forme minuscule de chaque valeur, calculée au premier besoin : voir prefilter.go.
+	type lowerVal struct {
+		s    string
+		ok   bool
+		done bool
+	}
+	lowerOf := map[Target][]lowerVal{}
+	lowerAt := func(target Target, i int, val string) (string, bool) {
+		lv := lowerOf[target]
+		if lv == nil {
+			lv = make([]lowerVal, len(targetValues[target]))
+			lowerOf[target] = lv
+		}
+		if !lv[i].done {
+			lv[i].s, lv[i].ok = lowered(val)
+			lv[i].done = true
+		}
+		return lv[i].s, lv[i].ok
 	}
 
 	var matches []Match
-	for _, rule := range rules {
+	for ri := range rules {
+		rule := &rules[ri]
 		if exclude[rule.ID] {
 			continue
 		}
 		for _, target := range rule.Targets {
 			values := targetValues[target]
-			for _, val := range values {
+			for vi, val := range values {
 				if val == "" {
 					continue
+				}
+				if rule.required != nil {
+					if lo, ok := lowerAt(target, vi, val); !rule.mayMatch(lo, ok) {
+						continue
+					}
 				}
 				if loc := rule.Pattern.FindStringIndex(val); loc != nil {
 					excerpt := val[loc[0]:loc[1]]
@@ -415,11 +443,11 @@ func (e *Engine) behaviorStoreForHost(host string, windowSec int) *behavior.Stor
 
 // Middleware retourne un handler HTTP WAF.
 func (e *Engine) Middleware(cfg *router.WAFConfig, next http.Handler) http.Handler {
-	maxBody := 10
+	maxBody := int64(DefaultMaxBodyBytes)
 	var excludeIDs []int
 	if cfg != nil {
 		if cfg.MaxBodyMB > 0 {
-			maxBody = cfg.MaxBodyMB
+			maxBody = int64(cfg.MaxBodyMB) << 20
 		}
 		excludeIDs = cfg.ExcludeIDs
 	}
@@ -542,7 +570,7 @@ func (e *Engine) Middleware(cfg *router.WAFConfig, next http.Handler) http.Handl
 				ResponseWriter: w,
 				buf:            &bytes.Buffer{},
 				status:         http.StatusOK,
-				maxBodyMB:      maxBody,
+				maxBodyBytes:   maxBody,
 			}
 			next.ServeHTTP(rc, r)
 
@@ -653,7 +681,7 @@ type responseCapture struct {
 	buf           *bytes.Buffer
 	status        int
 	headerWritten bool
-	maxBodyMB     int
+	maxBodyBytes  int64
 }
 
 func (rc *responseCapture) WriteHeader(code int) {
@@ -665,7 +693,7 @@ func (rc *responseCapture) Write(b []byte) (int, error) {
 	if rc.status == 0 {
 		rc.status = http.StatusOK
 	}
-	limit := int64(rc.maxBodyMB) * 1024 * 1024
+	limit := rc.maxBodyBytes
 	if int64(rc.buf.Len()) < limit {
 		remaining := limit - int64(rc.buf.Len())
 		if int64(len(b)) <= remaining {
@@ -783,10 +811,38 @@ func parseTrustedProxies(cidrs []string) []*net.IPNet {
 
 // --- helpers ----------------------------------------------------------------
 
+// maxDecodeBytes borne la taille des valeurs dont on inspecte aussi la forme décodée : le décodage se fait à chaque
+// requête, et un corps de plusieurs Mio n'a pas à être recopié deux fois pour cela.
+const maxDecodeBytes = 256 << 10
+
+// decodedVariants retourne les formes obtenues en décodant s une puis deux fois (%XX, +), celles qui diffèrent de
+// la précédente. La deuxième passe attrape le double encodage (%2527), que les passerelles et frameworks qui
+// décodent deux fois (proxy puis application) rendent exploitable.
+func decodedVariants(s string, max int) []string {
+	if len(s) > max || !strings.ContainsAny(s, "%+") {
+		return nil
+	}
+	var out []string
+	cur := s
+	for i := 0; i < 2; i++ {
+		dec, err := url.QueryUnescape(cur)
+		if err != nil || dec == cur {
+			break
+		}
+		out = append(out, dec)
+		cur = dec
+	}
+	return out
+}
+
 func extractArgs(r *http.Request) []string {
 	var vals []string
-	for _, v := range r.URL.Query() {
-		vals = append(vals, strings.Join(v, " "))
+	for k, v := range r.URL.Query() {
+		// Le nom du paramètre est une entrée comme sa valeur (?1 UNION SELECT…=1) ; chaque valeur est aussi lue
+		// décodée une fois de plus (double encodage).
+		joined := strings.Join(v, " ")
+		vals = append(vals, k, joined)
+		vals = append(vals, decodedVariants(joined, maxDecodeBytes)...)
 	}
 	return vals
 }
@@ -820,11 +876,10 @@ func extractCookies(r *http.Request) []string {
 
 // readBody lit le corps et retourne (raw string, valeurs extraites de JSON/form).
 // Les valeurs extraites sont ajoutées aux TargetArgs pour inspecter le contenu décodé.
-func readBody(r *http.Request, maxMB int) (raw string, extracted []string) {
+func readBody(r *http.Request, limit int64) (raw string, extracted []string) {
 	if r.Body == nil || r.ContentLength == 0 {
 		return "", nil
 	}
-	limit := int64(maxMB) * 1024 * 1024
 	orig := r.Body
 	data, err := io.ReadAll(io.LimitReader(orig, limit))
 	// Seuls les premiers maxMB sont inspectés : le corps complet doit néanmoins repartir vers le backend.

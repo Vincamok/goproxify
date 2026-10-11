@@ -39,6 +39,10 @@ type Route struct {
 
 	// TCP/UDP
 	ListenPort int `json:"listen_port,omitempty"` // port d'écoute local (L4)
+	// IdleTimeoutSec : une connexion TCP (L4) sans octet dans aucun sens depuis cette durée est fermée. 0 = jamais
+	// (défaut : les pools de connexions d'une base de données restent inactifs des heures). Pour une route UDP, c'est
+	// la durée d'inactivité d'une session (défaut 60 s). 86 400 au plus.
+	IdleTimeoutSec int `json:"idle_timeout_sec,omitempty"`
 
 	// Plugins WebAssembly attachés à la route, exécutés dans l'ordre (ADR 0008).
 	Plugins []PluginRef `json:"plugins,omitempty"`

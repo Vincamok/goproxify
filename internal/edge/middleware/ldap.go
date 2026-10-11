@@ -50,12 +50,18 @@ func LDAPAuth(cfg *router.LDAPConfig) func(http.Handler) http.Handler {
 			}
 
 			// 3. Authentification LDAP
+			if !ldapLimiter.Guard(w, r, username) {
+				return
+			}
 			displayName, email, err := ldapAuthenticate(cfg, username, password)
 			if err != nil {
+				ldapLimiter.RecordFail(r, username)
 				w.Header().Set("WWW-Authenticate", `Basic realm="LDAP"`)
 				http.Error(w, "401 Unauthorized", http.StatusUnauthorized)
 				return
 			}
+
+			ldapLimiter.RecordSuccess(r, username)
 
 			// 4. Écrire la session cookie
 			maxAge := cfg.SessionMaxAge
@@ -181,8 +187,9 @@ func ldapAuthenticate(cfg *router.LDAPConfig, username, password string) (displa
 	if userFilter == "" {
 		userFilter = "(|(sAMAccountName=%s)(uid=%s))"
 	}
-	esc := ldap.EscapeFilter(username)
-	filter := fmt.Sprintf(userFilter, esc, esc)
+	// Chaque %s du filtre reçoit l'identifiant échappé : Sprintf(filtre, esc, esc) ajoutait « %!(EXTRA …) » à un filtre
+	// qui n'a qu'un %s — l'exemple « (uid=%s) » de la documentation — et la recherche échouait toujours.
+	filter := buildLDAPFilter(userFilter, username)
 
 	searchReq := ldap.NewSearchRequest(
 		cfg.BaseDN,
@@ -195,6 +202,10 @@ func ldapAuthenticate(cfg *router.LDAPConfig, username, password string) (displa
 	result, err := conn.Search(searchReq)
 	if err != nil || len(result.Entries) == 0 {
 		return "", "", fmt.Errorf("ldap: utilisateur introuvable")
+	}
+	if len(result.Entries) != 1 {
+		// Un filtre qui désigne deux comptes (l'uid de l'un est le sAMAccountName de l'autre) ne dit pas qui se connecte.
+		return "", "", fmt.Errorf("ldap: identifiant ambigu")
 	}
 	entry := result.Entries[0]
 
@@ -247,4 +258,9 @@ func ldapInAllowedGroup(allowed, memberOf []string) bool {
 		}
 	}
 	return false
+}
+
+// buildLDAPFilter insère l'identifiant, échappé, à chaque %s du filtre.
+func buildLDAPFilter(userFilter, username string) string {
+	return strings.ReplaceAll(userFilter, "%s", ldap.EscapeFilter(username))
 }

@@ -36,7 +36,7 @@ func TestChallengesAndDevicesExpireInUTC(t *testing.T) {
 		t.Fatal(err)
 	}
 	var data map[string]string
-	if err := s.GetWebAuthnChallenge(ctx, id, &data); err != nil {
+	if err := s.GetWebAuthnChallenge(ctx, "u1", id, &data); err != nil {
 		t.Errorf("challenge WebAuthn valable 5 min : %v", err)
 	}
 	if _, err := s.CreateTrustedDevice(ctx, "u1", "hash", "portable"); err != nil {

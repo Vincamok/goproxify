@@ -4,6 +4,7 @@
 package api
 
 import (
+	"sync"
 	"context"
 	"database/sql"
 	"encoding/base64"
@@ -33,6 +34,15 @@ type MFAHandler struct {
 	// WebAuthn est instancié au démarrage avec rpID/rpOrigin depuis les settings.
 	WebAuthn *webauthn.WebAuthn
 	OnChange func()
+
+	limOnce sync.Once
+	limiter *mfaLimiter
+}
+
+// lim retourne le limiteur de tentatives du second facteur, créé au premier usage.
+func (h *MFAHandler) lim() *mfaLimiter {
+	h.limOnce.Do(func() { h.limiter = newMFALimiter() })
+	return h.limiter
 }
 
 func (h *MFAHandler) notifyChange() {
@@ -213,6 +223,9 @@ func (h *MFAHandler) emailSetup(w http.ResponseWriter, r *http.Request, userID s
 		http.Error(w, "email utilisateur introuvable", http.StatusInternalServerError)
 		return
 	}
+	if !h.allowSend(w, userID) {
+		return
+	}
 	code, err := mfa.GenerateOTP(6)
 	if err != nil {
 		writeErr(w, r, http.StatusInternalServerError, "api.err.otp_gen")
@@ -242,7 +255,11 @@ func (h *MFAHandler) emailVerify(w http.ResponseWriter, r *http.Request, userID 
 		writeErr(w, r, http.StatusBadRequest, "api.err.json")
 		return
 	}
+	if !h.allowVerify(w, userID) {
+		return
+	}
 	if _, ok := h.Store.VerifyChallenge(r.Context(), userID, mfa.MethodEmail, req.Code); !ok {
+		h.lim().fail(setupKey(userID))
 		writeErr(w, r, http.StatusUnauthorized, "api.err.code_invalid")
 		return
 	}
@@ -259,6 +276,13 @@ func (h *MFAHandler) smsSetup(w http.ResponseWriter, r *http.Request, userID str
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Phone == "" {
 		writeErr(w, r, http.StatusBadRequest, "api.err.phone_required")
+		return
+	}
+	if !e164.MatchString(req.Phone) {
+		http.Error(w, "numéro invalide : format international attendu (+33612345678)", http.StatusBadRequest)
+		return
+	}
+	if !h.allowSend(w, userID) {
 		return
 	}
 	cfg := h.smsCfg()
@@ -293,7 +317,11 @@ func (h *MFAHandler) smsVerify(w http.ResponseWriter, r *http.Request, userID st
 		writeErr(w, r, http.StatusBadRequest, "api.err.json")
 		return
 	}
+	if !h.allowVerify(w, userID) {
+		return
+	}
 	if _, ok := h.Store.VerifyChallenge(r.Context(), userID, mfa.MethodSMS, req.Code); !ok {
+		h.lim().fail(setupKey(userID))
 		writeErr(w, r, http.StatusUnauthorized, "api.err.code_invalid")
 		return
 	}
@@ -310,14 +338,17 @@ func (h *MFAHandler) pushSetup(w http.ResponseWriter, r *http.Request, userID st
 		writeErr(w, r, http.StatusBadRequest, "api.err.json")
 		return
 	}
-	if cfg.Provider == "" || (cfg.Provider == "ntfy" && cfg.Topic == "") {
-		http.Error(w, "provider et topic requis", http.StatusBadRequest)
+	if err := cfg.Validate(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !h.allowSend(w, userID) {
 		return
 	}
 	// Test d'envoi
 	if err := mfa.SendPushMFA(r.Context(), cfg, "123456", "test", "setup"); err != nil {
 		h.Log.Error("mfa: test push", "err", err)
-		http.Error(w, "push injoignable : "+err.Error(), http.StatusBadGateway)
+		http.Error(w, "push injoignable", http.StatusBadGateway)
 		return
 	}
 	method := mfa.MethodPushNtfy
@@ -341,6 +372,9 @@ func (h *MFAHandler) pushVerify(w http.ResponseWriter, r *http.Request, userID s
 	var cfg mfa.PushConfig
 	if err := h.Store.GetMethodConfig(r.Context(), userID, req.Method, &cfg); err != nil {
 		writeErr(w, r, http.StatusBadRequest, "api.err.push_unconfigured")
+		return
+	}
+	if !h.allowSend(w, userID) {
 		return
 	}
 	code, err := mfa.GenerateOTP(6)
@@ -370,8 +404,13 @@ func (h *MFAHandler) webAuthnRegisterBegin(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "WebAuthn begin: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.Store.CreateWebAuthnChallenge(r.Context(), userID, session) //nolint:errcheck
-	jsonOK(w, creation)
+	challengeID, err := h.Store.CreateWebAuthnChallenge(r.Context(), userID, session)
+	if err != nil {
+		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
+		return
+	}
+	// Le client renvoie challenge_id à register/finish : sans lui, le défi (session) ne se retrouve pas.
+	jsonOK(w, map[string]any{"options": creation, "challenge_id": challengeID})
 }
 
 func (h *MFAHandler) webAuthnRegisterFinish(w http.ResponseWriter, r *http.Request, userID string) {
@@ -381,7 +420,7 @@ func (h *MFAHandler) webAuthnRegisterFinish(w http.ResponseWriter, r *http.Reque
 	}
 	challengeID := r.URL.Query().Get("challenge")
 	var session webauthn.SessionData
-	if err := h.Store.GetWebAuthnChallenge(r.Context(), challengeID, &session); err != nil {
+	if err := h.Store.GetWebAuthnChallenge(r.Context(), userID, challengeID, &session); err != nil {
 		writeErr(w, r, http.StatusBadRequest, "api.err.webauthn_session")
 		return
 	}
@@ -478,12 +517,16 @@ func (h *MFAHandler) webAuthnLoginFinish(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "uid invalide", http.StatusUnauthorized)
 		return
 	}
+	if blocked, wait := h.lim().blocked(userKey(userID)); blocked {
+		tooManyMFAAttempts(w, wait)
+		return
+	}
 	if h.WebAuthn == nil {
 		writeErr(w, r, http.StatusServiceUnavailable, "api.err.webauthn_unconfigured")
 		return
 	}
 	var session webauthn.SessionData
-	if err := h.Store.GetWebAuthnChallenge(r.Context(), body.ChallengeID, &session); err != nil {
+	if err := h.Store.GetWebAuthnChallenge(r.Context(), userID, body.ChallengeID, &session); err != nil {
 		writeErr(w, r, http.StatusBadRequest, "api.err.webauthn_session")
 		return
 	}
@@ -499,10 +542,20 @@ func (h *MFAHandler) webAuthnLoginFinish(w http.ResponseWriter, r *http.Request)
 		writeErr(w, r, http.StatusBadRequest, "api.err.webauthn_response")
 		return
 	}
-	if _, err := h.WebAuthn.ValidateLogin(user, session, parsedResponse); err != nil {
+	validated, err := h.WebAuthn.ValidateLogin(user, session, parsedResponse)
+	if err != nil || validated.Authenticator.CloneWarning {
+		h.lim().fail(userKey(userID))
+		if err == nil {
+			h.Log.Warn("mfa: compteur de signature WebAuthn non croissant — clé peut-être clonée, connexion refusée", "user", userID)
+		}
 		http.Error(w, "WebAuthn login invalide", http.StatusUnauthorized)
 		return
 	}
+	// Le compteur doit être conservé : sans lui, une clé clonée ne serait jamais détectée.
+	if err := h.Store.UpsertMethod(r.Context(), userID, mfa.MethodWebAuthn, validated, true); err != nil {
+		h.Log.Warn("mfa: compteur de signature WebAuthn non enregistré", "user", userID, "err", err)
+	}
+	h.lim().success(userID)
 	token, err := adminauth.SignJWT(userID, h.JWTSecret, 24*time.Hour)
 	if err != nil {
 		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
@@ -531,6 +584,10 @@ func (h *MFAHandler) challenge(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "token MFA invalide ou expiré", http.StatusUnauthorized)
 		return
 	}
+	if blocked, wait := h.lim().blocked(userKey(userID)); blocked {
+		tooManyMFAAttempts(w, wait)
+		return
+	}
 
 	ok := false
 	switch req.Method {
@@ -539,7 +596,7 @@ func (h *MFAHandler) challenge(w http.ResponseWriter, r *http.Request) {
 			Secret string `json:"secret"`
 		}
 		if err := h.Store.GetMethodConfig(r.Context(), userID, mfa.MethodTOTP, &cfg); err == nil {
-			ok = mfa.TOTPVerify(cfg.Secret, req.Code)
+			ok = mfa.TOTPVerify(cfg.Secret, req.Code) && h.lim().claimTOTP(userID, req.Code)
 		}
 	case mfa.MethodEmail, mfa.MethodSMS, mfa.MethodPushNtfy, mfa.MethodPushGotify:
 		_, ok = h.Store.VerifyChallenge(r.Context(), userID, req.Method, req.Code)
@@ -551,9 +608,11 @@ func (h *MFAHandler) challenge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !ok {
+		h.lim().fail(userKey(userID))
 		http.Error(w, "code MFA invalide", http.StatusUnauthorized)
 		return
 	}
+	h.lim().success(userID)
 
 	token, err := adminauth.SignJWT(userID, h.JWTSecret, 24*time.Hour)
 	if err != nil {

@@ -21,6 +21,10 @@ type Rule struct {
 	Pattern      *regexp.Regexp
 	Targets      []Target // où chercher (URI, body, headers, args...)
 	Message      string
+
+	// required : sous-chaînes (en minuscules) dont une au moins figure dans toute valeur que Pattern reconnaît ;
+	// nil = pas de pré-filtre (voir prefilter.go).
+	required []string
 }
 
 // Severity classe la sévérité d'une correspondance.
@@ -73,7 +77,9 @@ const (
 )
 
 // DefaultRules retourne l'ensemble des règles OWASP CRS-4 simplifiées.
-func DefaultRules() []Rule {
+func DefaultRules() []Rule { return withPrefilters(defaultRulesRaw()) }
+
+func defaultRulesRaw() []Rule {
 	return []Rule{
 		// --- SQLi (CRS 942xxx) ---
 		{
@@ -369,7 +375,7 @@ func CompileCustomRules(customs []router.CustomRule) ([]Rule, error) {
 			Message:      c.Message,
 		})
 	}
-	return out, nil
+	return withPrefilters(out), nil
 }
 
 func parseSeverity(s string) Severity {

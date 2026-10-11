@@ -27,6 +27,10 @@ func BootstrapAdmin(path string) error {
 	}
 	jwtSecret := os.Getenv("GPX_SECURITY_JWT_SECRET")
 	if jwtSecret == "" {
+		// GPX_JWT_SECRET : nom que posent le chart Helm et les exemples de déploiement.
+		jwtSecret = os.Getenv("GPX_JWT_SECRET")
+	}
+	if jwtSecret == "" {
 		var err error
 		jwtSecret, err = randomHex(32)
 		if err != nil {
@@ -49,7 +53,7 @@ func BootstrapAdmin(path string) error {
 		},
 		"server": map[string]any{
 			"api_port":    apiPort,
-			"listen_addr": "0.0.0.0",
+			"listen_addr": envOr("GPX_SERVER_LISTEN_ADDR", "0.0.0.0"),
 		},
 		"storage": map[string]any{
 			"base_path": basePath,
@@ -188,6 +192,11 @@ func BootstrapAgent(path string) error {
 			"poll_interval_s": portainerPollS,
 			"skip_endpoints":  []string{},
 		},
+		// Découverte Kubernetes : le chart Helm l'active avec GPX_KUBERNETES_ENABLED (sans cela la variable était ignorée).
+		"kubernetes": map[string]any{
+			"enabled":   envBoolOr("GPX_KUBERNETES_ENABLED", false),
+			"namespace": envOr("GPX_KUBERNETES_NAMESPACE", ""),
+		},
 		"engine": map[string]any{
 			"log_level": logLevel,
 		},
@@ -227,6 +236,13 @@ func migrateAgentDockerConfig(path string, dockerEnabled bool, dockerRuntime str
 			"url":             portainerURL,
 			"api_key":         portainerAPIKey,
 			"poll_interval_s": portainerPollS,
+		}
+		changed = true
+	}
+	if _, ok := m["kubernetes"]; !ok && os.Getenv("GPX_KUBERNETES_ENABLED") != "" {
+		m["kubernetes"] = map[string]any{
+			"enabled":   envBoolOr("GPX_KUBERNETES_ENABLED", false),
+			"namespace": envOr("GPX_KUBERNETES_NAMESPACE", ""),
 		}
 		changed = true
 	}
