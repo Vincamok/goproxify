@@ -4,6 +4,8 @@ Un plugin est un module WebAssembly que les passerelles exécutent dans une sand
 
 ## Installer et attacher un plugin
 
+**Exemples intégrés** : un Admin neuf propose déjà cinq plugins, sans dépôt à configurer : `path-guard`, `rate-guard`, `body-redact`, `tcp-allow` et `coraza`. La page Plugins les liste dans son catalogue (dépôt « Exemples intégrés », `repo_id` `builtin`) et les installe d'un clic ; `goproxify plugin catalog -repo builtin` et `goproxify plugin fetch <nom> -repo builtin` font de même. Ils viennent des exemples compilés de `examples/plugins` (mêmes octets, vérifiés par un test) et font confiance au binaire de l'Admin : ils s'installent sans signature même quand des clés de confiance sont enregistrées, et apparaissent « intégré » (`signed_by` `builtin`) dans la liste. Ce sont des **exemples** : à lire, à adapter, pas des fonctions du produit — les fonctions standard (compression, anti-bot, cache, WAF…) restent natives. `token-check` n'est pas intégré : son manifeste doit nommer l'hôte de *votre* service d'authentification.
+
 Trois façons de l'attacher à une route : le formulaire (route → Sécurité → onglet **Plugins**, avec l'ordre d'exécution et les champs du manifeste), le JSON de la route, ou des labels Docker (`goproxify.plugins=a,b` et `goproxify.plugin.<nom>.<clé>=<valeur>`, voir [labels.md](labels.md)). Les routes TCP/UDP s'éditent dans le JSON de la route ou par labels.
 
 ```bash
@@ -24,6 +26,8 @@ Les plugins d'une route s'exécutent dans l'ordre de la liste. Ils s'exécutent 
 L'Admin pousse la liste complète aux passerelles. Une passerelle installe les plugins nouveaux ou modifiés (empreinte SHA-256 vérifiée), retire les absents, les stocke **chiffrés** et les recharge à son démarrage : les plugins fonctionnent Admin coupé, y compris après un redémarrage.
 
 ## Signature
+
+**Où elle est vérifiée** : par l'Admin, à l'installation (manuelle ou depuis un dépôt). Les passerelles reçoivent le paquet par le WebSocket Admin → passerelle (authentifié par le secret d'appairage) et ne contrôlent que l'empreinte SHA-256 : elles font confiance à l'Admin, comme pour le reste de ce qu'il leur pousse. Retirer une clé de confiance empêche donc d'installer de nouvelles versions signées par elle, mais **ne retire pas** un plugin déjà installé : supprimez-le ou remplacez-le. `TestPluginChain_SignedRepoToTwoGatewaysWithKeyRotation` rejoue la chaîne complète (dépôt HTTP, installation, deux passerelles, mise à jour avec rotation de clé, clé retirée, module altéré, version non signée, redémarrage d'une passerelle sans l'Admin).
 
 L'empreinte SHA-256 vérifie l'intégrité d'un module, pas son origine. La signature **Ed25519** prouve qui a publié le paquet. Elle couvre le **manifeste normalisé en entier** (politique d'erreur et limites comprises) et l'empreinte du module : un manifeste plus permissif ne peut pas être accolé à un module signé.
 
@@ -51,7 +55,7 @@ Un dépôt est une URL HTTPS qui sert un index JSON :
 
 `wasm_url` peut être relative à l'index. `goproxify plugin repo add -name … -url https://…/index.json`, `plugin catalog` liste les plugins proposés (avec l'état installé et les mises à jour), `plugin fetch <nom> -repo <id> [-version v]` installe ou met à jour ; la page *Plugins* fait la même chose. Sans `-version`, la version la plus récente est choisie (comparaison numérique : 1.10.0 > 1.9.0).
 
-**Un dépôt ne confère aucune confiance.** L'installation depuis un dépôt applique les mêmes contrôles qu'une installation manuelle : empreinte SHA-256 de l'index vérifiée sur le module téléchargé, module compilé et contrat contrôlé, et — dès qu'une clé de confiance est enregistrée — signature obligatoire, d'une de ces clés. Sans clé de confiance, l'empreinte ne protège que du transport : son origine n'est garantie par rien. Le serveur Admin relit l'index lui-même (le client ne fournit jamais l'URL du module), n'accepte que HTTPS, refuse les adresses internes (boucle locale, réseaux privés, link-local, métadonnées cloud) sauf dépôt déclaré `allow_private`, suit au plus 3 redirections et borne l'index (1 Mio) et le module (2 Mio).
+**Un dépôt ne confère aucune confiance.** L'installation depuis un dépôt applique les mêmes contrôles qu'une installation manuelle : empreinte SHA-256 de l'index vérifiée sur le module téléchargé, module compilé et contrat contrôlé, et — dès qu'une clé de confiance est enregistrée — signature obligatoire, d'une de ces clés. Sans clé de confiance, l'empreinte ne protège que du transport : son origine n'est garantie par rien. Le serveur Admin relit l'index lui-même (le client ne fournit jamais l'URL du module), n'accepte que HTTPS, refuse les adresses internes (boucle locale, réseaux privés, link-local, métadonnées cloud) sauf dépôt déclaré `allow_private` (qui n'ouvre jamais le link-local ni les métadonnées cloud), suit au plus 3 redirections et borne l'index (1 Mio) et le module (2 Mio).
 
 ## Manifeste
 
@@ -109,7 +113,7 @@ L'hôte n'importe qu'une fonction : `gpx.log(ptr i32, len i32)` (journal, 1 Kio 
 Un plugin n'a **aucune capacité par défaut**. Celles qu'il déclare dans `capabilities` sont les seules fonctions de l'hôte qu'il peut importer ; un import non déclaré est refusé au chargement.
 
 - **`kv`** — état clé/valeur propre au plugin, en mémoire de la passerelle (perdu au redémarrage et au remplacement du plugin). `gpx.kv_get(kptr,klen) -> i64` (−1 si absent, sinon `ptr<<32|len`), `gpx.kv_set(kptr,klen,vptr,vlen,ttl_ms) -> i32` (0 ok, 1 quota atteint, 2 arguments invalides), `gpx.kv_incr(kptr,klen,delta,ttl_ms) -> i64` (compteur à fenêtre fixe, utile pour une limitation de débit ; `math.MinInt64` en cas d'erreur). Bornes : 1 024 clés, clé de 128 octets, valeur de 4 Kio, durée de vie 1 h par défaut et 24 h au plus.
-- **`http`** — `gpx.http_fetch(ptr,len) -> i64` envoie la requête JSON `{method,url,headers,body,timeout_ms}` et retourne `{status,headers,body,error}`. Seuls les hôtes de `capabilities.http` (noms exacts ou `*.exemple.fr`) sont joignables ; les adresses internes (boucle locale, réseaux privés, link-local, métadonnées cloud) sont refusées *à la connexion* (contre le rebinding DNS) sauf `http_allow_private` ; pas de redirection suivie, pas de proxy d'environnement, méthodes GET/HEAD/POST/PUT/DELETE, 3 appels par hook, réponse tronquée à 64 Kio, délai limité à 80 % du temps restant du hook (déclarez un `timeout_ms` suffisant, 1 000 au plus).
+- **`http`** — `gpx.http_fetch(ptr,len) -> i64` envoie la requête JSON `{method,url,headers,body,timeout_ms}` et retourne `{status,headers,body,error}`. Seuls les hôtes de `capabilities.http` (noms exacts ou `*.exemple.fr`) sont joignables ; les adresses internes (boucle locale, réseaux privés) sont refusées *à la connexion* (contre le rebinding DNS) sauf `http_allow_private`, et le lien local, le multicast et les métadonnées cloud le sont toujours, même avec elle ; pas de redirection suivie, pas de proxy d'environnement, méthodes GET/HEAD/POST/PUT/DELETE, 3 appels par hook, réponse tronquée à 64 Kio, délai limité à 80 % du temps restant du hook (déclarez un `timeout_ms` suffisant, 1 000 au plus).
 
 ## Routes TCP/UDP
 
@@ -131,8 +135,52 @@ Ces chiffres sont une base : à mesurer avec votre propre module et votre trafic
 
 Le plugin d'exemple en TinyGo avec `encoding/json` (412 Kio) coûtait environ **0,5 ms et 270 Kio par appel** en amd64 (1,9 ms en 386 interprété), dix fois le module assemblé à la main ci-dessus ; le même plugin en Rust avec `serde_json` (57 Kio) coûte environ **0,24 ms et 390 Kio**. L'exemple livré, en TinyGo avec une lecture manuelle de l'entrée (8 Kio), coûte environ **75 µs et 180 Kio** : la réflexion d'`encoding/json` et la taille du module dominent, pas le moteur. Sur le chemin chaud, préférez une analyse minimale de l'entrée (et testez-la contre des entrées piégées). Pour un plugin sur le chemin chaud, préférez une analyse minimale de l'entrée plutôt qu'`encoding/json`, optimisez avec `wasm-opt`, et mesurez avec votre module.
 
+## Exemples compilés
+
+`examples/plugins/` contient sept plugins écrits avec de vrais compilateurs ; `go test ./internal/edge/plugins` les charge et exécute leurs décisions (c'est le test de la chaîne réelle : compilateur → moteur). Chacun a son `manifest.json` et son README ; les cinq derniers partagent `_abi/abi.go` (mémoire de l'ABI, lecture du JSON sans `encoding/json`), recopié dans chaque dossier pour que chacun se compile seul.
+
+| Exemple | Ce qu'il exerce | Taille |
+|---|---|---|
+| `path-guard` (TinyGo), `path-guard-rs` (Rust) | hook `request` : refus par préfixe de chemin, en-tête posé | 8 Kio, 57 Kio |
+| `rate-guard` (TinyGo) | capacité `kv` : limitation de débit par client et par route avec `gpx.kv_incr` | 11 Kio |
+| `body-redact` (TinyGo) | hook `response_body` : remplace un texte dans le corps (`replace_body`), corps binaire et jusqu'à 256 Kio | 14 Kio |
+| `token-check` (TinyGo) | capacité `http` : valide une clé d'API auprès d'un service interne avec `gpx.http_fetch` | 12 Kio |
+| `tcp-allow` (TinyGo) | hook `connect` : n'accepte sur une route TCP/UDP que des préfixes d'adresse | 11 Kio |
+| `coraza` (TinyGo) | moteur Coraza (SecLang) en module : les `SecRule` de la route décident du refus ; moteur reconstruit à chaque appel (~7 ms pour quatre règles) | 1,2 Mio |
+
+Ce que les écrire a appris :
+
+- **L'entrée contient des échappements `\uXXXX`.** L'hôte écrit `&`, `<` et `>` en `&`, `<`, `>`, et un caractère hors du plan de base en paire de substitution. Un lecteur JSON écrit à la main qui ne les décode pas altère silencieusement la valeur : une clé d'API qui contient `&` ne correspond plus à rien. `_abi/abi.go` les décode (paires comprises) ; `path-guard`, plus ancien, ne le fait pas (voir son README).
+- **La mémoire d'un plugin à corps se dimensionne sur le corps.** `body-redact` traite 256 Kio avec 64 pages (4 Mio) : le corps arrive en base64 (×1,33), est décodé, remplacé puis ré-encodé, soit une dizaine de fois sa taille à un instant ou un autre. Avec 32 pages le même appel s'arrête sur une erreur d'allocation. Lire une valeur sans antislash sans la recopier (`str` dans `abi.go`) évite l'essentiel de cette amplification.
+- **Un moteur complet se paie à chaque appel.** `coraza` (1,2 Mio) reconstruit Coraza et ses règles à chaque requête, faute d'état entre deux appels : environ 7 ms pour quatre règles (amd64). Il tient dans les maxima d'un plugin (256 pages, 1 s) avec un jeu de règles réduit, pas avec OWASP CRS en entier. Coraza se compile avec le tag `no_fs_access`, sinon il tente d'écrire sur un disque que le module n'a pas.
+- **Un plugin dont les limites sont trop justes échoue proprement** (`on_error`), il ne corrompt rien : c'est ce qui a signalé les deux points précédents.
+
+## Mesure en charge
+
+Mesuré avec les exemples ci-dessus, sur un Ryzen 7 5700G (16 threads, moteur compilé amd64), une vraie passerelle (tout le middleware d'une route), un vrai backend HTTP et 64 clients en keep-alive, **tout sur la même machine** : le client, le backend et la passerelle se partagent les cœurs, les débits sont donc un plancher, pas une capacité. Le backend répond 3 Kio.
+
+| Route | Requêtes/s | Latence p50 | p95 | p99 |
+|---|---|---|---|---|
+| sans plugin | 40 800 | 1,1 ms | 3,9 ms | 4,9 ms |
+| `path-guard` | 16 600 | 3,5 ms | 7,8 ms | 10,3 ms |
+| `rate-guard` (kv) | 17 800 | 3,4 ms | 7,5 ms | 10,0 ms |
+| `body-redact` (corps de 3 Kio) | 7 200 | 5,7 ms | 26,1 ms | 37,7 ms |
+| les trois empilés | 5 300 | 9,5 ms | 29,4 ms | 39,9 ms |
+
+Aucune erreur sur ces mesures ; sous concurrence, chaque scénario sert des réponses correctes (`TestPluginLoad_CorrectUnderConcurrency`). Pour les refaire : `GPX_LOAD=1 GOARCH=amd64 go test ./internal/edge -run TestPluginLoad_Report -v -count=1` (`GPX_LOAD_CLIENTS`, `GPX_LOAD_SECONDS`) et `go test ./internal/edge -bench PluginChain`.
+
+Ce qu'on en retient :
+
+- **Un plugin de requête divise le débit par deux et demi à saturation** (de 40 800 à 16 600 requêtes/s ici), pour un surcoût de l'ordre de 0,1 à 0,16 ms par appel en séquence (`BenchmarkTinyGoPathGuard`, `BenchmarkExamplePlugins` : 110 à 160 µs lors de cette mesure, 75 µs relevés plus haut sur une machine au repos). Chaque appel alloue environ 176 Kio (instance neuve) : à ce débit, c'est le ramasse-miettes qui plafonne, pas le code du plugin.
+- **Un hook de corps coûte beaucoup plus** : environ 1,1 ms par appel pour 3 Kio dans `body-redact` (décodage base64, recherche, ré-encodage dans le module), et la réponse est retenue jusqu'à son terme. Les p95 et p99 montent à 26 et 38 ms. À réserver aux routes qui en ont besoin.
+- **Les coûts s'additionnent** : trois plugins empilés coûtent à peu près la somme, pas le maximum.
+- **L'interpréteur** (386, autres architectures que amd64 et arm64) est environ vingt fois plus lent que le moteur compilé sur un corps de plusieurs centaines de Kio : n'en tirez aucun chiffre de capacité.
+- Non mesuré : plusieurs passerelles, un backend distant, des corps de plus de 256 Kio, des plugins qui appellent `gpx.http_fetch` sous charge (le temps est alors celui du service appelé), et la mémoire résidente sur plusieurs heures.
+
 ## Limites
 
 - Pas d'état partagé entre passerelles (le `kv` est local à une passerelle).
 - Pas de compilateur fourni : produisez le WASM avec la chaîne de votre langage (Rust `wasm32-unknown-unknown`, TinyGo `wasm-unknown`). `examples/plugins/path-guard` est un plugin Go compilé avec TinyGo 0.43 (`tinygo build -target=wasm-unknown -no-debug -scheduler=none`) et `examples/plugins/path-guard-rs` le même plugin en Rust 1.99 (`cargo build --release --target wasm32-unknown-unknown`) ; la suite de tests exécute les deux. En Rust, la pile par défaut de 1 Mio fait dépasser `memory_pages` (16 par défaut) : réduisez-la avec `-C link-arg=-zstack-size=65536` (voir le README de l'exemple).
-- Pas de mesure en charge réelle (seulement le micro-benchmark ci-dessus).
+- La mesure en charge ci-dessus tient sur une seule machine (client, backend et passerelle ensemble) : elle donne l'ordre de grandeur du surcoût, pas une capacité. Rien n'a été mesuré avec plusieurs passerelles ni sur la durée (mémoire résidente).
+- Un appel instancie un module neuf (environ 176 Kio alloués, 110 à 160 µs) : un plugin sur une route à très fort débit en reste le premier consommateur de CPU et de ramasse-miettes. Une instance réutilisée entre appels romprait la garantie « pas d'état entre deux requêtes » ; ce n'est pas fait.
+- Aucun SDK : l'ABI (mémoire, JSON d'entrée et de sortie) est à réécrire dans chaque langage ; `examples/plugins/_abi/abi.go` est le point de départ pour TinyGo.

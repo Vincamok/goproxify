@@ -751,6 +751,10 @@ Force un rafraîchissement complet (téléchargement inconditionnel, garde-fou d
 
 Lecture pour tout compte authentifié ; écritures réservées aux admins / superadmins et aux comptes `user` disposant d'au moins un grant `write`.
 
+### Plugins intégrés (Admin `0.137.0`, `coraza` ajouté en `0.138.0`)
+
+`GET /api/v1/plugin-repos/catalog` ajoute toujours les entrées du dépôt intégré (`repo_id` `builtin`, `repo_name` « Exemples intégrés », `builtin: true`, jamais `signed`) ; `?repo=builtin` ne renvoie qu'elles et ne contacte aucun dépôt distant, `?repo=<autre id>` les écarte. `POST /api/v1/plugin-repos/install` avec `repo_id: "builtin"` installe l'exemple nommé sans signature (`201`, ou `200` s'il remplace une version installée ; `404` si le nom est inconnu) ; `signed_by` vaut `builtin`.
+
 ### `/api/v1/plugins`
 
 Plugins WebAssembly (voir [plugins.md](plugins.md), ADR 0008). **Admin uniquement** ; scope PAT `audit:read` (lecture) / `security:write` (écriture), car installer un plugin fait exécuter du code sur les passerelles.
@@ -1736,6 +1740,10 @@ Codes d'erreur :
 ### Inscription d'une clé de sécurité (Admin `0.135.12`)
 
 `POST /api/v1/auth/mfa/webauthn/register/begin` renvoie `{ "options": <PublicKeyCredentialCreationOptions>, "challenge_id": "…" }` ; `POST …/register/finish?challenge=<challenge_id>` consomme ce défi (lié à l'utilisateur, à usage unique, 5 minutes). Les codes de secours se saisissent avec ou sans tirets, en majuscules ou en minuscules.
+
+### Envoi du code à la connexion (Admin `0.136.0`)
+
+`POST /api/v1/auth/mfa/send` `{ "mfa_token": "…", "method": "email|sms|push_ntfy|push_gotify" }` — public, authentifié par le `mfa_token` de `POST /auth/login`. `202` : code émis (6 chiffres, 5 minutes, usage unique) vers le destinataire enregistré à l'activation, à saisir via `POST /auth/mfa/challenge`. `400` : méthode sans code (TOTP, clé de sécurité, codes de secours), absente ou non confirmée ; `401` : `mfa_token` invalide ; `429` : limite d'envois ou second facteur verrouillé ; `502` : envoi impossible (SMTP, fournisseur SMS, canal push).
 
 ### Second facteur : envois de codes et canal push (Admin `0.135.17`)
 

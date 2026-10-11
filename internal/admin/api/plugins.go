@@ -50,6 +50,10 @@ type pluginRequest struct {
 	SHA256    string           `json:"sha256"`
 	Wasm      []byte           `json:"wasm"`      // base64 en JSON
 	Signature string           `json:"signature"` // Ed25519 en base64, voir plugins.Sign
+
+	// builtin : paquet livré avec l'Admin (pluginlib), jamais lu du JSON d'une requête. Il fait confiance au binaire
+	// de l'Admin comme le reste du code : pas de signature à présenter, même quand des clés de confiance existent.
+	builtin bool
 }
 
 func (h *PluginsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -165,7 +169,12 @@ func (h *PluginsHandler) installPackage(ctx context.Context, req pluginRequest, 
 	}
 	manifest := p.Manifest
 	p.Close(ctx)
-	signedBy, sigErr := verifyPluginSignature(ctx, h.DB, manifest, got, req.Signature)
+	signedBy, sigErr := "", ""
+	if req.builtin {
+		signedBy = "builtin"
+	} else {
+		signedBy, sigErr = verifyPluginSignature(ctx, h.DB, manifest, got, req.Signature)
+	}
 	if sigErr != "" {
 		return fail(http.StatusBadRequest, sigErr)
 	}

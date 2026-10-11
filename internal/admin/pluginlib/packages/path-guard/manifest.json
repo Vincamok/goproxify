@@ -1,0 +1,10 @@
+{
+  "name": "path-guard", "version": "1.0.0", "api_version": 1,
+  "hooks": ["request"],
+  "on_error": "deny",
+  "limits": { "memory_pages": 16, "timeout_ms": 50 },
+  "fields": [
+    { "key": "blocked_prefix", "label": "Préfixe de chemin refusé", "kind": "text" },
+    { "key": "header", "label": "En-tête portant l'IP du client", "kind": "text" }
+  ]
+}

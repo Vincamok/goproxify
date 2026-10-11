@@ -70,3 +70,39 @@ func TestInternalAPI_AgentTokenIsConfinedToAgentRoutes(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentIdentityBinding(t *testing.T) {
+	ts, err := edgetokens.Open(filepath.Join(t.TempDir(), "tokens.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ts.Close()
+	tokA, _, _ := ts.Create("node-a", edgetokens.RoleAgent, 0)
+	tokAdmin, _, _ := ts.Create("admin", edgetokens.RoleAdmin, 0)
+	s := &Server{tokenStore: ts}
+
+	call := func(token, claimed string) bool {
+		req := httptest.NewRequest(http.MethodPost, "/internal/v1/agent/heartbeat", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		return s.agentMayActAs(httptest.NewRecorder(), req, claimed)
+	}
+
+	t.Setenv("GPX_AGENT_BIND_IDENTITY", "")
+	if !call(tokA, "node-b") {
+		t.Fatal("sans l'option, comportement inchangé")
+	}
+
+	t.Setenv("GPX_AGENT_BIND_IDENTITY", "true")
+	if !call(tokA, "node-a") {
+		t.Fatal("un Agent doit pouvoir agir en son nom")
+	}
+	if call(tokA, "node-b") {
+		t.Fatal("un Agent ne doit pas agir au nom d'un autre")
+	}
+	if call(tokA, "") {
+		t.Fatal("un nom absent ne doit pas passer")
+	}
+	if !call(tokAdmin, "node-b") {
+		t.Fatal("un jeton d'administration (relais entre passerelles) n'est pas lié à un Agent")
+	}
+}

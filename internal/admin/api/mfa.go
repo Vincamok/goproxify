@@ -72,6 +72,10 @@ func (h *MFAHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.challenge(w, r)
 		return
 	}
+	if path == "send" && r.Method == http.MethodPost {
+		h.loginSend(w, r)
+		return
+	}
 	if path == "webauthn/login/begin" && r.Method == http.MethodPost {
 		h.webAuthnLoginBegin(w, r)
 		return

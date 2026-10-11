@@ -1,0 +1,11 @@
+{
+  "name": "body-redact", "version": "1.0.0", "api_version": 1,
+  "hooks": ["response_body"],
+  "on_error": "deny",
+  "on_oversize": "skip",
+  "limits": { "memory_pages": 64, "timeout_ms": 500, "max_body_bytes": 262144 },
+  "fields": [
+    { "key": "needle", "label": "Texte à masquer", "kind": "text", "required": true },
+    { "key": "replacement", "label": "Remplacement (défaut : ***)", "kind": "text" }
+  ]
+}

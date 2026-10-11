@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
+	"github.com/vincamok/goproxify/internal/admin/pluginlib"
 	"github.com/vincamok/goproxify/internal/edge/plugins"
 )
 
@@ -85,6 +86,7 @@ type CatalogEntry struct {
 	Hooks            []string `json:"hooks"`
 	SHA256           string   `json:"sha256"`
 	Signed           bool     `json:"signed"`
+	Builtin          bool     `json:"builtin,omitempty"`
 	InstalledVersion string   `json:"installed_version,omitempty"`
 	UpdateAvailable  bool     `json:"update_available"`
 }
@@ -302,7 +304,7 @@ func (h *PluginReposHandler) catalog(w http.ResponseWriter, r *http.Request) {
 	installed := installedVersions(r.Context(), h.DB)
 	var (
 		mu      sync.Mutex
-		entries = []CatalogEntry{}
+		entries = builtinCatalog(installed, r.URL.Query().Get("repo"))
 		errs    = []map[string]string{}
 		wg      sync.WaitGroup
 		sem     = make(chan struct{}, maxRepoParallel)
@@ -351,6 +353,10 @@ func (h *PluginReposHandler) install(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.RepoID == "" || req.Name == "" {
 		http.Error(w, "repo_id et name requis", http.StatusBadRequest)
+		return
+	}
+	if req.RepoID == pluginlib.RepoID {
+		h.installBuiltin(w, r, req.Name)
 		return
 	}
 	repos, _ := loadRepos(r.Context(), h.DB)
@@ -405,6 +411,51 @@ func (h *PluginReposHandler) install(w http.ResponseWriter, r *http.Request) {
 		name = entry.Name
 	}
 	info, created, ierr := h.Plugins.installPackage(r.Context(), pluginRequest{Manifest: entry.Manifest, SHA256: entry.SHA256, Wasm: wasm, Signature: entry.Signature}, name)
+	if ierr != nil {
+		http.Error(w, ierr.msg, ierr.status)
+		return
+	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(info)
+}
+
+// builtinCatalog : les plugins livrés avec l'Admin, présents quel que soit le dépôt configuré (aucun par défaut). Un
+// filtre ?repo= qui vise un autre dépôt les écarte.
+func builtinCatalog(installed map[string]string, want string) []CatalogEntry {
+	out := []CatalogEntry{}
+	if want != "" && want != pluginlib.RepoID {
+		return out
+	}
+	for _, e := range pluginlib.All() {
+		ce := CatalogEntry{
+			RepoID: pluginlib.RepoID, RepoName: pluginlib.RepoName, Name: e.Name, Version: e.Version,
+			Description: e.Description, Hooks: e.Manifest.Hooks, SHA256: e.SHA256, Builtin: true,
+		}
+		if v, ok := installed[e.Name]; ok {
+			ce.InstalledVersion = v
+			ce.UpdateAvailable = versionLess(v, e.Version)
+		}
+		out = append(out, ce)
+	}
+	return out
+}
+
+func (h *PluginReposHandler) installBuiltin(w http.ResponseWriter, r *http.Request, name string) {
+	e, ok := pluginlib.Get(name)
+	if !ok {
+		http.Error(w, "plugin introuvable dans les exemples intégrés", http.StatusNotFound)
+		return
+	}
+	target := ""
+	if _, replacing := installedVersions(r.Context(), h.DB)[e.Name]; replacing {
+		target = e.Name
+	}
+	info, created, ierr := h.Plugins.installPackage(r.Context(), pluginRequest{Manifest: e.Manifest, SHA256: e.SHA256, Wasm: e.Wasm, builtin: true}, target)
 	if ierr != nil {
 		http.Error(w, ierr.msg, ierr.status)
 		return

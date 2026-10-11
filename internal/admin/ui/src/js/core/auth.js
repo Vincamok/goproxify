@@ -43,6 +43,7 @@ async function doLogin() {
         doWebAuthnLogin();
         return;
       }
+      _mfaSendCode();
       setTimeout(() => codeEl?.focus(), 50);
       return;
     }
@@ -65,7 +66,23 @@ function _selectMFAMethod(method, btn) {
   if (codeField) codeField.style.display = method === 'webauthn' ? 'none' : '';
   if (method === 'webauthn') {
     doWebAuthnLogin();
+  } else {
+    _mfaSendCode();
   }
+}
+
+// Email, SMS et push : le code doit être envoyé à la connexion, rien ne l'émet avant la saisie.
+const _MFA_SENDING = ['email', 'sms', 'push_ntfy', 'push_gotify'];
+async function _mfaSendCode() {
+  if (!_MFA_SENDING.includes(_mfaMethod)) return;
+  try {
+    const res = await fetch('/api/v1/auth/mfa/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mfa_token: _mfaToken, method: _mfaMethod }),
+    });
+    if (!res.ok) toast((await res.text()).trim() || t('login.mfa_invalid'), 'error');
+  } catch (e) { toast(e.message, 'error'); }
 }
 
 async function doMFAChallenge() {

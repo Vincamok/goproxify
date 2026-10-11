@@ -1,0 +1,1 @@
+Moteur Coraza (SecLang, compatible OWASP CRS en partie) en module WASM : vos directives SecRule décident du refus. Le moteur est reconstruit à chaque requête (environ 7 ms pour quelques règles) : réservez-le aux routes sensibles. Le WAF natif de la passerelle reste le choix par défaut.

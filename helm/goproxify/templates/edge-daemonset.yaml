@@ -20,9 +20,12 @@ spec:
       labels:
         app.kubernetes.io/name: {{ include "goproxify.name" . }}
         app.kubernetes.io/component: edge
-      {{- with .Values.podAnnotations }}
-      annotations: {{- toYaml . | nindent 8 }}
-      {{- end }}
+      annotations:
+        # Un changement de secret redémarre les pods : les variables d'environnement tirées d'un Secret ne se relisent pas.
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
       {{- if .Values.security.edgeHostNetwork }}
       hostNetwork: true
@@ -60,6 +63,17 @@ spec:
                 secretKeyRef:
                   name: {{ include "goproxify.fullname" . }}-secret
                   key: pairing-secret
+            # Nœuds nommés d'après le nœud Kubernetes à l'appairage comme ensuite : un Agent ne peut pas agir au nom d'un autre.
+            {{- if .Values.global.previousPairingSecret }}
+            # Rotation du secret : l'ancien ne sert qu'à relire les copies locales chiffrées (routes, certificats, plugins).
+            - name: GPX_PAIRING_SECRET_PREVIOUS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "goproxify.fullname" . }}-secret
+                  key: previous-pairing-secret
+            {{- end }}
+            - name: GPX_AGENT_BIND_IDENTITY
+              value: "true"
             - name: GPX_AGENT_PAIRING_ROOT
               value: {{ .Values.security.agentPairingWithRootSecret | default false | quote }}
             # Une passerelle par nœud : sans nom propre, toutes se nommeraient « goproxify-edge » et partageraient

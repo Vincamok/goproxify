@@ -4,6 +4,7 @@
 package portal
 
 import (
+	edgecache "github.com/vincamok/goproxify/internal/edge/cache"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -52,7 +53,10 @@ type Store struct {
 	mu   sync.RWMutex
 	path string
 	key  [32]byte
-	snap Snapshot
+	// previous : clés des anciens secrets (edgecache.PreviousSecretsEnv), en lecture seulement : la base se relit après
+	// une rotation du secret d'appairage dont elle dérive, puis se réécrit avec la clé courante.
+	previous [][32]byte
+	snap     Snapshot
 
 	onChange  func() // appelé (dans une goroutine) après une modification locale réplicable
 	lastStamp int64
@@ -64,9 +68,16 @@ func NewStore(path, secret string) *Store {
 	key := sha256.Sum256([]byte(secret))
 	var nb [2]byte
 	_, _ = rand.Read(nb[:])
+	var previous [][32]byte
+	for _, old := range strings.Split(os.Getenv(edgecache.PreviousSecretsEnv), ",") {
+		if old = strings.TrimSpace(old); old != "" && old != secret {
+			previous = append(previous, sha256.Sum256([]byte(old)))
+		}
+	}
 	return &Store{
 		path:      path,
 		key:       key,
+		previous:  previous,
 		stampNode: int64(binary.BigEndian.Uint16(nb[:])) % 1000,
 		snap: Snapshot{
 			Vaults:       map[string][]byte{},
@@ -89,6 +100,15 @@ func (s *Store) Load() error {
 		return err
 	}
 	plain, err := decryptWithKey(data, s.key)
+	usedPrevious := false
+	if err != nil {
+		for _, key := range s.previous {
+			if p, perr := decryptWithKey(data, key); perr == nil {
+				plain, err, usedPrevious = p, nil, true
+				break
+			}
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("portal store decrypt: %w", err)
 	}
@@ -116,6 +136,9 @@ func (s *Store) Load() error {
 		}
 	}
 	s.snap = snap
+	if usedPrevious {
+		_ = s.persistLocked() // réécrit avec la clé courante
+	}
 	return nil
 }
 

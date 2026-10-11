@@ -5,7 +5,10 @@ package edge
 
 import (
 	"net/http"
+	"os"
 	"strings"
+
+	edgetokens "github.com/vincamok/goproxify/internal/edge/tokens"
 )
 
 // Un jeton d'Agent est remis à tout hôte qui s'appaire : il circule en clair entre l'Agent et la passerelle et vit sur
@@ -36,5 +39,31 @@ func isAgentDiscoveredRouteID(id string) bool {
 			return true
 		}
 	}
+	return false
+}
+
+// Avec GPX_AGENT_BIND_IDENTITY=true, un Agent ne peut agir qu'au nom de l'Agent dont le jeton porte le nom : sans cela,
+// n'importe quel Agent pouvait se déclarer un autre dans son heartbeat (et faire purger les routes de celui-ci) ou
+// annoncer des routes à son nom. Désactivé par défaut : un jeton émis sous un autre nom que l'identité actuelle de
+// l'Agent (renommage après l'appairage) serait refusé jusqu'à un nouvel appairage ; le chart l'active.
+func agentIdentityStrict() bool { return os.Getenv("GPX_AGENT_BIND_IDENTITY") == "true" }
+
+// agentMayActAs répond 403 et renvoie false si le jeton d'Agent présenté n'est pas celui de l'Agent « claimed ».
+func (s *Server) agentMayActAs(w http.ResponseWriter, r *http.Request, claimed string) bool {
+	if !agentIdentityStrict() || s.tokenStore == nil {
+		return true
+	}
+	bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	role, ok, err := s.tokenStore.RoleOf(bearer)
+	if err != nil || !ok || role != edgetokens.RoleAgent {
+		return true
+	}
+	if claimed != "" && s.tokenStore.NameOf(bearer) == claimed {
+		return true
+	}
+	if s.log != nil {
+		s.log.Warn("agent: jeton utilisé pour un autre Agent, refusé", "annoncé", claimed, "path", r.URL.Path)
+	}
+	http.Error(w, "403 Forbidden", http.StatusForbidden)
 	return false
 }

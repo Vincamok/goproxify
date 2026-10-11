@@ -4,6 +4,7 @@
 package plugins
 
 import (
+	"github.com/vincamok/goproxify/internal/ssrf"
 	"context"
 	"encoding/json"
 	"errors"
@@ -53,8 +54,8 @@ type Capabilities struct {
 	KV bool `json:"kv,omitempty"`
 	// HTTP : noms d'hôtes joignables par gpx.http_fetch (exacts, ou « *.exemple.fr » pour les sous-domaines).
 	HTTP []string `json:"http,omitempty"`
-	// HTTPAllowPrivate lève l'interdiction des adresses privées, loopback et link-local (métadonnées cloud
-	// comprises) : à n'activer que pour joindre un service interne connu.
+	// HTTPAllowPrivate lève l'interdiction des adresses privées et de la boucle locale : à n'activer que pour joindre
+	// un service interne connu. Le lien local, le multicast et les métadonnées cloud restent refusés.
 	HTTPAllowPrivate bool `json:"http_allow_private,omitempty"`
 }
 
@@ -331,8 +332,16 @@ func SafeHTTPClient(timeout time.Duration, allowPrivate bool) *http.Client {
 			if err != nil {
 				return err
 			}
-			if ip := net.ParseIP(host); ip != nil && blockedIP(ip) && !allowPrivate {
-				return fmt.Errorf("adresse %s refusée (réseau interne)", host)
+			if ip := net.ParseIP(host); ip != nil {
+				// http_allow_private ouvre le réseau interne (un service d'authentification, un dépôt maison), jamais
+				// le lien local, le multicast ni les métadonnées des fournisseurs cloud, qui livrent des identifiants :
+				// aucun service légitime n'y est, et un manifeste hostile le demanderait sans que l'opérateur le voie.
+				if ssrf.RefusedAddr(ip) {
+					return fmt.Errorf("adresse %s refusée (lien local, multicast ou métadonnées du cloud)", host)
+				}
+				if blockedIP(ip) && !allowPrivate {
+					return fmt.Errorf("adresse %s refusée (réseau interne)", host)
+				}
 			}
 			return nil
 		},

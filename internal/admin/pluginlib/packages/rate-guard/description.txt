@@ -1,0 +1,1 @@
+Limite le débit par client et par route (429 au-delà de N requêtes par fenêtre) avec un compteur tenu par la passerelle. Le compteur est propre à chaque passerelle et perdu au redémarrage.

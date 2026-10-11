@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/vincamok/goproxify/internal/edge/router"
@@ -46,7 +47,17 @@ type Info struct {
 type Store struct {
 	path string
 	key  [32]byte // AES-256-GCM
+	// previous : clés des secrets précédents (GPX_PAIRING_SECRET_PREVIOUS), essayées en lecture seulement.
+	previous [][32]byte
 }
+
+// PreviousSecretsEnv liste les anciens secrets d'appairage, séparés par des virgules. Changer GPX_PAIRING_SECRET change la
+// clé de chiffrement des copies locales de la passerelle (routes, certificats, plugins, configurations) : sans l'ancien
+// secret, elles ne se déchiffrent plus et la passerelle repart sans rien tant que l'Admin ne lui renvoie pas tout —
+// exactement ce que l'autonomie (ADR 0006) doit éviter. Les fichiers lus avec un ancien secret sont réécrits avec le
+// courant ; retirez la variable une fois la rotation terminée. Elle ne sert qu'à lire des données locales : elle
+// n'authentifie jamais rien (WebSocket Admin, appairage), pour qu'un secret révoqué ne reste pas valable.
+const PreviousSecretsEnv = "GPX_PAIRING_SECRET_PREVIOUS"
 
 // ResolveSecret choisit la clé de chiffrement du cache.
 // Priorité : auth_token explicite → GPX_CONTROL_PLANE_AUTH_TOKEN → GPX_PAIRING_SECRET.
@@ -72,7 +83,13 @@ func ResolveSecret(authToken string) string {
 // secret : passer ResolveSecret(...) pour la clé de production.
 func New(path, secret string) *Store {
 	key := sha256.Sum256([]byte(secret))
-	return &Store{path: path, key: key}
+	st := &Store{path: path, key: key}
+	for _, old := range strings.Split(os.Getenv(PreviousSecretsEnv), ",") {
+		if old = strings.TrimSpace(old); old != "" && old != secret {
+			st.previous = append(st.previous, sha256.Sum256([]byte(old)))
+		}
+	}
+	return st
 }
 
 // Save chiffre et écrit un snapshot sur disque.
@@ -96,14 +113,7 @@ func (s *Store) Save(snap *Snapshot) error {
 // Load déchiffre et retourne le snapshot du disque.
 // nil, nil = fichier absent. err = lecture/déchiffrement/parsing.
 func (s *Store) Load() (*Snapshot, error) {
-	data, err := os.ReadFile(s.path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return s.decode(data, s.key)
+	return s.LoadWithFallbacks()
 }
 
 // LoadWithFallbacks tente la clé courante puis d'anciennes clés (migration).
@@ -122,6 +132,13 @@ func (s *Store) LoadWithFallbacks(legacySecrets ...string) (*Snapshot, error) {
 		return snap, nil
 	}
 	primaryErr := err
+
+	for _, key := range s.previous {
+		if old, err := s.decode(data, key); err == nil {
+			_ = s.Save(old)
+			return old, nil
+		}
+	}
 
 	seen := map[[32]byte]bool{s.key: true}
 	for _, secret := range legacySecrets {
@@ -198,11 +215,23 @@ func (s *Store) LoadFile(path string, v any) (bool, error) {
 		return false, err
 	}
 	plain, err := decryptWithKey(data, s.key)
+	usedPrevious := false
+	if err != nil {
+		for _, key := range s.previous {
+			if p, perr := decryptWithKey(data, key); perr == nil {
+				plain, err, usedPrevious = p, nil, true
+				break
+			}
+		}
+	}
 	if err != nil {
 		return false, fmt.Errorf("déchiffrement %s : %w", filepath.Base(path), err)
 	}
 	if err := json.Unmarshal(plain, v); err != nil {
 		return false, fmt.Errorf("parsing %s : %w", filepath.Base(path), err)
+	}
+	if usedPrevious {
+		_ = s.SaveFile(path, v) // réécrit avec le secret courant
 	}
 	return true, nil
 }

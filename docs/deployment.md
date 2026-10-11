@@ -751,6 +751,24 @@ volumes:
 
 ---
 
+## Changer le secret d'appairage
+
+À faire après une fuite, un départ, ou périodiquement. Le secret `GPX_PAIRING_SECRET` fait deux choses sur la passerelle : il authentifie le WebSocket de l'Admin et l'appairage des Agents, et **il dérive la clé qui chiffre ses copies locales** (routes, certificats, plugins, réglages, règles automatiques, portail Access). Le changer sans précaution rend ces copies illisibles : la passerelle repart « sans config » et ne sert plus rien de ce qu'elle tenait de l'Admin tant qu'il ne lui renvoie pas tout — c'est exactement ce que l'autonomie (ADR 0006) doit éviter. Mesuré sur un cluster : après un changement sans précaution, la passerelle journalise `cache local illisible`, `paquet ignoré` pour chaque plugin et `copie locale illisible` pour les réglages, le portail et les règles.
+
+Procédure (le principe est le même avec Compose, Portainer ou Helm) :
+
+1. Générez le nouveau secret (`openssl rand -hex 32`) et la clé d'Agent qui en dérive (`printf %s "goproxify/agent-pairing/v1:<nouveau secret>" | sha256sum | cut -d' ' -f1`).
+2. **Passerelles** : `GPX_PAIRING_SECRET=<nouveau>` et `GPX_PAIRING_SECRET_PREVIOUS=<ancien>` (plusieurs anciens séparés par des virgules). **Admin** : `GPX_PAIRING_SECRET=<nouveau>`. **Agents** : `GPX_AGENT_PAIRING_KEY=<nouvelle clé>`. Avec le chart : `--set global.pairingSecret=<nouveau> --set global.previousPairingSecret=<ancien>` ; un changement de secret redémarre seul les pods (annotation `checksum/secret`).
+3. Redémarrez Admin, passerelles et Agents. Le WebSocket Admin → passerelle ne se rétablit que lorsque les deux ont le nouveau secret : les passerelles continuent de servir pendant ce temps, avec leurs copies locales relues grâce à l'ancien secret et **réécrites avec le nouveau** au démarrage.
+4. Une fois toutes les passerelles redémarrées avec la variable, retirez `GPX_PAIRING_SECRET_PREVIOUS` (une passerelle qui n'a pas encore redémarré garde ses copies sous l'ancienne clé : attendez qu'elles l'aient toutes fait). Redémarrez une dernière fois pour vérifier : plus rien ne dépend de l'ancien secret.
+
+À savoir :
+
+- **`GPX_PAIRING_SECRET_PREVIOUS` ne sert qu'à relire des données locales** ; il n'authentifie jamais rien. Après une fuite, l'ancien secret cesse donc d'ouvrir `/ws/admin` et l'appairage dès le redémarrage, même si la variable reste posée.
+- **Les jetons déjà émis restent valables** : l'ancien secret ne permet plus d'en obtenir, mais un jeton d'Agent ou de passerelle volé continue de fonctionner jusqu'à sa révocation (Admin → Jetons, ou suppression du nœud). Après une fuite, révoquez-les et réappairez les nœuds.
+- **Le portail Access** dérive sa clé du même secret quand `GPX_PORTAL_MASTER_KEY` n'est pas posée : la base du portail (coffres d'identifiants) suit la même règle. Poser `GPX_PORTAL_MASTER_KEY` dès le départ la rend indépendante du secret d'appairage ; la changer est une autre opération.
+- **Vérifié** sur un cluster à Admin coupé : secret changé sans l'ancien → cache, deux plugins, réglages, règles et portail illisibles ; avec `GPX_PAIRING_SECRET_PREVIOUS` → tout relu, plugins chargés (2) ; redémarrage sans la variable → plugins chargés (2). Admin remis en route : passerelle et Agent en ligne, plugins conservés, aucun refus côté Agent.
+
 ## Kubernetes (chart Helm)
 
 ```bash
@@ -759,7 +777,7 @@ helm install goproxify ./helm/goproxify \
   --set global.pairingSecret=$(openssl rand -hex 32)
 ```
 
-`global.pairingSecret` est **obligatoire** : c'est le `GPX_PAIRING_SECRET` que partagent l'Admin et la passerelle (l'ancien `global.authToken` est encore lu). Les Agents n'en reçoivent pas : le chart leur donne `GPX_AGENT_PAIRING_KEY`, dérivée dans le secret `agent-pairing-key` ; `security.agentPairingWithRootSecret: true` ré-accepte le secret racine d'un Agent (anciennes installations). Le chart crée :
+`global.pairingSecret` est **obligatoire** : c'est le `GPX_PAIRING_SECRET` que partagent l'Admin et la passerelle (l'ancien `global.authToken` est encore lu). Les Agents n'en reçoivent pas : le chart leur donne `GPX_AGENT_PAIRING_KEY`, dérivée dans le secret `agent-pairing-key` ; `security.agentPairingWithRootSecret: true` ré-accepte le secret racine d'un Agent (anciennes installations). Le chart pose aussi `GPX_AGENT_BIND_IDENTITY=true` sur les passerelles : un Agent ne peut agir (heartbeat, routes, événements) qu'au nom sous lequel son jeton a été émis. Hors chart, activez-le une fois les Agents appairés sous leur nom définitif. Le chart crée :
 
 | Objet | Rôle |
 |---|---|

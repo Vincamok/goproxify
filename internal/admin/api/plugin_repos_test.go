@@ -116,7 +116,7 @@ func TestRepos_CatalogInstallUpdate(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 			t.Fatalf("catalogue : %v %s", err, rec.Body.String())
 		}
-		return out.Entries, len(out.Errors)
+		return withoutBuiltin(out.Entries), len(out.Errors)
 	}
 	entries, errs := cat()
 	if errs != 0 || len(entries) != 3 || entries[0].Name != "autre" || entries[1].Version != "1.10.0" {
@@ -215,6 +215,7 @@ func TestRepos_BrokenRepoIsReportedNotFatal(t *testing.T) {
 		Errors  []map[string]string `json:"errors"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	out.Entries = withoutBuiltin(out.Entries)
 	if len(out.Entries) != 1 || len(out.Errors) != 1 || out.Errors[0]["repo_name"] != "casse" {
 		t.Fatalf("catalogue = %s", rec.Body.String())
 	}
@@ -236,4 +237,15 @@ func TestVersionLess(t *testing.T) {
 			t.Errorf("versionLess(%s, %s) = %v", c.a, c.b, got)
 		}
 	}
+}
+
+// Les exemples intégrés figurent toujours au catalogue : ces tests ne regardent que les dépôts qu'ils créent.
+func withoutBuiltin(in []CatalogEntry) []CatalogEntry {
+	out := []CatalogEntry{}
+	for _, e := range in {
+		if !e.Builtin {
+			out = append(out, e)
+		}
+	}
+	return out
 }

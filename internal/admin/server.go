@@ -706,6 +706,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /api/v1/bootstrap/{token}", bootstrapH.ServePublic)
 	// Routes MFA publiques (challenge pendant le login)
 	mux.HandleFunc("POST /api/v1/auth/mfa/challenge", mfaH.ServeHTTP)
+	mux.HandleFunc("POST /api/v1/auth/mfa/send", mfaH.ServeHTTP)
 	mux.HandleFunc("POST /api/v1/auth/mfa/webauthn/login/begin", mfaH.ServeHTTP)
 	mux.HandleFunc("POST /api/v1/auth/mfa/webauthn/login/finish", mfaH.ServeHTTP)
 

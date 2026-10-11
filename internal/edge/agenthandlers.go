@@ -48,6 +48,9 @@ func (s *Server) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "node_name requis", http.StatusBadRequest)
 		return
 	}
+	if !s.agentMayActAs(w, r, hb.NodeName) {
+		return
+	}
 
 	// Purger les routes Docker si l'agent ne signale pas de runtime Docker/Podman.
 	// On purge à chaque heartbeat sans runtime (pas seulement sur transition)
@@ -320,6 +323,9 @@ func (s *Server) handleAgentContainerStart(w http.ResponseWriter, r *http.Reques
 	var p agentContainerPayload
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !s.agentMayActAs(w, r, p.AgentName) {
 		return
 	}
 	host, extraPath := labels.ParseHostEntry(p.Host)
@@ -1129,6 +1135,9 @@ func (s *Server) handleAgentEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&e); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !s.agentMayActAs(w, r, e.NodeName) {
 		return
 	}
 	ev := s.nodeStore.RecordEvent(edgeagent.NodeEvent{

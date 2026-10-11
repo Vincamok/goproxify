@@ -18,9 +18,12 @@ spec:
       labels:
         app.kubernetes.io/name: {{ include "goproxify.name" . }}
         app.kubernetes.io/component: admin
-      {{- with .Values.podAnnotations }}
-      annotations: {{- toYaml . | nindent 8 }}
-      {{- end }}
+      annotations:
+        # Un changement de secret redémarre les pods : les variables d'environnement tirées d'un Secret ne se relisent pas.
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
       serviceAccountName: {{ include "goproxify.serviceAccountName" . }}
       {{- if .Values.security.adminRunAsUser }}

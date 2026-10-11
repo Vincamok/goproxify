@@ -1,0 +1,12 @@
+{
+  "name": "rate-guard", "version": "1.0.0", "api_version": 1,
+  "hooks": ["request"],
+  "on_error": "allow",
+  "limits": { "memory_pages": 16, "timeout_ms": 50 },
+  "capabilities": { "kv": true },
+  "fields": [
+    { "key": "limit", "label": "Requêtes autorisées par fenêtre", "kind": "text" },
+    { "key": "window_seconds", "label": "Durée de la fenêtre (secondes)", "kind": "text" },
+    { "key": "key_header", "label": "En-tête qui identifie le client (sinon l'IP)", "kind": "text" }
+  ]
+}

@@ -153,6 +153,13 @@ func (s *Store) Validate(rawToken string) (bool, error) {
 	return true, nil
 }
 
+// NameOf retourne le nom sous lequel un jeton a été émis (vide s'il est inconnu).
+func (s *Store) NameOf(rawToken string) string {
+	var name string
+	s.db.QueryRow(`SELECT name FROM tokens WHERE token_hash=?`, hash(rawToken)).Scan(&name) //nolint:errcheck
+	return name
+}
+
 // RoleOf retourne le rôle d'un token valide (non révoqué, non expiré) ; ok est faux sinon.
 func (s *Store) RoleOf(rawToken string) (role Role, ok bool, err error) {
 	var revoked int

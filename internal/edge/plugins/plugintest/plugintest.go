@@ -60,6 +60,10 @@ type Spec struct {
 	DataAt    int
 	Data      []byte
 	Segments  []Segment // segments de données supplémentaires
+
+	// HasStart déclare Start (indice de fonction, de type 7 : () -> ()) comme fonction de démarrage du module.
+	HasStart bool
+	Start    int
 }
 
 // Segment est un segment de données actif de la mémoire 0.
@@ -74,12 +78,14 @@ var (
 	typeLog   = append([]byte{0x60}, append(vec([]byte{0x7f}, []byte{0x7f}), vec()...)...)             // (i32,i32)->()
 )
 
+var typeVoid = []byte{0x60, 0x00, 0x00} // () -> ()
+
 func I64(v int64) []byte { return append([]byte{0x42}, sleb(v)...) }
 func I32(v int32) []byte { return append([]byte{0x41}, sleb(int64(v))...) }
 
 func (s Spec) Build() []byte {
 	b := []byte("\x00asm\x01\x00\x00\x00")
-	b = append(b, section(1, vec(typeAlloc, typeHook, typeLog, typeIncr, typeGet, typeSet, typeFetch))...)
+	b = append(b, section(1, vec(typeAlloc, typeHook, typeLog, typeIncr, typeGet, typeSet, typeFetch, typeVoid))...)
 	if len(s.Imports) > 0 {
 		b = append(b, section(2, vec(s.Imports...))...)
 	}
@@ -95,6 +101,9 @@ func (s Spec) Build() []byte {
 	}
 	exps = append(exps, append(Str("memory"), 0x02, 0x00))
 	b = append(b, section(7, vec(exps...))...)
+	if s.HasStart {
+		b = append(b, section(8, uleb(uint64(s.Start)))...)
+	}
 	var bodies [][]byte
 	for _, f := range s.Funcs {
 		decl := f.Locals

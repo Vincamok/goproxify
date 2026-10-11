@@ -1,0 +1,9 @@
+{
+  "name": "tcp-allow", "version": "1.0.0", "api_version": 1,
+  "hooks": ["connect"],
+  "on_error": "deny",
+  "limits": { "memory_pages": 16, "timeout_ms": 20 },
+  "fields": [
+    { "key": "allow", "label": "Préfixes d'adresse autorisés (séparés par des virgules)", "kind": "text", "required": true }
+  ]
+}

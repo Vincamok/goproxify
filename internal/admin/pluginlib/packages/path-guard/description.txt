@@ -1,0 +1,1 @@
+Refuse les chemins qui commencent par un préfixe configuré (403) et pose sur la requête un en-tête portant l'IP du client. Le plus simple des exemples : à lire avant d'écrire le sien.

@@ -1,0 +1,1 @@
+Pour une route TCP ou UDP : n'accepte que les clients dont l'adresse commence par l'un des préfixes configurés ; fermé si rien n'est configuré.

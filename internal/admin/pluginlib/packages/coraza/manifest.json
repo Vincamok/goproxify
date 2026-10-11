@@ -1,0 +1,11 @@
+{
+  "name": "coraza", "version": "1.0.0", "api_version": 1,
+  "hooks": ["request", "request_body"],
+  "on_error": "allow",
+  "on_oversize": "skip",
+  "limits": { "memory_pages": 256, "timeout_ms": 1000, "max_body_bytes": 65536 },
+  "fields": [
+    { "key": "rules", "label": "Directives SecLang (SecRule…)", "kind": "text", "multiline": true, "required": true },
+    { "key": "block_status", "label": "Statut si la règle n'en fixe pas (défaut 403)", "kind": "text" }
+  ]
+}

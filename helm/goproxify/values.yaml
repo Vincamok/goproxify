@@ -7,6 +7,9 @@ global:
   # Secret de couplage partagé par l'Admin, la passerelle et l'Agent (GPX_PAIRING_SECRET) : obligatoire.
   # Générez-le : openssl rand -hex 32. Ne le réutilisez pas entre environnements.
   pairingSecret: ""
+  # Rotation : l'ancien secret, le temps que les passerelles réécrivent leurs copies locales avec le nouveau
+  # (plusieurs secrets séparés par des virgules). À retirer ensuite. Voir docs/deployment.md.
+  previousPairingSecret: ""
   # Ancien nom de pairingSecret, encore lu s'il est renseigné.
   authToken: ""
   # Fuseau horaire des pods (crons, logs locaux, horloge admin)

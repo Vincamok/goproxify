@@ -4,6 +4,7 @@
 package admin
 
 import (
+	"github.com/vincamok/goproxify/internal/ssrf"
 	"github.com/vincamok/goproxify/internal/pairing"
 	"fmt"
 	"encoding/json"
@@ -280,6 +281,12 @@ func (s *Server) handleEdgeRegister(mgr *edgews.Manager) http.HandlerFunc {
 			http.Error(w, "endpoint requis", http.StatusBadRequest)
 			return
 		}
+		// L'Admin ouvre ensuite un WebSocket vers cette adresse en y joignant une signature valable cinq minutes sur
+		// n'importe quelle passerelle : une adresse choisie par l'appelant la livrerait.
+		if err := ssrf.ValidateHTTPURL(req.Endpoint, true); err != nil {
+			http.Error(w, "endpoint refusé : "+err.Error(), http.StatusBadRequest)
+			return
+		}
 
 		// Identifie le token depuis l'en-tête Authorization.
 		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
@@ -301,8 +308,8 @@ func (s *Server) handleEdgeRegister(mgr *edgews.Manager) http.HandlerFunc {
 		}
 
 		res, err := s.db.ExecContext(r.Context(),
-			`UPDATE tokens SET node_endpoint=?, raft_endpoint=? WHERE token=? AND role='edge' AND revoked=0`,
-			req.Endpoint, req.RaftEndpoint, token,
+			`UPDATE tokens SET node_endpoint=?, raft_endpoint=? WHERE (token_hash=? OR token=?) AND role='edge' AND revoked=0`,
+			req.Endpoint, req.RaftEndpoint, auth.HashNodeToken(token), token,
 		)
 		if err != nil {
 			s.log.Error("edge register: update endpoint", "err", err)
@@ -319,8 +326,8 @@ func (s *Server) handleEdgeRegister(mgr *edgews.Manager) http.HandlerFunc {
 		var edgeID, nodeName, rbacRole string
 		_ = s.db.QueryRowContext(r.Context(),
 			`SELECT id, COALESCE(node_name,''), COALESCE(rbac_role,'admin')
-			 FROM tokens WHERE token=? AND role='edge' AND revoked=0`,
-			token,
+			 FROM tokens WHERE (token_hash=? OR token=?) AND role='edge' AND revoked=0`,
+			auth.HashNodeToken(token), token,
 		).Scan(&edgeID, &nodeName, &rbacRole)
 
 		s.log.Info("edge enregistré", "endpoint", req.Endpoint, "node", nodeName)

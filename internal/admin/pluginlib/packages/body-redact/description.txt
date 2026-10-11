@@ -1,0 +1,1 @@
+Remplace dans le corps des réponses un texte configuré (identifiant interne, jeton qui fuit). La réponse est retenue jusqu'à son terme : à réserver aux routes qui en ont besoin ; un backend qui compresse livre des octets illisibles pour le plugin.

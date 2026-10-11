@@ -33,7 +33,7 @@ async function refreshPlugins() {
       <td>${esc(p.version)}</td>
       <td>${(p.hooks || []).map(h => `<span class="tag tag-neutral">${esc(h)}</span>`).join(' ')}</td>
       <td>${p.on_error === 'allow' ? `<span class="tag tag-red">${esc(t('plug.onerror.allow'))}</span>` : `<span class="tag tag-green">${esc(t('plug.onerror.deny'))}</span>`}</td>
-      <td>${p.signed_by ? `<span class="tag tag-green" title="${esc(t('plug.signed_key', { id: p.signed_by }))}">${esc(t('plug.signed'))}</span>` : `<span class="tag tag-neutral">${esc(t('plug.unsigned'))}</span>`}</td>
+      <td>${p.signed_by === 'builtin' ? `<span class="tag tag-neutral">${esc(t('plug.builtin'))}</span>` : p.signed_by ? `<span class="tag tag-green" title="${esc(t('plug.signed_key', { id: p.signed_by }))}">${esc(t('plug.signed'))}</span>` : `<span class="tag tag-neutral">${esc(t('plug.unsigned'))}</span>`}</td>
       <td title="${esc(p.sha256)}"><code>${esc((p.sha256 || '').slice(0, 12))}…</code> · ${Math.round((p.size || 0) / 1024)} Kio</td>
       <td>${fmtDate(p.updated_at)}</td>
       <td>${admin ? `<button class="btn btn-ghost btn-sm" onclick="openPluginModal('${esc(p.name)}')">${esc(t('plug.replace'))}</button>
@@ -70,9 +70,11 @@ async function refreshPlugins() {
 
       <div style="display:flex;align-items:center;justify-content:space-between;margin:24px 0 8px">
         <b>${esc(t('plug.catalog.title'))}</b>
-        ${(repos || []).length ? `<button class="btn btn-secondary btn-sm" onclick="loadPluginCatalog()">${esc(t('plug.catalog.load'))}</button>` : ''}
+        <button class="btn btn-secondary btn-sm" onclick="loadPluginCatalog()">${esc(t('plug.catalog.load'))}</button>
       </div>
       <div id="pl-catalog"></div>`;
+    // Les exemples intégrés sont locaux : ils s'affichent sans attendre ; le bouton interroge aussi les dépôts distants.
+    loadPluginCatalog(true);
   } catch (e) { content.innerHTML = `<p style="color:var(--red)">${esc(e.message)}</p>`; }
 }
 
@@ -196,12 +198,12 @@ window.deletePluginRepo = function(id) {
 };
 
 // Le catalogue interroge les dépôts sur le réseau : il ne se charge qu'à la demande.
-window.loadPluginCatalog = async function() {
+window.loadPluginCatalog = async function(builtinOnly) {
   const host = document.getElementById('pl-catalog');
   if (!host) return;
   host.innerHTML = `<p style="font-size:12.5px;color:var(--text3)">${esc(t('plug.catalog.loading'))}</p>`;
   try {
-    const res = await api('GET', '/plugin-repos/catalog');
+    const res = await api('GET', '/plugin-repos/catalog' + (builtinOnly === true ? '?repo=builtin' : ''));
     const admin = Role.isAdmin();
     const errors = (res.errors || []).map(e => `<p style="font-size:12px;color:var(--red)">${esc(t('plug.catalog.error', { name: e.repo_name, error: e.error }))}</p>`).join('');
     const rows = (res.entries || []).map(e => {
