@@ -1388,7 +1388,8 @@ Erreurs : `400` pour une saisie invalide (le corps explique la cause), `404` si 
 **Condition `metric_threshold`** :
 - Champs : `metric`, `entity` (vide = n'importe laquelle), `aggregation` (`avg|max|min|last|increase|rate`), `window` (1 h au plus), `operator`, `value`, `min_samples` (3 par défaut).
 - Séries : une heure d'historique, relevée toutes les 10 s, sur le trafic des proxies et des passerelles (`proxy.rps`, `proxy.error_rate_pct`, `proxy.p95_ms`, `edge.*`, `global.*`), le TLS (`tls.cert_expires_days`, `tls.handshake_p95_ms`, `tls.active_connections`), les connexions, le portail, le WAF, les étapes du pipeline et quelques compteurs de l'Admin.
-- Sans assez de points, la condition est fausse. Le détail porte `value`, `threshold` et `entity`, plus `host`, `proxy_id` et `proxy_name` pour une métrique de proxy.
+- Sans assez de points, la condition est fausse. Le détail porte `value`, `threshold` et `entity`, plus `host`, `proxy_id` et `proxy_name` pour une métrique de proxy, `node_name` pour une métrique de passerelle, `domain` pour un certificat.
+- `metrics[].edge` (catalogue, Admin 0.142.0) : chaque passerelle calcule aussi cette métrique sur son propre trafic. Un flux simple qui en surveille une s'exécute sur les passerelles (`placement: edge`). Ces métriques sont `proxy.error_rate_pct`, `proxy.p95_ms`, `edge.rps`, `edge.error_rate_pct`, `edge.p95_ms`, `tls.cert_expires_days`, `tls.handshake_p95_ms` et `tls.active_connections`. Sur une passerelle, `proxy_id` vaut le domaine du proxy.
 
 ### Modèles
 

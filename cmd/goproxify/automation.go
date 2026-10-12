@@ -428,7 +428,11 @@ func runAutomationCatalog() {
 		fmt.Println("métriques :")
 		for _, m := range metrics {
 			mm, _ := m.(map[string]any)
-			fmt.Printf("  %-28s %s\n", str(mm, "key"), str(mm, "label"))
+			edge := ""
+			if b, _ := mm["edge"].(bool); b {
+				edge = "  (aussi par chaque passerelle)"
+			}
+			fmt.Printf("  %-28s %s%s\n", str(mm, "key"), str(mm, "label"), edge)
 		}
 	}
 }

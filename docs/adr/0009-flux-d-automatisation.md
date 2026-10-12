@@ -64,12 +64,17 @@ Dans ce cas :
 
 Tout le reste — attente, approbation, si/sinon, appels, conditions sur les données de l'Admin — s'exécute sur l'Admin, puisque ces étapes dépendent de lui. Le garde-fou « Toujours sur l'Admin » force l'évaluation sur la vue du cluster.
 
+**Seuil sur une métrique** (Admin 0.142.0, passerelle 0.60.0) :
+- chaque passerelle garde une heure de ses propres métriques (`internal/metricwindow`, partagé avec l'Admin), calculées comme l'Admin mais sur son seul trafic ;
+- `metric_threshold` part donc aux passerelles quand la métrique surveillée a le même sens sur une passerelle seule (taux et latences, trafic de la passerelle, TLS : `rulesengine.MetricScopes`) ;
+- un débit par proxy, un total de toutes les passerelles ou un compteur de l'Admin reste sur l'Admin : sur une passerelle, la valeur ne serait qu'une part du trafic et un seuil réglé pour le cluster ne se déclencherait plus.
+
 ## Conséquences
 
 - **Remplacements** : `internal/admin/rulesengine`, `scheduler`, `playbooks`, leurs API (`/rules-engine`, `/scheduled-tasks`, `/playbooks`), leurs tables, outils MCP et commandes CLI sont remplacés par `/api/v1/automation`, les outils `*_flow*` et `goproxify automation`. Aucune migration : GoProxify n'était pas déployé.
 - **Import / export** : le document passe en `version: 2`.
 - **Mises en sourdine** : la table `automation_silences` est conservée et partagée avec le moteur d'alertes.
 - **Limites connues** :
-  - `metric_threshold` n'est évaluée que sur l'Admin ;
+  - sur une passerelle, l'historique des métriques vit en mémoire et repart de zéro au redémarrage (le nombre minimum de points évite de conclure trop tôt) ;
   - une exécution planifiée manquée pendant un arrêt de l'Admin n'est pas rattrapée ;
   - les libellés du catalogue sont en français, comme les autres familles de modules.

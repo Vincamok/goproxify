@@ -6,6 +6,8 @@ package rulesengine
 import (
 	"testing"
 	"time"
+
+	"github.com/vincamok/goproxify/internal/metricwindow"
 )
 
 type nopLogger struct{}
@@ -68,5 +70,38 @@ func TestFutureSilenceWindowDoesNotApplyYet(t *testing.T) {
 	e.evalAll()
 	if fired != 1 {
 		t.Fatalf("fenêtre à venir appliquée trop tôt : %d", fired)
+	}
+}
+
+func TestMetricThresholdNeedsSamplesAndKnownMetric(t *testing.T) {
+	threshold, two := 5.0, 2
+	samples := 1
+	acted := 0
+	e := New(nopLogger{}, Deps{
+		QueryMetric: func(string, string, time.Duration, string) []metricwindow.Value {
+			return []metricwindow.Value{{Entity: "paris-01", Value: 40, Samples: samples}}
+		},
+		EmitNotify: func(string, string, string, string, map[string]any) { acted++ },
+	})
+	var logs []ExecLog
+	e.OnRuleFired = func(l ExecLog) { logs = append(logs, l) }
+	rule := Rule{ID: "r1", Enabled: true, Action: Action{Type: ActionNotify},
+		Condition: Condition{Type: CondMetricThreshold, Metric: "edge.error_rate_pct", Value: &threshold, MinSamples: &two}}
+	e.ReplaceRules([]Rule{rule})
+	e.evalAll()
+	if acted != 0 || len(logs) != 0 {
+		t.Fatalf("déclenché avec trop peu de points (redémarrage récent) : %d %+v", acted, logs)
+	}
+	samples = 6
+	e.evalAll()
+	if acted != 1 || logs[0].Detail["node_name"] != "paris-01" {
+		t.Fatalf("seuil franchi : %d %+v", acted, logs)
+	}
+
+	rule.ID, rule.Condition.Metric = "r2", "proxy.rps"
+	e.ReplaceRules([]Rule{rule})
+	e.evalAll()
+	if acted != 1 || len(logs) != 2 || logs[1].Error == "" {
+		t.Fatalf("métrique que la passerelle ne calcule pas : %+v", logs)
 	}
 }

@@ -243,3 +243,76 @@ func TestExportImportRoundTrip(t *testing.T) {
 		t.Fatalf("planification importée : %+v", list)
 	}
 }
+
+// Un seuil sur une métrique que la passerelle calcule elle-même part aux passerelles, qui l'évaluent sur
+// leur propre trafic ; une métrique qui n'a de sens que pour le cluster reste sur l'Admin.
+func TestMetricThresholdOnEdge(t *testing.T) {
+	disable := Step{ID: "s1", Type: StepAction, Action: &Node{Type: "disable_proxy", Config: map[string]any{"proxy_id": "{{detail.proxy_id}}"}}}
+	flow := func(metric string, cfg map[string]any) *Flow {
+		c := map[string]any{"metric": metric, "aggregation": "avg", "window": "5m", "operator": ">", "value": 500.0, "min_samples": 2}
+		for k, v := range cfg {
+			c[k] = v
+		}
+		return &Flow{Name: "p95 " + metric, Enabled: true, Steps: []Step{disable},
+			Trigger: Trigger{Kind: TriggerCondition, Condition: &Cond{Type: "metric_threshold", Config: c}}}
+	}
+	for name, c := range map[string]struct {
+		f    *Flow
+		want string
+	}{
+		"latence d'un proxy":       {flow("proxy.p95_ms", nil), PlacementEdge},
+		"débit d'un proxy":         {flow("proxy.rps", nil), PlacementAdmin},
+		"débit total":              {flow("global.rps", nil), PlacementAdmin},
+		"compteur de l'Admin":      {flow("f2b.bans_total", nil), PlacementAdmin},
+		"variable dans le réglage": {flow("proxy.p95_ms", map[string]any{"entity": "{{flow.name}}"}), PlacementAdmin},
+	} {
+		if got, why := placement(c.f); got != c.want {
+			t.Errorf("%s : %s (%s), attendu %s", name, got, why, c.want)
+		}
+	}
+	if _, why := placement(flow("proxy.rps", nil)); why == "" {
+		t.Error("raison du placement sur l'Admin absente")
+	}
+
+	e := newEnv(t)
+	f := e.create(flow("proxy.p95_ms", nil))
+	rules, err := e.s.EdgeRules(context.Background())
+	if err != nil || len(rules) != 1 {
+		t.Fatalf("règles de passerelle : %v %v", rules, err)
+	}
+	b, _ := json.Marshal(rules)
+	var decoded []edgere.Rule
+	if err := json.Unmarshal(b, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	c := decoded[0].Condition
+	if decoded[0].ID != f.ID || c.Type != edgere.CondMetricThreshold || c.Metric != "proxy.p95_ms" || c.Window != "5m" ||
+		c.Value == nil || *c.Value != 500 || c.MinSamples == nil || *c.MinSamples != 2 {
+		t.Fatalf("condition traduite : %+v", c)
+	}
+
+	var disabled []string
+	eng := edgere.New(nopLog{}, edgere.Deps{
+		QueryMetric: func(key, entity string, window time.Duration, agg string) []MetricValue {
+			if key != "proxy.p95_ms" || window != 5*time.Minute || agg != "avg" {
+				t.Errorf("requête : %s %s %s %s", key, entity, window, agg)
+			}
+			return []MetricValue{{Entity: "lent.example", Value: 900, Samples: 30}, {Entity: "ok.example", Value: 80, Samples: 30}}
+		},
+		DisableProxy: func(id string) error { disabled = append(disabled, id); return nil },
+	})
+	var logs []edgere.ExecLog
+	eng.OnRuleFired = func(l edgere.ExecLog) { logs = append(logs, l) }
+	eng.ReplaceRules(decoded)
+	eng.Start()
+	eng.Stop()
+	if len(disabled) != 1 || disabled[0] != "lent.example" || len(logs) != 1 || logs[0].Detail["value"] != 900.0 {
+		t.Fatalf("évaluation par la passerelle : désactivés %v, journal %+v", disabled, logs)
+	}
+}
+
+type nopLog struct{}
+
+func (nopLog) Info(string, ...any)  {}
+func (nopLog) Warn(string, ...any)  {}
+func (nopLog) Debug(string, ...any) {}

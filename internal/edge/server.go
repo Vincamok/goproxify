@@ -71,6 +71,7 @@ type Server struct {
 	f2bEngine       *edgef2b.Engine
 	crowdSecBouncer *edgecrowdsec.Bouncer
 	rulesEngine     *edgere.Engine
+	autoMetrics     *localMetrics
 	tunnelManager   *tunnel.Manager
 
 	// bansMu sérialise reloadBanStore : une relecture de la DB plus ancienne ne doit pas remplacer
@@ -486,6 +487,9 @@ func (s *Server) Start(ctx context.Context) error {
 	s.crowdSecBouncer.OnDecisions = s.onCrowdSecDecisions
 	s.crowdSecBouncer.Start(ctx)
 
+	s.autoMetrics = newLocalMetrics(s.cfg.Identity.NodeName)
+	go s.autoMetrics.run(ctx)
+
 	// Moteur de règles automatiques — autonome, évalue règles poussées par Admin.
 	s.rulesEngine = edgere.New(s.log.Logger(), edgere.Deps{
 		GetRecentBanCount:   s.recentBanCount,
@@ -493,6 +497,7 @@ func (s *Server) Start(ctx context.Context) error {
 		GetF2BLastActivity:  func() time.Time { return s.f2bEngine.LastBan() },
 		GetCrowdSecLastSync: func() time.Time { return s.crowdSecBouncer.LastSync() },
 		GetProxyErrorRate:   s.proxyErrorRate,
+		QueryMetric:         s.autoMetrics.query,
 		DisableProxy: func(id string) error {
 			s.table.DisableByIDOrHost(id)
 			s.saveCache()

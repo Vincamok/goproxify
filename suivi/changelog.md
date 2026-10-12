@@ -9,6 +9,23 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ### Ajouté
 
+- **« Seuil sur une métrique » évalué par les passerelles (Admin 0.142.0, passerelle 0.60.0)**. Jusqu'ici, un flux à condition `metric_threshold` tournait toujours sur l'Admin : il s'arrêtait pendant une coupure de l'Admin, alors qu'un flux équivalent sur le taux d'erreurs (`proxy_error_rate`) continuait sur les passerelles.
+
+  **Ce que calcule la passerelle** :
+  - Chaque passerelle garde une heure de ses propres métriques, relevées toutes les 10 s à partir de ses compteurs.
+  - Les métriques concernées : taux d'erreurs 5xx et latence P95 par proxy, débit, erreurs et P95 de la passerelle, jours avant expiration d'un certificat, poignée de main TLS et connexions TLS par domaine.
+  - Le calcul est celui de l'Admin, sur le seul trafic de la passerelle : même fenêtre, mêmes agrégations, même détection de remise à zéro d'un compteur.
+
+  **Placement** :
+  - Un flux simple qui surveille une de ces métriques est envoyé aux passerelles, comme les autres flux simples (ADR 0009).
+  - Les débits par proxy, les totaux de toutes les passerelles et les compteurs de l'Admin restent évalués par l'Admin : sur une passerelle seule, ils ne vaudraient qu'une part du trafic. La raison s'affiche dans l'éditeur.
+  - « Toujours sur l'Admin » garde la vue de toutes les passerelles.
+  - Dans l'éditeur, ces métriques sont marquées « aussi par chaque passerelle » (catalogue : `metrics[].edge`).
+
+  **Limites** :
+  - L'historique vit en mémoire de la passerelle. Après un redémarrage, le nombre minimum de points (`min_samples`) empêche de conclure trop tôt.
+  - Une passerelle antérieure à 0.60.0 ne connaît pas cette condition : elle journalise une erreur à chaque évaluation et n'agit pas.
+
 - **Flux d'automatisation : ce qui change d'une version à l'autre, et un modèle mis à jour depuis l'installation (Admin 0.141.0)**.
 
   **Versions** :

@@ -116,7 +116,14 @@ const FlowCatalog = (() => {
   }
 
   // Les listes à source dynamique des formulaires (proxies, nœuds, playbooks…) viennent de l'API.
-  if (window.ManifestForm) ManifestForm.setOptionsLoader(src => api('GET', '/automation/options/' + encodeURIComponent(src)));
+  // Les métriques que chaque passerelle calcule aussi portent une marque : un flux qui en surveille une peut
+  // s'exécuter sur les passerelles.
+  if (window.ManifestForm) ManifestForm.setOptionsLoader(async src => {
+    const opts = await api('GET', '/automation/options/' + encodeURIComponent(src));
+    if (src !== 'metrics' || !Array.isArray(opts)) return opts;
+    const edge = new Set(list('metrics').filter(m => m.edge).map(m => m.key));
+    return opts.map(o => edge.has(o.value) ? { ...o, label: `${o.label} · ${t('flow.metric_edge_mark')}` } : o);
+  });
 
   return { load, list, find, label, eventLabel, condText, triggerText, stepText, stepsText, hasApproval, newStepId, walk, variablesAt, triggerOutputs };
 })();

@@ -268,7 +268,7 @@ function _feCond(holder, key, depth, removable) {
   return `<div class="fl-leaf${neg ? ' neg' : ''}"><div class="fl-leaf-head">
       <select class="input" onchange="_feLeafType(${bhr},this.value)">${opts}</select>${tools}
       ${removable ? '' : `<button type="button" class="btn btn-ghost btn-sm" onclick="_feCondWrap(${hr})">+ ${t('flow.condition')}</button>`}
-    </div>${man?.attrs?.edge ? '' : `<div class="fl-help">${t('flow.admin_condition')}</div>`}${_feForm(body.config, man?.fields)}</div>`;
+    </div>${man?.attrs?.edge ? '' : `<div class="fl-help">${t(man?.attrs?.edge_metrics ? 'flow.metric_edge_condition' : 'flow.admin_condition')}</div>`}${_feForm(body.config, man?.fields)}</div>`;
 }
 
 window._feCondNot = function(r, on) {

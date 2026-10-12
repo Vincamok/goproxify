@@ -6,9 +6,10 @@ package automation
 import (
 	"context"
 	"fmt"
-	"math"
 	"time"
 
+	edgere "github.com/vincamok/goproxify/internal/edge/rulesengine"
+	"github.com/vincamok/goproxify/internal/metricwindow"
 	"github.com/vincamok/goproxify/internal/modules"
 )
 
@@ -21,14 +22,13 @@ type MetricDef struct {
 	Scope string `json:"scope"`
 	// Kind : gauge (valeur instantanée) ou counter (cumul : increase et rate ont un sens).
 	Kind string `json:"kind"`
+	// Edge : chaque passerelle calcule aussi cette métrique, sur son propre trafic ; un flux qui la
+	// surveille peut donc s'exécuter sur les passerelles (rempli par le catalogue).
+	Edge bool `json:"edge,omitempty"`
 }
 
 // MetricValue est l'agrégat d'une série sur la fenêtre.
-type MetricValue struct {
-	Entity  string
-	Value   float64
-	Samples int
-}
+type MetricValue = metricwindow.Value
 
 // MetricSource fournit les séries récentes (automation/metrics.Store).
 type MetricSource interface {
@@ -50,7 +50,8 @@ var operators = []modules.Option{
 
 func registerMetricCondition() {
 	RegisterCondition(modules.Manifest{Type: "metric_threshold", Label: "Seuil sur une métrique",
-		Attrs: attrs(false, "metrics", "metric", "entity", "value", "threshold", "window", "host", "proxy_id", "proxy_name"),
+		Attrs: withAttr(attrs(false, "metrics", "metric", "entity", "value", "threshold", "window", "host", "proxy_id", "proxy_name", "node_name", "domain"),
+			"edge_metrics", true),
 		Fields: []modules.Field{
 			{Key: "metric", Label: "Métrique", Kind: modules.KindSelect, Source: "metrics", Required: true},
 			{Key: "entity", Label: "Sur (vide = n'importe lequel)", Kind: modules.KindSelect, Source: "metric_entities",
@@ -67,22 +68,12 @@ func registerMetricCondition() {
 		}
 		return nil
 	})
-}
-
-func compare(op string, v, threshold float64) bool {
-	switch op {
-	case ">=":
-		return v >= threshold
-	case "<":
-		return v < threshold
-	case "<=":
-		return v <= threshold
-	case "==":
-		return v == threshold
-	case "!=":
-		return v != threshold
+	edgeConditions["metric_threshold"] = func(cfg map[string]any) string {
+		if _, ok := edgere.MetricScopes[cfgStr(cfg, "metric")]; !ok {
+			return "métrique calculée par l'Admin seul (vue de toutes les passerelles)"
+		}
+		return ""
 	}
-	return v > threshold
 }
 
 func evalMetricThreshold(ctx context.Context, s *Service, cfg map[string]any) (bool, map[string]any, error) {
@@ -114,18 +105,8 @@ func evalMetricThreshold(ctx context.Context, s *Service, cfg map[string]any) (b
 		return false, nil, fmt.Errorf("value : seuil numérique requis")
 	}
 	minSamples := cfgInt(cfg, "min_samples", 3)
-	var best *MetricValue
-	for _, v := range s.deps.Metrics.Query(key, cfgStr(cfg, "entity"), window, agg) {
-		v := v
-		if v.Samples < minSamples || math.IsNaN(v.Value) || !compare(op, v.Value, threshold) {
-			continue
-		}
-		// La série la plus éloignée du seuil est la plus parlante (la pire).
-		if best == nil || math.Abs(v.Value-threshold) > math.Abs(best.Value-threshold) {
-			best = &v
-		}
-	}
-	if best == nil {
+	best, ok := metricwindow.Pick(s.deps.Metrics.Query(key, cfgStr(cfg, "entity"), window, agg), op, threshold, minSamples)
+	if !ok {
 		return false, nil, nil
 	}
 	detail := map[string]any{"metric": key, "entity": best.Entity, "value": best.Value, "threshold": threshold,
@@ -143,4 +124,9 @@ func evalMetricThreshold(ctx context.Context, s *Service, cfg map[string]any) (b
 		detail["domain"] = best.Entity
 	}
 	return true, detail, nil
+}
+
+func withAttr(m map[string]any, key string, v any) map[string]any {
+	m[key] = v
+	return m
 }

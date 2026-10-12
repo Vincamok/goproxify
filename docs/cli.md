@@ -921,7 +921,7 @@ Toutes les commandes acceptent `-admin-url` et `-token`.
   - `approve` et `reject` décident d'une approbation en attente (`-status waiting_approval` les liste).
   - `replay` relance un flux avec le détail d'une exécution terminée, par exemple interrompue par un redémarrage.
 - **`templates preview -flow <id>`** affiche aussi ce que l'enregistrement de ces paramètres changerait sur un flux issu du modèle, nouvelle version du modèle comprise.
-- **`catalog`** liste les déclencheurs, conditions, actions, types d'étape et métriques, avec leurs champs.
+- **`catalog`** liste les déclencheurs, conditions, actions, types d'étape et métriques, avec leurs champs. Une métrique suivie de « aussi par chaque passerelle » est aussi calculée par chaque passerelle : un flux simple qui la surveille s'exécute sur les passerelles.
 - **`export` / `import`** échangent flux, canaux et mises en sourdine en YAML `version: 2` (GitOps). Les secrets sont masqués à l'export et conservés à l'import.
 
 Exemple : la règle « CVE critique → approbation → désactiver le proxy » (`flux.json`).

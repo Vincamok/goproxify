@@ -12,11 +12,12 @@ import "time"
 type ConditionType string
 
 const (
-	CondCVECritical    ConditionType = "cve_critical"     // non évaluable en passerelle (toujours false)
-	CondBanSpike       ConditionType = "ban_spike"        // > N bans dans une fenêtre de temps
-	CondEngineSilent   ConditionType = "engine_silent"    // moteur IPS sans activité depuis > X min
-	CondProxyErrorRate ConditionType = "proxy_error_rate" // taux d'erreurs HTTP > seuil
-	CondBanRepeat      ConditionType = "ban_repeat"       // même IP bannie ≥ N fois
+	CondCVECritical     ConditionType = "cve_critical"     // non évaluable en passerelle (toujours false)
+	CondBanSpike        ConditionType = "ban_spike"        // > N bans dans une fenêtre de temps
+	CondEngineSilent    ConditionType = "engine_silent"    // moteur IPS sans activité depuis > X min
+	CondProxyErrorRate  ConditionType = "proxy_error_rate" // taux d'erreurs HTTP > seuil
+	CondBanRepeat       ConditionType = "ban_repeat"       // même IP bannie ≥ N fois
+	CondMetricThreshold ConditionType = "metric_threshold" // seuil sur une métrique de la passerelle (MetricScopes)
 )
 
 // ActionType identifie l'action à exécuter.
@@ -48,6 +49,15 @@ type Condition struct {
 
 	RepeatCount  int    `json:"repeat_count,omitempty"`
 	RepeatWindow string `json:"repeat_window,omitempty"`
+
+	// metric_threshold : mêmes champs que la condition de l'Admin.
+	Metric      string   `json:"metric,omitempty"`
+	Entity      string   `json:"entity,omitempty"`
+	Aggregation string   `json:"aggregation,omitempty"`
+	Window      string   `json:"window,omitempty"`
+	Operator    string   `json:"operator,omitempty"`
+	Value       *float64 `json:"value,omitempty"`
+	MinSamples  *int     `json:"min_samples,omitempty"`
 }
 
 // Action décrit la remédiation à appliquer si la condition est vraie.

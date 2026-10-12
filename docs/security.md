@@ -405,7 +405,7 @@ Depuis Admin `0.139.0` (ADR 0009), les règles automatiques, les planifications 
 | `ban_repeat` | IP bannie N fois ou plus sur une période | `repeat_count`, `repeat_window` |
 | `node_offline` | Nœud sans nouvelles depuis N minutes | `node_name` optionnel, `offline_minutes` |
 | `cert_expiring` | Certificat TLS expirant sous N jours | `domain` optionnel, `days_left` |
-| `metric_threshold` | Seuil sur une métrique relevée par l'Admin : trafic, erreurs et latence par proxy ou par passerelle, TLS, connexions, pipeline, compteurs de l'Admin | `metric`, `entity`, `aggregation` (avg, min, max, last, increase, rate), `window` (1 h au plus), `operator`, `value`, `min_samples` |
+| `metric_threshold` | Seuil sur une métrique relevée par l'Admin : trafic, erreurs et latence par proxy ou par passerelle, TLS, connexions, pipeline, compteurs de l'Admin. Les erreurs et la latence par proxy, le trafic de la passerelle et les métriques TLS sont aussi calculés par chaque passerelle : un flux simple qui en surveille une s'exécute sur les passerelles | `metric`, `entity`, `aggregation` (avg, min, max, last, increase, rate), `window` (1 h au plus), `operator`, `value`, `min_samples` |
 
 Le détail produit par une condition (IP, proxy, domaine, valeur mesurée…) est disponible dans les étapes en `{{detail.x}}`. L'éditeur liste les variables disponibles à chaque étape.
 

@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/vincamok/goproxify/internal/admin/alerting"
+	edgere "github.com/vincamok/goproxify/internal/edge/rulesengine"
 	"github.com/vincamok/goproxify/internal/modules"
 )
 
@@ -45,7 +46,10 @@ func (s *Service) Catalog() Catalog {
 		c.Events = append(c.Events, EventDef{Type: string(tr), Label: alerting.TriggerLabels[tr], Outputs: outputs})
 	}
 	if s.deps.Metrics != nil {
-		c.Metrics = s.deps.Metrics.Catalog()
+		for _, m := range s.deps.Metrics.Catalog() {
+			_, m.Edge = edgere.MetricScopes[m.Key]
+			c.Metrics = append(c.Metrics, m)
+		}
 	}
 	return c
 }

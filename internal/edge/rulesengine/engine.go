@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/vincamok/goproxify/internal/metricwindow"
 )
 
 const defaultInterval = 60 * time.Second
@@ -23,6 +25,8 @@ type Deps struct {
 	GetCrowdSecLastSync func() time.Time
 	// GetProxyErrorRate retourne le pire taux d'erreurs HTTP (0-100) et le domaine/proxy concerné.
 	GetProxyErrorRate func(since time.Time) (rate float64, host string)
+	// QueryMetric agrège les séries récentes d'une métrique de la passerelle (MetricScopes).
+	QueryMetric func(key, entity string, window time.Duration, agg string) []metricwindow.Value
 	// DisableProxy désactive une route par son ID (ou host si pas d'ID).
 	DisableProxy func(id string) error
 	// BanIP ajoute un ban IP avec durée (0 = permanent).
@@ -206,6 +210,8 @@ func (e *Engine) evalCondition(c Condition) (bool, map[string]any, error) {
 		return e.evalProxyErrorRate(c)
 	case CondBanRepeat:
 		return e.evalBanRepeat(c)
+	case CondMetricThreshold:
+		return e.evalMetricThreshold(c)
 	default:
 		return false, nil, fmt.Errorf("type de condition inconnu: %s", c.Type)
 	}

@@ -760,7 +760,7 @@ Tous sont réservés au rôle admin, comme `/api/v1/automation`. Scope `audit:re
 
 | Outil | Paramètres | Rôle |
 |---|---|---|
-| `get_automation_catalog` | — | Déclencheurs, événements, conditions, actions, types d'étape (manifestes avec leurs champs) et métriques disponibles. À lire avant `create_flow` |
+| `get_automation_catalog` | — | Déclencheurs, événements, conditions, actions, types d'étape (manifestes avec leurs champs) et métriques disponibles (`edge: true` : calculée aussi par chaque passerelle, un flux simple qui la surveille s'y exécute). À lire avant `create_flow` |
 | `list_flows` | `trigger` (ex. `condition,event`) | Flux avec état (`fire_count`, `next_run_at`, `waiting`…), `placement` (`edge` : exécuté par les passerelles) et, pour un flux issu d'un modèle, `template.outdated` / `template.missing` |
 | `get_flow` | `id` | Un flux |
 | `create_flow` | `flow` (objet) | Crée un flux de l'éditeur |

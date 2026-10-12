@@ -24,6 +24,10 @@ var edgeDefaults = map[string]map[string]string{
 	"disable_proxy": {"proxy_id": "{{detail.proxy_id}}"},
 }
 
+// edgeConditions sont les conditions que la passerelle sait évaluer selon leur réglage : la fonction dit
+// pourquoi pas ("" si elle le sait).
+var edgeConditions = map[string]func(cfg map[string]any) string{}
+
 // placement indique où un flux s'exécute, et pourquoi pas sur les passerelles.
 func placement(f *Flow) (string, string) {
 	if f.Guard.Placement == PlacementAdmin {
@@ -37,7 +41,13 @@ func placement(f *Flow) (string, string) {
 		return PlacementAdmin, "condition composée (et / ou / non)"
 	}
 	if _, man, ok := condRegistry.Lookup(c.Type); !ok || !attrBool(man.Attrs, "edge") {
-		return PlacementAdmin, "condition évaluée sur les données de l'Admin"
+		check, conditional := edgeConditions[c.Type]
+		if !ok || !conditional {
+			return PlacementAdmin, "condition évaluée sur les données de l'Admin"
+		}
+		if why := check(c.Config); why != "" {
+			return PlacementAdmin, why
+		}
 	}
 	if len(f.Steps) != 1 || f.Steps[0].Type != StepAction || f.Steps[0].Action == nil {
 		return PlacementAdmin, "plusieurs étapes, ou étape autre qu'une action"
