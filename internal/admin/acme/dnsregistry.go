@@ -34,6 +34,26 @@ func DNSProviderManifest(typ string) (modules.Manifest, bool) {
 	return m, ok
 }
 
+// Masked retourne l'entrée avec ses paramètres secrets masqués selon le manifeste du type. Un type
+// inconnu (entrée ancienne) est renvoyé tel quel : on ne sait pas quels champs sont secrets.
+func (e ProviderEntry) Masked() ProviderEntry {
+	m, ok := DNSProviderManifest(e.Type)
+	if !ok {
+		return e
+	}
+	params := make(map[string]string, len(e.Params))
+	for k, v := range e.Params {
+		params[k] = v
+	}
+	for _, f := range m.Fields {
+		if f.Secret && params[f.Key] != "" {
+			params[f.Key] = modules.Masque
+		}
+	}
+	e.Params = params
+	return e
+}
+
 // DNSStatusNotImplemented marque un fournisseur déclaré mais dont l'émission échoue
 // (attribut « status » du manifeste).
 const DNSStatusNotImplemented = "not_implemented"
@@ -104,7 +124,7 @@ func ProviderConfigFromEnv(dnsType string) ProviderConfig {
 // partent la clé d'application et la clé consommateur ; il doit désigner une API en HTTPS, pas un service interne.
 func ValidateDNSParams(typ string, params map[string]any) error {
 	if typ != "ovh" {
-		return nil
+		return validateLibdnsParams(typ, params)
 	}
 	ep, _ := params["endpoint"].(string)
 	ep = strings.TrimSpace(ep)

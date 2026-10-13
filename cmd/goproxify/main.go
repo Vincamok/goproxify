@@ -92,6 +92,8 @@ func main() {
 		runSnippet()
 	case "ech":
 		runECH()
+	case "acme":
+		runACME()
 	case "domain":
 		runDomain()
 	case "agent-mgmt":
@@ -159,6 +161,7 @@ Commandes d'administration (API Admin — -admin-url / -token) :
   alert     Canaux et règles d'alerte (channels/rules/test)
   snippet   Snippets de sécurité réutilisables (list/get/create/update/delete)
   domain    Domaines gérés ACME (list/get/create/renew/delete)
+  acme      Fournisseurs DNS du challenge DNS-01 (types, providers list/get/add/update/delete)
   ech       Encrypted Client Hello (status/enable/disable/rotate/delete-key)
   agent-mgmt     Agents Docker enregistrés (list/get/approve/revoke/delete/sources)
   settings       Configuration Admin (smtp get/set/test)

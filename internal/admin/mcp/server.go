@@ -8,6 +8,7 @@ package mcp
 
 import (
 	"github.com/vincamok/goproxify/internal/admin/routesecrets"
+	agentsources "github.com/vincamok/goproxify/internal/agent/sources"
 	"github.com/vincamok/goproxify/internal/admin/automation"
 	"github.com/vincamok/goproxify/internal/edge/engines"
 	"context"
@@ -23,6 +24,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/vincamok/goproxify/internal/admin/acme"
 	"github.com/vincamok/goproxify/internal/admin/alerting"
 	"github.com/vincamok/goproxify/internal/admin/api"
 	"github.com/vincamok/goproxify/internal/admin/archstore"
@@ -83,6 +85,7 @@ type Handler struct {
 	ResolvePublicURL func(r *http.Request) string
 	// Automation (optionnel) — flux d'automatisation (règles, planifications, playbooks).
 	Automation   *automation.Service
+	DNSProviders *acme.ProviderStore // optionnel — fournisseurs DNS nommés (ACME DNS-01)
 	CertDeployer CertDeployerIface   // optionnel — déclenche les déploiements de certs
 	InternalCA   *internalca.Manager // optionnel — CA interne (émission de certs hors ACME)
 	ArchStore    *archstore.Store    // optionnel — architecture.json (outil get_architecture)
@@ -468,6 +471,16 @@ var tools = []map[string]any{
 		"inputSchema": schema(),
 	},
 	{
+		"name":        "list_dns_providers",
+		"description": "Fournisseurs DNS nommés utilisés par le challenge ACME DNS-01 (nom, type, paramètres ; secrets masqués). Un domaine les désigne par leur nom.",
+		"inputSchema": schema(),
+	},
+	{
+		"name":        "list_dns_provider_types",
+		"description": "Types de fournisseur DNS ACME (OVH, Cloudflare, Route 53, Gandi, Hetzner et les modules libdns : attrs.engine = libdns) avec leurs paramètres (clé, secret, requis, variable d'environnement).",
+		"inputSchema": schema(opt("q", "string", "Filtrer sur le type ou le libellé (sous-chaîne, insensible à la casse)")),
+	},
+	{
 		"name":        "trigger_cert_deploy",
 		"description": "Déclenche immédiatement le déploiement d'un certificat vers une cible spécifique.",
 		"inputSchema": schema(req("target_id", "string", "ID de la cible de déploiement")),
@@ -798,6 +811,8 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 		result, toolErr = h.toolListDeclaredNodes(r)
 	case "get_architecture":
 		result, toolErr = h.toolGetArchitecture(p.Arguments)
+	case "list_discovery_sources":
+		result = agentsources.Manifests()
 	case "create_declared_node":
 		result, toolErr = h.toolCreateDeclaredNode(r, p.Arguments)
 	case "delete_declared_node":
@@ -861,6 +876,11 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 		result, toolErr = h.toolGetCertStatus(r, domain)
 	case "list_cert_deploy_types":
 		result = certdeploy.Manifests()
+	case "list_dns_providers":
+		result, toolErr = h.toolListDNSProviders()
+	case "list_dns_provider_types":
+		q, _ := p.Arguments["q"].(string)
+		result = dnsProviderTypes(q)
 	case "list_cert_deploy_targets":
 		certID, _ := p.Arguments["cert_id"].(string)
 		result, toolErr = h.toolListCertDeployTargets(r, certID)

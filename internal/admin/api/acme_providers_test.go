@@ -123,7 +123,7 @@ func TestACMEProviderTypes_Endpoint(t *testing.T) {
 	rec := httptest.NewRecorder()
 	ACMEProviderTypesHandler{}.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/acme/provider-types", nil))
 	var got []modules.Manifest
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || len(got) != 5 {
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || len(got) < 30 {
 		t.Fatalf("manifestes = %d, %v", len(got), err)
 	}
 	if got[0].Type != "ovh" {
@@ -133,5 +133,26 @@ func TestACMEProviderTypes_Endpoint(t *testing.T) {
 	ACMEProviderTypesHandler{}.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/acme/provider-types", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("POST : %d", rec.Code)
+	}
+}
+
+// Les fournisseurs libdns passent par les mêmes contrôles que les natifs : champ requis, clé inconnue, adresse d'API,
+// secret masqué en sortie.
+func TestACMEProviders_LibdnsProvidersShareTheValidation(t *testing.T) {
+	h := newProvidersHandler(t)
+	for name, body := range map[string]string{
+		"champ requis":   `{"name":"x","type":"digitalocean","params":{}}`,
+		"clé inconnue":   `{"name":"x","type":"digitalocean","params":{"auth_token":"t","typo":"1"}}`,
+		"URL en http":    `{"name":"x","type":"linode","params":{"api_token":"t","api_url":"http://api.example.com"}}`,
+		"URL métadonnée": `{"name":"x","type":"dnsimple","params":{"api_access_token":"t","api_url":"https://169.254.169.254"}}`,
+	} {
+		if rec := provCall(h, http.MethodPost, "/api/v1/acme/providers", body); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s : %d (attendu 400) %s", name, rec.Code, rec.Body.String())
+		}
+	}
+	id := createProvider(t, h, `{"name":"do","type":"digitalocean","params":{"auth_token":"do-secret-token"}}`)
+	rec := provCall(h, http.MethodGet, "/api/v1/acme/providers/"+id, "")
+	if strings.Contains(rec.Body.String(), "do-secret-token") {
+		t.Fatalf("le jeton sort de l'API : %s", rec.Body.String())
 	}
 }

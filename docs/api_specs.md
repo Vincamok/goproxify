@@ -505,7 +505,7 @@ Retourne le statut d'expiration de tous les certificats.
 
 ### `GET /api/v1/acme/providers`
 
-Liste les fournisseurs DNS ACME nommés. Admin uniquement.
+Liste les fournisseurs DNS ACME nommés. Admin uniquement ; scope PAT `certs:read` pour `GET`, `certs:write` pour `POST`, `PUT` et `DELETE` sur `/api/v1/acme/*` (depuis Admin `0.145.0` ; avant, aucun scope n'était exigé et un token d'admin de lecture pouvait modifier un fournisseur). CLI `goproxify acme`, MCP `list_dns_providers` et `list_dns_provider_types`.
 
 **Réponse :**
 ```json
@@ -547,7 +547,7 @@ Manifestes des fournisseurs DNS ACME, dans l'ordre d'affichage. Admin uniquement
   { "key": "zone_id", "label": "Zone ID", "kind": "text", "env": "CF_ZONE_ID" } ] }]
 ```
 
-`env` : variable d'environnement qui fournit la valeur quand un domaine ne la renseigne pas. `attrs.status = "not_implemented"` : réservé à un fournisseur déclaré mais incapable d'émettre (aucun aujourd'hui ; Route 53, qui l'était, fonctionne depuis Admin `0.123.0`). Types : `ovh`, `cloudflare`, `route53`, `hetzner`, `gandi`.
+`env` : variable d'environnement qui fournit la valeur quand un domaine ne la renseigne pas. `attrs.status = "not_implemented"` : réservé à un fournisseur déclaré mais incapable d'émettre (aucun aujourd'hui ; Route 53, qui l'était, fonctionne depuis Admin `0.123.0`). Types natifs : `ovh`, `cloudflare`, `route53`, `hetzner`, `gandi`. Depuis Admin `0.143.0`, 28 fournisseurs [libdns](https://github.com/libdns) s'y ajoutent (`attrs.engine = "libdns"`) : `azure`, `bunny`, `cloudns`, `desec`, `digitalocean`, `dnsimple`, `duckdns`, `dynu`, `easydns`, `gcore`, `godaddy`, `googleclouddns`, `he`, `infomaniak`, `inwx`, `ionos`, `linode`, `loopia`, `luadns`, `namecheap`, `namedotcom`, `netcup`, `netlify`, `njalla`, `porkbun`, `powerdns`, `scaleway`, `vercel`. Les clés des paramètres sont les étiquettes JSON de la configuration du fournisseur libdns ; chacun accepte en plus `zone` (facultatif : déduite du domaine enregistrable, à renseigner pour une zone déléguée). Les adresses d'API saisies (`api_url`, `endpoint_url`, `server_url`…) doivent être en HTTPS et ne pas viser un réseau interne ni les métadonnées du cloud (`400` sinon) ; PowerDNS, auto-hébergé, accepte http et un réseau privé, jamais le lien local.
 
 À partir d'Admin `0.122.0`, `POST` et `PUT /api/v1/acme/providers` renvoient `400` pour un type inconnu, un paramètre requis vide ou une clé inconnue ; `GET` masque les paramètres `secret` (`••••••••`) et `PUT` conserve un secret absent, vide ou égal au masque. Avant, la liste renvoyait les jetons en clair.
 
@@ -900,7 +900,7 @@ Liste tous les Agents (online, pending, offline).
 
 ### `GET /api/v1/discovery-sources`
 
-Manifestes des sources de découverte de l'Agent, dans l'ordre de démarrage : `docker`, `portainer`, `kubernetes`. Admin uniquement (`nodes:read` pour un PAT). Chaque source est un **module** du registre commun (`internal/agent/sources`, ADR 0007) ; le champ `fields` décrit sa configuration dans `agent.json` (clé, genre, `secret`, `required`). Une source ajoutée au code de l'Agent apparaît ici sans autre modification.
+Manifestes des sources de découverte de l'Agent, dans l'ordre de démarrage : `docker`, `portainer`, `kubernetes`, puis (Admin `0.144.0`) les annuaires de services `consul`, `nomad`, `etcd` et `ecs`. Admin uniquement (`nodes:read` pour un PAT). Chaque source est un **module** du registre commun (`internal/agent/sources`, ADR 0007) ; le champ `fields` décrit sa configuration dans `agent.json` (clé, genre, `secret`, `required`). Une source ajoutée au code de l'Agent apparaît ici sans autre modification.
 
 ```json
 [{ "type": "kubernetes", "label": "Kubernetes", "fields": [

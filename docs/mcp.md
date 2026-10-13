@@ -22,7 +22,7 @@ Chaque outil exige un scope, le même que sa route REST équivalente. Les outils
 | `proxies:read` | `list_proxies`, `get_proxy` |
 | `proxies:write` | `create_proxy`, `update_proxy`, `set_proxy_enabled`, `purge_proxy_cache` |
 | `proxies:delete` | `delete_proxy` |
-| `nodes:read` | `list_nodes`, `list_declared_nodes`, `get_topology_live`, `list_agents` †, `get_architecture` † |
+| `nodes:read` | `list_nodes`, `list_declared_nodes`, `get_topology_live`, `list_agents` †, `get_architecture` †, `list_discovery_sources` † |
 | `nodes:write` | `create_declared_node`, `delete_declared_node`, `create_bootstrap_ticket`, `accept_node`, `reject_node`, `approve_agent` †, `revoke_agent` † |
 | `alerts:read` | `list_alerts`, `list_alert_events`, `list_alert_channels`, `list_alert_channel_types`, `list_alert_rules` |
 | `alerts:write` | `create_alert_channel`, `delete_alert_channel`, `create_alert_rule`, `delete_alert_rule`, `ack_alert_event` |
@@ -34,7 +34,7 @@ Chaque outil exige un scope, le même que sa route REST équivalente. Les outils
 | `snippets:write` | `create_snippet`, `delete_snippet` |
 | `domains:read` | `list_domains` |
 | `domains:write` | `create_domain`, `renew_domain`, `rotate_cert` |
-| `certs:read` | `list_certs`, `get_cert_status`, `list_cert_deploy_targets`, `list_cert_deploy_types`, `list_internal_cas` †, `list_internal_certs` †, `get_ech_status` † |
+| `certs:read` | `list_certs`, `get_cert_status`, `list_cert_deploy_targets`, `list_cert_deploy_types`, `list_internal_cas` †, `list_internal_certs` †, `get_ech_status` †, `list_dns_providers` †, `list_dns_provider_types` † |
 | `certs:write` | `obtain_cert`, `import_cert`, `trigger_cert_deploy`, `create_internal_ca` †, `issue_internal_cert` †, `revoke_internal_cert` † |
 | `logs:read` | `list_logs`, `get_prism_anomalies`, `get_prism_geo`, `get_prism_tls_fingerprints`, `get_prism_slo`, `simulate_sentinel_config` †, `trace_ip` †, `preview_security_ban` †, `preview_asn_ban` † |
 | `audit:read` | `get_audit_log`, `list_ip_profiles`, `get_security_overview` †, `list_security_bans` †, `list_security_engine_types` †, `list_plugins` †, `lookup_asn` †, `list_ban_whitelist` †, `list_security_threats` †, `list_security_cves` †, `list_auth_providers` †, `list_auth_provider_types` †, `list_flows` †, `get_flow` †, `list_flow_versions` †, `list_flow_runs` †, `get_flow_run` †, `get_automation_catalog` †, `list_flow_templates` †, `list_silences` †, `export_automation` † |
@@ -226,6 +226,16 @@ Liste les Agents vus via le plan de contrôle WebSocket (`pending`, `approved`, 
   { "id": "agent-1", "name": "agent-1", "version": "0.3.0", "status": "pending", "seen_at": "2026-08-08T10:00:00Z" }
 ]
 ```
+
+---
+
+### `list_discovery_sources`
+
+Sources de découverte de l'Agent — Docker/Podman, Portainer, Kubernetes, Consul, Nomad, etcd, Amazon ECS — avec leurs champs de configuration (clé, `secret`, `required`) pour la section `sources.<type>` de `agent.json`. Même source que `GET /api/v1/discovery-sources` et `goproxify agent-mgmt sources`.
+
+_Aucun paramètre._
+
+**Scope :** `nodes:read` + rôle admin
 
 ---
 
@@ -833,6 +843,34 @@ Types de cible de déploiement de certificats (`webhook`, `ssh_exec`…) avec le
 _Aucun paramètre._
 
 **Scope :** `certs:read`
+
+---
+
+### `list_dns_providers`
+
+Fournisseurs DNS nommés du challenge ACME DNS-01 : identifiant, nom, type et paramètres, **secrets masqués** (`••••••••`). Un certificat en désigne un par `acme_provider_id`. Même source que `GET /api/v1/acme/providers`.
+
+_Aucun paramètre._
+
+**Scope :** `certs:read` + rôle admin
+
+```json
+[{ "id": "3f9c2a1b", "name": "do-prod", "type": "digitalocean", "params": { "auth_token": "••••••••" } }]
+```
+
+---
+
+### `list_dns_provider_types`
+
+Types de fournisseur DNS (cinq natifs et 28 modules libdns, `attrs.engine = "libdns"`) avec leurs paramètres : clé, `secret`, `required`, variable d'environnement (`env`). Même source que `GET /api/v1/acme/provider-types`.
+
+| Paramètre | Type | Requis | Description |
+|-----------|------|--------|-------------|
+| `q` | string | — | Filtre sur le type ou le libellé (sous-chaîne, insensible à la casse) |
+
+**Scope :** `certs:read` + rôle admin
+
+Lecture seule : un fournisseur se crée dans l'interface, par l'API ou par `goproxify acme providers add`, pour que ses identifiants ne transitent pas par un client IA.
 
 ---
 

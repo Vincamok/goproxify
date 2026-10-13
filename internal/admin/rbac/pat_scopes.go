@@ -102,7 +102,7 @@ func ScopeCatalog() []ScopeMeta {
 // Doit contenir exactement les outils du serveur MCP (vérifié par un test de internal/admin/mcp).
 var mcpTools = []string{
 	"list_proxies", "get_proxy", "create_proxy", "update_proxy", "set_proxy_enabled", "delete_proxy", "purge_proxy_cache",
-	"list_nodes", "list_agents", "list_declared_nodes", "get_topology_live", "get_architecture",
+	"list_nodes", "list_agents", "list_declared_nodes", "get_topology_live", "get_architecture", "list_discovery_sources",
 	"approve_agent", "revoke_agent", "create_declared_node", "delete_declared_node",
 	"create_bootstrap_ticket", "accept_node", "reject_node",
 	"list_alerts", "list_alert_events", "list_alert_channels", "list_alert_channel_types", "list_alert_rules",
@@ -110,7 +110,7 @@ var mcpTools = []string{
 	"get_metrics", "get_proxy_metrics", "list_backups", "list_users",
 	"list_snippets", "list_detector_types", "create_snippet", "delete_snippet",
 	"list_domains", "create_domain", "renew_domain", "rotate_cert",
-	"list_certs", "get_cert_status", "list_cert_deploy_targets", "list_cert_deploy_types", "list_internal_cas", "list_internal_certs", "get_ech_status",
+	"list_certs", "get_cert_status", "list_cert_deploy_targets", "list_cert_deploy_types", "list_internal_cas", "list_internal_certs", "get_ech_status", "list_dns_providers", "list_dns_provider_types",
 	"obtain_cert", "import_cert", "trigger_cert_deploy", "create_internal_ca", "issue_internal_cert", "revoke_internal_cert",
 	"list_logs", "simulate_sentinel_config", "trace_ip", "preview_security_ban", "preview_asn_ban", "get_prism_anomalies", "get_prism_geo", "get_prism_tls_fingerprints", "get_prism_slo", "list_teams",
 	"get_audit_log", "get_security_overview", "list_security_bans", "list_security_engine_types", "list_plugins", "lookup_asn", "list_security_threats", "list_security_cves",
@@ -228,7 +228,7 @@ func ToolRequiredScope(tool string) string {
 		return ScopeProxiesWrite
 	case "delete_proxy":
 		return ScopeProxiesDelete
-	case "list_nodes", "list_agents", "list_declared_nodes", "get_topology_live", "get_architecture":
+	case "list_nodes", "list_agents", "list_declared_nodes", "get_topology_live", "get_architecture", "list_discovery_sources":
 		return ScopeNodesRead
 	case "approve_agent", "revoke_agent",
 		"create_declared_node", "delete_declared_node",
@@ -252,7 +252,7 @@ func ToolRequiredScope(tool string) string {
 		return ScopeDomainsRead
 	case "create_domain", "renew_domain", "rotate_cert":
 		return ScopeDomainsWrite
-	case "list_certs", "get_cert_status", "list_cert_deploy_targets", "list_cert_deploy_types", "list_internal_cas", "list_internal_certs", "get_ech_status":
+	case "list_certs", "get_cert_status", "list_cert_deploy_targets", "list_cert_deploy_types", "list_internal_cas", "list_internal_certs", "get_ech_status", "list_dns_providers", "list_dns_provider_types":
 		return ScopeCertsRead
 	case "obtain_cert", "import_cert", "trigger_cert_deploy",
 		"create_internal_ca", "issue_internal_cert", "revoke_internal_cert":
@@ -295,7 +295,7 @@ func ToolRequiresAdmin(tool string) bool {
 	}
 	switch tool {
 	case "list_agents", "approve_agent", "revoke_agent",
-		"get_architecture",
+		"get_architecture", "list_discovery_sources", "list_dns_providers", "list_dns_provider_types",
 		"list_backups", "list_users", "list_teams",
 		"get_security_overview", "list_security_bans", "list_security_engine_types", "list_plugins", "lookup_asn", "list_security_threats", "list_security_cves",
 		"create_security_ban", "delete_security_ban", "ban_ip", "unban_ip", "simulate_sentinel_config", "trace_ip", "preview_security_ban", "preview_asn_ban", "list_ban_whitelist", "add_ban_whitelist", "remove_ban_whitelist", "import_security_bans", "ban_asn", "unban_asn",
@@ -375,6 +375,7 @@ func RequiredScopeForRequest(r *http.Request) string {
 		return ScopeDomainsWrite
 	case strings.HasPrefix(path, "/api/v1/certs"),
 		strings.HasPrefix(path, "/api/v1/cert-deploy-types"),
+		strings.HasPrefix(path, "/api/v1/acme/"),
 		strings.HasPrefix(path, "/api/v1/internal-ca"),
 		strings.HasPrefix(path, "/api/v1/ech"):
 		if method == http.MethodGet {

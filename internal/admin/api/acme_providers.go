@@ -51,7 +51,7 @@ func (h *ACMEProvidersHandler) list(w http.ResponseWriter, _ *http.Request) {
 		entries = []acme.ProviderEntry{}
 	}
 	for i := range entries {
-		entries[i] = maskProviderEntry(entries[i])
+		entries[i] = entries[i].Masked()
 	}
 	jsonOK(w, entries)
 }
@@ -66,7 +66,7 @@ func (h *ACMEProvidersHandler) get(w http.ResponseWriter, r *http.Request, id st
 		writeErr(w, r, http.StatusNotFound, "api.err.not_found")
 		return
 	}
-	jsonOK(w, maskProviderEntry(*e))
+	jsonOK(w, e.Masked())
 }
 
 func (h *ACMEProvidersHandler) create(w http.ResponseWriter, r *http.Request) {
@@ -161,15 +161,6 @@ func (h *ACMEProvidersHandler) delete(w http.ResponseWriter, r *http.Request, id
 	}
 	h.Log.Info("acme_providers: supprimé", "id", id)
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// maskProviderEntry masque les paramètres secrets selon le manifeste du type. Un type inconnu
-// (entrée ancienne) est renvoyé tel quel : on ne sait pas quels champs sont secrets.
-func maskProviderEntry(e acme.ProviderEntry) acme.ProviderEntry {
-	if man, ok := acme.DNSProviderManifest(e.Type); ok {
-		e.Params = paramsStr(man.Mask(paramsAny(e.Params)))
-	}
-	return e
 }
 
 func paramsAny(p map[string]string) map[string]any {

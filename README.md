@@ -12,12 +12,13 @@ You have several VPS, Docker containers on different hosts, and you want to rout
 
 ### What makes it different
 
-- **One binary, three roles** — the same executable starts as Edge (proxy), Admin (management UI) or Agent (Docker discovery)
+- **One binary, three roles** — the same executable starts as Edge (proxy), Admin (management UI) or Agent (service discovery)
 - **The Edge is autonomous** — it starts and routes traffic even when the Admin is unreachable; routes and certificates are held locally, in RAM
 - **HTTP/1.1, HTTP/2, HTTP/3 QUIC, TCP/UDP L4** — one tool covers all protocols
 - **Built-in OWASP CRS-4 WAF** — 13 rule sets (SQLi, XSS, Log4Shell…) with no external plugin
 - **SSH and Docker access from the UI** — web terminal, UUID `ssh` to VMs and `docker exec` to containers, directly from your browser
-- **Automatic Docker discovery** — the Agent reads `goproxify.*` labels on your containers and pushes routes in real time
+- **Automatic service discovery** — the Agent reads `goproxify.*` labels on Docker/Podman containers and Kubernetes services, or tags from Consul, Nomad, etcd and Amazon ECS, and pushes routes in real time
+- **WASM plugins** — sandboxed plugins on requests, bodies and TCP/UDP streams; Coraza (SecLang) and ready-made examples installable in one click
 - **Alerting to 10 channels** — Email, Webhook, ntfy.sh, Jira, Linear, GitHub Issues, and more
 
 ---
@@ -194,7 +195,7 @@ goproxify <command> [options]
 Service commands:
   admin    Start Administration (Control Plane + Web UI)
   edge     Start Edge (Data Plane — Reverse Proxy)
-  agent    Start Agent (Docker Discovery)
+  agent    Start Agent (service discovery)
   landing  Start landing page (optional)
 
 Operational commands (talk to Admin via HTTP):
@@ -247,7 +248,7 @@ Full reference → **[docs/cli.md](docs/cli.md)**
 - **Bans page** — the same page in the Admin (all Edges) and in each Edge menu: KPIs, 48 h timeline, origin by country, filters, bulk actions and a mobile card layout; every ban records the Edge that reported it
 - **HA groups** — Sentinel, IPS provider, HTTP timeouts and the access portal are configured once per HA group; the portal store (accounts, 2FA, vaults, optional shared web sessions) and Sentinel reference lists are replicated between Edges, and bans keep flowing between peers when the Admin is down
 - **Guided first start** — initial configuration wizard
-- ACME DNS-01 wildcard management (OVH, Cloudflare, Gandi, Route 53, Hetzner), plus HTTP-01 and TLS-ALPN-01 validation served by the Edge (no DNS provider needed)
+- ACME DNS-01 wildcard management (OVH, Cloudflare, Gandi, Route 53, Hetzner and 28 more providers through [libdns](https://github.com/libdns): DigitalOcean, Scaleway, Namecheap, GoDaddy, Azure DNS, Google Cloud DNS, Porkbun, deSEC…), plus HTTP-01 and TLS-ALPN-01 validation served by the Edge (no DNS provider needed)
 - OCSP stapling fetched autonomously by each Edge
 - Certificate push to Edge (RAM only, never persisted on Edge side)
 - **Certificate Hub** — ACME monitoring (dashboard + expiry alerts), external PEM cert import, deploy targets (HMAC webhook / ssh_exec), multi-format pull tokens (PEM/DER/PKCS#12/JSON)
@@ -258,11 +259,13 @@ Full reference → **[docs/cli.md](docs/cli.md)**
 - **GDPR-ready access logs** — client IPs kept in full, anonymised or pseudonymised (AES-GCM, revealable with an audited legal reason by the superadmin or a delegated DPO, account or team), configurable retention, Art. 17 erasure by IP or user — see [docs/rgpd.md](docs/rgpd.md)
 - Scheduled backups and restore
 - Import: nginx, HAProxy, Traefik, Caddy, CSV, JSON
+- **WASM plugins** (wazero) — signed packages, plugin repositories, per-route attachment; Coraza (SecLang) and four example plugins (`path-guard`, `rate-guard`, `body-redact`, `tcp-allow`) shipped with the Admin
 
-### Agent (Docker Discovery)
+### Agent (Service Discovery)
 
 - Reads `/var/run/docker.sock` **read-only**
 - Detects `goproxify.*` labels on containers in real time
+- Also discovers Portainer, Kubernetes `Ingress`/`Service` annotations, and **Consul, Nomad, etcd and Amazon ECS** instances (polled; an unreachable directory never removes a route)
 - Sends routes, metrics and events to the Edge via **persistent WS tunnel** (Agent→Edge)
 - HTTP heartbeat fallback if WS connection is unavailable
 - Canary (`goproxify.canary`) and Shadow Mirror (`goproxify.shadow`) labels supported
@@ -316,11 +319,12 @@ See `.env.example` for the full list.
 | Language | Go 1.25 — single static binary, zero runtime dependency |
 | Protocols | HTTP/1.1, HTTP/2, HTTP/3 QUIC (quic-go), TCP/UDP L4 |
 | **Control plane** | **Persistent WebSocket `nhooyr.io/websocket` — Admin→Edge(WS), Agent→Edge(WS)** |
-| TLS | SSL termination + SNI Passthrough, ACME DNS-01 wildcard |
+| TLS | SSL termination + SNI Passthrough, ACME DNS-01 wildcard (33 DNS providers), HTTP-01, TLS-ALPN-01 |
 | Admin persistence | CGO-free SQLite (`modernc.org/sqlite`) — config, users, tokens — Raft HA option |
 | Edge persistence | Proxies: **YAML** files (`proxies/*.yaml`, `proxies-revisions/*.yaml`) · AES-256-GCM local cache (certs) |
 | Configuration | `GPX_*` environment variables + optional JSON |
-| Discovery | Docker Engine API via Unix socket (read-only) |
+| Discovery | Docker Engine API via Unix socket (read-only), Portainer, Kubernetes, Consul, Nomad, etcd v3, Amazon ECS |
+| Plugins | WebAssembly via `wazero` (no CGO) |
 | Metrics | Prometheus on the Edge internal API (`:8000/metrics`, bearer token; public `/metrics` only with `GPX_METRICS_PUBLIC=1`), OpenTelemetry (OTLP) |
 | Security | OWASP CRS-4 WAF (13 rule sets, request + response inspection), behavioral Sentinel, native Fail2Ban, CrowdSec, **automation flows** (rules, schedules, playbooks with approval), step-by-step **IP / CIDR trace** over long periods, rate limiting, Geo-IP, ECDSA P-256 JWT, HMAC-SHA256 WS, CVE scanner with KEV/EPSS enrichment and configurable remediation SLA |
 | Deployment | Single binary · Docker Compose · systemd |

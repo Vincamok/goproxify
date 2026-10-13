@@ -2,6 +2,8 @@
 
 L'Agent GoProxify détecte automatiquement les conteneurs portant `goproxify.enable: "true"` et configure la passerelle en conséquence. Tous les labels sont optionnels sauf `goproxify.enable` et `goproxify.host`.
 
+Les mêmes étiquettes valent pour les instances lues dans un annuaire de services — tags et métadonnées Consul, tags Nomad, `dockerLabels` et tags ECS, valeur JSON etcd (voir « Service directory discovery » dans [fonctionnalites.md](fonctionnalites.md)) : seules changent l'adresse et le port, que l'annuaire fournit (étiquettes `goproxify.scheme` et `goproxify.port` pour les ajuster).
+
 ---
 
 ## Identification du proxy

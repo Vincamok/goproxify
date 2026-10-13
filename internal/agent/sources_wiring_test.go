@@ -67,21 +67,28 @@ func TestSanitizedAgentConfig_ExposesKubernetesWithoutSecrets(t *testing.T) {
 	cfg := agentWith(func(c *config.AgentConfig) {
 		c.Kubernetes.Enabled, c.Kubernetes.APIServer = true, "https://k8s:6443"
 		c.Kubernetes.Token, c.Kubernetes.Namespace = "kube-secret-token", "prod"
-		c.Sources = map[string]map[string]any{"consul": {"url": "http://c", "token": "consul-secret"}}
+		c.Sources = map[string]map[string]any{
+			"consul":    {"address": "http://c", "token": "consul-secret"},
+			"zookeeper": {"url": "http://z", "token": "zk-secret"},
+		}
 	})
 	got := sanitizedAgentConfig(cfg)
 	k := got["kubernetes"].(map[string]any)
 	if k["enabled"] != true || k["api_server"] != "https://k8s:6443" || k["namespace"] != "prod" || k["token"] != "••••••••" {
 		t.Fatalf("kubernetes = %v", k)
 	}
-	for _, leaked := range []string{"kube-secret-token", "consul-secret"} {
+	for _, leaked := range []string{"kube-secret-token", "consul-secret", "zk-secret"} {
 		if containsString(got, leaked) {
 			t.Errorf("secret %q exposé", leaked)
 		}
 	}
-	// Une source sans manifeste dans le registre de l'Agent n'est pas exposée.
-	if s, ok := got["sources"]; ok && len(s.(map[string]any)) != 0 {
+	// Une source sans manifeste dans le registre de l'Agent n'est pas exposée ; Consul, déclaré, l'est avec son jeton masqué.
+	s, _ := got["sources"].(map[string]any)
+	if _, ok := s["zookeeper"]; ok || len(s) != 1 {
 		t.Errorf("sources = %v", s)
+	}
+	if c, _ := s["consul"].(map[string]any); c["address"] != "http://c" || c["token"] != "••••••••" {
+		t.Errorf("consul = %v", s["consul"])
 	}
 }
 

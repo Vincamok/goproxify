@@ -540,3 +540,38 @@ func TestKubernetesAnnouncementsDoNotMultiplyBackends(t *testing.T) {
 		t.Fatalf("%d backends pour un seul Service annoncé %d fois : %+v", len(rt.Backends), 10, rt.Backends)
 	}
 }
+
+// Un Agent dont les seules sources sont des annuaires (Consul, Nomad, etcd, ECS) annonce un runtime qui n'est ni Docker
+// ni Podman : son battement de cœur ne doit pas purger les routes que ces sources ont créées, et l'arrêt d'une instance
+// ne retire que son propre backend.
+func TestCatalogRoutesSurviveHeartbeatWithoutDockerAndStopIsExact(t *testing.T) {
+	s := testEdgeServer()
+	post := func(backend, cid string) {
+		b, _ := json.Marshal(map[string]any{
+			"host": "svc.example.fr", "backends": []string{backend},
+			"container_id": cid, "agent_name": "node-a", "source": "consul",
+		})
+		rr := httptest.NewRecorder()
+		s.handleAgentContainerStart(rr, httptest.NewRequest(http.MethodPost, "/internal/v1/agent/containers", bytes.NewReader(b)))
+		if rr.Code != http.StatusNoContent {
+			t.Fatalf("status = %d", rr.Code)
+		}
+	}
+	const a, b = "0123456789abcdef0123456789abcdef@consul", "fedcba9876543210fedcba9876543210@consul"
+	post("http://10.0.0.1:80", a)
+	post("http://10.0.0.2:80", b)
+
+	s.purgeDockerRoutesForAgent("node-a")
+	rt, ok := s.table.ByHost("svc.example.fr")
+	if !ok || len(rt.Backends) != 2 {
+		t.Fatalf("les routes d'annuaire ont été purgées : %+v", rt)
+	}
+
+	stop, _ := json.Marshal(map[string]any{"container_id": a, "name": "svc-1", "action": "stop"})
+	rr := httptest.NewRecorder()
+	s.handleAgentContainerStop(rr, httptest.NewRequest(http.MethodDelete, "/internal/v1/agent/containers", bytes.NewReader(stop)))
+	rt, ok = s.table.ByHost("svc.example.fr")
+	if !ok || len(rt.Backends) != 1 || rt.Backends[0].URL != "http://10.0.0.2:80" {
+		t.Fatalf("le retrait d'une instance doit laisser l'autre : %+v", rt)
+	}
+}

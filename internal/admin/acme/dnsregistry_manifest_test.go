@@ -15,8 +15,11 @@ func TestDNSRegistry_ShippedTypesInOrder(t *testing.T) {
 	for _, m := range DNSProviderManifests() {
 		got = append(got, m.Type)
 	}
-	if !reflect.DeepEqual(got, shippedDNSTypes) {
-		t.Fatalf("types = %v", got)
+	if len(got) < len(shippedDNSTypes) || !reflect.DeepEqual(got[:len(shippedDNSTypes)], shippedDNSTypes) {
+		t.Fatalf("les fournisseurs natifs viennent d'abord, dans l'ordre : types = %v", got)
+	}
+	if len(got)-len(shippedDNSTypes) != len(libdnsSpecs) {
+		t.Fatalf("%d fournisseurs libdns déclarés, %d enregistrés", len(libdnsSpecs), len(got)-len(shippedDNSTypes))
 	}
 }
 

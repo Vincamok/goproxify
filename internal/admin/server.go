@@ -878,6 +878,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mcpH := &mcp.Handler{
 		ProxyMetrics: func(points int) (any, any) { return proxyMetricsH.Snapshot(points) },
 		ArchStore:    archStore,
+		DNSProviders: acmeProviderStore,
 		DB:           s.db, Log: s.log, Pusher: manager,
 		Access: manager, AccessTemplates: manager,
 		ResolvePublicURL: bootstrapH.ResolvePublicURL,

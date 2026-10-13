@@ -88,6 +88,18 @@ func hasRuntime(runtimes []string, names ...string) bool {
 	return false
 }
 
+// Les sources d'annuaire de l'Agent (Consul, Nomad, etcd, ECS) identifient leurs instances « <empreinte>@<source> » et
+// réutilisent aussi l'identifiant « docker-host: » : le battement de cœur d'un Agent qui n'a que ces sources ne doit pas
+// supprimer leurs routes.
+func hasCatalogBackend(rt *router.Route) bool {
+	for _, b := range rt.Backends {
+		if strings.Contains(b.ContainerID, "@") {
+			return true
+		}
+	}
+	return false
+}
+
 // La découverte Kubernetes réutilise l'identifiant « docker-host: » des routes : sans ce test, le heartbeat d'un Agent
 // qui n'a que le runtime « kubernetes » les supprimerait dès la seconde suivante.
 func hasKubernetesBackend(rt *router.Route) bool {
@@ -105,7 +117,7 @@ func (s *Server) purgeDockerRoutesForAgent(agentName string) {
 		if rt.AgentName != agentName {
 			continue
 		}
-		if (strings.HasPrefix(rt.ID, "docker:") || strings.HasPrefix(rt.ID, "docker-host:")) && !hasKubernetesBackend(rt) {
+		if (strings.HasPrefix(rt.ID, "docker:") || strings.HasPrefix(rt.ID, "docker-host:")) && !hasKubernetesBackend(rt) && !hasCatalogBackend(rt) {
 			if s.table.Delete(rt.ID) {
 				changed = true
 			}

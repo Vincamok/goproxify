@@ -1144,7 +1144,7 @@
         <h3 data-i18n="f3.title">Your container fleet, connected</h3>
         <p data-i18n="f3.body">The Agent watches your containers (via Portainer or Docker) and tells the gateways what is running. When you start, stop or move an app, public routes stay in sync.</p>
         <ul class="feature-points">
-          <li data-i18n="f3.p1">Discover new containers and Kubernetes services as they appear</li>
+          <li data-i18n="f3.p1">Discover new containers, Kubernetes services and Consul, Nomad, etcd or Amazon ECS instances as they appear</li>
           <li data-i18n="f3.p2">Stay linked to Portainer to manage the whole fleet</li>
           <li data-i18n="f3.p3">Update routes automatically when apps change</li>
         </ul>
@@ -1183,6 +1183,7 @@
           <li data-i18n="f5.p2">Sentinel — immediate ban on signal, anti-DDoS global RPS, behavioural per-IP window</li>
           <li data-i18n="f5.p3">Rate limit (per IP or per authenticated user), GeoIP, CrowdSec, CVE scanner, SSO</li>
           <li data-i18n="f5.p4">Automation flows — rules, schedules and playbooks with human approval, built in a visual editor</li>
+          <li data-i18n="f5.p5">WASM plugins — Coraza (SecLang) and ready-made examples installed in one click, sandboxed on every request</li>
         </ul>
       </div>
 
@@ -2404,6 +2405,26 @@ volumes:
           <tr>
             <td>
               <div class="tech-name">
+                <span class="stack-dot" style="background:#14b8a6"></span>
+                Service directories
+              </div>
+            </td>
+            <td class="tech-desc">Kubernetes, Portainer, Consul, Nomad, etcd v3 and Amazon ECS — same options as Docker labels; an unreachable directory never removes a route</td>
+            <td style="color:var(--text-muted);font-size:0.8rem">Agent</td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tech-name">
+                <span class="stack-dot" style="background:#654ff0"></span>
+                WebAssembly (wazero)
+              </div>
+            </td>
+            <td class="tech-desc">Sandboxed plugins on requests, bodies and TCP/UDP streams, without CGO. Signed packages, plugin repositories, Coraza (SecLang) bundled</td>
+            <td style="color:var(--text-muted);font-size:0.8rem">Edge · Admin</td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tech-name">
                 <span class="stack-dot" style="background:#ef4444"></span>
                 JWT + PAT
               </div>
@@ -2428,7 +2449,7 @@ volumes:
                 ACME DNS-01
               </div>
             </td>
-            <td class="tech-desc">Automatic wildcard certs via OVH, Cloudflare, Gandi, Route53, Hetzner</td>
+            <td class="tech-desc">Automatic wildcard certs via OVH, Cloudflare, Gandi, Route53, Hetzner and 28 more DNS providers (libdns)</td>
             <td style="color:var(--text-muted);font-size:0.8rem">Admin → Edge</td>
           </tr>
           <tr>
@@ -2762,7 +2783,7 @@ volumes:
       'f2.p1': 'Create and edit which address opens which site',
       'f2.p2': 'Manage domains and certificates from one place',
       'f2.p3': 'Design your layout with the architecture assistant',
-      'f3.p1': 'Discover new containers and Kubernetes services as they appear',
+      'f3.p1': 'Discover new containers, Kubernetes services and Consul, Nomad, etcd or Amazon ECS instances as they appear',
       'f3.p2': 'Stay linked to Portainer to manage the whole fleet',
       'f3.p3': 'Update routes automatically when apps change',
       'f4.p1': 'Sites keep answering even if the Admin is briefly offline',
@@ -2772,6 +2793,7 @@ volumes:
       'f5.p2': 'Sentinel — immediate ban on signal, anti-DDoS global RPS, behavioural per-IP window',
       'f5.p3': 'Rate limit (per IP or per authenticated user), GeoIP, CrowdSec, CVE scanner, SSO',
       'f5.p4': 'Automation flows — rules, schedules and playbooks with human approval, built in a visual editor',
+      'f5.p5': 'WASM plugins — Coraza (SecLang) and ready-made examples installed in one click, sandboxed on every request',
       'f6.p1': 'Live views of traffic across your published sites',
       'f6.p2': 'Clear access logs you can actually read',
       'f6.p3': 'Alerts on several channels when something goes wrong',
@@ -2948,7 +2970,7 @@ volumes:
       'f2.p1': 'Créer et modifier quelle adresse ouvre quel site',
       'f2.p2': 'Gérer domaines et certificats depuis un seul endroit',
       'f2.p3': "Concevoir votre layout avec l'assistant d'architecture",
-      'f3.p1': "Découvrir les nouveaux conteneurs et services Kubernetes dès qu'ils apparaissent",
+      'f3.p1': "Découvrir les nouveaux conteneurs, services Kubernetes et instances Consul, Nomad, etcd ou Amazon ECS dès qu'ils apparaissent",
       'f3.p2': 'Rester branché sur Portainer pour piloter toute la flotte',
       'f3.p3': 'Mettre à jour les routes automatiquement quand les apps changent',
       'f4.p1': "Les sites répondent même si l'Admin est brièvement hors ligne",
@@ -2958,6 +2980,7 @@ volumes:
       'f5.p2': 'Sentinel — ban immédiat sur signal, RPS global anti-DDoS, fenêtre comportementale par IP',
       'f5.p3': 'Rate limit (par IP ou par utilisateur authentifié), GeoIP, CrowdSec, scanner CVE, SSO',
       'f5.p4': 'Flux d’automatisation — règles, planifications et playbooks avec approbation humaine, construits dans un éditeur visuel',
+      'f5.p5': 'Plugins WASM — Coraza (SecLang) et exemples prêts à l’emploi installés en un clic, isolés à chaque requête',
       'f6.p1': 'Vues en direct du trafic sur vos sites publiés',
       'f6.p2': "Journaux d'accès clairs et lisibles",
       'f6.p3': 'Alertes sur plusieurs canaux quand quelque chose cloche',
@@ -3134,7 +3157,7 @@ volumes:
       'f2.p1': 'Crear y editar qué dirección abre qué sitio',
       'f2.p2': 'Gestionar dominios y certificados en un solo lugar',
       'f2.p3': 'Diseñar tu layout con el asistente de arquitectura',
-      'f3.p1': 'Descubrir contenedores nuevos y servicios Kubernetes en cuanto aparecen',
+      'f3.p1': 'Descubrir contenedores nuevos, servicios Kubernetes e instancias Consul, Nomad, etcd o Amazon ECS en cuanto aparecen',
       'f3.p2': 'Seguir conectado a Portainer para gestionar toda la flota',
       'f3.p3': 'Actualizar rutas automáticamente cuando las apps cambian',
       'f4.p1': 'Los sitios siguen respondiendo si el Admin está offline un momento',
@@ -3144,6 +3167,7 @@ volumes:
       'f5.p2': 'Sentinel — ban inmediato por señal, RPS global anti-DDoS, ventana conductual por IP',
       'f5.p3': 'Rate limit (por IP o por usuario autenticado), GeoIP, CrowdSec, escáner CVE, SSO',
       'f5.p4': 'Flujos de automatización — reglas, programaciones y playbooks con aprobación humana, creados en un editor visual',
+      'f5.p5': 'Plugins WASM — Coraza (SecLang) y ejemplos listos para usar instalados en un clic, aislados en cada petición',
       'f6.p1': 'Vistas en vivo del tráfico en tus sitios publicados',
       'f6.p2': 'Registros de acceso claros y legibles',
       'f6.p3': 'Alertas en varios canales cuando algo va mal',
@@ -3320,7 +3344,7 @@ volumes:
       'f2.p1': 'Anlegen und ändern, welche Adresse welche Site öffnet',
       'f2.p2': 'Domains und Zertifikate an einem Ort verwalten',
       'f2.p3': 'Ihr Layout mit dem Architektur-Assistenten entwerfen',
-      'f3.p1': 'Neue Container und Kubernetes-Dienste entdecken, sobald sie erscheinen',
+      'f3.p1': 'Neue Container, Kubernetes-Dienste und Consul-, Nomad-, etcd- oder Amazon-ECS-Instanzen entdecken, sobald sie erscheinen',
       'f3.p2': 'Mit Portainer verbunden bleiben, um die ganze Flotte zu steuern',
       'f3.p3': 'Routen automatisch aktualisieren, wenn Apps wechseln',
       'f4.p1': 'Sites antworten weiter, auch wenn das Admin kurz offline ist',
@@ -3330,6 +3354,7 @@ volumes:
       'f5.p2': 'Sentinel — Sofortsperre bei Signal, globaler Anti-DDoS-RPS, Verhaltensanalyse pro IP',
       'f5.p3': 'Rate-Limit (pro IP oder authentifiziertem Nutzer), GeoIP, CrowdSec, CVE-Scanner, SSO',
       'f5.p4': 'Automatisierungs-Flows — Regeln, Zeitpläne und Playbooks mit menschlicher Genehmigung, in einem visuellen Editor gebaut',
+      'f5.p5': 'WASM-Plugins — Coraza (SecLang) und fertige Beispiele mit einem Klick installiert, bei jeder Anfrage isoliert',
       'f6.p1': 'Live-Ansichten des Traffics auf Ihren veröffentlichten Sites',
       'f6.p2': 'Klare, lesbare Access-Logs',
       'f6.p3': 'Alerts auf mehreren Kanälen, wenn etwas schiefläuft',

@@ -205,6 +205,9 @@ func TestToolScopesMatchREST(t *testing.T) {
 		{"trigger_cert_deploy", http.MethodPost, "/api/v1/certs/c1/deploy-targets/t1/trigger"},
 		{"list_internal_cas", http.MethodGet, "/api/v1/internal-ca"},
 		{"list_cert_deploy_types", http.MethodGet, "/api/v1/cert-deploy-types"},
+		{"list_dns_providers", http.MethodGet, "/api/v1/acme/providers"},
+		{"list_dns_provider_types", http.MethodGet, "/api/v1/acme/provider-types"},
+		{"list_discovery_sources", http.MethodGet, "/api/v1/discovery-sources"},
 		{"get_ech_status", http.MethodGet, "/api/v1/ech"},
 		{"list_internal_certs", http.MethodGet, "/api/v1/internal-ca/ca1/certs"},
 		{"create_internal_ca", http.MethodPost, "/api/v1/internal-ca"},
@@ -310,6 +313,21 @@ func TestPortalTerminalContentNeedsWriteScope(t *testing.T) {
 		{http.MethodDelete, "/api/v1/portal/sessions/abc?edge=a", rbac.ScopePortalWrite},
 	} {
 		if got := scope(c.method, c.path); got != c.want {
+			t.Errorf("%s %s: %q, attendu %q", c.method, c.path, got, c.want)
+		}
+	}
+}
+
+// Les fournisseurs DNS portent les identifiants d'API des zones : un PAT sans certs:write ne les modifie pas.
+func TestACMEProvidersNeedCertsScope(t *testing.T) {
+	for _, c := range []struct{ method, path, want string }{
+		{http.MethodGet, "/api/v1/acme/providers", rbac.ScopeCertsRead},
+		{http.MethodGet, "/api/v1/acme/provider-types", rbac.ScopeCertsRead},
+		{http.MethodPost, "/api/v1/acme/providers", rbac.ScopeCertsWrite},
+		{http.MethodPut, "/api/v1/acme/providers/p1", rbac.ScopeCertsWrite},
+		{http.MethodDelete, "/api/v1/acme/providers/p1", rbac.ScopeCertsWrite},
+	} {
+		if got := rbac.RequiredScopeForRequest(httptest.NewRequest(c.method, c.path, nil)); got != c.want {
 			t.Errorf("%s %s: %q, attendu %q", c.method, c.path, got, c.want)
 		}
 	}

@@ -50,6 +50,11 @@ func infraTools() []map[string]any {
 			),
 		},
 		{
+			"name":        "list_discovery_sources",
+			"description": "Sources de découverte de l'Agent (Docker/Podman, Portainer, Kubernetes, Consul, Nomad, etcd, Amazon ECS) avec leurs champs de configuration (clé, secret, requis) pour la section sources.<type> de agent.json.",
+			"inputSchema": schema(),
+		},
+		{
 			"name":        "list_declared_nodes",
 			"description": "Liste les nœuds déclarés (wizard architecture / Infrastructure) pas encore connectés.",
 			"inputSchema": schema(),

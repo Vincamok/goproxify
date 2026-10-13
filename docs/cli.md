@@ -223,8 +223,9 @@ Gestion des certificats TLS (ACME / Let's Encrypt).
 
 ```
 goproxify cert list   [-admin-url …] [-token …]
-goproxify cert obtain <domaine> [-admin-url …] [-token …]
+goproxify cert obtain <domaine> [-dns-provider <id>] [-admin-url …] [-token …]
 goproxify cert delete <domaine> [-admin-url …] [-token …]
+  -dns-provider  Fournisseur DNS nommé du challenge DNS-01 (voir goproxify acme), mémorisé et réutilisé au renouvellement
 ```
 
 `list` affiche le domaine, le statut, le nombre de jours avant expiration (⚠ si < 14 j) et l'émetteur.
@@ -234,7 +235,37 @@ Exemples :
 ```bash
 goproxify cert list
 goproxify cert obtain app.example.fr
+goproxify cert obtain "*.example.fr" -dns-provider 3f9c2a1b
 goproxify cert delete old.example.fr
+```
+
+---
+
+### `goproxify acme`
+
+Fournisseurs DNS du challenge ACME DNS-01 : cinq natifs (OVH, Cloudflare, Route 53, Gandi, Hetzner) et 28 modules [libdns](https://github.com/libdns). Admin uniquement ; scopes PAT `certs:read` (lecture) et `certs:write` (écriture).
+
+```
+goproxify acme types [-q <filtre>] [-json]
+goproxify acme providers list   [-json]
+goproxify acme providers get    <id>
+goproxify acme providers add    -name <nom> -type <type> [-set clé=valeur,…] [-file params.json]
+goproxify acme providers update <id> [-name <nom>] [-set clé=valeur,…] [-file params.json]
+goproxify acme providers delete <id> [-y]
+```
+
+- `types` liste chaque type avec son moteur (`libdns` pour les modules) et ses paramètres (`*` requis, `(secret)`) ; `-q` filtre sur le type ou le libellé.
+- `-set` convient aux valeurs simples. Une valeur contenant une virgule passe par `-file`, un objet JSON `{ "clé": "valeur" }` ; `-set` s'applique après `-file`.
+- Les secrets sont masqués à la lecture ; `update` part de la configuration enregistrée, ne change que ce qui est donné et conserve les secrets non fournis. Le type d'un fournisseur ne change pas : en créer un autre.
+
+Exemples :
+
+```bash
+goproxify acme types -q ocean
+goproxify acme providers add -name do-prod -type digitalocean -set auth_token=dop_v1_xxx
+goproxify acme providers add -name gcp -type googleclouddns -set gcp_project=my-project,gcp_application_default=/etc/goproxify/gcp-sa.json
+goproxify acme providers add -name pdns -type powerdns -file pdns-params.json
+goproxify acme providers update 3f9c2a1b -set zone=example.fr
 ```
 
 ---
@@ -550,7 +581,7 @@ goproxify agent-mgmt delete  <id> [-y] [-admin-url …] [-token …]
 goproxify agent-mgmt sources [-admin-url …] [-token …]
 ```
 
-`sources` liste les sources de découverte de l'Agent (Docker/Podman, Portainer, Kubernetes…) avec leurs champs de configuration (`*` = requis, « secret » = masqué dans le heartbeat et conservé par un correctif de configuration). Chaque source est un module du registre (ADR 0007).
+`sources` liste les sources de découverte de l'Agent (Docker/Podman, Portainer, Kubernetes, Consul, Nomad, etcd, ECS) avec leurs champs de configuration (`*` = requis, « secret » = masqué dans le heartbeat et conservé par un correctif de configuration). Chaque source est un module du registre (ADR 0007).
 
 Exemples :
 

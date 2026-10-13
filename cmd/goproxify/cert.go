@@ -59,7 +59,7 @@ func runCert() {
 			domain = os.Args[3]
 		}
 		if domain == "" {
-			fmt.Fprintln(os.Stderr, "usage: goproxify cert obtain <domaine>")
+			fmt.Fprintln(os.Stderr, "usage: goproxify cert obtain <domaine> [-dns-provider <id>]")
 			os.Exit(1)
 		}
 		client, err := newAdminClient(args)
@@ -67,8 +67,11 @@ func runCert() {
 			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
 			os.Exit(1)
 		}
-		if _, err := client.DoJSON("POST", "/api/v1/certs",
-			map[string]any{"domain": domain}, nil, 200, 201, 202); err != nil {
+		body := map[string]any{"domain": domain}
+		if p := flagValue(args, "-dns-provider", ""); p != "" {
+			body["acme_provider_id"] = p
+		}
+		if _, err := client.DoJSON("POST", "/api/v1/certs", body, nil, 200, 201, 202); err != nil {
 			fmt.Fprintf(os.Stderr, "cert obtain : %v\n", err)
 			os.Exit(1)
 		}
@@ -105,8 +108,11 @@ Sous-commandes :
   delete  Supprime un certificat
 
 goproxify cert list   [-admin-url …] [-token …]
-goproxify cert obtain <domaine> [-admin-url …] [-token …]
+goproxify cert obtain <domaine> [-dns-provider <id>] [-admin-url …] [-token …]
 goproxify cert delete <domaine> [-admin-url …] [-token …]
+
+-dns-provider : fournisseur DNS nommé pour le challenge DNS-01 (goproxify acme providers list) ;
+il est mémorisé sur le certificat et réutilisé au renouvellement.
 `)
 	default:
 		fmt.Fprintf(os.Stderr, "sous-commande cert inconnue : %q\n", sub)

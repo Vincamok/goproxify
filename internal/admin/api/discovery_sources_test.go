@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/vincamok/goproxify/internal/modules"
@@ -16,11 +17,15 @@ func TestDiscoverySources_Endpoint(t *testing.T) {
 	rec := httptest.NewRecorder()
 	DiscoverySourcesHandler{}.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/discovery-sources", nil))
 	var got []modules.Manifest
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || len(got) != 3 {
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || len(got) != 7 {
 		t.Fatalf("manifestes = %d, %v", len(got), err)
 	}
-	if got[0].Type != "docker" || got[1].Type != "portainer" || got[2].Type != "kubernetes" {
-		t.Errorf("ordre : %s %s %s", got[0].Type, got[1].Type, got[2].Type)
+	var order []string
+	for _, m := range got {
+		order = append(order, m.Type)
+	}
+	if strings.Join(order, " ") != "docker portainer kubernetes consul nomad etcd ecs" {
+		t.Errorf("ordre : %v", order)
 	}
 	rec = httptest.NewRecorder()
 	DiscoverySourcesHandler{}.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/discovery-sources", nil))
