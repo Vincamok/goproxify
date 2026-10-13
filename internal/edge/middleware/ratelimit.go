@@ -29,14 +29,22 @@ func (r *rateLimiter) allow() bool {
 	return ok
 }
 
-func (r *rateLimiter) allowWithTokens() (bool, float64) {
+func (r *rateLimiter) allowWithTokens() (bool, float64) { return r.allowWithPeers(0) }
+
+// allowWithPeers : peers est le débit que les autres passerelles du groupe HA admettent déjà pour cette clé
+// (rate_limit.shared) ; il est retiré du débit de recharge, dans la limite du plancher (voir ratelimit_shared.go).
+func (r *rateLimiter) allowWithPeers(peers float64) (bool, float64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := time.Now()
 	elapsed := now.Sub(r.lastRefill).Seconds()
 	r.lastRefill = now
 	r.lastSeen = now
-	r.tokens = min(r.maxTokens, r.tokens+elapsed*r.refillRate)
+	refill := r.refillRate
+	if peers > 0 {
+		refill = effectiveRate(r.refillRate, peers)
+	}
+	r.tokens = min(r.maxTokens, r.tokens+elapsed*refill)
 	if r.tokens >= 1 {
 		r.tokens--
 		return true, r.tokens
@@ -83,7 +91,15 @@ func RateLimit(cfg *router.RateLimitConfig) func(http.Handler) http.Handler {
 			key := rateLimitKey(r, cfg)
 			if cfg.RequestsPerSecond > 0 {
 				rl := rlStore.get(key, cfg)
-				allowed, tokens := rl.allowWithTokens()
+				var peers float64
+				shareKey := r.Host + "\x00" + key
+				if cfg.Shared {
+					peers = rateShares.peerRateSum(shareKey, time.Now())
+				}
+				allowed, tokens := rl.allowWithPeers(peers)
+				if allowed && cfg.Shared {
+					rateShares.admitted(shareKey, time.Now())
+				}
 				metrics.RateLimit.TokensCurrent.WithLabelValues(r.Host, key).Set(tokens)
 				if !allowed {
 					metrics.Pipeline.BlockedTotal.WithLabelValues(r.Host, "ratelimit", "rate_exceeded").Inc()

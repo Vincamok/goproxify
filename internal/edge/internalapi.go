@@ -94,6 +94,7 @@ func (s *Server) startInternalAPI() error {
 	mux.HandleFunc("POST /internal/v1/gateway/tunnel", s.handleGatewayTunnel)
 	mux.HandleFunc("GET /internal/v1/lb/scores", s.handleLBScores)
 	mux.HandleFunc("GET /internal/v1/ratelimit/export", s.handleQuotaExport)
+	mux.HandleFunc("GET /internal/v1/ratelimit/rates", s.handleRateExport)
 	mux.HandleFunc("GET /internal/v1/health", s.handleInternalHealth)
 	mux.HandleFunc("GET /internal/v1/backends/health", s.handleBackendsHealth)
 	mux.HandleFunc("GET /internal/v1/metrics/summary", s.handleMetricsSummary)

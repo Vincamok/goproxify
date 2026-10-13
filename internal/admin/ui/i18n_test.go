@@ -155,3 +155,33 @@ func TestAutomationPagesAreFullyTranslated(t *testing.T) {
 		}
 	}
 }
+
+// La page compte (profil, MFA, appareils de confiance, jetons) : chaque clé account.* existe dans les quatre
+// langues et aucun texte accentué n'est écrit en dur.
+func TestAccountPageIsFullyTranslated(t *testing.T) {
+	blocks := localeBlocks(t)
+	b, err := srcFS.ReadFile("src/js/pages/account.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := regexp.MustCompile(`\bt\('(account\.[A-Za-z0-9_.-]+)'`).FindAllStringSubmatch(string(b), -1)
+	if len(keys) == 0 {
+		t.Fatal("aucune clé account.* trouvée")
+	}
+	for _, m := range keys {
+		for lang, block := range blocks {
+			if !strings.Contains(block, "'"+m[1]+"':") {
+				t.Errorf("clé %q absente de la langue %s", m[1], lang)
+			}
+		}
+	}
+	accent := regexp.MustCompile(`[àâçéèêëîïôûùü]`)
+	for i, line := range strings.Split(string(b), "\n") {
+		if idx := strings.Index(line, "//"); idx >= 0 {
+			line = line[:idx]
+		}
+		if accent.MatchString(line) {
+			t.Errorf("pages/account.js:%d : texte accentué en dur : %s", i+1, strings.TrimSpace(line))
+		}
+	}
+}

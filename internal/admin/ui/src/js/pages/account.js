@@ -141,7 +141,61 @@ pages.profile = async function() {
         </div>
       </div>
 
-    </div>`;
+    </div>
+
+    <div style="margin:28px 0 12px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+      <div>
+        <h6 style="margin:0 0 4px;">${t('account.trusted_title')}</h6>
+        <p style="margin:0;opacity:0.65;font-size:13px;max-width:640px;">${t('account.trusted_meta')}</p>
+      </div>
+      <button class="btn btn-ghost btn-sm" style="color:var(--red)" id="trusted-revoke-all" onclick="revokeAllTrustedDevices()">${t('account.trusted_revoke_all')}</button>
+    </div>
+    <div class="card" style="overflow-x:auto" id="trusted-devices"></div>`;
+
+  function renderTrustedDevices(devices) {
+    const box = document.getElementById('trusted-devices');
+    if (!box) return;
+    document.getElementById('trusted-revoke-all').style.display = devices.length ? '' : 'none';
+    const now = new Date();
+    const rows = devices.map(d => {
+      const expired = d.expires_at && new Date(d.expires_at) < now;
+      return `<tr>
+        <td style="max-width:360px;word-break:break-word">${esc(d.name || '—')}</td>
+        <td style="font-size:12px;white-space:nowrap">${esc(fmtDate(d.created_at))}</td>
+        <td style="font-size:12px;white-space:nowrap">${expired ? `<span class="tag tag-neutral">${t('account.trusted_expired')}</span>` : esc(fmtDate(d.expires_at))}</td>
+        <td style="white-space:nowrap;text-align:right"><button class="btn btn-sm btn-danger" onclick="revokeTrustedDevice('${esc(d.id)}')">${t('account.trusted_revoke')}</button></td>
+      </tr>`;
+    }).join('') || `<tr><td colspan="4" style="opacity:0.5">${t('account.trusted_empty')}</td></tr>`;
+    box.innerHTML = `<table class="table" style="width:100%;table-layout:auto">
+      <thead><tr><th>${t('account.trusted_col_name')}</th><th>${t('account.trusted_col_created')}</th><th>${t('account.trusted_col_expires')}</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  }
+
+  async function refreshTrustedDevices() {
+    renderTrustedDevices(await api('GET', '/auth/mfa/trusted-devices').catch(() => []) || []);
+  }
+  refreshTrustedDevices();
+
+  window.revokeTrustedDevice = function(id) {
+    confirm_(t('account.trusted_revoke_confirm'), async () => {
+      try {
+        await api('DELETE', `/auth/mfa/trusted-devices/${encodeURIComponent(id)}`);
+        toast(t('account.trusted_revoked'), 'success');
+        await refreshTrustedDevices();
+      } catch(e) { toast(e.message, 'error'); }
+    });
+  };
+
+  window.revokeAllTrustedDevices = function() {
+    confirm_(t('account.trusted_revoke_all_confirm'), async () => {
+      try {
+        await api('DELETE', '/auth/mfa/trusted-devices');
+        toast(t('account.trusted_all_revoked'), 'success');
+        await refreshTrustedDevices();
+      } catch(e) { toast(e.message, 'error'); }
+    });
+  };
 
   window.saveEmail = async function() {
     const el  = document.getElementById('me-email');
@@ -173,6 +227,7 @@ pages.profile = async function() {
       document.getElementById('pw-current').value = '';
       document.getElementById('pw-new').value = '';
       document.getElementById('pw-confirm').value = '';
+      refreshTrustedDevices();
     } catch(e) { msg.textContent = e.message; msg.style.color='var(--red)'; msg.style.display=''; }
   };
 

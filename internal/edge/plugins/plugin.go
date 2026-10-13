@@ -50,6 +50,7 @@ const (
 	HookRequestBody  = "request_body"  // corps de la requête, tamponné
 	HookResponseBody = "response_body" // corps de la réponse, tamponné
 	HookConnect      = "connect"       // connexion TCP/UDP entrante (routes L4)
+	HookLog          = "log"           // requête terminée, hors du chemin de la réponse : ne décide de rien
 )
 
 // Politique face à un corps plus gros que limits.max_body_bytes.
@@ -58,7 +59,7 @@ const (
 	OnOversizeSkip = "skip" // le corps passe sans que le plugin le voie
 )
 
-var knownHooks = map[string]bool{HookRequest: true, HookResponse: true, HookRequestBody: true, HookResponseBody: true, HookConnect: true}
+var knownHooks = map[string]bool{HookRequest: true, HookResponse: true, HookRequestBody: true, HookResponseBody: true, HookConnect: true, HookLog: true}
 
 // Politique d'erreur.
 const (
@@ -102,13 +103,13 @@ func (m *Manifest) Normalize() error {
 		return fmt.Errorf("api_version %d non prise en charge (attendu %d)", m.APIVersion, APIVersion)
 	}
 	if len(m.Hooks) == 0 {
-		return errors.New("au moins un hook requis (request, response, request_body, response_body, connect)")
+		return errors.New("au moins un hook requis (request, response, request_body, response_body, connect, log)")
 	}
 	seen := map[string]bool{}
 	bodyHook := false
 	for _, h := range m.Hooks {
 		if !knownHooks[h] {
-			return fmt.Errorf("hook %q inconnu (request, response, request_body, response_body, connect)", h)
+			return fmt.Errorf("hook %q inconnu (request, response, request_body, response_body, connect, log)", h)
 		}
 		bodyHook = bodyHook || h == HookRequestBody || h == HookResponseBody
 		if seen[h] {
@@ -217,6 +218,8 @@ const (
 type Plugin struct {
 	Manifest Manifest
 	SHA256   string
+	// Verified : la signature du paquet a été contrôlée contre les clés épinglées de la passerelle (trust.go).
+	Verified bool
 
 	rt       wazero.Runtime
 	compiled wazero.CompiledModule
@@ -395,6 +398,10 @@ func (p *Plugin) Call(ctx context.Context, hook string, input any) (Output, erro
 	if l := state.logs.buf.String(); l != "" {
 		p.log.Info("plugin: journal", "hook", hook, "message", strings.TrimSpace(l))
 	}
+	if hook == HookLog {
+		// Un hook de journal n'a rien à décider : ce qu'il renvoie est ignoré, seuls ses échecs comptent.
+		return Output{Action: ActionAllow}, err
+	}
 	if err == nil {
 		err = out.validateFor(hook)
 	}
@@ -533,6 +540,13 @@ type RequestBodyInput struct {
 type ResponseBodyInput struct {
 	ResponseInput
 	Body []byte `json:"body"`
+}
+
+// LogInput est ce que reçoit le hook log : la requête et sa réponse, une fois celle-ci envoyée.
+type LogInput struct {
+	ResponseInput
+	DurationMs int64 `json:"duration_ms"`
+	BytesOut   int64 `json:"bytes_out"`
 }
 
 // ConnectInput est ce que reçoit le hook connect d'une route TCP/UDP.

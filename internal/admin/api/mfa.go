@@ -135,6 +135,8 @@ func (h *MFAHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Trusted devices
 	case path == "trusted-devices" && r.Method == http.MethodGet:
 		h.listDevices(w, r, userID)
+	case path == "trusted-devices" && r.Method == http.MethodDelete:
+		h.deleteAllDevices(w, r, userID)
 	case strings.HasPrefix(path, "trusted-devices/") && r.Method == http.MethodDelete:
 		deviceID := strings.TrimPrefix(path, "trusted-devices/")
 		h.deleteDevice(w, r, userID, deviceID)
@@ -507,6 +509,8 @@ func (h *MFAHandler) webAuthnLoginFinish(w http.ResponseWriter, r *http.Request)
 		UserID      string          `json:"user_id"`
 		ChallengeID string          `json:"challenge_id"`
 		Response    json.RawMessage `json:"response"`
+		Trust       bool            `json:"trust_device"`
+		DevName     string          `json:"device_name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, r, http.StatusBadRequest, "api.err.json")
@@ -564,6 +568,9 @@ func (h *MFAHandler) webAuthnLoginFinish(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
 		return
+	}
+	if body.Trust {
+		h.trustDevice(w, r, userID, body.DevName)
 	}
 	jsonOK(w, map[string]string{"token": token})
 }
@@ -624,25 +631,31 @@ func (h *MFAHandler) challenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := map[string]any{"token": token}
-
 	if req.Trust {
-		plain, hash, err := mfa.GenerateDeviceToken()
-		if err == nil {
-			name := req.DevName
-			if name == "" {
-				name = r.UserAgent()
-				if len(name) > 80 {
-					name = name[:80]
-				}
-			}
-			if _, err := h.Store.CreateTrustedDevice(r.Context(), userID, hash, name); err == nil {
-				resp["device_token"] = plain
-			}
+		h.trustDevice(w, r, userID, req.DevName)
+	}
+	jsonOK(w, map[string]string{"token": token})
+}
+
+// trustDevice enregistre l'appareil et lui pose le cookie qui évitera la MFA à la prochaine connexion. Le token
+// ne passe que par ce cookie HttpOnly : l'interface ne le conservait nulle part, si bien qu'« appareil de confiance »
+// ne servait jamais (et un token lisible par le JavaScript serait à la portée d'une injection de script).
+func (h *MFAHandler) trustDevice(w http.ResponseWriter, r *http.Request, userID, name string) {
+	plain, hash, err := mfa.GenerateDeviceToken()
+	if err != nil {
+		return
+	}
+	if name == "" {
+		name = r.UserAgent()
+		if len(name) > 80 {
+			name = name[:80]
 		}
 	}
-
-	jsonOK(w, resp)
+	if _, err := h.Store.CreateTrustedDevice(r.Context(), userID, hash, name); err != nil {
+		h.Log.Warn("mfa: appareil de confiance non enregistré", "user", userID, "err", err)
+		return
+	}
+	http.SetCookie(w, mfa.DeviceCookie(r, plain))
 }
 
 // --- Backup codes ---
@@ -683,12 +696,24 @@ func (h *MFAHandler) deleteDevice(w http.ResponseWriter, r *http.Request, userID
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h *MFAHandler) deleteAllDevices(w http.ResponseWriter, r *http.Request, userID string) {
+	if err := h.Store.DeleteTrustedDevices(r.Context(), userID); err != nil {
+		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // --- Suppression méthode ---
 
 func (h *MFAHandler) deleteMethod(w http.ResponseWriter, r *http.Request, userID string, method mfa.Method) {
 	h.Store.DeleteMethod(r.Context(), userID, method) //nolint:errcheck
 	if method == mfa.MethodBackup {
 		h.Store.SaveBackupCodes(r.Context(), userID, nil) //nolint:errcheck
+	}
+	// MFA désactivée : un appareil gardé de confiance dispenserait du second facteur dès sa réactivation.
+	if has, err := h.Store.HasVerifiedMFA(r.Context(), userID); err == nil && !has {
+		h.Store.DeleteTrustedDevices(r.Context(), userID) //nolint:errcheck
 	}
 	h.notifyChange()
 	w.WriteHeader(http.StatusNoContent)

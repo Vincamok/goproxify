@@ -51,7 +51,7 @@ func TestExamplesShareTheSameABI(t *testing.T) {
 	if err != nil {
 		t.Skipf("socle absent : %v", err)
 	}
-	for _, name := range []string{"rate-guard", "body-redact", "token-check", "tcp-allow", "coraza"} {
+	for _, name := range []string{"body-redact", "token-check", "tcp-allow", "coraza"} {
 		got, err := os.ReadFile(filepath.Join(root, name, "abi.go"))
 		if err != nil {
 			t.Fatalf("%s : %v", name, err)

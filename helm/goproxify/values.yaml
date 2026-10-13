@@ -10,6 +10,10 @@ global:
   # Rotation : l'ancien secret, le temps que les passerelles réécrivent leurs copies locales avec le nouveau
   # (plusieurs secrets séparés par des virgules). À retirer ensuite. Voir docs/deployment.md.
   previousPairingSecret: ""
+  # Clés publiques Ed25519 (base64, séparées par des virgules) auxquelles les passerelles font confiance pour les
+  # plugins : un plugin non signé par l'une d'elles est refusé, même poussé par l'Admin. Vide : seule l'empreinte est
+  # contrôlée. Les plugins intégrés de l'Admin ne sont pas signés et sont alors refusés. Voir docs/plugins.md.
+  pluginTrustedKeys: ""
   # Ancien nom de pairingSecret, encore lu s'il est renseigné.
   authToken: ""
   # Fuseau horaire des pods (crons, logs locaux, horloge admin)

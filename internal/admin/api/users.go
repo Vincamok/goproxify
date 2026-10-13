@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
+	"github.com/vincamok/goproxify/internal/admin/mfa"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
 )
 
@@ -352,6 +353,7 @@ func (h *UsersHandler) update(w http.ResponseWriter, r *http.Request, id string)
 		if err == nil {
 			h.DB.ExecContext(r.Context(), `UPDATE users SET password_hash=? WHERE id=?`, hash, id) //nolint:errcheck
 			_ = adminauth.RevokeSessions(r.Context(), h.DB, id)
+			_ = mfa.NewStore(h.DB).DeleteTrustedDevices(r.Context(), id)
 		}
 	}
 
@@ -506,6 +508,8 @@ func (h *UsersHandler) changePassword(w http.ResponseWriter, r *http.Request, id
 		writeErr(w, r, http.StatusNotFound, "api.err.user_not_found")
 		return
 	}
+	// Un mot de passe réinitialisé par un admin ne laisse aucun appareil dispensé du second facteur.
+	_ = mfa.NewStore(h.DB).DeleteTrustedDevices(r.Context(), id)
 
 	actor := adminauth.UserIDFromContext(r.Context())
 	_ = admindb.WriteAudit(h.DB, actor, "change_password", "user:"+id, "")

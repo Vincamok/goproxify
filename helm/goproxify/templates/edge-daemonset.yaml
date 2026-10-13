@@ -72,6 +72,11 @@ spec:
                   name: {{ include "goproxify.fullname" . }}-secret
                   key: previous-pairing-secret
             {{- end }}
+            {{- if .Values.global.pluginTrustedKeys }}
+            # Clés publiques épinglées : la passerelle refuse tout plugin qui n'est pas signé par l'une d'elles, même poussé par l'Admin.
+            - name: GPX_PLUGIN_TRUSTED_KEYS
+              value: {{ .Values.global.pluginTrustedKeys | quote }}
+            {{- end }}
             - name: GPX_AGENT_BIND_IDENTITY
               value: "true"
             - name: GPX_AGENT_PAIRING_ROOT

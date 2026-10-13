@@ -2,7 +2,7 @@ apiVersion: v2
 name: goproxify
 description: Goproxify — reverse proxy distribué avec Administration, Passerelle et Agent
 type: application
-version: 0.4.2
+version: 0.4.3
 appVersion: "1.0.0"
 keywords:
   - proxy

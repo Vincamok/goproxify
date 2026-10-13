@@ -147,8 +147,9 @@ func Static(out string) []byte {
 			{Typ: 1, Body: I64(packed)},
 			{Typ: 1, Body: I64(packed)},
 			{Typ: 1, Body: I64(packed)},
+			{Typ: 1, Body: I64(packed)},
 		},
-		ExportsFn: map[string]int{"alloc": 0, "on_request": 1, "on_response": 2, "on_request_body": 3, "on_response_body": 4, "on_connect": 5},
+		ExportsFn: map[string]int{"alloc": 0, "on_request": 1, "on_response": 2, "on_request_body": 3, "on_response_body": 4, "on_connect": 5, "on_log": 6},
 		DataAt:    dataAtOffset, Data: []byte(out),
 	}.Build()
 }
@@ -179,7 +180,7 @@ func Log() []byte {
 	return Spec{
 		Imports:   [][]byte{imp},
 		MemMin:    2,
-		Funcs:     []Fn{{Typ: 0, Body: I32(1024)}, {Typ: 1, Body: call}, {Typ: 1, Body: call}, {Typ: 1, Body: call}, {Typ: 1, Body: call}},
-		ExportsFn: map[string]int{"alloc": 1, "on_request": 2, "on_request_body": 3, "on_response_body": 4, "on_connect": 5},
+		Funcs:     []Fn{{Typ: 0, Body: I32(1024)}, {Typ: 1, Body: call}, {Typ: 1, Body: call}, {Typ: 1, Body: call}, {Typ: 1, Body: call}, {Typ: 1, Body: call}},
+		ExportsFn: map[string]int{"alloc": 1, "on_request": 2, "on_request_body": 3, "on_response_body": 4, "on_connect": 5, "on_log": 6},
 	}.Build()
 }

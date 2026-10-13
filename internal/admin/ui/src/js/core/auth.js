@@ -221,9 +221,6 @@ async function doPairingLogin() {
 function doLogout() {
   localStorage.removeItem('gpx_token');
   state.token = '';
-  try {
-    document.cookie = '_gpx_device=; path=/; Max-Age=0; SameSite=Lax';
-  } catch (_) { /* ignore */ }
   showLogin();
 }
 

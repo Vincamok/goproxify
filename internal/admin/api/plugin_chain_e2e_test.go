@@ -8,6 +8,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
@@ -36,7 +37,7 @@ type gatewayPusher struct {
 }
 
 func (g *gatewayPusher) PushPlugins(ctx context.Context) {
-	rows, err := g.db.QueryContext(ctx, `SELECT manifest, sha256, wasm FROM plugins ORDER BY name`)
+	rows, err := g.db.QueryContext(ctx, `SELECT manifest, sha256, wasm, signature FROM plugins ORDER BY name`)
 	if err != nil {
 		return
 	}
@@ -45,7 +46,7 @@ func (g *gatewayPusher) PushPlugins(ctx context.Context) {
 	for rows.Next() {
 		var pkg plugins.Package
 		var manifest string
-		if rows.Scan(&manifest, &pkg.SHA256, &pkg.Wasm) == nil && json.Unmarshal([]byte(manifest), &pkg.Manifest) == nil {
+		if rows.Scan(&manifest, &pkg.SHA256, &pkg.Wasm, &pkg.Signature) == nil && json.Unmarshal([]byte(manifest), &pkg.Manifest) == nil {
 			pkgs = append(pkgs, pkg)
 		}
 	}
@@ -228,5 +229,79 @@ func TestPluginChain_SignedRepoToTwoGatewaysWithKeyRotation(t *testing.T) {
 	}
 	if installedSHA(restarted, base.Name) != wantV2 {
 		t.Error("le plugin rechargé n'est pas la version 2")
+	}
+}
+
+// Une passerelle qui épingle des clés ne fait pas confiance à l'Admin : elle refuse ce qu'il pousse sans signature
+// d'une de ses clés, et accepte le même plugin dès qu'il est signé. Une passerelle sans épinglage reçoit tout.
+func TestPluginChain_PinnedGatewayDoesNotTrustTheAdmin(t *testing.T) {
+	base, ok := pluginlib.Get("path-guard")
+	if !ok {
+		t.Skip("exemple intégré absent")
+	}
+	pub, priv, _ := plugins.GenerateKey()
+	otherPub, _, _ := plugins.GenerateKey()
+
+	db, err := admindb.Open(filepath.Join(t.TempDir(), "admin.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	open := newGateway(t, t.TempDir())
+	t.Setenv(plugins.TrustedKeysEnv, base64.StdEncoding.EncodeToString(pub))
+	pinned := newGateway(t, t.TempDir())
+	t.Setenv(plugins.TrustedKeysEnv, base64.StdEncoding.EncodeToString(otherPub))
+	pinnedOther := newGateway(t, t.TempDir())
+	pusher := &gatewayPusher{db: db, gw: []*plugins.Manager{open, pinned, pinnedOther}}
+	ph := &PluginsHandler{DB: db, Log: slog.New(slog.DiscardHandler), Pusher: pusher}
+
+	// 1. Aucune clé côté Admin : l'installation non signée est permise, les passerelles qui épinglent la refusent.
+	req := pluginRequest{Manifest: base.Manifest, SHA256: base.SHA256, Wasm: base.Wasm}
+	if _, _, ierr := ph.installPackage(context.Background(), req, ""); ierr != nil {
+		t.Fatalf("installation non signée : %v", ierr.msg)
+	}
+	for deadline := time.Now().Add(3 * time.Second); installedSHA(open, base.Name) == "" && time.Now().Before(deadline); {
+		time.Sleep(20 * time.Millisecond)
+	}
+	time.Sleep(100 * time.Millisecond) // le temps, pour les passerelles qui épinglent, de refuser
+	if installedSHA(open, base.Name) != base.SHA256 {
+		t.Error("la passerelle sans épinglage doit recevoir le plugin")
+	}
+	for name, m := range map[string]*plugins.Manager{"épinglée": pinned, "épinglée sur une autre clé": pinnedOther} {
+		if installedSHA(m, base.Name) != "" {
+			t.Errorf("passerelle %s : un plugin non signé a été accepté", name)
+		}
+	}
+
+	// 2. Clé de confiance côté Admin, version signée : la passerelle épinglée sur cette clé l'accepte (et la
+	//    signature a bien été stockée puis poussée), celle épinglée sur une autre clé la refuse toujours.
+	if rec := addKey(t, ph, pub); rec.Code != http.StatusCreated {
+		t.Fatalf("clé : %d %s", rec.Code, rec.Body.String())
+	}
+	m := base.Manifest
+	m.Version = "1.0.1"
+	v2 := append(append([]byte{}, base.Wasm...), 0x00, 0x04, 0x01, 'x', 0x01, 0x02)
+	sum := sha256.Sum256(v2)
+	sha := hex.EncodeToString(sum[:])
+	sig, err := plugins.Sign(priv, m, sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ierr := ph.installPackage(context.Background(), pluginRequest{Manifest: m, SHA256: sha, Wasm: v2, Signature: sig}, base.Name); ierr != nil {
+		t.Fatalf("installation signée : %v", ierr.msg)
+	}
+	pusher.eventually(t, "version signée", func(g *plugins.Manager) bool {
+		if g == pinnedOther {
+			return true
+		}
+		return installedSHA(g, base.Name) == sha
+	})
+	if info := pinned.List(); len(info) != 1 || !info[0].Verified {
+		t.Errorf("passerelle épinglée : %+v", info)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if installedSHA(pinnedOther, base.Name) != "" {
+		t.Error("la passerelle épinglée sur une autre clé ne doit rien accepter")
 	}
 }

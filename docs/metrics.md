@@ -88,6 +88,9 @@ histogram_quantile(0.95, rate(gpx_backend_ttfb_seconds_bucket[5m]))
 | Métrique | Type | Labels | Description |
 |---|---|---|---|
 | `gpx_pipeline_blocked_total` | Counter | `host`, `stage`, `reason` | Requêtes bloquées par étape |
+| `gpx_detector_decisions_total` | Counter | `detector`, `decision` | Décisions des détecteurs par route (`ip_filter`, `geo_ip`, `bot`, `waf`) : `pass` (la suite de la chaîne est appelée, y compris en mode détection) ou `block` |
+| `gpx_plugin_log_calls_total` | Counter | `plugin`, `result` | Appels du hook `log` des plugins (`ok` / `error`) |
+| `gpx_plugin_log_dropped_total` | Counter | `plugin` | Appels du hook `log` abandonnés, file pleine |
 
 Valeurs de `stage` : `ipfilter`, `ratelimit`, `bot`, `jwt`, `geoip`.  
 Valeurs de `reason` selon la `stage` :

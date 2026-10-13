@@ -911,7 +911,7 @@ func (m *Manager) PushSnippets(ctx context.Context) {
 
 // loadPlugins lit les plugins installés (paquets complets) pour les passerelles.
 func (m *Manager) loadPlugins(ctx context.Context) ([]plugins.Package, error) {
-	rows, err := m.db.QueryContext(ctx, `SELECT manifest, sha256, wasm FROM plugins ORDER BY name`)
+	rows, err := m.db.QueryContext(ctx, `SELECT manifest, sha256, wasm, signature FROM plugins ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -920,7 +920,7 @@ func (m *Manager) loadPlugins(ctx context.Context) ([]plugins.Package, error) {
 	for rows.Next() {
 		var pkg plugins.Package
 		var manifest string
-		if err := rows.Scan(&manifest, &pkg.SHA256, &pkg.Wasm); err != nil {
+		if err := rows.Scan(&manifest, &pkg.SHA256, &pkg.Wasm, &pkg.Signature); err != nil {
 			continue
 		}
 		if json.Unmarshal([]byte(manifest), &pkg.Manifest) != nil {

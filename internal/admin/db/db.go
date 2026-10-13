@@ -412,6 +412,8 @@ func migrate(db *sql.DB) error {
 		`ALTER TABLE users ADD COLUMN tokens_valid_after INTEGER NOT NULL DEFAULT 0`,
 		// Clé de confiance qui a signé le plugin ('' = non signé)
 		`ALTER TABLE plugins ADD COLUMN signed_by TEXT NOT NULL DEFAULT ''`,
+		// Signature Ed25519 vérifiée à l'installation, poussée avec le paquet : une passerelle qui épingle des clés la revérifie
+		`ALTER TABLE plugins ADD COLUMN signature TEXT NOT NULL DEFAULT ''`,
 	} {
 		db.Exec(s) //nolint:errcheck
 	}

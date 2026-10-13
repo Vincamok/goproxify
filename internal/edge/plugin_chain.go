@@ -92,7 +92,18 @@ func (s *Server) pluginMiddleware(route *router.Route) func(http.Handler) http.H
 				Method: r.Method, Host: r.Host, Path: r.URL.Path, Query: r.URL.RawQuery,
 				Headers: r.Header, ClientIP: edgelog.RealIP(r),
 			}
-			var respHooks, respBodyHooks []activePlugin
+			var respHooks, respBodyHooks, logHooks []activePlugin
+			for _, a := range active {
+				if a.p.Manifest.Has(plugins.HookLog) {
+					logHooks = append(logHooks, a)
+				}
+			}
+			if len(logHooks) > 0 {
+				// Avant tout le reste : un refus d'un autre plugin de la chaîne est une réponse que le journal doit voir.
+				obs, done := s.observeForLog(w, logHooks, in)
+				defer done()
+				w = obs
+			}
 			for _, a := range active {
 				if a.p.Manifest.Has(plugins.HookResponse) {
 					respHooks = append(respHooks, a)

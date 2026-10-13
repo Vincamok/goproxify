@@ -23,6 +23,9 @@ type Package struct {
 	Manifest Manifest `json:"manifest"`
 	SHA256   string   `json:"sha256"`
 	Wasm     []byte   `json:"wasm"`
+	// Signature : Ed25519 en base64 (plugins.Sign) du manifeste normalisé et de l'empreinte. Vérifiée par la
+	// passerelle seulement si des clés de confiance y sont épinglées (trust.go).
+	Signature string `json:"signature,omitempty"`
 }
 
 // Manager tient les plugins chargés d'une passerelle et leur stockage chiffré.
@@ -30,6 +33,8 @@ type Manager struct {
 	dir   string
 	cache *edgecache.Store
 	log   *slog.Logger
+
+	trust trust
 
 	mu      sync.RWMutex
 	plugins map[string]*Plugin
@@ -40,7 +45,7 @@ func NewManager(cache *edgecache.Store, dir string, log *slog.Logger) *Manager {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Manager{dir: dir, cache: cache, log: log, plugins: map[string]*Plugin{}}
+	return &Manager{dir: dir, cache: cache, log: log, trust: loadTrust(log), plugins: map[string]*Plugin{}}
 }
 
 func (m *Manager) path(name string) string { return filepath.Join(m.dir, name+".gpx") }
@@ -51,10 +56,14 @@ func (m *Manager) Install(ctx context.Context, pkg Package) error {
 	if strings.TrimSpace(pkg.SHA256) == "" {
 		return errors.New("empreinte sha256 requise")
 	}
+	if err := m.verify(pkg); err != nil {
+		return err
+	}
 	p, err := Load(ctx, pkg.Manifest, pkg.Wasm, pkg.SHA256, m.log)
 	if err != nil {
 		return err
 	}
+	p.Verified = m.trust.pinned
 	pkg.Manifest = p.Manifest // valeurs par défaut appliquées
 	pkg.SHA256 = p.SHA256
 	if err := m.cache.SaveFile(m.path(pkg.Manifest.Name), pkg); err != nil {
@@ -109,11 +118,16 @@ func (m *Manager) LoadAll(ctx context.Context) (loaded int, errs []error) {
 			errs = append(errs, fmt.Errorf("%s : %w", e.Name(), errOr(err, "paquet absent")))
 			continue
 		}
+		if err := m.verify(pkg); err != nil {
+			errs = append(errs, fmt.Errorf("%s : %w", e.Name(), err))
+			continue
+		}
 		p, err := Load(ctx, pkg.Manifest, pkg.Wasm, pkg.SHA256, m.log)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s : %w", e.Name(), err))
 			continue
 		}
+		p.Verified = m.trust.pinned
 		m.mu.Lock()
 		if old := m.plugins[p.Manifest.Name]; old != nil {
 			old.Close(ctx)
@@ -147,6 +161,8 @@ func (m *Manager) Get(name string) (*Plugin, bool) {
 type Info struct {
 	Manifest Manifest `json:"manifest"`
 	SHA256   string   `json:"sha256"`
+	// Verified : paquet dont la signature a été contrôlée par une clé épinglée sur cette passerelle.
+	Verified bool `json:"verified,omitempty"`
 }
 
 // List retourne les plugins chargés, triés par nom.
@@ -158,7 +174,7 @@ func (m *Manager) List() []Info {
 	defer m.mu.RUnlock()
 	out := make([]Info, 0, len(m.plugins))
 	for _, p := range m.plugins {
-		out = append(out, Info{Manifest: p.Manifest, SHA256: p.SHA256})
+		out = append(out, Info{Manifest: p.Manifest, SHA256: p.SHA256, Verified: p.Verified})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Manifest.Name < out[j].Manifest.Name })
 	return out

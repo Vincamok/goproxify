@@ -354,6 +354,12 @@ func (s *Store) DeleteTrustedDevice(ctx context.Context, userID, deviceID string
 	return err
 }
 
+// DeleteTrustedDevices révoque tous les appareils de confiance d'un utilisateur.
+func (s *Store) DeleteTrustedDevices(ctx context.Context, userID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM user_trusted_devices WHERE user_id=?`, userID)
+	return err
+}
+
 func replaceAll(s, old, new string) string {
 	result := ""
 	for _, c := range s {

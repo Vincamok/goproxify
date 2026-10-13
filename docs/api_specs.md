@@ -202,7 +202,7 @@ Contrôles : `syntax`, `structure` (type, host, backends, URLs, et — depuis Ed
 
 Crée un proxy manuel. Corps : objet conforme au schéma canonique (section `proxies`).
 
-Options avancées de la configuration (Edge 0.37.0, détail dans [fonctionnalites.md](fonctionnalites.md)) : `split`, `maintenance`, `signed_url`, `graphql`, `bandwidth`, `redact_json`, `rate_limit.quota` / `quota_period` / `key_by` (`header:<nom>`, `cookie:<nom>`), condition `jwt_claim`, et pour `sso` : `provider: "oauth2_proxy"`, `forward_auth_signin_url`, `forward_auth_timeout_ms`.
+Options avancées de la configuration (Edge 0.37.0, détail dans [fonctionnalites.md](fonctionnalites.md)) : `split`, `maintenance`, `signed_url`, `graphql`, `bandwidth`, `redact_json`, `html_inject` (Edge 0.61.0 : `position` `head_end`/`body_end`, `content` ≤ 16 Kio, `csp_nonce`), `rate_limit.quota` / `quota_period` / `key_by` (`header:<nom>`, `cookie:<nom>`), condition `jwt_claim`, et pour `sso` : `provider: "oauth2_proxy"`, `forward_auth_signin_url`, `forward_auth_timeout_ms`.
 
 ### `GET /api/v1/proxies/:domain`
 
@@ -1717,6 +1717,18 @@ Codes d'erreur :
 `methods` (réponse `202` de `POST /api/v1/auth/login` et `GET /api/v1/auth/mfa`) ne liste que `id`, `user_id`, `method`, `enabled`, `verified`. Le champ `config` — qui contenait le secret TOTP — n'est plus jamais renvoyé : avant cette version, le mot de passe seul donnait de quoi calculer le code. Le compteur de signatures d'une clé de sécurité est enregistré à chaque connexion ; un compteur qui n'augmente pas (clé clonée) est refusé avec `401`, comme un mauvais code.
 
 ### Second facteur à la connexion (Admin `0.135.11`)
+
+**Appareil de confiance** (Admin `0.146.2`) : avec `"trust_device": true` (et `device_name` facultatif), `POST /api/v1/auth/mfa/challenge` et `/api/v1/auth/mfa/webauthn/login/finish` enregistrent l'appareil pour 7 jours et posent le cookie `_gpx_device` (HttpOnly, SameSite=Strict, `Path=/api/v1/auth`, Secure en HTTPS ou derrière un proxy qui envoie `X-Forwarded-Proto: https`). `POST /api/v1/auth/login` le lit (ou l'en-tête `X-Device-Token`) et délivre alors directement le JWT, sans second facteur. Le token n'est plus renvoyé dans le corps (`device_token`) ; WebAuthn ignorait `trust_device`. L'appareil est conservé en base : il survit à un redémarrage de l'Admin. `GET /api/v1/auth/mfa/trusted-devices` les liste, `DELETE /api/v1/auth/mfa/trusted-devices/{id}` en révoque un.
+
+Gestion (Admin `0.147.1`), pour l'utilisateur courant uniquement (JWT complet) :
+
+| Méthode | Route | Réponse |
+|---|---|---|
+| `GET` | `/api/v1/auth/mfa/trusted-devices` | `200` — `[{ "id", "name", "expires_at", "created_at" }]` (plus récent d'abord, expirés inclus ; `null` si aucun) |
+| `DELETE` | `/api/v1/auth/mfa/trusted-devices/{id}` | `204` — sans effet sur l'appareil d'un autre utilisateur |
+| `DELETE` | `/api/v1/auth/mfa/trusted-devices` | `204` — révoque tous les appareils de l'utilisateur |
+
+Révocation automatique de tous les appareils d'un utilisateur : `POST /api/v1/me/change-password`, `PUT /api/v1/users/{id}/password`, `PUT /api/v1/users/{id}` avec `password`, et `DELETE /api/v1/auth/mfa/{method}` quand plus aucune méthode vérifiée ne reste (MFA désactivée).
 
 `POST /api/v1/auth/mfa/challenge` et `/api/v1/auth/mfa/webauthn/login/finish` : 5 échecs sur un compte (toutes méthodes confondues) le verrouillent 15 minutes — réponse `429` avec `Retry-After`, y compris pour le bon code. Un code TOTP accepté ne peut plus être rejoué dans sa fenêtre de validité.
 

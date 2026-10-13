@@ -63,6 +63,7 @@ type Server struct {
 	ech             *edgetls.ECHManager
 	snippetStore    *router.SnippetStore
 	pluginMgr       *plugins.Manager // plugins WASM installés (ADR 0008)
+	pluginLog       pluginLogQueue   // appels du hook log, hors du chemin de la réponse
 	providerStore   *router.AuthProviderStore
 	profileStore    *router.IPProfileStore
 	banStore        *router.BanStore
@@ -576,6 +577,7 @@ func (s *Server) Stop(ctx context.Context) {
 	if s.clusterGroup != nil {
 		s.clusterGroup.Stop()
 	}
+	s.pluginLog.stop()
 	s.l4.stop()
 	s.mu.Lock()
 	for _, l := range s.tcpPorts {

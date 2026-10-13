@@ -27,7 +27,7 @@ L'Admin pousse la liste complète aux passerelles. Une passerelle installe les p
 
 ## Signature
 
-**Où elle est vérifiée** : par l'Admin, à l'installation (manuelle ou depuis un dépôt). Les passerelles reçoivent le paquet par le WebSocket Admin → passerelle (authentifié par le secret d'appairage) et ne contrôlent que l'empreinte SHA-256 : elles font confiance à l'Admin, comme pour le reste de ce qu'il leur pousse. Retirer une clé de confiance empêche donc d'installer de nouvelles versions signées par elle, mais **ne retire pas** un plugin déjà installé : supprimez-le ou remplacez-le. `TestPluginChain_SignedRepoToTwoGatewaysWithKeyRotation` rejoue la chaîne complète (dépôt HTTP, installation, deux passerelles, mise à jour avec rotation de clé, clé retirée, module altéré, version non signée, redémarrage d'une passerelle sans l'Admin).
+**Où elle est vérifiée** : par l'Admin, à l'installation (manuelle ou depuis un dépôt), et — **si la passerelle épingle des clés** (voir « Clés épinglées sur la passerelle » plus bas) — par chaque passerelle. Par défaut les passerelles reçoivent le paquet par le WebSocket Admin → passerelle (authentifié par le secret d'appairage) et ne contrôlent que l'empreinte SHA-256 : elles font confiance à l'Admin, comme pour le reste de ce qu'il leur pousse. Retirer une clé de confiance empêche donc d'installer de nouvelles versions signées par elle, mais **ne retire pas** un plugin déjà installé : supprimez-le ou remplacez-le. `TestPluginChain_SignedRepoToTwoGatewaysWithKeyRotation` rejoue la chaîne complète (dépôt HTTP, installation, deux passerelles, mise à jour avec rotation de clé, clé retirée, module altéré, version non signée, redémarrage d'une passerelle sans l'Admin).
 
 L'empreinte SHA-256 vérifie l'intégrité d'un module, pas son origine. La signature **Ed25519** prouve qui a publié le paquet. Elle couvre le **manifeste normalisé en entier** (politique d'erreur et limites comprises) et l'empreinte du module : un manifeste plus permissif ne peut pas être accolé à un module signé.
 
@@ -41,7 +41,27 @@ goproxify plugin install -manifest plugin.json -wasm plugin.wasm -signature <sig
 - **Aucune clé de confiance enregistrée** : la signature est facultative. Une signature fournie est refusée (elle ne se vérifie pas) : enregistrez d'abord la clé.
 - **Au moins une clé enregistrée** : tout plugin installé ou **remplacé** doit être signé par l'une d'elles ; sinon `400`.
 - Retirer une clé ne retire pas les plugins qu'elle a signés ; l'identifiant de la clé signataire (`signed_by`) est conservé et affiché.
-- L'Admin vérifie la signature à l'installation ; les passerelles font confiance à l'Admin qui leur pousse la liste (comme pour le reste de la configuration).
+- L'Admin vérifie la signature à l'installation et conserve celle qui a été vérifiée (colonne `signature`) pour la pousser avec le paquet. Une passerelle qui n'épingle aucune clé fait confiance à l'Admin qui lui pousse la liste (comme pour le reste de la configuration).
+
+### Clés épinglées sur la passerelle
+
+Un Admin compromis pourrait signer lui-même un plugin avec une clé qu'il vient d'enregistrer et le pousser partout. Pour que la passerelle n'ait pas à lui faire confiance sur ce point, épinglez les clés **sur la passerelle**, hors de portée de l'Admin :
+
+```bash
+GPX_PLUGIN_TRUSTED_KEYS=<clé publique base64>,<autre clé>      # ou
+GPX_PLUGIN_TRUSTED_KEYS_FILE=/etc/goproxify/plugin-keys        # une clé par ligne, # pour commenter
+```
+
+Avec le chart Helm : `global.pluginTrustedKeys`. Tant qu'aucune des deux variables n'est définie, rien ne change. Dès que l'une l'est :
+
+- tout paquet doit porter une signature valide, sur le manifeste normalisé et l'empreinte, d'**une** de ces clés — qu'il vienne de l'Admin, d'un pair ou du disque. Sinon il est refusé et **la version qui tourne reste en place** ;
+- les copies chiffrées déjà stockées sont **revérifiées au redémarrage** : un plugin installé avant l'épinglage, ou signé par une clé retirée depuis, n'est plus chargé (une route qui y fait référence répond alors `503`, jamais publique) ;
+- une configuration inutilisable (aucune clé lisible) **refuse tout** au lieu de désactiver la vérification, et le journal le dit ;
+- les **plugins intégrés** de l'Admin ne sont pas signés (ils font confiance à son binaire) : une passerelle qui épingle les refuse. Installez à leur place des plugins signés par votre dépôt ;
+- la liste des plugins d'une passerelle indique `verified` pour ceux dont la signature a été contrôlée ;
+- c'est le seul cas où retirer une clé retire des plugins : retirez-la de la variable, redémarrez, et ce qu'elle avait signé n'est plus chargé.
+
+Limite : l'épinglage protège contre un Admin ou un transit compromis, pas contre une clé privée qui fuit. `TestPluginChain_PinnedGatewayDoesNotTrustTheAdmin` et `plugins/trust_test.go` couvrent le comportement.
 
 ## Dépôts de plugins
 
@@ -78,7 +98,7 @@ Un dépôt est une URL HTTPS qui sert un index JSON :
 | `limits.memory_pages` | pages de 64 Kio, 16 par défaut, 256 au plus |
 | `limits.timeout_ms` | 50 par défaut, 1 000 au plus ; une boucle infinie est interrompue |
 | `fields` | champs de configuration, au format des manifestes de modules (clés, genres, secrets, requis). La configuration d'une route est validée par ce manifeste |
-| `hooks` (suite) | `request_body`, `response_body` (corps tamponné), `connect` (routes TCP/UDP) ; un plugin sans hook applicable au type de la route est refusé à la validation |
+| `hooks` (suite) | `request_body`, `response_body` (corps tamponné), `connect` (routes TCP/UDP), `log` (requête terminée, hors du chemin de la réponse — voir « Hook log ») ; un plugin sans hook applicable au type de la route est refusé à la validation |
 | `limits.max_body_bytes` | taille maximale du corps présenté aux hooks de corps : 32 Kio par défaut, 1 Mio au plus |
 | `on_oversize` | `deny` (défaut : `413` sur une requête, `502` sur une réponse) ou `skip` (le corps passe sans que le plugin le voie), pour un corps plus gros que `max_body_bytes` |
 | `capabilities` | fonctions de l'hôte que le plugin peut importer en plus de `gpx.log` : `kv` (état), `http` (liste d'hôtes joignables), `http_allow_private` — voir ci-dessous |
@@ -107,6 +127,15 @@ L'hôte n'importe qu'une fonction : `gpx.log(ptr i32, len i32)` (journal, 1 Kio 
 - La **requête** est lue jusqu'à la limite ; si tous les plugins sont en dépassement (`skip`), le flux d'origine est restitué en entier au backend.
 - La **réponse** est retenue jusqu'à son terme : elle n'est plus transmise au fil de l'eau tant qu'un plugin de réponse est attaché. Un flux (`text/event-stream`) ne peut pas être retenu : il est traité comme un dépassement. HEAD, 1xx, 204 et 304 n'ont pas de corps : rien n'est examiné. Le corps est vu tel que le backend l'envoie (`Content-Encoding` compris : un backend qui compresse livre des octets compressés).
 - Un refus tardif (`deny` sur la réponse) retire les en-têtes propres à la réponse du backend (`Set-Cookie`, `Content-Encoding`, `ETag`…).
+
+## Hook log
+
+`log` est appelé **après** l'envoi de la réponse, de façon asynchrone : il ne peut ni refuser ni modifier quoi que ce soit, et sa sortie est ignorée (seuls ses échecs sont comptés). Il reçoit la requête et la réponse terminée : `{method, host, path, query, headers, client_ip, status, response_headers, duration_ms, bytes_out, config}`. Avec la capacité `http` il peut envoyer l'événement à un collecteur ; avec `kv` tenir des compteurs ; `gpx.log` écrit dans le journal de la passerelle.
+
+- **Jamais sur le chemin de la requête.** Les appels passent par une file bornée par passerelle (1 024 entrées, 2 exécutants) ; un plugin lent ou en boucle (borné par `timeout_ms`) ne retarde aucune réponse. File pleine : l'appel est **abandonné et compté** (`gpx_plugin_log_dropped_total{plugin}`), jamais accumulé. Un journal n'est donc pas une piste d'audit garantie ; pour cela, le journal d'accès de la passerelle reste la source.
+- `on_error` ne s'applique pas (rien à refuser) ; un échec incrémente `gpx_plugin_log_calls_total{plugin,result="error"}` et est journalisé.
+- Un refus d'un autre plugin de la chaîne (`deny`, 503 de plugin absent) est une réponse comme une autre : le journal la voit avec son statut.
+- Les octets comptés sont ceux écrits au client ; une connexion détournée (WebSocket) est notée `101`.
 
 ## État et réseau (capacités)
 
@@ -142,7 +171,7 @@ Le plugin d'exemple en TinyGo avec `encoding/json` (412 Kio) coûtait environ **
 | Exemple | Ce qu'il exerce | Taille |
 |---|---|---|
 | `path-guard` (TinyGo), `path-guard-rs` (Rust) | hook `request` : refus par préfixe de chemin, en-tête posé | 8 Kio, 57 Kio |
-| `rate-guard` (TinyGo) | capacité `kv` : limitation de débit par client et par route avec `gpx.kv_incr` | 11 Kio |
+| `rate-guard` (TinyGo, SDK) | capacité `kv` : limitation de débit par client et par route avec `gpx.KVIncr` ; seul exemple écrit avec le SDK Go | 24 Kio |
 | `body-redact` (TinyGo) | hook `response_body` : remplace un texte dans le corps (`replace_body`), corps binaire et jusqu'à 256 Kio | 14 Kio |
 | `token-check` (TinyGo) | capacité `http` : valide une clé d'API auprès d'un service interne avec `gpx.http_fetch` | 12 Kio |
 | `tcp-allow` (TinyGo) | hook `connect` : n'accepte sur une route TCP/UDP que des préfixes d'adresse | 11 Kio |
@@ -154,6 +183,10 @@ Ce que les écrire a appris :
 - **La mémoire d'un plugin à corps se dimensionne sur le corps.** `body-redact` traite 256 Kio avec 64 pages (4 Mio) : le corps arrive en base64 (×1,33), est décodé, remplacé puis ré-encodé, soit une dizaine de fois sa taille à un instant ou un autre. Avec 32 pages le même appel s'arrête sur une erreur d'allocation. Lire une valeur sans antislash sans la recopier (`str` dans `abi.go`) évite l'essentiel de cette amplification.
 - **Un moteur complet se paie à chaque appel.** `coraza` (1,2 Mio) reconstruit Coraza et ses règles à chaque requête, faute d'état entre deux appels : environ 7 ms pour quatre règles (amd64). Il tient dans les maxima d'un plugin (256 pages, 1 s) avec un jeu de règles réduit, pas avec OWASP CRS en entier. Coraza se compile avec le tag `no_fs_access`, sinon il tente d'écrire sur un disque que le module n'a pas.
 - **Un plugin dont les limites sont trop justes échoue proprement** (`on_error`), il ne corrompt rien : c'est ce qui a signalé les deux points précédents.
+
+## SDK Go
+
+`sdk/go` (module `github.com/vincamok/goproxify/sdk/go`, paquet `gpx`) évite de réécrire l'ABI : un plugin déclare ses gestionnaires dans `init()` (l'hôte exécute `_initialize` sur chaque instance, jamais `main()`) et reçoit un `*gpx.Event` typé (méthode, chemin, en-têtes insensibles à la casse, configuration, corps décodé, statut, durée…) ; il rend `gpx.Allow()`, `gpx.Deny(statut, corps)` ou `gpx.Modify().SetHeader(…)`. `gpx.KVIncr`, `gpx.HTTPFetch` et `gpx.Log` enveloppent les fonctions de l'hôte. Les échappements `u+XXXX` de l'entrée sont décodés et il n'utilise pas `encoding/json`. Détails, API et limites : [sdk/go/README.md](../sdk/go/README.md). Un module écrit avec le SDK pèse environ 12 Kio de plus qu'un module à lecture manuelle, pour un coût d'appel équivalent (environ 120 µs mesurés sur `rate-guard`).
 
 ## Mesure en charge
 
@@ -183,4 +216,4 @@ Ce qu'on en retient :
 - Pas de compilateur fourni : produisez le WASM avec la chaîne de votre langage (Rust `wasm32-unknown-unknown`, TinyGo `wasm-unknown`). `examples/plugins/path-guard` est un plugin Go compilé avec TinyGo 0.43 (`tinygo build -target=wasm-unknown -no-debug -scheduler=none`) et `examples/plugins/path-guard-rs` le même plugin en Rust 1.99 (`cargo build --release --target wasm32-unknown-unknown`) ; la suite de tests exécute les deux. En Rust, la pile par défaut de 1 Mio fait dépasser `memory_pages` (16 par défaut) : réduisez-la avec `-C link-arg=-zstack-size=65536` (voir le README de l'exemple).
 - La mesure en charge ci-dessus tient sur une seule machine (client, backend et passerelle ensemble) : elle donne l'ordre de grandeur du surcoût, pas une capacité. Rien n'a été mesuré avec plusieurs passerelles ni sur la durée (mémoire résidente).
 - Un appel instancie un module neuf (environ 176 Kio alloués, 110 à 160 µs) : un plugin sur une route à très fort débit en reste le premier consommateur de CPU et de ramasse-miettes. Une instance réutilisée entre appels romprait la garantie « pas d'état entre deux requêtes » ; ce n'est pas fait.
-- Aucun SDK : l'ABI (mémoire, JSON d'entrée et de sortie) est à réécrire dans chaque langage ; `examples/plugins/_abi/abi.go` est le point de départ pour TinyGo.
+- **SDK : Go (TinyGo) seulement.** `sdk/go` porte l'ABI pour TinyGo (voir « SDK Go »). Dans les autres langages l'ABI (mémoire, JSON d'entrée et de sortie) est à réécrire ; l'exemple Rust `path-guard-rs` est le point de départ.

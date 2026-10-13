@@ -884,7 +884,7 @@ func (h *Handler) reverseProxyFor(b *router.Backend, target *url.URL) *httputil.
 			}
 			applyForwardedHeaders(req, h.route, xfHost)
 			applyRequestHeaderManipulation(req, h.route)
-			if h.route.RedactJSON != nil {
+			if h.route.RedactJSON != nil || h.route.HTMLInject != nil || len(h.route.SubFilters) > 0 {
 				req.Header.Set("Accept-Encoding", "gzip")
 			}
 			if h.route.RequestID != nil && !*h.route.RequestID {
@@ -925,6 +925,9 @@ func (h *Handler) reverseProxyFor(b *router.Backend, target *url.URL) *httputil.
 				if err := applySubFilters(resp, h.route.SubFilters, subFilterRes); err != nil {
 					return err
 				}
+			}
+			if err := applyHTMLInject(resp, h.route.HTMLInject); err != nil {
+				return err
 			}
 			if err := applyRedactJSON(resp, h.route.RedactJSON); err != nil {
 				return err

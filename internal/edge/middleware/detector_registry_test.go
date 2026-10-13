@@ -102,3 +102,25 @@ func TestDetectorSecretsAreMasked(t *testing.T) {
 		t.Fatalf("masquage = %s", b)
 	}
 }
+
+// Chaque détecteur décrit porte son exécution, et inversement : SetDetectorExec ne le contrôle pas (l'ordre des init()
+// suit le nom des fichiers), ce test s'en charge.
+func TestDetectorExecsMatchTheRegistry(t *testing.T) {
+	described := map[string]bool{}
+	for _, typ := range DetectorTypes() {
+		described[typ] = true
+		if _, ok := detectorExecs[typ]; !ok {
+			t.Errorf("le détecteur %s est décrit sans exécution", typ)
+		}
+	}
+	ranks := map[int]string{}
+	for typ, ex := range detectorExecs {
+		if !described[typ] {
+			t.Errorf("l'exécution %s n'a pas de détecteur décrit", typ)
+		}
+		if other, dup := ranks[ex.rank]; dup {
+			t.Errorf("rang %d partagé par %s et %s", ex.rank, other, typ)
+		}
+		ranks[ex.rank] = typ
+	}
+}

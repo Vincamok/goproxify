@@ -647,7 +647,7 @@ window._psecMount = async function(id, initialTab, embedEl) {
               <div class="field" style="flex:1;margin:0;"><label class="field-label" style="font-size:11px">Quota (requêtes)</label><input id="psec-rl-quota" class="input" type="number" min="0" placeholder="0" value="${rlCfg.quota || ''}"></div>
               <div class="field" style="flex:1;margin:0;"><label class="field-label" style="font-size:11px">Par</label><select id="psec-rl-period" class="input"><option value="minute" ${rlCfg.quota_period==='minute'?'selected':''}>minute</option><option value="hour" ${rlCfg.quota_period==='hour'?'selected':''}>heure</option><option value="day" ${(!rlCfg.quota_period||rlCfg.quota_period==='day')?'selected':''}>jour</option></select></div>
             </div>
-            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" id="psec-rl-shared" ${rlCfg.shared?'checked':''}> Quota partagé entre les passerelles d'un groupe HA</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" id="psec-rl-shared" ${rlCfg.shared?'checked':''}> Quota et débit partagés entre les passerelles d'un groupe HA</label>
           </div>
           <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
             <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:12px;">Filtrage IP</div>

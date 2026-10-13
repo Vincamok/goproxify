@@ -124,6 +124,8 @@ type Route struct {
 	Bandwidth *BandwidthConfig `json:"bandwidth,omitempty"`
 	// RedactJSON masque des champs des réponses JSON avant de les envoyer au client.
 	RedactJSON *RedactConfig `json:"redact_json,omitempty"`
+	// HTMLInject insère un fragment (script, balise) dans les pages HTML du backend.
+	HTMLInject *HTMLInjectConfig `json:"html_inject,omitempty"`
 	Conditions []Condition      `json:"conditions,omitempty"`
 	Locations  []Location       `json:"locations,omitempty"`
 	// StripPrefix is applied at proxy time (usually copied from the matched Location).
@@ -245,7 +247,8 @@ type RateLimitConfig struct {
 	// en plus du débit instantané. 0 = pas de quota.
 	Quota       int    `json:"quota,omitempty"`
 	QuotaPeriod string `json:"quota_period,omitempty"`
-	// Shared : les passerelles d'un groupe HA échangent leurs comptes de quota (au plus ~2 s de retard) pour appliquer un quota commun.
+	// Shared : les passerelles d'un groupe HA échangent leurs comptes de quota (au plus ~2 s de retard) pour appliquer un quota commun,
+	// et le débit qu'elles admettent par clé (~0,5 s) : chacune retire la part de ses pairs de son débit instantané (rps).
 	Shared bool `json:"shared,omitempty"`
 }
 
@@ -730,6 +733,20 @@ type GraphQLConfig struct {
 // BandwidthConfig plafonne le débit d'une réponse.
 type BandwidthConfig struct {
 	BytesPerSec int64 `json:"bytes_per_sec"`
+}
+
+// Positions d'insertion de HTMLInjectConfig.
+const (
+	HTMLInjectHeadEnd = "head_end" // avant le premier </head>
+	HTMLInjectBodyEnd = "body_end" // avant le dernier </body> (défaut)
+)
+
+// HTMLInjectConfig insère Content dans les réponses text/html. Avec CSPNonce, {{nonce}} dans Content est remplacé
+// par un nonce propre à la réponse, ajouté à la directive script-src du Content-Security-Policy du backend.
+type HTMLInjectConfig struct {
+	Position string `json:"position,omitempty"`
+	Content  string `json:"content"`
+	CSPNonce bool   `json:"csp_nonce,omitempty"`
 }
 
 // RedactConfig masque des champs JSON. Fields : noms de clés (à toute profondeur) ou chemins "a.b.c".

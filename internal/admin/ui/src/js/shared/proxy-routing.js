@@ -65,7 +65,7 @@
   window._proutRender = function (cfg) {
     cfg = cfg || {};
     const sp = cfg.split, mt = cfg.maintenance, su = cfg.signed_url, gq = cfg.graphql, hg = cfg.hedge;
-    const bw = cfg.bandwidth, rj = cfg.redact_json, st = cfg.static, rs = cfg.request_schema, oa = cfg.openapi, gt = cfg.grpc_transcode;
+    const bw = cfg.bandwidth, rj = cfg.redact_json, hi = cfg.html_inject, st = cfg.static, rs = cfg.request_schema, oa = cfg.openapi, gt = cfg.grpc_transcode;
     const gtFiles = Object.keys(gt?.proto || {});
     const variants = sp?.variants?.length ? sp.variants : [{}, {}];
     setTimeout(() => { variants.forEach(v => window._proutAddVariant(v)); }, 0);
@@ -100,6 +100,11 @@
         toggle('prout-rj-on', 'Activer', !!rj?.fields?.length) +
         area('prout-rj-fields', 'Champs (un par ligne)', (rj?.fields || []).join('\n'), 'placeholder="password\nuser.ssn"') +
         `<div style="margin-top:10px;max-width:200px;">${field('prout-rj-mask', 'Valeur de remplacement', rj?.mask, 'placeholder="***"', false)}</div>`)}
+      ${card('html_inject', 'Injection dans les pages HTML', 'Insère un fragment (script, balise) dans les pages HTML du backend, avant </head> ou avant </body>. Avec le nonce CSP, {{nonce}} est remplacé par une valeur propre à chaque réponse et ajouté à script-src du Content-Security-Policy du backend. Seules les réponses non compressées ou gzip sont modifiées.', !!hi?.content,
+        toggle('prout-hi-on', 'Activer', !!hi?.content) +
+        `<div class="field" style="max-width:260px;margin:0 0 10px;"><label class="field-label" style="font-size:11px">Position</label><select id="prout-hi-pos" class="input"><option value="body_end" ${hi?.position !== 'head_end' ? 'selected' : ''}>Avant &lt;/body&gt;</option><option value="head_end" ${hi?.position === 'head_end' ? 'selected' : ''}>Avant &lt;/head&gt;</option></select></div>` +
+        area('prout-hi-content', 'Fragment HTML (16 Kio max)', hi?.content || '', 'spellcheck="false" placeholder="&lt;script nonce=&quot;{{nonce}}&quot; src=&quot;/analytics.js&quot;&gt;&lt;/script&gt;"', 5) +
+        `<label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-top:10px;cursor:pointer;"><input type="checkbox" id="prout-hi-nonce" ${hi?.csp_nonce ? 'checked' : ''}> Nonce CSP ({{nonce}})</label>`)}
       ${card('static', 'Fichiers statiques', 'Sert un dossier de la passerelle sans backend. Le repli SPA renvoie l\'index pour les chemins de page introuvables.', !!st?.enabled,
         toggle('prout-st-on', 'Servir un dossier', st?.enabled) +
         row(field('prout-st-root', 'Dossier (sur la passerelle)', st?.root, 'placeholder="/var/www/app"') + field('prout-st-index', 'Index', st?.index, 'placeholder="index.html"') + field('prout-st-cache', 'Cache max-age (s)', st?.cache_max_age || '', 'type="number" min="0"', false)) +
@@ -134,7 +139,7 @@
     prev = prev || {};
     if (!document.getElementById('prout-split-on')) {
       const keep = {};
-      for (const k of ['split', 'maintenance', 'signed_url', 'graphql', 'hedge', 'grpc_web', 'bandwidth', 'redact_json', 'static', 'request_schema', 'openapi', 'grpc_transcode'])
+      for (const k of ['split', 'maintenance', 'signed_url', 'graphql', 'hedge', 'grpc_web', 'bandwidth', 'redact_json', 'html_inject', 'static', 'request_schema', 'openapi', 'grpc_transcode'])
         if (prev[k] !== undefined) keep[k] = prev[k];
       return keep;
     }
@@ -190,6 +195,12 @@
       const fields = lines(document.getElementById('prout-rj-fields')?.value);
       if (!fields.length) throw new Error('Masquage JSON : indiquer au moins un champ');
       out.redact_json = { fields, ...(val('prout-rj-mask') ? { mask: val('prout-rj-mask') } : {}) };
+    }
+    if (checked('prout-hi-on')) {
+      const content = document.getElementById('prout-hi-content')?.value || '';
+      if (!content.trim()) throw new Error('Injection HTML : le fragment est obligatoire');
+      if (content.length > 16384) throw new Error('Injection HTML : 16 Kio au maximum');
+      out.html_inject = { content, position: val('prout-hi-pos') === 'head_end' ? 'head_end' : 'body_end', ...(checked('prout-hi-nonce') ? { csp_nonce: true } : {}) };
     }
     if (checked('prout-st-on') || prev.static) {
       if (checked('prout-st-on') && !val('prout-st-root')) throw new Error('Fichiers statiques : le dossier est obligatoire');

@@ -13,6 +13,7 @@ import (
 
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
+	"github.com/vincamok/goproxify/internal/admin/mfa"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
 )
 
@@ -226,8 +227,10 @@ func (h *MeHandler) changePassword(w http.ResponseWriter, r *http.Request, userI
 		return
 	}
 	// Toute session émise avant ce changement est révoquée (une session volée ne survit pas au nouveau mot de passe) ;
-	// l'appelant en reçoit une neuve pour ne pas être déconnecté.
+	// l'appelant en reçoit une neuve pour ne pas être déconnecté. Les appareils de confiance aussi : sinon le mot de
+	// passe seul suffirait encore depuis un appareil gardé par celui qu'on veut exclure.
 	_ = adminauth.RevokeSessions(r.Context(), h.DB, userID)
+	_ = mfa.NewStore(h.DB).DeleteTrustedDevices(r.Context(), userID)
 	_ = admindb.WriteAudit(h.DB, userID, "change_password", "user:"+userID, "")
 	h.notifyChange()
 	if adminauth.AuthKindFromContext(r.Context()) == adminauth.AuthKindJWT && h.JWTSecret != "" {

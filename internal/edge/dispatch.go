@@ -18,10 +18,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	edgelog "github.com/vincamok/goproxify/internal/edge/logger"
 	"github.com/vincamok/goproxify/internal/edge/errorpages"
-	"github.com/vincamok/goproxify/internal/edge/geoip"
 	"github.com/vincamok/goproxify/internal/edge/metrics"
 	"github.com/vincamok/goproxify/internal/edge/grpctrans"
-	"github.com/vincamok/goproxify/internal/edge/middleware"
 	"github.com/vincamok/goproxify/internal/edge/proxy"
 	"github.com/vincamok/goproxify/internal/edge/static"
 	"github.com/vincamok/goproxify/internal/edge/router"
@@ -296,49 +294,7 @@ func (s *Server) handlerForRoute(route *router.Route, locPath string) http.Handl
 	} else if route.CachePath != "" {
 		h = proxy.New(route.CachePath).Middleware(h)
 	}
-	h = middleware.GraphQLLimits(route.GraphQL)(h)
-	h = middleware.RequestSchema(route.Host, route.RequestSchema)(h)
-	h = middleware.OpenAPI(route.Host, route.OpenAPI)(h)
-	h = middleware.SSOAuth(route.SSO)(h)
-	h = middleware.JWTValidation(route.JWT)(h)
-	h = middleware.MTLSValidation(route.MTLS)(h)
-	h = middleware.CORS(route.CORS)(h)
-	h = middleware.SecurityHeaders(route.Headers)(h)
-	var geoIPMW func(http.Handler) http.Handler
-	if route.GeoIP != nil {
-		dbPath := route.GeoIP.DBPath
-		if dbPath == "" && s.cfg != nil {
-			dbPath = s.cfg.GeoIP.DBPath
-		}
-		if dbPath == "" {
-			dbPath = geoip.DefaultDBPath
-		}
-		geoIPMW = middleware.GeoIP(dbPath, route.GeoIP.Mode, route.GeoIP.Countries)
-	} else {
-		geoIPMW = middleware.GeoIP("", "", nil)
-	}
-	h = geoIPMW(h)
-	if len(route.Plugins) > 0 {
-		// Après le WAF, le bot, le débit et les filtres réseau (qui s'exécutent avant) ; avant l'authentification.
-		h = s.pluginMiddleware(route)(h)
-	}
-	h = middleware.IPFilter(route.IPFilter)(h)
-	h = middleware.RateLimit(route.RateLimit)(h)
-	h = middleware.LimitConn(route.ID, route.LimitConn)(h)
-	h = middleware.BackpressureShared(key, route.Host, route.Backpressure)(h)
-	h = middleware.ResolveRequestVars(route.RequestVars)(h)
-	h = middleware.BotProtection(route.Bot)(h)
-	if route.WAF != nil && route.WAF.Enabled {
-		h = s.wafEngine.Middleware(route.WAF, h)
-	}
-	if route.RequestID != nil && !*route.RequestID {
-		h = stripRequestIDResponse(h)
-	}
-	h = middleware.Transform(route.Transform)(h)
-	h = middleware.Compress(route.Compression)(h)
-	h = middleware.Bandwidth(route.Bandwidth)(h)
-	h = middleware.SignedURL(route.SignedURL)(h)
-	h = middleware.Maintenance(route.Maintenance)(h)
+	h = wrapStages(h, s.dispatchStages(route, key))
 
 	s.dispatchHandlers.Store(key, &cachedDispatch{gen: gen, h: h})
 	return h

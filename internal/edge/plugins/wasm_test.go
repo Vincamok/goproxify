@@ -163,7 +163,7 @@ func TestManifestNormalize(t *testing.T) {
 		"version":      func(m *Manifest) { m.Version = "" },
 		"api":          func(m *Manifest) { m.APIVersion = 2 },
 		"sans hook":    func(m *Manifest) { m.Hooks = nil },
-		"hook inconnu": func(m *Manifest) { m.Hooks = []string{"log"} },
+		"hook inconnu": func(m *Manifest) { m.Hooks = []string{"audit"} },
 		"hook double":  func(m *Manifest) { m.Hooks = []string{"request", "request"} },
 		"on_error":     func(m *Manifest) { m.OnError = "ignore" },
 		"mémoire":      func(m *Manifest) { m.Limits.MemoryPages = MaxMemoryPages + 1 },

@@ -200,7 +200,7 @@ func (p *Pusher) PushPlugins(ctx context.Context) {
 }
 
 func (p *Pusher) activePlugins(ctx context.Context) ([]plugins.Package, error) {
-	rows, err := p.db.QueryContext(ctx, `SELECT manifest, sha256, wasm FROM plugins ORDER BY name`)
+	rows, err := p.db.QueryContext(ctx, `SELECT manifest, sha256, wasm, signature FROM plugins ORDER BY name`)
 	if err != nil {
 		return []plugins.Package{}, nil // table absente sur une base ancienne
 	}
@@ -209,7 +209,7 @@ func (p *Pusher) activePlugins(ctx context.Context) ([]plugins.Package, error) {
 	for rows.Next() {
 		var pkg plugins.Package
 		var manifest string
-		if err := rows.Scan(&manifest, &pkg.SHA256, &pkg.Wasm); err != nil || json.Unmarshal([]byte(manifest), &pkg.Manifest) != nil {
+		if err := rows.Scan(&manifest, &pkg.SHA256, &pkg.Wasm, &pkg.Signature); err != nil || json.Unmarshal([]byte(manifest), &pkg.Manifest) != nil {
 			continue
 		}
 		list = append(list, pkg)

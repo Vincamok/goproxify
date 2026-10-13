@@ -121,6 +121,38 @@ var CertExpirySeconds = promauto.NewGaugeVec(prometheus.GaugeOpts{
 	Help:      "Secondes avant expiration du certificat TLS (0 = expiré).",
 }, []string{"domain"})
 
+// Detector expose les décisions des détecteurs par route (WAF, bot, filtre IP, GeoIP) : une seule série pour
+// tous, quel que soit leur mécanisme interne. decision = pass (la suite de la chaîne est appelée) | block.
+var Detector = struct {
+	Decisions *prometheus.CounterVec
+}{
+	Decisions: promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "gpx",
+		Subsystem: "detector",
+		Name:      "decisions_total",
+		Help:      "Décisions des détecteurs par route (decision=pass|block).",
+	}, []string{"detector", "decision"}),
+}
+
+// PluginLog expose les appels du hook « log » des plugins, exécutés hors de la requête.
+var PluginLog = struct {
+	Calls   *prometheus.CounterVec
+	Dropped *prometheus.CounterVec
+}{
+	Calls: promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "gpx",
+		Subsystem: "plugin_log",
+		Name:      "calls_total",
+		Help:      "Appels du hook log d'un plugin (result=ok|error).",
+	}, []string{"plugin", "result"}),
+	Dropped: promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "gpx",
+		Subsystem: "plugin_log",
+		Name:      "dropped_total",
+		Help:      "Appels du hook log abandonnés parce que la file était pleine.",
+	}, []string{"plugin"}),
+}
+
 // Pipeline expose les métriques de blocage par étape du pipeline de sécurité.
 var Pipeline = struct {
 	BlockedTotal *prometheus.CounterVec

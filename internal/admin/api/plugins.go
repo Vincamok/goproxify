@@ -188,10 +188,15 @@ func (h *PluginsHandler) installPackage(ctx context.Context, req pluginRequest, 
 	if name != "" && exists == 0 {
 		return fail(http.StatusNotFound, "plugin introuvable")
 	}
+	// Seule une signature vérifiée est conservée : elle part avec le paquet vers les passerelles qui épinglent des clés.
+	signature := ""
+	if signedBy != "" && signedBy != "builtin" {
+		signature = req.Signature
+	}
 	if _, err := h.DB.ExecContext(ctx,
-		`INSERT INTO plugins (name, manifest, sha256, wasm, signed_by) VALUES (?, ?, ?, ?, ?)
-		 ON CONFLICT(name) DO UPDATE SET manifest=excluded.manifest, sha256=excluded.sha256, wasm=excluded.wasm, signed_by=excluded.signed_by, updated_at=CURRENT_TIMESTAMP`,
-		manifest.Name, string(mb), got, req.Wasm, signedBy); err != nil {
+		`INSERT INTO plugins (name, manifest, sha256, wasm, signed_by, signature) VALUES (?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(name) DO UPDATE SET manifest=excluded.manifest, sha256=excluded.sha256, wasm=excluded.wasm, signed_by=excluded.signed_by, signature=excluded.signature, updated_at=CURRENT_TIMESTAMP`,
+		manifest.Name, string(mb), got, req.Wasm, signedBy, signature); err != nil {
 		if !isCtxErr(err) {
 			h.Log.Error("plugins: install", "err", err)
 		}

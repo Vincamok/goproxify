@@ -769,6 +769,10 @@ Procédure (le principe est le même avec Compose, Portainer ou Helm) :
 - **Le portail Access** dérive sa clé du même secret quand `GPX_PORTAL_MASTER_KEY` n'est pas posée : la base du portail (coffres d'identifiants) suit la même règle. Poser `GPX_PORTAL_MASTER_KEY` dès le départ la rend indépendante du secret d'appairage ; la changer est une autre opération.
 - **Vérifié** sur un cluster à Admin coupé : secret changé sans l'ancien → cache, deux plugins, réglages, règles et portail illisibles ; avec `GPX_PAIRING_SECRET_PREVIOUS` → tout relu, plugins chargés (2) ; redémarrage sans la variable → plugins chargés (2). Admin remis en route : passerelle et Agent en ligne, plugins conservés, aucun refus côté Agent.
 
+## Épingler les clés de signature des plugins
+
+Par défaut une passerelle fait confiance à l'Admin pour les plugins qu'il lui pousse (seule l'empreinte est contrôlée). Pour qu'un Admin compromis ne puisse pas lui faire exécuter de code, posez sur **chaque passerelle** `GPX_PLUGIN_TRUSTED_KEYS=<clé publique Ed25519 base64>[,…]` (ou `GPX_PLUGIN_TRUSTED_KEYS_FILE`) ; avec Helm, `global.pluginTrustedKeys`. Elle refuse alors tout plugin non signé par l'une de ces clés — les plugins intégrés de l'Admin compris — et revérifie ses copies locales au redémarrage. Détails, limites et mise en place des clés : [plugins.md](plugins.md#clés-épinglées-sur-la-passerelle).
+
 ## Kubernetes (chart Helm)
 
 ```bash

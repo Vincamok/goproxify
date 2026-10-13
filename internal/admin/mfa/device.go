@@ -8,6 +8,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net/http"
+	"strings"
 )
 
 const TrustedDeviceCookie = "_gpx_device"
@@ -24,6 +26,21 @@ func GenerateDeviceToken() (plain, hash string, err error) {
 	h := sha256.Sum256([]byte(plain))
 	hash = hex.EncodeToString(h[:])
 	return plain, hash, nil
+}
+
+// DeviceCookie porte le token d'un appareil de confiance. HttpOnly : un script de la page ne peut pas le lire ; limité
+// à /api/v1/auth, il n'accompagne que la connexion. Secure dès que le navigateur parle HTTPS, directement ou derrière un
+// reverse proxy (un en-tête forgé ne ferait que rendre le cookie inutilisable en HTTP clair).
+func DeviceCookie(r *http.Request, value string) *http.Cookie {
+	return &http.Cookie{
+		Name:     TrustedDeviceCookie,
+		Value:    value,
+		Path:     "/api/v1/auth",
+		MaxAge:   TrustedDeviceTTLDays * 24 * 3600,
+		HttpOnly: true,
+		Secure:   r.TLS != nil || strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https"),
+		SameSite: http.SameSiteStrictMode,
+	}
 }
 
 // HashDeviceToken calcule le hash SHA-256 d'un token appareil.
