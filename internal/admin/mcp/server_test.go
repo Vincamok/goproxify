@@ -4,7 +4,6 @@
 package mcp
 
 import (
-	"bytes"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -187,35 +186,5 @@ func TestListAgentsApprove(t *testing.T) {
 	}
 	if revoked != "ag1" {
 		t.Fatalf("revoked=%q", revoked)
-	}
-}
-
-func TestToolsListIncludesNewTools(t *testing.T) {
-	h := setupMCPDB(t)
-	body, _ := json.Marshal(map[string]any{
-		"jsonrpc": "2.0", "id": 1, "method": "tools/list",
-	})
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(body))
-	req.RemoteAddr = "127.0.0.1:40000" // l'allowlist MCP par défaut n'accepte que les réseaux privés
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-	var resp struct {
-		Result struct {
-			Tools []struct {
-				Name string `json:"name"`
-			} `json:"tools"`
-		} `json:"result"`
-	}
-	json.NewDecoder(w.Body).Decode(&resp) //nolint:errcheck
-	want := map[string]bool{
-		"update_proxy": true, "set_proxy_enabled": true, "list_agents": true,
-		"approve_agent": true, "list_security_bans": true, "get_security_overview": true,
-		"get_prism_anomalies": true, "get_prism_geo": true, "list_alert_events": true,
-	}
-	for _, tool := range resp.Result.Tools {
-		delete(want, tool.Name)
-	}
-	if len(want) > 0 {
-		t.Fatalf("missing tools: %v", want)
 	}
 }

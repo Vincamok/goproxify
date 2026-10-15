@@ -164,7 +164,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "initialize":
 		resp = h.handleInitialize(req)
 	case "tools/list":
-		resp = h.handleToolsList(req)
+		resp = h.handleToolsList(req, r)
 	case "tools/call":
 		resp = h.handleToolsCall(req, r)
 	case "resources/list":
@@ -553,10 +553,6 @@ var tools = []map[string]any{
 func init() {
 	tools = append(tools, portalTools()...)
 	tools = append(tools, infraTools()...)
-}
-
-func (h *Handler) handleToolsList(req rpcRequest) rpcResponse {
-	return okResp(req.ID, map[string]any{"tools": tools})
 }
 
 // --- tools/call ----------------------------------------------------------
@@ -2273,6 +2269,9 @@ func (h *Handler) serveSSE(w http.ResponseWriter, r *http.Request) {
 		scheme = "https"
 	}
 	endpointURL := scheme + "://" + r.Host + "/mcp"
+	if r.URL.RawQuery != "" {
+		endpointURL += "?" + r.URL.RawQuery // conserve ?toolsets= pour les POST du client
+	}
 	fmt.Fprintf(w, "event: endpoint\ndata: %s\n\n", endpointURL)
 	flusher.Flush()
 

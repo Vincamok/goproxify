@@ -85,6 +85,11 @@ func TestEveryResourceMapsToTool(t *testing.T) {
 // mcpClient appelle /mcp comme en production (RequirePAT) avec un PAT portant scopes.
 func mcpClient(t *testing.T, h *Handler, userID, role string, scopes ...string) func(method string, params any) rpcResponse {
 	t.Helper()
+	return mcpClientAt(t, h, "/mcp", userID, role, scopes...)
+}
+
+func mcpClientAt(t *testing.T, h *Handler, target, userID, role string, scopes ...string) func(method string, params any) rpcResponse {
+	t.Helper()
 	if _, err := h.DB.Exec(`INSERT INTO users (id, email, password_hash, role) VALUES (?,?,?,?)`,
 		userID, userID+"@t.local", "x", role); err != nil {
 		t.Fatal(err)
@@ -103,7 +108,7 @@ func mcpClient(t *testing.T, h *Handler, userID, role string, scopes ...string) 
 	return func(method string, params any) rpcResponse {
 		p, _ := json.Marshal(params)
 		body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": json.RawMessage(p)})
-		r := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(body))
+		r := httptest.NewRequest(http.MethodPost, target, bytes.NewReader(body))
 		r.RemoteAddr = "127.0.0.1:40000"
 		r.Header.Set("Authorization", "Bearer "+plain)
 		w := httptest.NewRecorder()

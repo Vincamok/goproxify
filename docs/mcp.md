@@ -47,6 +47,32 @@ Les scopes d'écriture (`proxies:delete`, `nodes:write`, `alerts:write`, `domain
 - `Erreur: accès réservé aux administrateurs` : outil † appelé par un compte `user` ;
 - `Erreur: outil sans scope déclaré: <outil>` : outil exposé sans entrée dans la table outil → scope (bug serveur, refusé par sécurité).
 
+`tools/list` n'annonce que les outils que l'appelant peut appeler (mêmes contrôles : scope du PAT ∩ droits du compte, rôle admin pour les outils †). Un PAT limité à quelques scopes réduit donc d'autant la liste envoyée au modèle.
+
+### Groupes d'outils (`?toolsets=`)
+
+La liste complète (plus de 150 outils) pèse environ 17 000 tokens, ce qui dépasse la fenêtre d'un modèle local à petit contexte (llama.cpp, Ollama, LM Studio à 8k : erreur `exceed_context_size_error`). Le paramètre `toolsets` de l'URL restreint `tools/list` à certains groupes :
+
+```
+https://<admin-host>:9443/mcp?toolsets=proxies,observability
+```
+
+| Groupe | Contenu | Taille approx. |
+|--------|---------|----------------|
+| `proxies` | routes proxy, purge du cache | ~850 tokens |
+| `nodes` | passerelles, Agents, nœuds déclarés, topologie | ~1 200 |
+| `alerts` | règles, canaux, événements d'alerte | ~1 100 |
+| `observability` | métriques, logs, Prism (anomalies, géo, empreintes TLS, SLO) | ~1 200 |
+| `domains` | domaines, renouvellement | ~300 |
+| `certs` | certificats, déploiements, CA interne, ECH, fournisseurs DNS | ~1 300 |
+| `security` | bans, ASN, liste blanche, profils IP, fournisseurs d'auth, menaces, CVE, plugins, simulation Sentinel, `trace_ip` | ~4 500 |
+| `automation` | flux, exécutions, modèles, silences, import/export | ~2 600 |
+| `snippets` | snippets, types de détecteurs | ~300 |
+| `portal` | GoProxify Access | ~3 900 |
+| `admin` | sauvegardes, utilisateurs, équipes, journal d'audit | ~200 |
+
+Les noms sont séparés par des virgules, sans tenir compte de la casse ; paramètre absent = tous les groupes. Un nom inconnu renvoie une erreur JSON-RPC `-32602` qui liste les groupes disponibles. Avec le transport SSE, le paramètre posé sur `GET /mcp/sse?toolsets=…` est reporté dans l'URL d'envoi annoncée au client. Le filtre ne porte que sur la liste : il réduit ce que le modèle voit, il ne restreint pas les droits (`tools/call` d'un outil hors groupe reste soumis aux seuls scopes). Pour restreindre les droits, limiter les scopes du PAT.
+
 ---
 
 ## Connexion depuis Claude Desktop

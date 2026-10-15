@@ -1418,6 +1418,8 @@ Erreurs : `400` pour une saisie invalide (le corps explique la cause), `404` si 
 
 Périmètre d'accès du serveur MCP, admin uniquement (`RequireAdmin`).
 
+Le endpoint `/mcp` lui-même accepte le paramètre `?toolsets=a,b` (groupes d'outils annoncés par `tools/list`, voir [docs/mcp.md](mcp.md#groupes-doutils-toolsets)) ; `tools/list` n'annonce que les outils autorisés à l'appelant.
+
 ### `GET /api/v1/mcp-access/allowed-ips`
 
 Allowlist d'IP/CIDR sources autorisées à appeler `/mcp`. Réponse : `{ ips: string[] }`. Liste vide = aucune restriction (comportement historique).
