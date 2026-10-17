@@ -180,6 +180,10 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ### Corrigé
 
+- **Admin : une passerelle qui ne répond pas ne ralentit plus chaque lecture (Admin 0.152.3)** : la liste des proxies (`GET /api/v1/proxies`), le tableau de bord, l'outil MCP `list_proxies` et les autres lectures parcourent les passerelles l'une après l'autre avec un timeout de 15 s ; une passerelle en attente (pair HA sans trafic, injoignable) faisait attendre toute l'interface — le p95 de l'hôte de l'Admin atteignait ~4,8 s alors que les services proxifiés restaient sous 400 ms.
+  - **Lecture écartée après un échec** (`internal/admin/edgeproxy/liveness.go`) : une passerelle qui n'a pas répondu à une lecture n'est plus interrogée pendant 30 s (`ErrEdgeDown`, retour immédiat) ; la première lecture après ce délai tente à nouveau et les suivantes n'attendent pas son résultat. Dès que la passerelle répond, elle est de nouveau lue.
+  - **Écritures inchangées** : publication, suppression, purge… atteignent toujours la passerelle. L'abandon d'une requête par le navigateur ne met pas la passerelle de côté.
+
 - **Éditeur YAML de la modale proxy : les listes devenaient des chaînes (Admin 0.152.2)** : le test (dry run) et l'enregistrement en mode YAML échouaient avec « Config illisible : json: cannot unmarshal string into Go struct field … of type []string » (`aliases`, `headers_manipulation.forwarded_headers`, `tags`…). `dump` écrit les listes en ligne sans guillemets (`[a.fr, b.fr]`) mais le parseur ne relisait que du JSON strict et laissait alors la ligne en chaîne. Les listes en ligne sont maintenant relues élément par élément (guillemets, imbrication), et une valeur contenant une virgule ou un crochet est écrite entre guillemets.
 
 - **Synchronisation entre pairs : un pair injoignable ne coûte plus 60 s par tour (Edge 0.67.1, Admin 0.152.1)** : `syncPeer` enchaînait une dizaine d'appels (scores, WAF, listes de menaces, portail, agents, ECH, bans, conteneurs) de 8 s chacun ; un pair en attente (sans trafic, sans bascule type VRRP) les faisait tous expirer, d'où un « Sync pair » de plusieurs dizaines de secondes dans l'Admin.

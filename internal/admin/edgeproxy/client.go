@@ -205,11 +205,18 @@ func (c *Client) do(ctx context.Context, t Target, method, path string, body any
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	if method == http.MethodGet && !edgeLiveness.claim(t.Endpoint, time.Now()) {
+		return ErrEdgeDown
+	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
+		if ctx.Err() == nil { // un client qui abandonne n'est pas une passerelle en panne
+			edgeLiveness.fail(t.Endpoint, time.Now())
+		}
 		return err
 	}
 	defer resp.Body.Close()
+	edgeLiveness.ok(t.Endpoint)
 	data, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return &HTTPError{Status: resp.StatusCode, Body: string(data)}
