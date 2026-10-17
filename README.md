@@ -239,7 +239,7 @@ Full reference → **[docs/cli.md](docs/cli.md)**
 
 ### Admin (Control Plane)
 
-- **Web UI + REST API** — CRUD proxies, snippets, tokens, users
+- **Web UI + REST API** — CRUD proxies, snippets, tokens, users; three skins (Flat, Industry DS, Console), light or dark, each with its own accent colours
 - **GoProxify Access** — destination catalogue (global / per-Edge view), invite users by email (SMTP), tags, Access HTML templates, portal options per Edge
 - **User API tokens (PAT)** — `gpx_pat_*` self-service with scopes (`proxies:read`, `certs:write`, …) for scripts and MCP clients; a read scope never allows a write; distinct from Edge/Agent pairing tokens
 - **MCP server** — JSON-RPC 2.0 + SSE; **PAT-only** authentication (no session JWT); every tool and resource requires the scope of its REST equivalent, plus the admin role where the REST route is admin-only — a tool without a declared scope is refused

@@ -23,6 +23,7 @@ function _applyThemeMode(mode) {
     document.documentElement.dataset.theme = mode;
   }
   updateThemeIcon();
+  _reapplyAccent();
 }
 
 function updateThemeIcon() {
@@ -117,6 +118,7 @@ function applySkin(id) {
   );
 
   const skin = _getSkinList().find(s => s.id === id);
+  _syncSkinFonts(skin);
   if (skin) {
     const savedAccent = parseInt(localStorage.getItem('gpx_accent_' + id) || '0');
     _renderPaletteSwatches(skin.accents, id);
@@ -128,13 +130,27 @@ function initSkin() {
   applySkin(_getActiveSkinId());
 }
 
+// Les polices externes d'un skin ne sont chargées que s'il est actif : un skin sans `fonts` ne fait aucune requête externe.
+function _syncSkinFonts(skin) {
+  document.querySelectorAll('link[data-skin-font]').forEach(el => el.remove());
+  ((skin && skin.fonts) || []).forEach(href => {
+    const l = document.createElement('link');
+    l.rel = 'stylesheet';
+    l.href = href;
+    l.dataset.skinFont = '';
+    document.head.appendChild(l);
+  });
+}
+
 // ── Palette d'accent ───────────────────────────────────────────────────────
+// Un accent peut déclarer `dark: { color, hover }` : variante éclaircie appliquée en thème sombre.
 function _applyAccent(accents, idx, skinId) {
   const a = accents[idx];
   if (!a) return;
-  document.documentElement.style.setProperty('--accent', a.color);
-  document.documentElement.style.setProperty('--accent-hover', a.hover);
-  document.documentElement.style.setProperty('--color-accent', a.color);
+  const v = document.documentElement.dataset.theme === 'dark' && a.dark ? a.dark : a;
+  document.documentElement.style.setProperty('--accent', v.color);
+  document.documentElement.style.setProperty('--accent-hover', v.hover);
+  document.documentElement.style.setProperty('--color-accent', v.color);
   if (skinId) localStorage.setItem('gpx_accent_' + skinId, idx);
   document.querySelectorAll('.palette-swatch').forEach((el, i) =>
     el.classList.toggle('active', i === idx)
@@ -146,6 +162,13 @@ function applyAccent(idx) {
   const skin = _getSkinList().find(s => s.id === skinId);
   const accents = skin ? skin.accents : (APP_CONFIG.accents || []);
   _applyAccent(accents, idx, skinId);
+}
+
+function _reapplyAccent() {
+  if (typeof APP_CONFIG === 'undefined') return;
+  const skinId = _getActiveSkinId();
+  const skin = _getSkinList().find(s => s.id === skinId);
+  if (skin) _applyAccent(skin.accents, parseInt(localStorage.getItem('gpx_accent_' + skinId) || '0'), skinId);
 }
 
 function _renderPaletteSwatches(accents, skinId) {

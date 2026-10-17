@@ -1,0 +1,224 @@
+/* ── Skin : Console ──────────────────────────────────────────────────────
+   Langage graphique de la landing : surfaces blanches à filet fin, texte quasi noir,
+   un seul accent, police système. Aucune police ni ressource externe.
+   L'accent (--accent) est posé en ligne par theme.js ; ses variantes sombres sont
+   déclarées dans app.config.js (accents[].dark).
+   ───────────────────────────────────────────────────────────────────────── */
+
+:root {
+  color-scheme:   light;
+  --bg:           #f6f7f8;
+  --bg2:          #ffffff;
+  --bg3:          #eceef0;
+  --border:       #e2e5e8;
+  --border-strong:#cfd4d9;
+
+  --text:         #0c0f12;
+  --text2:        #565e68;
+  --text3:        #646c76;
+
+  --accent:       #0b6e5a;
+  --accent-hover: #09594a;
+  --on-accent:    #ffffff;
+  --green:        #3a7519;
+  --red:          #b1362b;
+  --yellow:       #7d5a00;
+  --blue:         #2b5a9a;
+  --cyan:         #1f6b80;
+  --purple:       #6b4fa0;
+  --orange:       #a5521a;
+
+  --radius:       8px;
+  --radius-lg:    12px;
+
+  --shadow:       0 1px 2px rgba(12,15,18,.05), 0 12px 32px -8px rgba(12,15,18,.14);
+  --shadow-lg:    0 1px 2px rgba(12,15,18,.05), 0 12px 32px -8px rgba(12,15,18,.14);
+
+  --sidebar-w:    240px;
+
+  --font:         system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-heading: var(--font);
+  --font-mono:    ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+
+  --accent-dim:         color-mix(in srgb, var(--accent) 8%, transparent);
+  --color-accent:       var(--accent);
+  --color-accent-100:   color-mix(in srgb, var(--accent) 9%, transparent);
+  --color-accent-200:   color-mix(in srgb, var(--accent) 16%, transparent);
+  --color-accent-700:   var(--text);
+  --color-accent-800:   var(--text);
+  --color-accent-900:   var(--text);
+  --color-surface:      var(--bg2);
+  --color-surface-2:    var(--bg3);
+  --color-divider:      var(--border);
+  --color-neutral-100:  var(--bg);
+  --color-neutral-200:  var(--bg3);
+  --color-neutral-300:  var(--border-strong);
+  --color-neutral-800:  var(--text2);
+  --color-neutral-900:  var(--text);
+  --font-heading-weight: 650;
+  --radius-md:          var(--radius-lg);
+
+  --surface:            var(--bg2);
+  --surface2:           var(--bg3);
+}
+
+[data-theme="dark"] {
+  color-scheme:   dark;
+  --bg:           #0b0d10;
+  --bg2:          #12151a;
+  --bg3:          #1a1e24;
+  --border:       #22272e;
+  --border-strong:#323943;
+  --text:         #eceef1;
+  --text2:        #a0a8b2;
+  --text3:        #8a929c;
+  --accent:       #3ecfae;
+  --accent-hover: #5fdcc0;
+  --on-accent:    #0b0d10;
+  --green:        #98c964;
+  --red:          #ea8f86;
+  --yellow:       #e0bc55;
+  --blue:         #7aa7e0;
+  --cyan:         #5cc0d6;
+  --purple:       #b39ae0;
+  --orange:       #e59a62;
+
+  --shadow:       0 1px 2px rgba(0,0,0,.4), 0 16px 40px -10px rgba(0,0,0,.6);
+  --shadow-lg:    0 1px 2px rgba(0,0,0,.4), 0 16px 40px -10px rgba(0,0,0,.6);
+
+  --accent-dim:         color-mix(in srgb, var(--accent) 10%, transparent);
+  --color-accent-100:   color-mix(in srgb, var(--accent) 12%, transparent);
+  --color-accent-200:   color-mix(in srgb, var(--accent) 20%, transparent);
+  --color-accent-700:   var(--text);
+  --color-accent-800:   var(--text);
+  --color-neutral-200:  var(--bg3);
+  --color-neutral-300:  var(--border-strong);
+}
+
+/* Pas de blueprint corners dans ce skin */
+.corner { display: none; }
+
+/* ── Typographie ── */
+h1, h2, h3,
+.topbar-title, .card-title, .modal-title, .dialog-title, .sidebar-logo-text, .trafic-page-title,
+.stat-value, .as-card-h h2, .as-kc-v, .gp-d-hero h2, .gp-d-kpi .v, .lbl-hero-title, .tf-hero-host {
+  font-weight: 650;
+  letter-spacing: -.02em;
+}
+.stat-value, .as-kc-v, .gp-d-kpi .v { letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+.topbar-title { letter-spacing: -.025em; }
+td.mono, .label-gen, .topbar-clock-time { font-family: var(--font-mono); letter-spacing: 0; }
+thead th, .stat-label, .nav-label, .nav-sublabel, .card-kicker, .fp-section-label {
+  text-transform: none; letter-spacing: .01em;
+}
+thead th { font-size: 12px; color: var(--text2); }
+.nav-label, .nav-sublabel { font-size: 11.5px; }
+.stat-label { font-size: 12.5px; }
+
+/* ── Focus clavier ── */
+:focus-visible,
+input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible,
+a:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--accent) !important;
+  outline-offset: 2px;
+}
+input:focus-visible, select:focus-visible, textarea:focus-visible { outline-offset: 1px; }
+
+/* ── Surfaces et formes ── */
+.card, .modal, .dialog, .sm-modal, .search-box { border-radius: var(--radius-lg); }
+.card, .stat-tile, .node-card { box-shadow: none; }
+.btn, .nav-item, .space-btn { border-radius: var(--radius); }
+.tag { border-radius: 4px; font-weight: 500; letter-spacing: 0; }
+.modal-overlay, .dialog-backdrop, .search-scrim, .sm-scrim, .as-ov { background: rgba(12,15,18,.5); }
+[data-theme="dark"] .modal-overlay, [data-theme="dark"] .dialog-backdrop,
+[data-theme="dark"] .search-scrim, [data-theme="dark"] .sm-scrim, [data-theme="dark"] .as-ov { background: rgba(0,0,0,.6); }
+.search-box, .sm-modal, .prism-drawer, .sent-drawer, .trafic-md { box-shadow: var(--shadow-lg); }
+#space-picker, .pxi-suggest, .as-menu, .gm-tip.leaflet-tooltip, #wm-tooltip { box-shadow: var(--shadow-lg); }
+.prism-filters { box-shadow: none; }
+
+/* ── Boutons ── */
+.btn.btn-primary, .btn-primary {
+  background: var(--text); color: var(--on-accent); border: 1px solid var(--text);
+}
+.btn.btn-primary:hover, .btn-primary:hover {
+  background: var(--accent); border-color: var(--accent); color: var(--on-accent);
+}
+.btn.btn-secondary { background: var(--bg2); border-color: var(--border-strong); }
+.btn-danger { background: var(--red); color: var(--on-accent); }
+.seg-opt:has(input:checked), .pm-mode button.on, .pm-seg button.on,
+.trigger-chip.selected, .wizard-step-bubble.active, .pw-pf:has(input:checked) .pw-cb {
+  color: var(--on-accent);
+}
+.wizard-step-bubble.done, #btn-logs-live.is-active, .pxi-live-btn.is-active { color: var(--on-accent); }
+.vs-score, .sy-tag, .tr-dot { color: var(--on-accent); }
+
+/* ── Champs ── */
+.input { background: var(--bg2); border-color: var(--border-strong); }
+.input:focus { border-color: var(--accent); }
+select.input { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238a929c'/%3E%3C/svg%3E"); }
+
+/* ── Navigation ── */
+.nav-item.active, .nav-edge-item.selected {
+  background: var(--bg3); color: var(--text); font-weight: 600;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.space-btn.active { background: var(--bg2); color: var(--text); border-color: var(--accent); }
+.sidebar-avatar { background: var(--color-accent-100); color: var(--accent); }
+.space-dot.online, .space-dot-inline.online { background: var(--green); }
+.space-dot.offline, .space-dot-inline.offline { background: var(--red); }
+.space-dot { border-color: var(--bg3); }
+
+/* ── États sémantiques ── */
+:root .tag-green  { background: color-mix(in srgb, var(--green)  12%, transparent); color: var(--green); }
+:root .tag-red    { background: color-mix(in srgb, var(--red)    12%, transparent); color: var(--red); }
+:root .tag-yellow { background: color-mix(in srgb, var(--yellow) 14%, transparent); color: var(--yellow); }
+:root .tag-blue   { background: color-mix(in srgb, var(--blue)   12%, transparent); color: var(--blue); }
+:root .tag-orange { background: color-mix(in srgb, var(--orange) 12%, transparent); color: var(--orange); }
+:root .tag-accent { background: var(--color-accent-100); color: var(--accent); }
+:root .tag-accent-2 { background: var(--bg3); color: var(--text2); }
+.grade-Ap, .grade-A { background: color-mix(in srgb, var(--green)  14%, transparent); color: var(--green); }
+.grade-B            { background: color-mix(in srgb, var(--blue)   14%, transparent); color: var(--blue); }
+.grade-C            { background: color-mix(in srgb, var(--yellow) 16%, transparent); color: var(--yellow); }
+.grade-D, .grade-E, .grade-F { background: color-mix(in srgb, var(--red) 14%, transparent); color: var(--red); }
+.prism-bar-fill.warn { background: var(--yellow); }
+.prism-bot-badge { background: color-mix(in srgb, var(--yellow) 14%, transparent); color: var(--yellow); }
+.prism-ins-ico.y { background: color-mix(in srgb, var(--yellow) 16%, transparent); color: var(--yellow); }
+.tf-test-badge.ok      { background: color-mix(in srgb, var(--green)  14%, transparent); color: var(--green); }
+.tf-test-badge.warning { background: color-mix(in srgb, var(--yellow) 16%, transparent); color: var(--yellow); }
+.tf-test-badge.error   { background: color-mix(in srgb, var(--red)    14%, transparent); color: var(--red); }
+.tf-test-badge.skip    { background: var(--bg3); color: var(--text2); }
+.tf-result-warning { color: var(--yellow); }
+.tf-hero.tone-secure { --tf-hero: var(--green); }
+.tf-hero.tone-plain  { --tf-hero: var(--yellow); }
+.tf-node.tone-sky, .tf-ov-node.tone-sky       { --tf: var(--blue); }
+.tf-node.tone-violet, .tf-ov-node.tone-violet { --tf: var(--purple); }
+.tf-node.tone-green, .tf-ov-node.tone-green   { --tf: var(--green); }
+.tf-node.tone-cyan, .tf-ov-node.tone-cyan     { --tf: var(--cyan); }
+.tf-node.tone-amber, .tf-ov-node.tone-amber   { --tf: var(--yellow); }
+.tf-node.tone-orange, .tf-ov-node.tone-orange { --tf: var(--orange); }
+.tf-node.tone-teal, .tf-ov-node.tone-teal     { --tf: var(--accent); }
+.infra-card.selected { background: var(--accent-dim); }
+
+/* ── Pas de dégradés ni de halos ── */
+.sec-bans-config, .bk-rs-banner { background: var(--bg3); border-color: var(--border); }
+.tf-hero { background: var(--bg2); }
+.tf-ov-link span, .tf-rail-line { background: var(--border-strong); }
+.tf-ov-link span::after { border-color: var(--border-strong); }
+.topo-tile-wrap.selected .card { box-shadow: none; }
+
+/* ── Pas de badges pilule ni de tuiles d'icônes colorées ── */
+.chip, .lbl-file-badge, .search-badge, .infra-tag, .sec-bans-status, .tf-hero-type, .as-st, .as-zt,
+.prism-src-badge, .prism-verdict, .live-feed-count, .pw-count, .topo-risk, .as-vd-sum span, .as-cfg-badge,
+.as-cfg-st, .sy-eng, .sent-chip { border-radius: 4px; }
+.as-pill, .as-add, .as-pills button, .sent-drawer-nav button, .pw-pf, .trigger-chip { border-radius: var(--radius); }
+.gp-d-pill { padding: 0; border-radius: 0; background: none; font-weight: 600; }
+.gp-d-ico { background: none; border: 1px solid var(--border); border-radius: var(--radius); }
+.gp-d-fact span { text-transform: none; letter-spacing: 0; opacity: 1; color: var(--text2); font-size: 12px; }
+.pw-ic { color: var(--text2); background: var(--bg3); }
+.toggle input:checked + .toggle-slider::before { background: var(--on-accent); }
+:where(.btn:not(.btn-primary, .btn-secondary, .btn-ghost, .btn-icon, .btn-danger)) { background: var(--bg3); color: var(--text); }
+.as-ic, .as-td-ic, .as-td-ic[data-tone] { background: var(--bg3); }
+.as-editbar { background: var(--bg3); border-color: var(--border-strong); }
+.prism-panel-title, .prism-table th { text-transform: none; letter-spacing: .01em; color: var(--text2); }
+.prism-panel-title { font-size: 12.5px; font-weight: 650; }
+.prism-table th { font-size: 11.5px; }

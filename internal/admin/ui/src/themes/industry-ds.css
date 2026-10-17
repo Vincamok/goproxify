@@ -4,8 +4,8 @@
    déclarer le nom dans app.config.js → skin: 'mon-skin'.
    ───────────────────────────────────────────────────────────────────────── */
 
-/* Police — charger dans <head> si externe */
-@import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;700&family=Barlow+Condensed:wght@400;600&display=swap');
+/* Police — Barlow est chargée à l'activation du skin (app.config.js → skins[].fonts), pas ici :
+   une importation CSS serait téléchargée même quand le skin est inactif. */
 
 /* ── Thème clair (défaut) ── */
 :root {

@@ -34,12 +34,25 @@ const APP_CONFIG = {
     {
       id: 'industry-ds',
       label: 'Industry DS',
+      fonts: [
+        'https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;700&family=Barlow+Condensed:wght@400;600&display=swap',
+      ],
       // Palettes d'accent propres à ce skin
       accents: [
         { name: 'Acier',    color: '#5980a6', hover: '#4a6d8f' },
         { name: 'Sarcelle', color: '#0e8a7c', hover: '#0a6b5f' },
         { name: 'Bronze',   color: '#8c6d2f', hover: '#7a5e27' },
         { name: 'Ardoise',  color: '#5a6675', hover: '#49535f' },
+      ],
+    },
+    {
+      id: 'console',
+      label: 'Console',
+      accents: [
+        { name: 'Sarcelle',  color: '#0b6e5a', hover: '#09594a', dark: { color: '#3ecfae', hover: '#5fdcc0' } },
+        { name: 'Graphite',  color: '#3f4750', hover: '#2f363d', dark: { color: '#b4bcc6', hover: '#cdd3da' } },
+        { name: 'Bleu nuit', color: '#1d4f91', hover: '#173f74', dark: { color: '#7aaaea', hover: '#9bc0f0' } },
+        { name: 'Cuivre',    color: '#a8501f', hover: '#8c4219', dark: { color: '#e59660', hover: '#eeaa7c' } },
       ],
     },
   ],
