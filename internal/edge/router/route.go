@@ -8,6 +8,12 @@ import (
 	"time"
 )
 
+// RouteOrigin identifie la route découverte (ID de route et passerelle qui l'annonçait) dont un proxy est issu.
+type RouteOrigin struct {
+	ID   string `json:"id"`
+	Edge string `json:"edge,omitempty"`
+}
+
 // Route décrit un proxy HTTP ou TCP/UDP vers un ou plusieurs backends.
 type Route struct {
 	ID       string   `json:"id"`
@@ -18,6 +24,10 @@ type Route struct {
 
 	// AgentName est le nœud Agent qui a découvert / injecté cette route (docker:/k8s:).
 	AgentName string `json:"agent_name,omitempty"`
+
+	// Origin dit quelle route découverte a donné ce proxy (conversion « conteneur → proxy ») : l'Admin signale le proxy
+	// dont le conteneur d'origine a disparu. N'a aucun effet sur le routage.
+	Origin *RouteOrigin `json:"origin,omitempty"`
 
 	// DelegateAPIEndpoint est l'endpoint interne (http://host:8000) de la passerelle déléguée.
 	// Renseigné par Admin lors du push des délégations. Utilisé pour le relay passerelle→Passerelle.

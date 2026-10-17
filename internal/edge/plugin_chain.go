@@ -121,6 +121,7 @@ func (s *Server) pluginMiddleware(route *router.Route) func(http.Handler) http.H
 				}
 				switch out.Action {
 				case plugins.ActionDeny:
+					s.pluginDenied(r, a)
 					writePluginDeny(w, out, false)
 					return
 				case plugins.ActionModify:
@@ -181,6 +182,7 @@ func (s *Server) requestBodyHooks(w http.ResponseWriter, r *http.Request, route 
 		}
 		switch out.Action {
 		case plugins.ActionDeny:
+			s.pluginDenied(r, a)
 			writePluginDeny(w, out, false)
 			return false
 		case plugins.ActionModify:

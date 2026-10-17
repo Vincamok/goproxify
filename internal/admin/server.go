@@ -783,6 +783,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("POST /api/v1/bootstrap-tickets", adminOnly(http.HandlerFunc(bootstrapH.ServeCreate)))
 	mux.Handle("/api/v1/node-events", protected(nodeEventsH))
 	mux.Handle("/api/v1/discovered-containers", protected(discoveredH))
+	mux.Handle("/api/v1/discovered-containers/", protected(discoveredH))
 	mux.Handle("/api/v1/backends/health", protected(backendsHealthH))
 	mux.Handle("/api/v1/metrics/proxies", protected(proxyMetricsH))
 	mux.Handle("/api/v1/metrics/summary", protected(http.HandlerFunc(proxyMetricsH.ServeSummary)))

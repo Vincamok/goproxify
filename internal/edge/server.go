@@ -64,6 +64,7 @@ type Server struct {
 	snippetStore    *router.SnippetStore
 	pluginMgr       *plugins.Manager // plugins WASM installés (ADR 0008)
 	pluginLog       pluginLogQueue   // appels du hook log, hors du chemin de la réponse
+	pluginGuard     pluginGuard      // refus des plugins de détection, comptés par IP
 	providerStore   *router.AuthProviderStore
 	profileStore    *router.IPProfileStore
 	banStore        *router.BanStore
@@ -201,26 +202,8 @@ func New(cfg *config.EdgeConfig) (*Server, error) {
 	s.metrics = proxy.NewAgentMetricsStore()
 	s.peers = proxy.NewPeerRegistry()
 	s.wafEngine = waf.NewEngine(nil, log.Logger())
-	s.accessLog.SetWAFExtractor(func(r *http.Request) []string {
-		matches := waf.MatchesFromContext(r.Context())
-		if len(matches) == 0 {
-			return nil
-		}
-		seen := make(map[string]bool, len(matches))
-		cats := make([]string, 0, len(matches))
-		for _, m := range matches {
-			if !seen[m.Category] {
-				seen[m.Category] = true
-				cats = append(cats, m.Category)
-			}
-		}
-		return cats
-	})
 	s.wafEngine.SetBanCallback(waf.BanCallback(s.threatBanCallback()))
 	log.Logger().Info("waf: moteur prêt — activer par route (label goproxify.waf=detect|block ou snippet)")
-	s.accessLog.SetThreatExtractor(func(r *http.Request) string {
-		return threat.SignalFromContext(r.Context())
-	})
 	s.portal = portal.NewService(log.Logger())
 	s.portalRepl = &portalReplicator{}
 	s.portal.SetStoreChangeHook(s.schedulePortalReplicaPush)

@@ -812,7 +812,7 @@ goproxify security threat simulate -file <threat-config.json> [-hours N] [-domai
 # -edge : pour une passerelle membre d'un groupe HA, la config lue/écrite est celle du groupe (poussée à tous les membres)
 
 # Bans
-goproxify security bans list   [-edge <passerelle>] [-source <source>] [-active true|false] [-scope <passerelle|group:nom>] [-admin-url …] [-token …]
+goproxify security bans list   [-edge <passerelle>] [-source <source>] [-active true|false] [-scope <passerelle|group:nom>] [-admin-url …] [-token …]   # -source : native, fail2ban, crowdsec, threat, plugin:<nom> (ex. plugin:coraza)
 goproxify security bans add    -ip <ip|cidr> [-reason <raison>] [-ttl <durée>] [-scope <passerelle|group:nom>] [-admin-url …] [-token …]
 goproxify security bans preview -ip <ip|cidr> [-hours N] [-json] [-admin-url …] [-token …]   # impact d'un ban avant de le créer
 goproxify security bans whitelist list|add|delete [-ip <ip|cidr>] [-comment <texte>] [-admin-url …] [-token …]   # liste blanche des bans
@@ -989,11 +989,17 @@ Conteneurs découverts par les Agents. Agrège les résultats de toutes les pass
 ```
 goproxify containers [list] [-admin-url …] [-token …]
 goproxify containers convert <hôte|id> [-edge <passerelle>] [-admin-url …] [-token …]
+goproxify containers show <hôte|id> [-edge <passerelle>] [-format compose|portainer|portainer_inline|docker_run|kubernetes]
+goproxify containers orphans [-admin-url …] [-token …]
 ```
 
 `list` affiche pour chaque conteneur : le host, TLS, la passerelle source, l'Agent, le proxy qui le remplace (`REMPLACÉ PAR`, `-` s'il est servi par ses labels) et les backends.
 
 `convert` crée un proxy modifiable à partir de la route issue des labels (`POST /api/v1/proxies/from-discovered`). Le proxy prend la place de la route des labels sur son hôte ; désactivé ou supprimé, il la lui rend. `-edge` n'est utile que si plusieurs passerelles annoncent la même route.
+
+`show` affiche le bilan de sécurité de la route (score, TLS / WAF / rate limit) et les **labels à ajouter** (modèle de sécurité : un snippet de l'Admin du bon type s'il existe, sinon WAF en blocage et `100/s:50`). Avec `-format`, il imprime le jeu de labels **corrigé** prêt à coller (Compose, Portainer, `docker run`, Kubernetes) — rien n'est modifié sur le conteneur.
+
+`orphans` liste les proxys créés par `convert` dont le conteneur d'origine n'est plus annoncé par sa passerelle (routes mortes probables).
 
 Exemples :
 
@@ -1001,6 +1007,8 @@ Exemples :
 goproxify containers
 goproxify containers list
 goproxify containers convert app.example.fr
+goproxify containers show app.example.fr -format compose
+goproxify containers orphans
 ```
 
 ---

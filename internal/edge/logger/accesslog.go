@@ -5,12 +5,14 @@ package logger
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,13 +22,45 @@ import (
 	"gopkg.in/lumberjack.v2"
 )
 
-// WAFMatchExtractor extrait les catégories WAF déclenchées depuis la requête (après traitement).
-// Registré via SetWAFExtractor pour éviter les cycles d'import.
-type WAFMatchExtractor func(r *http.Request) []string
+type notesKey struct{}
 
-// ThreatSignalExtractor extrait le signal Sentinel (raison) depuis la requête.
-// Registré via SetThreatExtractor pour éviter les cycles d'import.
-type ThreatSignalExtractor func(r *http.Request) string
+// requestNotes porte jusqu'au journal d'accès ce que les étapes de sécurité apprennent d'une requête. Le journal
+// enveloppe tout le reste et chaque étape travaille sur une copie de la requête : un contexte posé en aval ne
+// lui remonte jamais, d'où ce support partagé, placé dans le contexte avant les étapes.
+type requestNotes struct {
+	mu     sync.Mutex
+	waf    []string
+	threat string
+}
+
+func notesOf(ctx context.Context) *requestNotes {
+	n, _ := ctx.Value(notesKey{}).(*requestNotes)
+	return n
+}
+
+// NoteWAF signale au journal d'accès les catégories d'un refus ou d'une détection (WAF, plugin de détection).
+func NoteWAF(ctx context.Context, categories ...string) {
+	n := notesOf(ctx)
+	if n == nil {
+		return
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for _, c := range categories {
+		if c != "" && !slices.Contains(n.waf, c) {
+			n.waf = append(n.waf, c)
+		}
+	}
+}
+
+// NoteThreat signale au journal d'accès le signal Sentinel d'une requête.
+func NoteThreat(ctx context.Context, signal string) {
+	if n := notesOf(ctx); n != nil {
+		n.mu.Lock()
+		n.threat = signal
+		n.mu.Unlock()
+	}
+}
 
 // AccessLogger écrit les access logs JSON de façon asynchrone et les pousse
 // vers l'Admin (via SetForwarder et/ou SetRemote).
@@ -43,12 +77,6 @@ type AccessLogger struct {
 	remoteToken string
 	nodeName    string
 	forwardFn   func([]ShipEntry) // prioritaire sur HTTP si défini
-
-	wafExtMu sync.RWMutex
-	wafExt   WAFMatchExtractor
-
-	threatExtMu sync.RWMutex
-	threatExt   ThreatSignalExtractor
 
 	f2bTapMu sync.RWMutex
 	f2bTap   func(ip string, status int)
@@ -253,20 +281,6 @@ func (a *AccessLogger) SetNodeName(name string) {
 	a.remoteMu.Unlock()
 }
 
-// SetWAFExtractor enregistre la fonction d'extraction des matches WAF (évite le cycle logger↔waf).
-func (a *AccessLogger) SetWAFExtractor(fn WAFMatchExtractor) {
-	a.wafExtMu.Lock()
-	a.wafExt = fn
-	a.wafExtMu.Unlock()
-}
-
-// SetThreatExtractor enregistre la fonction d'extraction du signal Sentinel.
-func (a *AccessLogger) SetThreatExtractor(fn ThreatSignalExtractor) {
-	a.threatExtMu.Lock()
-	a.threatExt = fn
-	a.threatExtMu.Unlock()
-}
-
 // SetProxyTap enregistre un callback appelé pour chaque requête loguée (domain, status).
 // Permet au moteur de règles de calculer les taux d'erreurs par proxy.
 func (a *AccessLogger) SetProxyTap(fn func(domain string, status int)) {
@@ -383,6 +397,8 @@ func (a *AccessLogger) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rw := &statusWriter{ResponseWriter: w, status: 200}
+		notes := &requestNotes{}
+		r = r.WithContext(context.WithValue(r.Context(), notesKey{}, notes))
 		next.ServeHTTP(rw, r)
 
 		// Plan de contrôle : pas d'access log (bruit pour Prism / Logs).
@@ -393,20 +409,9 @@ func (a *AccessLogger) Middleware(next http.Handler) http.Handler {
 
 		ip := RealIP(r)
 
-		a.wafExtMu.RLock()
-		ext := a.wafExt
-		a.wafExtMu.RUnlock()
-		var wafMatches []string
-		if ext != nil {
-			wafMatches = ext(r)
-		}
-		a.threatExtMu.RLock()
-		tExt := a.threatExt
-		a.threatExtMu.RUnlock()
-		var threatSignal string
-		if tExt != nil {
-			threatSignal = tExt(r)
-		}
+		notes.mu.Lock()
+		wafMatches, threatSignal := notes.waf, notes.threat
+		notes.mu.Unlock()
 
 		// Les taps sécurité reçoivent l'IP réelle avant toute anonymisation.
 		a.f2bTapMu.RLock()

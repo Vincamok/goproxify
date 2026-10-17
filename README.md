@@ -259,7 +259,7 @@ Full reference → **[docs/cli.md](docs/cli.md)**
 - **GDPR-ready access logs** — client IPs kept in full, anonymised or pseudonymised (AES-GCM, revealable with an audited legal reason by the superadmin or a delegated DPO, account or team), configurable retention, Art. 17 erasure by IP or user — see [docs/rgpd.md](docs/rgpd.md)
 - Scheduled backups and restore
 - Import: nginx, HAProxy, Traefik, Caddy, CSV, JSON
-- **WASM plugins** (wazero) — signed packages, plugin repositories, per-route attachment; Coraza (SecLang) and four example plugins (`path-guard`, `rate-guard`, `body-redact`, `tcp-allow`) shipped with the Admin
+- **WASM plugins** (wazero) — signed packages, plugin repositories, per-route attachment; Coraza (SecLang, its denials logged and able to ban the IP) and four example plugins (`path-guard`, `rate-guard`, `body-redact`, `tcp-allow`) shipped with the Admin
 
 ### Agent (Service Discovery)
 

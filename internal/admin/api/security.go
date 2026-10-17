@@ -777,11 +777,7 @@ func (h *SecurityHandler) timeline(w http.ResponseWriter, r *http.Request) {
 	var events []event
 
 	banSourceLabel := map[string]string{
-		"fail2ban": "Fail2Ban",
-		"native":   "Natif",
-		"crowdsec": "CrowdSec",
-		"threat":   "Sentinel",
-		"agent":    "Agent",
+		"native": "Natif",
 	}
 
 	if source == "" || source == "ban" || source == "all" {
@@ -792,9 +788,9 @@ func (h *SecurityHandler) timeline(w http.ResponseWriter, r *http.Request) {
 			for rows.Next() {
 				var ip, domain, src, reason, ts string
 				rows.Scan(&ip, &domain, &src, &reason, &ts) //nolint:errcheck
-				label := banSourceLabel[src]
-				if label == "" {
-					label = src
+				label, ok := banSourceLabel[src]
+				if !ok {
+					label = sourceLabel(src)
 				}
 				events = append(events, event{Type: "ban", IP: ip, Domain: domain, CreatedAt: ts, Source: src,
 					Summary: label + ": " + ip + " banni — " + reason, Severity: "warning"})

@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	edgelog "github.com/vincamok/goproxify/internal/edge/logger"
 	"github.com/vincamok/goproxify/internal/edge/tlsfp"
 )
 
@@ -487,9 +488,9 @@ func (e *Engine) ResetIP(ip string) {
 	e.counters.reset(ip)
 }
 
-// WithSignal enrichit le contexte de la requête avec la raison du signal Sentinel.
-// Utilisé par server.go pour transmettre la raison à l'access log.
+// WithSignal enrichit le contexte de la requête avec la raison du signal Sentinel et la signale à l'access log.
 func WithSignal(r *http.Request, reason string) *http.Request {
+	edgelog.NoteThreat(r.Context(), reason)
 	return r.WithContext(context.WithValue(r.Context(), contextKey{}, reason))
 }
 

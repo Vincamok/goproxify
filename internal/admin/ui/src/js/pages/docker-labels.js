@@ -1129,3 +1129,115 @@ window.openProxyLabelsModal = async function(proxyId) {
      <button class="btn btn-primary" onclick="closeModal()">${esc(t('common.close'))}</button>`, true);
   _plmRender();
 };
+
+// ── Détail d'un conteneur découvert : route servie, sécurité, labels (actuels / avec modèle), dernières requêtes ──────
+// Le serveur fait le travail (GET /discovered-containers/detail) ; on ne fait que présenter et laisser copier.
+async function _cdtLoad(flowKey, idx) {
+  const tile = (window._traficContainers || {})[flowKey];
+  const routes = (tile && tile.routes) || [];
+  const route = routes[idx] || routes[0];
+  if (!route) return false;
+  let d;
+  try {
+    d = await api('GET', `/discovered-containers/detail?id=${encodeURIComponent(route.id)}&edge=${encodeURIComponent(route.edge_name || '')}`);
+  } catch (e) {
+    toast(e.message, 'error');
+    return false;
+  }
+  const prev = window._cdt;
+  window._cdt = { flowKey, idx: routes[idx] ? idx : 0, routes, d, fixed: !!(prev && prev.fixed && d.fixed_labels) };
+  return true;
+}
+
+function _cdtLabelSet() {
+  const s = window._cdt;
+  return (s.fixed && s.d.fixed_labels) ? s.d.fixed_labels : s.d.labels;
+}
+
+function _cdtRender() {
+  const s = window._cdt;
+  if (!s) return;
+  const d = s.d, c = d.container, a = d.audit;
+  const kv = (k, v) => v ? `<div style="display:flex;gap:8px;font-size:12px;margin-bottom:3px"><span style="color:var(--text2);min-width:90px">${esc(k)}</span><span style="word-break:break-all">${esc(v)}</span></div>` : '';
+  const section = (title, inner) => `<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:700;margin-bottom:8px;color:var(--text1)">${esc(title)}</div>${inner}</div>`;
+  const pre = (id, text) => `<pre id="${id}" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:12px;line-height:1.5;margin:0;overflow:auto;max-height:220px">${esc(text)}</pre>`;
+  const hosts = [c.host, ...(c.aliases || [])];
+  const picker = s.routes.length > 1
+    ? `<select class="input" style="margin-bottom:10px;max-width:360px" onchange="cdtRoute(+this.value)">${s.routes.map((r, i) => `<option value="${i}" ${i === s.idx ? 'selected' : ''}>${esc(r.host)}</option>`).join('')}</select>` : '';
+  const backends = (c.backends || []).map(u => {
+    const st = (window._backendHealth || {})[u] || 'up';
+    const col = st === 'down' ? 'var(--red)' : st === 'degraded' ? 'var(--yellow,#f59e0b)' : 'var(--green)';
+    return `<div style="font-size:12px;display:flex;align-items:center;gap:6px;margin-bottom:3px"><span style="width:8px;height:8px;border-radius:50%;background:${col};flex-shrink:0"></span><code>${esc(u)}</code></div>`;
+  }).join('');
+  const overview = section(t('cdetail.overview'),
+    picker + kv(t('cdetail.route'), hosts.join(', ')) + kv(t('cdetail.edge'), c.edge_name) + kv(t('cdetail.agent'), c.agent_name) + kv(t('cdetail.source'), c.source) + kv('ID', c.id)
+    + `<div style="margin-top:8px">${backends}</div>`);
+
+  const gradeColor = a.score >= 70 ? 'var(--green)' : a.score >= 40 ? 'var(--yellow,#f59e0b)' : 'var(--red)';
+  const checks = (a.checks || []).map(ck => {
+    const label = t('security.posture.check.' + ck.key);
+    return `<span class="chip" style="${ck.present ? 'color:var(--green)' : 'color:var(--text3);text-decoration:line-through'}">${ck.present ? '✓' : '✗'} ${esc(label.startsWith('security.posture') ? ck.name : label)}</span>`;
+  }).join(' ');
+  const security = section(t('cdetail.security'),
+    `<div style="margin-bottom:8px"><span style="font-weight:700;color:${gradeColor}">${esc(t('cdetail.score', { score: a.score, grade: a.grade }))}</span></div>
+     <div style="display:flex;flex-wrap:wrap;gap:4px">${checks}</div>`);
+
+  let labelsHtml = '';
+  if (a.missing.length) {
+    labelsHtml += `<div style="margin-bottom:12px;padding:10px 12px;border:1px solid var(--border);border-left:3px solid var(--yellow,#f59e0b);border-radius:8px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <span style="font-size:12px;font-weight:600">${esc(t('cdetail.add_title'))}</span>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="plmCopy('cdt-added')">${esc(t('dockerlbl.copy'))}</button></div>
+      ${pre('cdt-added', a.added.map(l => `${l.key}=${l.value}`).join('\n'))}
+      <div style="font-size:11px;color:var(--text2);margin-top:6px">${esc(t('cdetail.add_hint'))}</div></div>
+      <div style="display:flex;gap:6px;margin-bottom:10px">
+        <button type="button" class="btn ${s.fixed ? 'btn-secondary' : 'btn-primary'} btn-sm" onclick="cdtFixed(false)">${esc(t('cdetail.labels_current'))}</button>
+        <button type="button" class="btn ${s.fixed ? 'btn-primary' : 'btn-secondary'} btn-sm" onclick="cdtFixed(true)">${esc(t('cdetail.labels_fixed'))}</button></div>`;
+  } else {
+    labelsHtml += `<div style="font-size:12px;color:var(--green);margin-bottom:10px">${esc(t('cdetail.all_good'))}</div>`;
+  }
+  labelsHtml += '<div id="plm-body"></div>';
+
+  document.getElementById('cdt-body').innerHTML = overview + security
+    + section(t('cdetail.labels'), labelsHtml)
+    + section(t('cdetail.logs'), `<div id="cdt-logs" style="font-size:12px;color:var(--text2)">${s.logsHtml || esc(t('common.loading'))}</div>
+        <button type="button" class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="closeModal();logsFilters.domain='${esc(c.host)}';navigate('logs')">${esc(t('cdetail.all_logs'))}</button>`)
+    + `<details><summary style="cursor:pointer;font-size:12px;font-weight:700">${esc(t('cdetail.config'))}</summary><div style="margin-top:8px">${pre('cdt-config', JSON.stringify(d.config, null, 2))}</div></details>`;
+
+  window._plm = { id: c.id, data: _cdtLabelSet(), tab: (window._plm && window._plm.tab) || 'compose', stackEnv: (_cdtLabelSet().env || []).length > 0 };
+  _plmRender();
+  if (!s.logsHtml) _cdtLoadLogs(c.host);
+}
+
+async function _cdtLoadLogs(host) {
+  const el = document.getElementById('cdt-logs');
+  const s = window._cdt;
+  if (!el) return;
+  try {
+    const res = await api('GET', `/logs?domain=${encodeURIComponent(host)}&page_size=10&exclude_internal=1`);
+    const rows = (res && res.entries) || [];
+    if (window._cdt !== s || !document.getElementById('cdt-logs')) return;
+    el.innerHTML = s.logsHtml = rows.length
+      ? `<table style="width:100%;border-collapse:collapse">${rows.map(e => {
+          const col = e.status >= 500 ? 'var(--red)' : e.status >= 400 ? 'var(--yellow,#f59e0b)' : 'var(--green)';
+          return `<tr><td style="padding:2px 6px;white-space:nowrap;color:var(--text3)">${esc(new Date(e.ts).toLocaleTimeString())}</td>
+            <td style="padding:2px 6px;color:${col}">${esc(String(e.status || ''))}</td>
+            <td style="padding:2px 6px">${esc(e.method || '')} ${esc(e.path || '')}</td>
+            <td style="padding:2px 6px;color:var(--text3)">${esc(e.ip || '')}</td></tr>`;
+        }).join('')}</table>`
+      : esc(t('cdetail.no_logs'));
+  } catch {
+    el.textContent = '—';
+  }
+}
+
+window.cdtFixed = on => { window._cdt.fixed = on; _cdtRender(); };
+window.cdtRoute = async idx => { if (await _cdtLoad(window._cdt.flowKey, idx)) _cdtRender(); };
+
+window.openContainerDetail = async function(flowKey) {
+  if (!(await _cdtLoad(flowKey, 0))) return;
+  const host = window._cdt.d.container.host;
+  modal(t('cdetail.title', { host }), '<div id="cdt-body"></div>',
+    `<button class="btn btn-primary" onclick="closeModal()">${esc(t('common.close'))}</button>`, true);
+  _cdtRender();
+};

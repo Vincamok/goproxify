@@ -101,6 +101,7 @@ Un dépôt est une URL HTTPS qui sert un index JSON :
 | `hooks` (suite) | `request_body`, `response_body` (corps tamponné), `connect` (routes TCP/UDP), `log` (requête terminée, hors du chemin de la réponse — voir « Hook log ») ; un plugin sans hook applicable au type de la route est refusé à la validation |
 | `limits.max_body_bytes` | taille maximale du corps présenté aux hooks de corps : 32 Kio par défaut, 1 Mio au plus |
 | `on_oversize` | `deny` (défaut : `413` sur une requête, `502` sur une réponse) ou `skip` (le corps passe sans que le plugin le voie), pour un corps plus gros que `max_body_bytes` |
+| `detector` | `true` : les refus du plugin (hooks `request`, `request_body`) sont des détections de sécurité — voir « Plugins de détection ». Faux par défaut ; exige l'un de ces deux hooks |
 | `capabilities` | fonctions de l'hôte que le plugin peut importer en plus de `gpx.log` : `kv` (état), `http` (liste d'hôtes joignables), `http_allow_private` — voir ci-dessous |
 
 ## ABI v1
@@ -136,6 +137,23 @@ L'hôte n'importe qu'une fonction : `gpx.log(ptr i32, len i32)` (journal, 1 Kio 
 - `on_error` ne s'applique pas (rien à refuser) ; un échec incrémente `gpx_plugin_log_calls_total{plugin,result="error"}` et est journalisé.
 - Un refus d'un autre plugin de la chaîne (`deny`, 503 de plugin absent) est une réponse comme une autre : le journal la voit avec son statut.
 - Les octets comptés sont ceux écrits au client ; une connexion détournée (WebSocket) est notée `101`.
+
+## Plugins de détection
+
+Un plugin qui déclare `"detector": true` est un moteur de règles (comme `coraza`), pas un contrôle d'accès. Ses refus aux hooks `request` et `request_body` :
+
+- sont signalés au journal d'accès : le nom du plugin rejoint `waf_matches`, donc le badge « Match WAF » du Journal, la trace d'IP, l'aperçu de ban et l'analyse ASN ;
+- peuvent bannir l'IP qui en accumule, si la configuration de la route le demande. Le manifeste doit alors déclarer trois champs numériques, lus par la passerelle (`coraza` les déclare) :
+
+| Champ | Rôle | Défaut |
+|---|---|---|
+| `ban_after` | refus avant ban, par IP et par plugin | 0 : jamais |
+| `ban_window_sec` | fenêtre glissante de comptage | 300 |
+| `ban_duration_sec` | durée du ban | 3600 |
+
+Le ban porte la source `plugin:<nom>` et la raison `<nom>: trop de refus` ; il apparaît dans « Bans actifs par source » et « Raisons fréquentes ». Il vise la même cible que Fail2Ban (l'IP, ou le /64 d'une IPv6) et ne touche jamais les réseaux privés, Cloudflare, la liste blanche des bans ni celle de Fail2Ban. Il est posé et persisté par la passerelle, propagé à ses pairs HA, et ne dépend pas de l'Admin pour s'appliquer ni pour survivre à un redémarrage ; le compteur de refus, lui, est en mémoire.
+
+Tout refus de plugin au hook de requête, détecteur ou non, est compté dans `gpx_pipeline_blocked_total{stage="plugin", reason="<plugin>"}`. Un plugin qui refuse un accès légitime (clé d'API absente, `token-check`) ne doit pas se déclarer détecteur : ses refus banniraient sinon des clients normaux.
 
 ## État et réseau (capacités)
 

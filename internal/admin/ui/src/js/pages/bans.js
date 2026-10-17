@@ -38,7 +38,8 @@ const bnEdge = name => _bn.edgeNames.get(name) || name;
 const bnScopeLabel = scope => scope.startsWith('group:') ? t('security.ban_modal.scope_group', { name: scope.slice(6) }) : bnEdge(scope);
 const bnScopeTag = b => b.target_scope
   ? ` <span class="tag tag-yellow" title="${esc(t('security.ban_scope_title', { scope: bnScopeLabel(b.target_scope) }))}">→ ${esc(bnScopeLabel(b.target_scope))}</span>` : '';
-const bnSrc = b => String(b.source || 'native').split(':')[0];
+const bnSrc = b => { const s = String(b.source || 'native'); return s.startsWith('plugin:') ? s : s.split(':')[0]; };
+const bnSrcColor = k => BN_SRC_COLORS[k] || (k.startsWith('plugin:') ? 'var(--red)' : 'var(--text3)');
 
 function bnRemaining(ms) {
   if (ms <= 0) return 'expiré';
@@ -206,7 +207,7 @@ function bnAnalysisHTML() {
   }).flat();
   const geo = bnRankHTML(geoRows, 'Aucune géolocalisation disponible.');
   const sources = bnRankHTML(bnCountBy(_bn.bans, bnSrc).map(([k, n]) => ({
-    label: _secSourceLabel(k), n, color: BN_SRC_COLORS[k] || 'var(--text3)', onclick: `bnSetSource('${esc(k)}')`,
+    label: _secSourceLabel(k), n, color: bnSrcColor(k), onclick: `bnSetSource('${esc(k)}')`,
   })), 'Aucun ban actif.');
   const where = admin
     ? bnRankHTML(bnCountBy(_bn.bans, b => b.edge_name || '__global').slice(0, 6).map(([k, n]) => ({
@@ -266,7 +267,7 @@ function bnRowHTML(b) {
   return `<tr>
     <td class="bn-c-sel"><input type="checkbox" ${_bn.sel.has(b.id) ? 'checked' : ''} onchange="bnToggle('${id}',this.checked)" aria-label="Sélectionner ${ip}"></td>
     <td class="mono bn-c-ip">${ip}${rec ? ` <span class="tag tag-yellow" title="${rec} bans sur l'historique">×${rec}</span>` : ''}${b.exempt ? ' <span class="tag tag-green" title="Entièrement couvert par la liste blanche : ce ban ne s\'applique pas">Exempté</span>' : ''}</td>
-    <td data-label="Source"><span class="tag tag-neutral"><i class="sent-dot" style="background:${BN_SRC_COLORS[bnSrc(b)] || 'var(--text3)'};margin-right:5px"></i>${esc(_secSourceLabel(bnSrc(b)))}</span></td>
+    <td data-label="Source"><span class="tag tag-neutral"><i class="sent-dot" style="background:${bnSrcColor(bnSrc(b))};margin-right:5px"></i>${esc(_secSourceLabel(bnSrc(b)))}</span></td>
     ${admin ? `<td data-label="Passerelle" style="font-size:12px">${b.edge_name ? esc(bnEdge(b.edge_name)) : '<span class="tag tag-neutral">Global</span>'}${bnScopeTag(b)}</td>` : `<td data-label="Domaine" style="color:var(--text2)">${esc(b.domain || '—')}</td>`}
     <td data-label="Raison" style="color:var(--text2);font-size:12px;max-width:260px" title="${esc(b.reason || '')}">${esc(b.reason || '—')}</td>
     <td data-label="Restant">${bnTtlCell(b)}</td>

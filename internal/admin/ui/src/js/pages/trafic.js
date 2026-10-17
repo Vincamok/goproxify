@@ -522,7 +522,7 @@ async function renderTraficPage(ctx) {
           <input type="checkbox" ${m.isSel ? 'checked' : ''} onchange="traficSelToggle('${esc(m.id)}','${m.stype}')" style="width:14px;height:14px;cursor:pointer;accent-color:var(--accent);flex-shrink:0">
           ${c.toggle}
           <div class="trafic-tile-host">${domainLink(master, true, m.hasTLS)}</div>
-          ${typeBadge(m.type)}${m.isImplicit ? `<span class="chip" title="${esc(t('trafic.implicit_hint'))}">${esc(t('trafic.implicit'))}</span>` : ''}${m.isImplicit ? '' : discoveredMatchBadge(p)}
+          ${typeBadge(m.type)}${m.isImplicit ? `<span class="chip" title="${esc(t('trafic.implicit_hint'))}">${esc(t('trafic.implicit'))}</span>` : ''}${m.isImplicit ? '' : proxyOriginBadges(p)}
           <div class="trafic-tile-actions">${c.secWarn}${c.edit}${c.more}</div>
         </div>
         ${aliasesAndChips(m, aliases, '')}
@@ -560,7 +560,7 @@ async function renderTraficPage(ctx) {
           </div>
         </td>
         <td style="padding:8px 10px;max-width:260px">
-          <div style="display:flex;align-items:center;gap:6px;min-width:0"><div class="trafic-tile-host">${domainLink(master, true, m.hasTLS)}</div>${typeBadge(m.type)}${m.isImplicit ? '' : discoveredMatchBadge(p)}</div>
+          <div style="display:flex;align-items:center;gap:6px;min-width:0"><div class="trafic-tile-host">${domainLink(master, true, m.hasTLS)}</div>${typeBadge(m.type)}${m.isImplicit ? '' : proxyOriginBadges(p)}</div>
           ${aliasesAndChips(m, aliases, 'margin-top:3px')}
         </td>
         <td style="padding:8px 10px;max-width:280px">${backendsInline(m.allBackends, 'tr')}</td>
@@ -1407,6 +1407,14 @@ async function renderTraficPage(ctx) {
       return `<span class="chip" style="color:${best === 'same' ? 'var(--accent)' : 'var(--yellow,#f59e0b)'}" title="${esc(tip)}">${esc(label)}</span>`;
     }
 
+    // Pastille d'un proxy converti dont le conteneur d'origine n'est plus annoncé par sa passerelle.
+    function orphanBadge(p) {
+      const o = window._traficOrphans && window._traficOrphans.get(p.id);
+      if (!o) return '';
+      return `<span class="chip" style="color:var(--red)" title="${esc(t('trafic.orphan_hint', { id: o.origin.id }))}">${esc(t('trafic.orphan'))}</span>`;
+    }
+    const proxyOriginBadges = p => discoveredMatchBadge(p) + orphanBadge(p);
+
     function buildContainerTile(c) {
       const hosts = (c.hosts && c.hosts.length) ? c.hosts : [c.host || '—'].filter(Boolean);
       const host = hosts[0] || '—';
@@ -1460,9 +1468,13 @@ async function renderTraficPage(ctx) {
         return `<a href="#" onclick="event.preventDefault();openProxyModal('${esc(p.id)}')" style="display:inline-flex;align-items:center;font-size:10px;color:${color};background:var(--bg3);padding:1px 6px;border-radius:4px;border:1px solid var(--border);white-space:nowrap" title="${esc(label)}">${esc(label)}</a>`;
       }).join('');
       if (replacedChips) chips += replacedChips;
+      // Contrôles de sécurité absents (TLS, WAF, rate limit), calculés par le serveur snippets compris.
+      const missing = [...new Set(routes.flatMap(r => r.missing || []))];
+      chips += missing.map(k => `<span style="display:inline-flex;align-items:center;font-size:10px;color:var(--yellow,#f59e0b);background:var(--bg3);padding:1px 6px;border-radius:4px;border:1px solid var(--border);white-space:nowrap">${esc(t('cdetail.no_' + k))}</span>`).join('');
+      const detailBtn = `<button class="btn btn-ghost btn-icon" onclick="openContainerDetail('${esc(flowKey)}')" title="${esc(t('trafic.detail'))}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></button>`;
       const convertBtn = (Role.canWrite() && convertible.length)
         ? `<button class="btn btn-ghost btn-icon" onclick="convertDiscoveredContainer('${esc(flowKey)}')" title="${esc(t('trafic.convert_proxy'))}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m17 1 4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="m7 23-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></button>` : '';
-      const flowBtn = `${convertBtn}<button class="btn btn-ghost btn-icon" onclick="openTrafficFlowModal('container','${esc(flowKey)}')" title="${esc(t('trafic.flow_title'))}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><circle cx="6" cy="5" r="2"/><path d="M18 7v4a2 2 0 0 1-2 2H8a2 2 0 0 0-2 2v2"/></svg></button>`;
+      const flowBtn = `${detailBtn}${convertBtn}<button class="btn btn-ghost btn-icon" onclick="openTrafficFlowModal('container','${esc(flowKey)}')" title="${esc(t('trafic.flow_title'))}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><circle cx="6" cy="5" r="2"/><path d="M18 7v4a2 2 0 0 1-2 2H8a2 2 0 0 0-2 2v2"/></svg></button>`;
 
       return `<div class="trafic-tile" title="${esc(c.id||'')}" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
         <div class="trafic-tile-head">
@@ -1491,6 +1503,10 @@ async function renderTraficPage(ctx) {
         const edgeName = edge ? (edge.node_name || edge.display_name || '') : '';
         const raw = edgeName ? all.filter(c => c.edge_name === edgeName) : all;
         window._traficDiscovered = raw;
+        api('GET', '/discovered-containers/orphans').then(list => {
+          window._traficOrphans = new Map((list || []).map(o => [o.proxy_id, o]));
+          if (typeof window.renderPage === 'function') window.renderPage();
+        }).catch(() => {});
         if (typeof window.renderPage === 'function') window.renderPage();
         const items = groupDiscoveredContainers(raw);
         window._traficContainers = {};

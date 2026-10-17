@@ -20,6 +20,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	edgelog "github.com/vincamok/goproxify/internal/edge/logger"
 	"github.com/vincamok/goproxify/internal/edge/router"
 	"github.com/vincamok/goproxify/internal/edge/waf/behavior"
 )
@@ -532,6 +533,11 @@ func (e *Engine) Middleware(cfg *router.WAFConfig, next http.Handler) http.Handl
 		if len(matches) > 0 {
 			ctx := context.WithValue(r.Context(), contextKey{}, matches)
 			r = r.WithContext(ctx)
+			cats := make([]string, len(matches))
+			for i, m := range matches {
+				cats[i] = m.Category
+			}
+			edgelog.NoteWAF(ctx, cats...)
 
 			for _, m := range matches {
 				action := "detect"

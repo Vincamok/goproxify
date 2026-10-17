@@ -127,11 +127,10 @@ func (e *Engine) Feed(ip string, status int) {
 		return
 	}
 
-	addr, ok := clientAddr(ip)
-	if !ok || isPrivateIP(addr) || whitelisted(netip.PrefixFrom(addr, addr.BitLen()), cfg.Whitelist) {
+	key, ok := BanTarget(ip, cfg.Whitelist)
+	if !ok {
 		return
 	}
-	key := banKey(addr, cfg.Whitelist)
 
 	window := time.Duration(cfg.WindowSec) * time.Second
 	if window <= 0 {
@@ -248,6 +247,17 @@ func (e *Engine) sweep() {
 			e.mu.Unlock()
 		}
 	}
+}
+
+// BanTarget donne la cible d'un ban pour l'adresse d'un client (l'IP, ou le /64 d'une IPv6), ou false pour ce
+// qu'on ne bannit jamais : une valeur qui n'est pas une IP, un réseau privé, Cloudflare, la liste blanche.
+// Les autres détecteurs qui bannissent (plugins) s'y alignent pour viser les mêmes cibles que Fail2Ban.
+func BanTarget(ip string, whitelist []string) (string, bool) {
+	addr, ok := clientAddr(ip)
+	if !ok || isPrivateIP(addr) || whitelisted(netip.PrefixFrom(addr, addr.BitLen()), whitelist) {
+		return "", false
+	}
+	return banKey(addr, whitelist), true
 }
 
 // clientAddr lit une IP seule, « IP:port » ou « [IPv6]:port ». Faux pour tout ce qui n'est pas une IP.

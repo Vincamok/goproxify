@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	edgews "github.com/vincamok/goproxify/internal/edge/ws"
 )
 
 var prismSourceLabels = map[string]string{
@@ -29,9 +31,24 @@ var sentinelTechniqueLabels = map[string]string{
 	"rate":        "Débit excessif",
 }
 
+// sourceLabel donne le libellé d'une source de ban. Celle d'un plugin de détection ("plugin:coraza") porte le
+// nom du plugin.
+func sourceLabel(src string) string {
+	if l, ok := prismSourceLabels[src]; ok {
+		return l
+	}
+	if name, ok := strings.CutPrefix(src, edgews.PluginBanSourcePrefix); ok && name != "" {
+		return strings.ToUpper(name[:1]) + name[1:]
+	}
+	return src
+}
+
 // banTechnique déduit la technique de détection d'un ban à partir de sa source et de sa raison.
 func banTechnique(source, reason string) (key, label string) {
 	reason = strings.TrimSpace(reason)
+	if strings.HasPrefix(source, edgews.PluginBanSourcePrefix) {
+		return "denials", "Trop de refus"
+	}
 	switch source {
 	case "threat":
 		key = strings.TrimSpace(strings.TrimPrefix(reason, "threat:"))
@@ -85,11 +102,7 @@ func (h *PrismHandler) bansBreakdown(w http.ResponseWriter, r *http.Request) {
 			cur.Count += n
 			continue
 		}
-		sl := prismSourceLabels[src]
-		if sl == "" {
-			sl = src
-		}
-		agg[k] = &row{Source: src, SourceLabel: sl, Sentinel: src == "threat", Technique: key, Label: label, Count: n}
+		agg[k] = &row{Source: src, SourceLabel: sourceLabel(src), Sentinel: src == "threat", Technique: key, Label: label, Count: n}
 	}
 	out := make([]row, 0, len(agg))
 	for _, v := range agg {
@@ -156,10 +169,7 @@ func (h *PrismHandler) ipScan(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			b.Sentinel = b.Source == "threat"
-			b.SourceLabel = prismSourceLabels[b.Source]
-			if b.SourceLabel == "" {
-				b.SourceLabel = b.Source
-			}
+			b.SourceLabel = sourceLabel(b.Source)
 			_, b.Technique = banTechnique(b.Source, b.Reason)
 			out.Bans = append(out.Bans, b)
 		}

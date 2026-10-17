@@ -631,6 +631,9 @@ func (s *Server) autoBanWhitelisted(b *router.RuntimeBan) bool {
 	case "threat":
 		return s.threatEngine != nil && s.threatEngine.WhitelistedIP(b.IP)
 	}
+	if strings.HasPrefix(b.Source, edgews.PluginBanSourcePrefix) {
+		return s.profileStore.IsWhitelisted(b.IP) || (s.f2bEngine != nil && s.f2bEngine.Whitelisted(b.IP))
+	}
 	return false
 }
 

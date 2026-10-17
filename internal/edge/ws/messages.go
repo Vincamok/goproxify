@@ -149,12 +149,17 @@ type UnbanEntry struct {
 	At *time.Time `json:"at,omitempty"`
 }
 
+// PluginBanSourcePrefix préfixe la source du ban d'un plugin de détection : "plugin:coraza".
+const PluginBanSourcePrefix = "plugin:"
+
 // ThreatBanPayload est envoyé par passerelle → Admin quand le moteur détecte et banne une IP.
 type ThreatBanPayload struct {
 	IP        string `json:"ip"`
 	Reason    string `json:"reason"`
 	ExpiresAt string `json:"expires_at,omitempty"` // RFC3339
 	NodeName  string `json:"node_name,omitempty"`
+	// Source : "plugin:<nom>" pour le ban d'un plugin de détection ; vide pour Sentinel.
+	Source string `json:"source,omitempty"`
 }
 
 // LogEntryPayload est le format normalisé des logs relayés passerelle → Admin.

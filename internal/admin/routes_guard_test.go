@@ -24,6 +24,7 @@ var openToAnyAuthenticatedAccount = map[string]string{
 	"GET /api/v1/architecture/groups":    "lecture seule",
 	"/api/v1/node-events":                "lecture seule",
 	"/api/v1/discovered-containers":      "lecture seule",
+	"/api/v1/discovered-containers/":     "lecture seule (détail, orphelins)",
 	"/api/v1/backends/health":            "lecture seule",
 	"/api/v1/metrics/proxies":            "lecture seule",
 	"/api/v1/metrics/summary":            "lecture seule",

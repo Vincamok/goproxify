@@ -86,7 +86,12 @@ type Manifest struct {
 	OnError    string   `json:"on_error,omitempty"`
 	Limits     Limits   `json:"limits,omitempty"`
 	// OnOversize : corps trop gros pour un hook de corps (deny par défaut, skip pour le laisser passer).
-	OnOversize   string          `json:"on_oversize,omitempty"`
+	OnOversize string `json:"on_oversize,omitempty"`
+	// Detector : les refus du plugin sont des détections de sécurité (moteur de règles, pas contrôle d'accès).
+	// Ils sont signalés au journal d'accès, et les champs ban_after, ban_window_sec et ban_duration_sec de sa
+	// configuration peuvent bannir l'IP qui en accumule. Un plugin qui refuse un accès légitime (clé d'API
+	// absente) ne l'est pas : ses refus ne doivent jamais bannir.
+	Detector     bool            `json:"detector,omitempty"`
 	Capabilities *Capabilities   `json:"capabilities,omitempty"`
 	Fields       []modules.Field `json:"fields,omitempty"`
 }
@@ -154,6 +159,9 @@ func (m *Manifest) Normalize() error {
 		}
 	} else if m.Limits.MaxBodyBytes != 0 || m.OnOversize != "" {
 		return errors.New("limits.max_body_bytes et on_oversize exigent un hook request_body ou response_body")
+	}
+	if m.Detector && !m.Has(HookRequest) && !m.Has(HookRequestBody) {
+		return errors.New("detector exige un hook request ou request_body")
 	}
 	if err := m.Capabilities.validate(); err != nil {
 		return err

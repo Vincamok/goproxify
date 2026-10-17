@@ -270,7 +270,7 @@ function secBansBySourceHTML(bans) {
       const pct = Math.round((c / total) * 100);
       return `<div style="margin-bottom:10px">
         <div style="display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:3px">
-          <span style="color:var(--text1)">${labels[src]||src}</span>
+          <span style="color:var(--text1)">${labels[src]||_secSourceLabel(src)}</span>
           <span style="color:var(--text2)">${c} <span style="color:var(--text3)">(${pct}%)</span></span>
         </div>
         <div style="height:5px;border-radius:3px;background:var(--bg2);overflow:hidden">
@@ -1028,6 +1028,7 @@ function filterSecThreatsList(threats) {
 
 function _secSourceLabel(source) {
   if (!source) return '—';
+  if (source.startsWith('plugin:') && source.length > 7) return source[7].toUpperCase() + source.slice(8);
   const v = t('security.source.' + source);
   return v.startsWith('security.source.') ? source : v;
 }

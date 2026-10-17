@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/vincamok/goproxify/internal/admin/api"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
 	"github.com/vincamok/goproxify/internal/edge/proxystore"
 )
@@ -240,5 +241,25 @@ func TestConvertDiscoveredContainerCreatesManagedProxy(t *testing.T) {
 	cfg := got.(map[string]any)
 	if cfg["host"] != "lab.example.com" || cfg["tls_enabled"] != true || cfg["lb"] != "adaptive" {
 		t.Fatalf("la config des labels doit être reprise : %v", cfg)
+	}
+}
+
+func TestGetDiscoveredContainerAuditsAndFiltersFormat(t *testing.T) {
+	h := setupMCPDB(t)
+	r := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+
+	res, err := h.toolGetDiscoveredContainer(r, map[string]any{"id": "lab.example.com", "format": "compose"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := res.(*api.ContainerDetail)
+	if len(d.Audit.Missing) == 0 || d.FixedLabels == nil {
+		t.Fatalf("la route des labels de test n'a ni WAF ni rate limit : %+v", d.Audit)
+	}
+	if len(d.Labels.Formats) != 1 || d.Labels.Formats["compose"].Text == "" {
+		t.Fatalf("seul le format demandé doit rester : %v", d.Labels.Formats)
+	}
+	if _, err := h.toolGetDiscoveredContainer(r, map[string]any{"id": "lab.example.com", "format": "nope"}); err == nil {
+		t.Fatal("un format inconnu doit être refusé")
 	}
 }

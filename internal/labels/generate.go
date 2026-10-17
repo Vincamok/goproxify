@@ -68,7 +68,7 @@ func (g *Generated) Env() []string {
 // handledKeys sont les clés JSON de la route que FromRoute traite (en entier ou en partie) ou ignore volontairement.
 // Toute autre clé non vide est un réglage sans label.
 var handledKeys = map[string]bool{
-	"id": true, "updated_at": true, "agent_name": true, "delegate_api_endpoint": true,
+	"id": true, "updated_at": true, "agent_name": true, "delegate_api_endpoint": true, "origin": true,
 	"host": true, "aliases": true, "type": true, "backends": true,
 	"tls_enabled": true, "tls_passthrough": true,
 	"preserve_host": true, "websocket": true, "request_id": true, "http_version": true,

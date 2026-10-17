@@ -5,6 +5,7 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 )
@@ -85,6 +86,131 @@ func runContainers() {
 		}
 		fmt.Printf("Proxy %s créé pour %s (modifiable avec « goproxify proxy »).\n", out.ID, out.Name)
 
+	case "show":
+		args := parseFlags(os.Args[3:])
+		pos := positionalArgs(os.Args[3:])
+		id := flagValue(args, "-id", "")
+		if id == "" && len(pos) > 0 {
+			id = pos[0]
+		}
+		if id == "" {
+			fmt.Fprintln(os.Stderr, "usage: goproxify containers show <hôte|id> [-edge <passerelle>] [-format compose|portainer|portainer_inline|docker_run|kubernetes]")
+			os.Exit(1)
+		}
+		client, err := newAdminClient(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+			os.Exit(1)
+		}
+		var d struct {
+			Container struct {
+				ID         string   `json:"id"`
+				Host       string   `json:"host"`
+				Backends   []string `json:"backends"`
+				Source     string   `json:"source"`
+				EdgeName   string   `json:"edge_name"`
+				AgentName  string   `json:"agent_name"`
+				ShadowedBy string   `json:"shadowed_by"`
+			} `json:"container"`
+			Audit struct {
+				Score   int      `json:"score"`
+				Grade   string   `json:"grade"`
+				Missing []string `json:"missing"`
+				Checks  []struct {
+					Name    string `json:"name"`
+					Present bool   `json:"present"`
+				} `json:"checks"`
+				Added []struct {
+					Key   string `json:"key"`
+					Value string `json:"value"`
+				} `json:"added"`
+			} `json:"audit"`
+			Labels struct {
+				Formats map[string]struct {
+					Text string `json:"text"`
+				} `json:"formats"`
+			} `json:"labels"`
+			FixedLabels struct {
+				Formats map[string]struct {
+					Text string `json:"text"`
+				} `json:"formats"`
+			} `json:"fixed_labels"`
+		}
+		q := "?id=" + url.QueryEscape(id) + "&edge=" + url.QueryEscape(flagValue(args, "-edge", ""))
+		if _, err := client.DoJSON("GET", "/api/v1/discovered-containers/detail"+q, nil, &d); err != nil {
+			fmt.Fprintf(os.Stderr, "containers show : %v\n", err)
+			os.Exit(1)
+		}
+		if format := flagValue(args, "-format", ""); format != "" {
+			src := d.FixedLabels.Formats
+			if len(src) == 0 {
+				src = d.Labels.Formats
+			}
+			f, ok := src[format]
+			if !ok {
+				fmt.Fprintf(os.Stderr, "format inconnu %q\n", format)
+				os.Exit(1)
+			}
+			fmt.Print(f.Text)
+			return
+		}
+		c := d.Container
+		fmt.Printf("%s  (%s, passerelle %s, Agent %s)\n", c.Host, c.Source, c.EdgeName, c.AgentName)
+		fmt.Printf("Backends : %s\n", strings.Join(c.Backends, ", "))
+		if c.ShadowedBy != "" {
+			fmt.Printf("Remplacé par le proxy : %s\n", c.ShadowedBy)
+		}
+		fmt.Printf("Sécurité : %d/100 (%s)\n", d.Audit.Score, d.Audit.Grade)
+		for _, ck := range d.Audit.Checks {
+			mark := "✗"
+			if ck.Present {
+				mark = "✓"
+			}
+			fmt.Printf("  %s %s\n", mark, ck.Name)
+		}
+		if len(d.Audit.Added) == 0 {
+			fmt.Println("Rien à ajouter : TLS, WAF et rate limit sont en place.")
+			return
+		}
+		fmt.Println("Labels à ajouter (modèle de sécurité) :")
+		for _, l := range d.Audit.Added {
+			fmt.Printf("  %s=%s\n", l.Key, l.Value)
+		}
+		fmt.Println("Tout le jeu corrigé : goproxify containers show <hôte> -format compose")
+
+	case "orphans":
+		args := parseFlags(os.Args[3:])
+		client, err := newAdminClient(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+			os.Exit(1)
+		}
+		var orphans []struct {
+			ProxyID string `json:"proxy_id"`
+			Host    string `json:"host"`
+			Enabled bool   `json:"enabled"`
+			Origin  struct {
+				ID   string `json:"id"`
+				Edge string `json:"edge"`
+			} `json:"origin"`
+		}
+		if _, err := client.DoJSON("GET", "/api/v1/discovered-containers/orphans", nil, &orphans); err != nil {
+			fmt.Fprintf(os.Stderr, "containers orphans : %v\n", err)
+			os.Exit(1)
+		}
+		if len(orphans) == 0 {
+			fmt.Println("(aucun proxy orphelin)")
+			return
+		}
+		fmt.Printf("%-40s  %-38s  %-8s  %s\n", "HOST", "PROXY", "ACTIF", "CONTENEUR D'ORIGINE (passerelle)")
+		for _, o := range orphans {
+			active := "non"
+			if o.Enabled {
+				active = "oui"
+			}
+			fmt.Printf("%-40s  %-38s  %-8s  %s (%s)\n", o.Host, o.ProxyID, active, o.Origin.ID, o.Origin.Edge)
+		}
+
 	case "help":
 		fmt.Print(`Usage: goproxify containers [list] [options]
 
@@ -94,6 +220,12 @@ Agrège les résultats de toutes les passerelles connectées.
 goproxify containers list [-admin-url …] [-token …]
 goproxify containers      [-admin-url …] [-token …]
 goproxify containers convert <id> [-edge <passerelle>] [-admin-url …] [-token …]
+goproxify containers show <hôte|id> [-edge <passerelle>] [-format compose|portainer|portainer_inline|docker_run|kubernetes]
+goproxify containers orphans [-admin-url …] [-token …]
+
+  show affiche le bilan de sécurité (score, TLS / WAF / rate limit) et les labels à ajouter ;
+  avec -format, le jeu de labels corrigé prêt à coller (Compose, Portainer, docker run, Kubernetes).
+  orphans liste les proxys convertis dont le conteneur d'origine n'est plus annoncé.
 
   convert crée un proxy modifiable à partir de la route issue des labels (<id> : l'hôte,
   ex. app.example.fr, ou l'id de l'API). Le proxy prend la place de la route des labels

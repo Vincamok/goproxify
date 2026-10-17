@@ -1,11 +1,15 @@
 {
-  "name": "coraza", "version": "1.0.0", "api_version": 1,
+  "name": "coraza", "version": "1.1.0", "api_version": 1,
   "hooks": ["request", "request_body"],
+  "detector": true,
   "on_error": "allow",
   "on_oversize": "skip",
   "limits": { "memory_pages": 256, "timeout_ms": 1000, "max_body_bytes": 65536 },
   "fields": [
     { "key": "rules", "label": "Directives SecLang (SecRule…)", "kind": "text", "multiline": true, "required": true },
-    { "key": "block_status", "label": "Statut si la règle n'en fixe pas (défaut 403)", "kind": "text" }
+    { "key": "block_status", "label": "Statut si la règle n'en fixe pas (défaut 403)", "kind": "text" },
+    { "key": "ban_after", "label": "Bannir l'IP après N refus (0 : jamais)", "kind": "number", "default": 0 },
+    { "key": "ban_window_sec", "label": "Fenêtre de comptage des refus (s)", "kind": "number", "default": 300 },
+    { "key": "ban_duration_sec", "label": "Durée du ban (s)", "kind": "number", "default": 3600 }
   ]
 }

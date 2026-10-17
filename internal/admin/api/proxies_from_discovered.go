@@ -54,8 +54,12 @@ func (h *ProxiesHandler) fromDiscovered(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, r, http.StatusForbidden, "api.err.out_of_scope_domain")
 		return
 	}
-	cfgJSON, _ := injectRouteFields(c.ProxyConfig, route.ID, route.UpdatedAt)
-	prod, err := h.publishAll(r.Context(), route.ID, route.Host, true, json.RawMessage(cfgJSON), userID)
+	cfgJSON, err := c.ConversionConfig(route.ID, route.UpdatedAt)
+	if err != nil {
+		writeErr(w, r, http.StatusBadRequest, "api.err.json_body")
+		return
+	}
+	prod, err := h.publishAll(r.Context(), route.ID, route.Host, true, cfgJSON, userID)
 	if err != nil {
 		h.writeEdgeErr(w, r, err)
 		return

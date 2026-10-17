@@ -19,7 +19,7 @@ Chaque outil exige un scope, le même que sa route REST équivalente. Les outils
 
 | Scope | Outils |
 |-------|--------|
-| `proxies:read` | `list_proxies`, `get_proxy`, `get_proxy_labels` |
+| `proxies:read` | `list_proxies`, `get_proxy`, `get_proxy_labels`, `get_discovered_container`, `list_orphan_proxies` |
 | `proxies:write` | `create_proxy`, `convert_discovered_container`, `update_proxy`, `set_proxy_enabled`, `purge_proxy_cache` |
 | `proxies:delete` | `delete_proxy` |
 | `nodes:read` | `list_nodes`, `list_declared_nodes`, `get_topology_live`, `list_agents` †, `get_architecture` †, `list_discovery_sources` † |
@@ -152,6 +152,28 @@ Donne les labels qui reproduisent un proxy : de quoi le déclarer sur un contene
 | `format`  | string | —      | `compose`, `portainer` (avec `stack.env`), `portainer_inline` (sans), `docker_run`, `kubernetes` ; omis : tous |
 
 **Réponse :** avec `format`, `{ format, text, env, unsupported }` ; sans, `{ labels, env, unsupported, formats }`.
+
+---
+
+### `get_discovered_container`
+
+Détail d'une route découverte par les labels d'un conteneur : config servie par la passerelle (secrets masqués), labels qui la reproduisent, bilan de sécurité (score, contrôles, manques parmi TLS / WAF / rate limit) et **labels corrigés** avec le modèle de sécurité appliqué (un snippet de l'Admin du bon type s'il existe, sinon WAF en blocage et 100 req/s). Même contenu que `GET /api/v1/discovered-containers/detail`.
+
+| Paramètre | Type   | Requis | Description |
+|-----------|--------|--------|-------------|
+| `id`      | string | ✓      | `id` de la route découverte (`list_proxies`) ou son domaine |
+| `edge`    | string | —      | Nom de la passerelle, si plusieurs annoncent la même route |
+| `format`  | string | —      | `compose`, `portainer`, `portainer_inline`, `docker_run`, `kubernetes` : ne garde que ce format (défaut : tous) |
+
+**Réponse :** `{ container, config, labels, fixed_labels, audit }` (`fixed_labels` absent quand rien ne manque).
+
+---
+
+### `list_orphan_proxies`
+
+Proxys créés par `convert_discovered_container` dont le conteneur d'origine n'est plus annoncé par sa passerelle. Une passerelle injoignable n'en fait déclarer aucun.
+
+**Paramètres :** aucun — **Réponse :** `[{ proxy_id, host, enabled, origin: { id, edge } }]`.
 
 ---
 
@@ -623,12 +645,12 @@ Compteurs sécurité : bans actifs, menaces CrowdSec, CVE ouvertes, certificats 
 
 ### `list_security_bans`
 
-Liste les bans IP (Fail2Ban, CrowdSec, natif).
+Liste les bans IP (Fail2Ban, CrowdSec, Sentinel, plugins de détection comme Coraza, natif).
 
 | Paramètre      | Type    | Requis | Description                                      |
 |----------------|---------|--------|--------------------------------------------------|
 | `ip`           | string  | —      | Filtrer par IP (sous-chaîne)                     |
-| `source`       | string  | —      | `native`, `fail2ban`, `crowdsec`                 |
+| `source`       | string  | —      | `native`, `fail2ban`, `crowdsec`, `threat`, `plugin:<nom>` (ex. `plugin:coraza`) |
 | `active_only`  | boolean | —      | Uniquement les bans non expirés                  |
 | `edge`         | string  | —      | Passerelle (nom du nœud ou id du token) : ses bans et les bans globaux |
 

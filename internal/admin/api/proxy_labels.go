@@ -35,11 +35,18 @@ func BuildProxyLabels(config json.RawMessage) (*ProxyLabels, error) {
 	if err := json.Unmarshal(config, &route); err != nil {
 		return nil, err
 	}
+	return buildRouteLabels(&route)
+}
+
+// buildRouteLabels est BuildProxyLabels pour une route déjà lue.
+func buildRouteLabels(route *router.Route) (*ProxyLabels, error) {
 	if strings.EqualFold(string(route.Type), "https") {
-		route.Type = router.RouteHTTP
-		route.TLSEnabled = true
+		r := *route
+		r.Type = router.RouteHTTP
+		r.TLSEnabled = true
+		route = &r
 	}
-	g := labels.FromRoute(&route)
+	g := labels.FromRoute(route)
 	out := &ProxyLabels{
 		Labels:      make([]LabelPair, 0, len(g.Labels)),
 		Env:         append([]string{}, g.Env()...),

@@ -41,6 +41,7 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/security"
 	"github.com/vincamok/goproxify/internal/edge/middleware"
 	"github.com/vincamok/goproxify/internal/edge/proxystore"
+	"github.com/vincamok/goproxify/internal/labels"
 	"github.com/vincamok/goproxify/internal/sqltime"
 )
 
@@ -257,6 +258,20 @@ var tools = []map[string]any{
 		),
 	},
 	{
+		"name":        "get_discovered_container",
+		"description": "Détail d'une route découverte par les labels d'un conteneur : config servie par la passerelle (secrets masqués), labels qui la reproduisent, bilan de sécurité (score, contrôles, manques parmi TLS / WAF / rate limit) et labels corrigés avec le modèle de sécurité appliqué (un snippet de l'Admin du bon type, sinon WAF en blocage et 100 req/s).",
+		"inputSchema": schema(
+			req("id", "string", "ID de la route découverte (champ id de list_proxies) ou son domaine"),
+			opt("edge", "string", "Nom de la passerelle, si plusieurs annoncent la même route"),
+			opt("format", "string", "compose | portainer | portainer_inline | docker_run | kubernetes : ne garde que ce format (défaut : tous)"),
+		),
+	},
+	{
+		"name":        "list_orphan_proxies",
+		"description": "Liste les proxies créés par convert_discovered_container dont le conteneur d'origine n'est plus annoncé par sa passerelle (routes mortes probables). Une passerelle injoignable n'en fait déclarer aucun.",
+		"inputSchema": schema(),
+	},
+	{
 		"name":        "convert_discovered_container",
 		"description": "Convertit une route découverte par les labels d'un conteneur (list_proxies, source \"docker\", \"k8s\"…) en proxy configuré modifiable, avec sa configuration actuelle. Le proxy prend la place de la route des labels sur son hôte ; désactivé ou supprimé, il la lui rend. Les backends sont repris tels quels (adresses de conteneur). Retourne l'ID du proxy créé.",
 		"inputSchema": schema(
@@ -424,10 +439,10 @@ var tools = []map[string]any{
 	},
 	{
 		"name":        "list_security_bans",
-		"description": "Liste les bans IP (Fail2Ban, CrowdSec, natif).",
+		"description": "Liste les bans IP (Fail2Ban, CrowdSec, Sentinel, plugins de détection comme Coraza, natif).",
 		"inputSchema": schema(
 			opt("ip", "string", "Filtrer par IP (sous-chaîne)"),
-			opt("source", "string", "Filtrer par source: native, fail2ban, crowdsec"),
+			opt("source", "string", "Filtrer par source: native, fail2ban, crowdsec, threat, plugin:<nom> (ex. plugin:coraza)"),
 			opt("active_only", "boolean", "Si true, uniquement les bans non expirés"),
 			opt("edge", "string", "Passerelle (nom du nœud ou id du token) : ses bans et les bans globaux"),
 		),
@@ -636,6 +651,10 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 		result, toolErr = h.toolGetProxyLabels(r, id, format)
 	case "create_proxy":
 		result, toolErr = h.toolCreateProxy(r, p.Arguments)
+	case "get_discovered_container":
+		result, toolErr = h.toolGetDiscoveredContainer(r, p.Arguments)
+	case "list_orphan_proxies":
+		result, toolErr = (&api.DiscoveredContainersHandler{DB: h.DB, Log: h.Log}).Orphans(r.Context())
 	case "convert_discovered_container":
 		result, toolErr = h.toolConvertDiscoveredContainer(r, p.Arguments)
 	case "update_proxy":
@@ -1068,6 +1087,38 @@ func (h *Handler) toolCreateProxy(r *http.Request, args map[string]any) (any, er
 	return map[string]any{"id": id, "host": host, "backend": backend, "type": rtype, "lb": lb}, nil
 }
 
+func (h *Handler) toolGetDiscoveredContainer(r *http.Request, args map[string]any) (any, error) {
+	id, _ := args["id"].(string)
+	edge, _ := args["edge"].(string)
+	format, _ := args["format"].(string)
+	if id == "" {
+		return nil, fmt.Errorf("id requis")
+	}
+	dc := &api.DiscoveredContainersHandler{DB: h.DB, Log: h.Log}
+	c, err := dc.Find(r.Context(), id, edge)
+	if err != nil {
+		return nil, err
+	}
+	d, err := dc.Detail(r.Context(), c)
+	if err != nil {
+		return nil, err
+	}
+	for _, l := range []*api.ProxyLabels{d.Labels, d.FixedLabels} {
+		if l == nil {
+			continue
+		}
+		if format == "" {
+			continue
+		}
+		if f, ok := l.Formats[format]; ok {
+			l.Formats = map[string]labels.Output{format: f}
+		} else {
+			return nil, fmt.Errorf("format inconnu %q (compose, portainer, portainer_inline, docker_run, kubernetes)", format)
+		}
+	}
+	return d, nil
+}
+
 func (h *Handler) toolConvertDiscoveredContainer(r *http.Request, args map[string]any) (any, error) {
 	id, _ := args["id"].(string)
 	edge, _ := args["edge"].(string)
@@ -1083,14 +1134,8 @@ func (h *Handler) toolConvertDiscoveredContainer(r *http.Request, args map[strin
 			return nil, err
 		}
 	}
-	var m map[string]any
-	if err := json.Unmarshal(c.ProxyConfig, &m); err != nil {
-		return nil, err
-	}
 	proxyID := uuid.New().String()
-	m["id"] = proxyID
-	m["updated_at"] = time.Now().UTC()
-	cfgJSON, err := json.Marshal(m)
+	cfgJSON, err := c.ConversionConfig(proxyID, time.Now().UTC())
 	if err != nil {
 		return nil, err
 	}

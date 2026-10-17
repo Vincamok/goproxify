@@ -101,7 +101,7 @@ func ScopeCatalog() []ScopeMeta {
 // la carte scope → outils de /mcp-access sans dupliquer ToolRequiredScope.
 // Doit contenir exactement les outils du serveur MCP (vérifié par un test de internal/admin/mcp).
 var mcpTools = []string{
-	"list_proxies", "get_proxy", "get_proxy_labels", "create_proxy", "convert_discovered_container", "update_proxy", "set_proxy_enabled", "delete_proxy", "purge_proxy_cache",
+	"list_proxies", "get_proxy", "get_proxy_labels", "get_discovered_container", "list_orphan_proxies", "create_proxy", "convert_discovered_container", "update_proxy", "set_proxy_enabled", "delete_proxy", "purge_proxy_cache",
 	"list_nodes", "list_agents", "list_declared_nodes", "get_topology_live", "get_architecture", "list_discovery_sources",
 	"approve_agent", "revoke_agent", "create_declared_node", "delete_declared_node",
 	"create_bootstrap_ticket", "accept_node", "reject_node",
@@ -222,7 +222,7 @@ func EffectiveHasScope(ctx context.Context, db *sql.DB, scope string) bool {
 // le serveur MCP le refuse.
 func ToolRequiredScope(tool string) string {
 	switch tool {
-	case "list_proxies", "get_proxy", "get_proxy_labels":
+	case "list_proxies", "get_proxy", "get_proxy_labels", "get_discovered_container", "list_orphan_proxies":
 		return ScopeProxiesRead
 	case "create_proxy", "convert_discovered_container", "update_proxy", "set_proxy_enabled", "purge_proxy_cache":
 		return ScopeProxiesWrite

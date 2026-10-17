@@ -540,17 +540,21 @@ func (m *Manager) handleThreatBan(raw json.RawMessage) {
 	if p.ExpiresAt != "" {
 		expiresAt = p.ExpiresAt
 	}
-	banID := "threat-" + p.IP
+	source := "threat"
+	if strings.HasPrefix(p.Source, edgeWS.PluginBanSourcePrefix) && len(p.Source) > len(edgeWS.PluginBanSourcePrefix) {
+		source = p.Source
+	}
+	banID := source + "-" + p.IP
 	m.db.Exec( //nolint:errcheck
 		`INSERT INTO security_bans (id, ip, domain, reason, source, expires_at, edge_name)
-		 VALUES (?, ?, '', ?, 'threat', ?, ?)
+		 VALUES (?, ?, '', ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET reason=excluded.reason, expires_at=excluded.expires_at`,
-		banID, p.IP, p.Reason, expiresAt, p.NodeName,
+		banID, p.IP, p.Reason, source, expiresAt, p.NodeName,
 	)
 	m.db.Exec( //nolint:errcheck
 		`INSERT INTO security_ban_history (ip, domain, action, reason, source, ban_id, edge_name) VALUES (?,?,'banned',?,?,?,?)`,
-		p.IP, "", p.Reason, "threat", banID, p.NodeName)
-	if m.alertEngine != nil {
+		p.IP, "", p.Reason, source, banID, p.NodeName)
+	if source == "threat" && m.alertEngine != nil {
 		m.alertEngine.Emit(alerting.Event{
 			Trigger:  alerting.TriggerSentinelBan,
 			Severity: alerting.SevWarning,

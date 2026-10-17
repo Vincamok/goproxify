@@ -218,6 +218,36 @@ Labels qui reproduisent un proxy (Admin `0.152.0`), pour le déclarer sur un con
 
 Routes découvertes par les labels (Docker, Podman, Portainer, Kubernetes…), agrégées sur les passerelles connectées. Scope `nodes:read`. Chaque entrée : `id`, `host`, `aliases`, `backends`, `container_ids`, `tls`, `source`, `edge_name`, `agent_name`, `config` (réglages issus des labels) et, depuis Admin `0.153.0`, **`shadowed_by`** : l'ID du proxy configuré qui sert l'hôte à la place de la route des labels (absent quand c'est la route des labels qui sert).
 
+Depuis Admin `0.155.0`, chaque entrée porte aussi **`missing`** : les contrôles de sécurité absents de la route parmi `tls`, `waf`, `rate_limit` (les snippets de la route sont fusionnés avant le jugement).
+
+### `GET /api/v1/discovered-containers/detail?id=<id ou hôte>&edge=<passerelle>`
+
+Vue complète d'une route découverte (Admin `0.155.0`, scope `nodes:read`). `edge` n'est requis que si plusieurs passerelles annoncent la même route (`409` sinon ; `404` si elle est introuvable).
+
+```json
+{
+  "container": { "id": "docker-host:app.example.fr", "host": "app.example.fr", "backends": ["http://10.0.0.5:80"], "edge_name": "edge-1", "missing": ["waf", "rate_limit"] },
+  "config": { "host": "app.example.fr", "tls_enabled": true },
+  "labels": { "labels": [{ "key": "goproxify.host", "value": "app.example.fr" }], "env": [], "unsupported": [], "formats": { "compose": { "text": "…" } } },
+  "fixed_labels": { "labels": [], "env": [], "unsupported": [], "formats": { "compose": { "text": "…" } } },
+  "audit": {
+    "score": 55, "grade": "C",
+    "checks": [{ "key": "tls", "name": "TLS activé", "present": true, "points": 20 }],
+    "missing": ["waf", "rate_limit"],
+    "added": [{ "key": "goproxify.waf", "value": "block" }, { "key": "goproxify.rate_limit", "value": "100/s:50" }]
+  }
+}
+```
+
+- **`config`** : la route telle que la passerelle la sert, secrets masqués.
+- **`labels`** : les labels qui la reproduisent, dans les mêmes formats que `GET /proxies/{id}/labels` (Compose, Portainer, `docker run`, Kubernetes).
+- **`audit`** : même score que la posture de sécurité d'un proxy, snippets fusionnés. `added` liste les labels à ajouter ou à changer pour combler `missing` (**modèle de sécurité**) : TLS (`goproxify.tls=true`), et pour le WAF et le rate limit un **snippet de l'Admin du bon type s'il en existe** (`goproxify.snippets=<ids>`), sinon WAF en blocage (`goproxify.waf=block`) et `100/s:50`.
+- **`fixed_labels`** : les mêmes labels avec le modèle appliqué, prêts à coller dans le Compose ; absent quand rien ne manque. Rien n'est modifié sur le conteneur ni sur la passerelle.
+
+### `GET /api/v1/discovered-containers/orphans`
+
+Proxies créés par `POST /proxies/from-discovered` dont la route d'origine n'est plus annoncée par sa passerelle (Admin `0.155.0`, scope `nodes:read`) : `[{ "proxy_id", "host", "enabled", "origin": { "id", "edge" } }]`. Le proxy converti garde son `origin` (`{ id, edge }`) dans sa config, sans effet sur le routage. Une passerelle qui ne répond pas n'a pas de liste à comparer : ses proxys ne sont jamais déclarés orphelins.
+
 **Priorité sur un hôte** (Edge `0.68.0`) : un proxy configuré (créé depuis l'Admin, portail, délégation) passe toujours avant la route issue des labels du même hôte ou alias, quel que soit l'ordre d'arrivée du conteneur et des poussées de l'Admin. La route des labels reste dans la table et reprend l'hôte quand le proxy est **désactivé ou supprimé**.
 
 ### `POST /api/v1/proxies/from-discovered`
@@ -1064,7 +1094,7 @@ Compteurs globaux : `active_bans`, `active_threats`, `open_cves`, `critical_cves
 
 ### `GET /api/v1/security/bans`
 
-Liste tous les bans correspondant aux filtres, du plus récent au plus ancien. Paramètres : `active=true` (non expirés) ou `active=false` (expirés uniquement), `ip` (sous-chaîne), `domain`, `source` (`native|fail2ban|crowdsec|threat|automation|automation:<nœud>`), `edge` (nom du nœud ou id du token : les bans de cette passerelle **et** les bans globaux). Chaque entrée porte `edge_name`, la passerelle d'origine (vide = ban global : créé depuis l'Admin ou antérieur à cette colonne).
+Liste tous les bans correspondant aux filtres, du plus récent au plus ancien. Paramètres : `active=true` (non expirés) ou `active=false` (expirés uniquement), `ip` (sous-chaîne), `domain`, `source` (`native|fail2ban|crowdsec|threat|automation|automation:<nœud>|plugin:<nom>`, ce dernier pour les bans d'un plugin de détection comme `plugin:coraza`), `edge` (nom du nœud ou id du token : les bans de cette passerelle **et** les bans globaux). Chaque entrée porte `edge_name`, la passerelle d'origine (vide = ban global : créé depuis l'Admin ou antérieur à cette colonne).
 
 `GET /security/bans/countries`, `GET /security/bans/export` (CSV ou JSON, colonne `edge_name` ajoutée) et `GET /security/bans/intel/{kpis,by-reason,by-source,timeline,top-ips}` acceptent le même paramètre `edge`. `intel/kpis` renvoie `history_total` (bans posés), `unbanned` (débans), `rotation_ratio` (`unbanned / history_total`) et `recurring_ips`, le nombre d'IP ayant au moins 3 bans ; le nombre de bans actifs est la longueur de `GET /security/bans?active=true`.
 
