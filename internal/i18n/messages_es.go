@@ -104,6 +104,7 @@ var messagesES = map[string]string{
 	"api.err.node_not_found":        "nodo no encontrado",
 	"api.err.user_not_found":        "usuario no encontrado",
 	"api.err.proxy_not_found":       "proxy no encontrado",
+	"api.err.labels_implicit":       "un proxy implícito lo genera GoProxify: no hay etiquetas que exportar",
 	"api.err.team_not_found":        "equipo no encontrado",
 	"api.err.token_not_found":       "token no encontrado",
 	"api.err.channel_not_found":     "canal no encontrado",

@@ -193,6 +193,8 @@ Gestion des proxies (lecture et cycle de vie).
 ```
 goproxify proxy list    [-admin-url …] [-token …]
 goproxify proxy get     <id> [-admin-url …] [-token …]
+goproxify proxy labels  <id> [-format compose|portainer|portainer_inline|docker_run|kubernetes] [-admin-url …] [-token …]
+  Affiche les labels qui reproduisent le proxy (défaut `compose` ; `portainer` = avec stack.env, `portainer_inline` = sans). Les secrets sortent en variables `${GPX_…}` à renseigner (bloc de variables à la suite) ; les réglages sans label sont listés sur la sortie d'erreur
 goproxify proxy enable  <id> [-admin-url …] [-token …]
 goproxify proxy disable <id> [-admin-url …] [-token …]
 goproxify proxy metrics [-admin-url …] [-token …]

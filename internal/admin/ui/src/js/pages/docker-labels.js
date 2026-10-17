@@ -1069,3 +1069,63 @@ pages['docker-labels'] = function() {
   navigate('infrastructure');
   setTimeout(() => openDockerLabelsModal(), 80);
 };
+
+// ── Labels d'un proxy existant : lecture seule, un bloc à copier par cible ───────────────────────
+// Le serveur transforme la config du proxy en labels (GET /proxies/{id}/labels) ; on ne fait que les présenter.
+const _PLM_TABS = [
+  { id: 'compose', label: 'Docker Compose', fmt: () => 'compose' },
+  { id: 'portainer', label: 'Portainer', fmt: s => s.stackEnv ? 'portainer' : 'portainer_inline' },
+  { id: 'docker_run', label: 'docker run', fmt: () => 'docker_run' },
+  { id: 'kubernetes', label: 'Kubernetes', fmt: () => 'kubernetes' },
+];
+
+function _plmRender() {
+  const s = window._plm;
+  if (!s) return;
+  const tab = _PLM_TABS.find(x => x.id === s.tab) || _PLM_TABS[0];
+  const out = s.data.formats[tab.fmt(s)] || { text: '' };
+  const hasEnv = (s.data.env || []).length > 0;
+  const tabs = _PLM_TABS.map(x =>
+    `<button type="button" class="btn ${x.id === tab.id ? 'btn-primary' : 'btn-secondary'} btn-sm" onclick="plmTab('${x.id}')">${esc(x.label)}</button>`).join('');
+  const envToggle = tab.id === 'portainer'
+    ? `<label style="display:flex;align-items:center;gap:8px;font-size:12px;margin:10px 0 0;${hasEnv ? 'cursor:pointer' : 'opacity:.55'}">
+         <input type="checkbox" ${s.stackEnv && hasEnv ? 'checked' : ''} ${hasEnv ? '' : 'disabled'} onchange="plmStackEnv(this.checked)">
+         ${esc(t('plabels.stack_env'))}${hasEnv ? '' : ' — ' + esc(t('plabels.no_secret'))}</label>` : '';
+  const pre = (id, text) => `<pre id="${id}" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px 14px;font-size:12px;line-height:1.55;margin:0;overflow:auto;max-height:300px">${esc(text)}</pre>`;
+  const envBlock = out.env
+    ? `<div style="margin-top:12px"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;font-size:12px;color:var(--text2)">
+         <span>${esc(t(tab.id === 'docker_run' ? 'plabels.env_shell' : tab.id === 'portainer' ? 'plabels.env_stack' : 'plabels.env_file'))}</span>
+         <button type="button" class="btn btn-ghost btn-sm" onclick="plmCopy('plm-env')">${esc(t('dockerlbl.copy'))}</button></div>${pre('plm-env', out.env)}</div>` : '';
+  const unsup = (s.data.unsupported || []).length
+    ? `<div style="margin-top:14px;padding:10px 12px;border:1px solid var(--border);border-left:3px solid var(--yellow,#f59e0b);border-radius:8px;font-size:12px;color:var(--text2)">
+         <div style="font-weight:600;color:var(--text1);margin-bottom:4px">${esc(t('plabels.unsupported_title'))}</div>
+         <div style="margin-bottom:4px">${esc(t('plabels.unsupported_hint'))}</div>
+         <ul style="margin:0;padding-left:18px">${s.data.unsupported.map(u => `<li>${esc(u)}</li>`).join('')}</ul></div>` : '';
+  document.getElementById('plm-body').innerHTML = `
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">${tabs}</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;font-size:12px;color:var(--text2)">
+      <span>${esc(t('plabels.intro'))}</span>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="plmCopy('plm-text')">${esc(t('dockerlbl.copy'))}</button></div>
+    ${pre('plm-text', out.text)}${envToggle}${envBlock}${unsup}`;
+}
+
+window.plmTab = id => { window._plm.tab = id; _plmRender(); };
+window.plmStackEnv = on => { window._plm.stackEnv = on; _plmRender(); };
+window.plmCopy = id => copyText(document.getElementById(id)?.textContent || '', t('dockerlbl.copied'));
+
+window.openProxyLabelsModal = async function(proxyId) {
+  let data;
+  try {
+    data = await api('GET', `/proxies/${encodeURIComponent(proxyId)}/labels`);
+  } catch (e) {
+    toast(e.message, 'error');
+    return;
+  }
+  window._plm = { id: proxyId, data, tab: 'compose', stackEnv: (data.env || []).length > 0 };
+  const host = (data.labels.find(l => l.key === 'goproxify.host') || {}).value || proxyId;
+  modal(`${t('plabels.title')} — ${host.split(',')[0]}`,
+    '<div id="plm-body"></div>',
+    `<button class="btn btn-secondary" onclick="closeModal();setTimeout(()=>openDockerLabelsFromProxy('${esc(proxyId)}'),30)">${esc(t('plabels.customize'))}</button>
+     <button class="btn btn-primary" onclick="closeModal()">${esc(t('common.close'))}</button>`, true);
+  _plmRender();
+};

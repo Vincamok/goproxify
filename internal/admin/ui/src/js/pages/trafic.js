@@ -461,7 +461,7 @@ async function renderTraficPage(ctx) {
         !m.isStr && Role.canWrite() && !m.isAuto && !m.isImplicit && item('edit', esc(t('trafic.duplicate')), `duplicateProxy('${id}')`),
         !m.isStr && item('hist', esc(t('backups.history.title') || 'Historique'), `openProxyVersionsModal('${id}','${host}')`),
         item('flow', esc(t('trafic.flow_title')), `openTrafficFlowModal('proxy','${id}')`),
-        item('labels', esc(t('trafic.docker_labels')), `openDockerLabelsFromProxy('${id}')`),
+        !m.isStr && !m.isAuto && !m.isImplicit && item('labels', esc(t('trafic.docker_labels')), `openProxyLabelsModal('${id}')`),
         Role.canDelete() && !m.isAuto && `<div class="trafic-menu-sep"></div>` + item('trash', esc(t(m.isImplicit ? 'trafic.reset_implicit' : 'common.delete')), `traficDelete('${id}',${m.isImplicit})`, 'is-danger'),
       ].filter(Boolean).join('');
       const more = `<button type="button" class="btn btn-ghost btn-icon" title="${esc(t('trafic.more_actions'))}" onclick="traficMenu(event,this)">${ico(ICO.more)}</button><div class="trafic-menu">${items}</div>`;

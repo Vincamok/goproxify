@@ -413,6 +413,54 @@ paths:
         "204":
           description: Supprimé
 
+  /api/v1/proxies/{id}/labels:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [proxies]
+      summary: Labels qui reproduisent un proxy
+      description: >-
+        Équivalent en labels Docker / Portainer / annotations Kubernetes. Les secrets sortent en variables ${GPX_…} ;
+        unsupported liste les réglages sans label. 409 pour un proxy implicite.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  labels:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key: { type: string }
+                        value: { type: string }
+                  env:
+                    type: array
+                    items: { type: string }
+                  unsupported:
+                    type: array
+                    items: { type: string }
+                  formats:
+                    type: object
+                    description: compose, portainer (avec stack.env), portainer_inline (sans), docker_run, kubernetes
+                    additionalProperties:
+                      type: object
+                      properties:
+                        text: { type: string }
+                        env: { type: string }
+        "404":
+          description: Introuvable
+        "409":
+          description: Proxy implicite
+
   /api/v1/certs:
     get:
       tags: [certs]

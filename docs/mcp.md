@@ -19,7 +19,7 @@ Chaque outil exige un scope, le même que sa route REST équivalente. Les outils
 
 | Scope | Outils |
 |-------|--------|
-| `proxies:read` | `list_proxies`, `get_proxy` |
+| `proxies:read` | `list_proxies`, `get_proxy`, `get_proxy_labels` |
 | `proxies:write` | `create_proxy`, `update_proxy`, `set_proxy_enabled`, `purge_proxy_cache` |
 | `proxies:delete` | `delete_proxy` |
 | `nodes:read` | `list_nodes`, `list_declared_nodes`, `get_topology_live`, `list_agents` †, `get_architecture` †, `list_discovery_sources` † |
@@ -139,6 +139,19 @@ Retourne la configuration complète d'un proxy.
 | `id`      | string | ✓      | ID, nom ou domaine du proxy          |
 
 **Réponse :** objet JSON complet du proxy (backends, LB, headers, snippets…)
+
+---
+
+### `get_proxy_labels`
+
+Donne les labels qui reproduisent un proxy : de quoi le déclarer sur un conteneur Docker, une Stack Portainer ou un Service Kubernetes. Les secrets (valeur d'un en-tête `Authorization`, clé de plugin sensible…) ne sortent jamais : ils deviennent des variables `${GPX_…}` à renseigner. `unsupported` liste les réglages du proxy qu'aucun label ne porte, ou qu'il porte en partie. Refusé pour un proxy implicite (généré par GoProxify).
+
+| Paramètre | Type   | Requis | Description |
+|-----------|--------|--------|-------------|
+| `id`      | string | ✓      | ID, nom ou domaine du proxy |
+| `format`  | string | —      | `compose`, `portainer` (avec `stack.env`), `portainer_inline` (sans), `docker_run`, `kubernetes` ; omis : tous |
+
+**Réponse :** avec `format`, `{ format, text, env, unsupported }` ; sans, `{ labels, env, unsupported, formats }`.
 
 ---
 

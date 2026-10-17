@@ -162,6 +162,7 @@ Operator portal served by the **Edge** (not Admin):
 - **Vault**: SSH login + password or private key, encrypted on the Edge (never exposed to Admin)
 - Optional **2FA** (TOTP / OTP email); TTL / one-shot sessions / revocation; metadata audit
 - Config & catalogue pushed from Admin (see §3)
+- **Labels of an existing proxy**: *Proxies › ⋯ › Docker / Kubernetes labels* shows, read-only, the labels that reproduce the proxy as Docker Compose, Portainer (with or without `stack.env`), `docker run` or a Kubernetes Service, with a copy button per target. Secrets become `${GPX_…}` variables (never written in clear), and settings that no label can carry are listed. API `GET /proxies/{id}/labels`, CLI `proxy labels`, MCP `get_proxy_labels`
 - **Editable implicit proxies**: the portal's public hosts (and TLS-terminating domain delegations) appear in the proxy list with an *implicit* badge; WAF, rate limits, headers, IP filter, cache… can be set on them while host, backend and inbound TLS stay generated. The customisation is a local file on the Edge (survives an Admin outage and a restart); *Reset* removes it
 
 ---

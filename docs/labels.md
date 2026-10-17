@@ -4,6 +4,8 @@ L'Agent GoProxify détecte automatiquement les conteneurs portant `goproxify.ena
 
 Les mêmes étiquettes valent pour les instances lues dans un annuaire de services — tags et métadonnées Consul, tags Nomad, `dockerLabels` et tags ECS, valeur JSON etcd (voir « Service directory discovery » dans [fonctionnalites.md](fonctionnalites.md)) : seules changent l'adresse et le port, que l'annuaire fournit (étiquettes `goproxify.scheme` et `goproxify.port` pour les ajuster).
 
+Pour un proxy déjà créé dans l'Admin, **Proxies › ⋯ › Labels** (ou `goproxify proxy labels <id>`, ou l'outil MCP `get_proxy_labels`) produit les labels équivalents en Docker Compose, Portainer (avec ou sans `stack.env`), `docker run` ou Kubernetes, et liste les réglages du proxy qu'aucun label ne porte.
+
 ---
 
 ## Identification du proxy

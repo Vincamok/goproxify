@@ -238,6 +238,14 @@ var tools = []map[string]any{
 		"inputSchema": schema(req("id", "string", "ID ou domaine du proxy")),
 	},
 	{
+		"name":        "get_proxy_labels",
+		"description": "Donne les labels (Docker, Portainer, Kubernetes) qui reproduisent un proxy, avec ce qui n'a pas de label. Les secrets sortent sous forme de variables.",
+		"inputSchema": schema(
+			req("id", "string", "ID ou domaine du proxy"),
+			opt("format", "string", "compose | portainer | portainer_inline | docker_run | kubernetes (défaut : tous)"),
+		),
+	},
+	{
 		"name":        "create_proxy",
 		"description": "Crée une nouvelle route proxy (HTTP/TCP/UDP). Retourne l'ID créé.",
 		"inputSchema": schema(
@@ -614,6 +622,10 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 	case "get_proxy":
 		id, _ := p.Arguments["id"].(string)
 		result, toolErr = h.toolGetProxy(r, id)
+	case "get_proxy_labels":
+		id, _ := p.Arguments["id"].(string)
+		format, _ := p.Arguments["format"].(string)
+		result, toolErr = h.toolGetProxyLabels(r, id, format)
 	case "create_proxy":
 		result, toolErr = h.toolCreateProxy(r, p.Arguments)
 	case "update_proxy":
@@ -972,6 +984,28 @@ func (h *Handler) toolGetProxy(r *http.Request, id string) (any, error) {
 	var out any
 	_ = json.Unmarshal(routesecrets.Mask(env.Config, routesecrets.FromDB(h.DB)), &out)
 	return out, nil
+}
+
+func (h *Handler) toolGetProxyLabels(r *http.Request, id, format string) (any, error) {
+	env, err := h.resolveProxyEnvelope(r.Context(), id)
+	if err != nil {
+		return nil, err
+	}
+	if env.Implicit {
+		return nil, fmt.Errorf("un proxy implicite est généré par GoProxify : il n'y a pas de labels à exporter")
+	}
+	out, err := api.BuildProxyLabels(env.Config)
+	if err != nil {
+		return nil, err
+	}
+	if format == "" {
+		return out, nil
+	}
+	f, ok := out.Formats[format]
+	if !ok {
+		return nil, fmt.Errorf("format inconnu %q (compose, portainer, portainer_inline, docker_run, kubernetes)", format)
+	}
+	return map[string]any{"format": format, "text": f.Text, "env": f.Env, "unsupported": out.Unsupported}, nil
 }
 
 func (h *Handler) toolCreateProxy(r *http.Request, args map[string]any) (any, error) {

@@ -74,6 +74,46 @@ func runProxy() {
 		out, _ := json.MarshalIndent(proxy, "", "  ")
 		fmt.Println(string(out))
 
+	case "labels":
+		args := parseFlags(os.Args[3:])
+		id := flagValue(args, "-id", "")
+		if id == "" && len(os.Args) > 3 && !strings.HasPrefix(os.Args[3], "-") {
+			id = os.Args[3]
+		}
+		if id == "" {
+			fmt.Fprintln(os.Stderr, "usage: goproxify proxy labels <id> [-format compose|portainer|portainer_inline|docker_run|kubernetes]")
+			os.Exit(1)
+		}
+		format := flagValue(args, "-format", "compose")
+		client, err := newAdminClient(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+			os.Exit(1)
+		}
+		var res struct {
+			Unsupported []string `json:"unsupported"`
+			Formats     map[string]struct {
+				Text string `json:"text"`
+				Env  string `json:"env"`
+			} `json:"formats"`
+		}
+		if _, err := client.DoJSON("GET", "/api/v1/proxies/"+url.PathEscape(id)+"/labels", nil, &res); err != nil {
+			fmt.Fprintf(os.Stderr, "proxy labels : %v\n", err)
+			os.Exit(1)
+		}
+		f, ok := res.Formats[format]
+		if !ok {
+			fmt.Fprintf(os.Stderr, "format inconnu %q (compose, portainer, portainer_inline, docker_run, kubernetes)\n", format)
+			os.Exit(1)
+		}
+		fmt.Print(f.Text)
+		if f.Env != "" {
+			fmt.Printf("\n# Variables à renseigner :\n%s", f.Env)
+		}
+		for _, u := range res.Unsupported {
+			fmt.Fprintf(os.Stderr, "sans label : %s\n", u)
+		}
+
 	case "metrics":
 		args := parseFlags(os.Args[3:])
 		client, err := newAdminClient(args)
@@ -255,6 +295,7 @@ func runProxy() {
 Sous-commandes :
   list    Liste tous les proxies
   get     Affiche la config complète d'un proxy
+  labels  Affiche les labels qui reproduisent un proxy (Docker, Portainer, Kubernetes)
   enable  Active un proxy
   disable Désactive un proxy
   delete  Supprime un proxy
@@ -264,6 +305,7 @@ Sous-commandes :
 
 goproxify proxy list   [-admin-url …] [-token …]
 goproxify proxy get    <id> [-admin-url …] [-token …]
+goproxify proxy labels <id> [-format compose|portainer|portainer_inline|docker_run|kubernetes] [-admin-url …] [-token …]
 goproxify proxy enable <id> [-admin-url …] [-token …]
 goproxify proxy disable <id> [-admin-url …] [-token …]
 goproxify proxy metrics [-admin-url …] [-token …]

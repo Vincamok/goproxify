@@ -1301,8 +1301,8 @@ window.openProxyModal = async function(id, initialTab, secTab, opts = {}) {
     </div><!-- end flex container -->`;
 
   const footer = `
-    ${id ? `<div style="margin-right:auto;display:flex;align-items:center;gap:4px;">
-      <button class="btn btn-ghost" style="display:flex;align-items:center;gap:6px;" onclick="closeModal();setTimeout(()=>openDockerLabelsFromProxy('${esc(id)}'),30)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="8" width="20" height="10" rx="2"/><path d="M6 8V6h3v2M11 8V5h3v3M16 8V6h3v2"/></svg>Labels</button>
+    ${id && !existing?.implicit ? `<div style="margin-right:auto;display:flex;align-items:center;gap:4px;">
+      <button class="btn btn-ghost" style="display:flex;align-items:center;gap:6px;" onclick="closeModal();setTimeout(()=>openProxyLabelsModal('${esc(id)}'),30)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="8" width="20" height="10" rx="2"/><path d="M6 8V6h3v2M11 8V5h3v3M16 8V6h3v2"/></svg>Labels</button>
     </div>` : ''}
     <button class="btn btn-secondary" onclick="closeModal()">Annuler</button>
     <button class="btn btn-primary" onclick="saveProxy('${esc(id||'')}')">Enregistrer</button>`;

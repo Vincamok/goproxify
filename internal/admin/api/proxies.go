@@ -82,6 +82,8 @@ func (h *ProxiesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch {
+	case r.Method == http.MethodGet && id != "" && sub == "labels":
+		h.labelsFiles(w, r, id)
 	case r.Method == http.MethodGet && id == "":
 		h.listFiles(w, r)
 	case r.Method == http.MethodPost && id == "":

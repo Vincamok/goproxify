@@ -104,6 +104,7 @@ var messagesDE = map[string]string{
 	"api.err.node_not_found":        "Knoten nicht gefunden",
 	"api.err.user_not_found":        "Benutzer nicht gefunden",
 	"api.err.proxy_not_found":       "Proxy nicht gefunden",
+	"api.err.labels_implicit":       "Ein impliziter Proxy wird von GoProxify erzeugt: es gibt keine Labels zu exportieren",
 	"api.err.team_not_found":        "Team nicht gefunden",
 	"api.err.token_not_found":       "Token nicht gefunden",
 	"api.err.channel_not_found":     "Kanal nicht gefunden",

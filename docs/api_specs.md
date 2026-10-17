@@ -190,6 +190,30 @@ Liste tous les proxies (manuels + labels).
 
 **Proxies implicites** (Admin `0.151.0`, Edge `0.67.0`) : les routes que GoProxify génère lui-même — hôtes du portail Access (`gpx-portal-public`, `gpx-portal-public:<hôte>`) et délégations de domaine en terminaison TLS (`deleg-<id>`) — sont listées avec `"implicit": true`. Elles se lisent (`GET /api/v1/proxies/{id}`) et se modifient (`PUT`, `PATCH` pour l'activation) comme les autres, mais seule leur **surcouche** est prise en compte : l'hôte, les alias, les backends et le TLS entrant restent ceux du générateur (ils suivent le réglage du portail ou de la délégation), les champs qui détournent le trafic (`static`, `split`, `canary`, `shadow`) sont ignorés, tout le reste (WAF, limites de débit, en-têtes, filtre IP, cache…) s'applique. `enabled: false` retire la route. `DELETE` supprime la surcouche et rend la route à son état généré ; la route elle-même n'est supprimée que par son réglage d'origine. Un passthrough TLS (délégation) n'est pas listé : aucun réglage HTTP à surcharger. La surcouche est un fichier `proxies/<id>.yaml` sur la passerelle : elle survit à une coupure de l'Admin et à un redémarrage.
 
+### `GET /api/v1/proxies/{id}/labels`
+
+Labels qui reproduisent un proxy (Admin `0.152.0`), pour le déclarer sur un conteneur Docker, une Stack Portainer ou un Service Kubernetes. Scope `proxies:read`. La conversion se fait côté serveur, sur tout le vocabulaire de [labels.md](labels.md) (sécurité, résilience, en-têtes, timeouts, cache, JWT/mTLS, plugins, snippets…) ; elle est vérifiée par un test qui relit les labels produits avec le vrai parseur de l'Agent et de la passerelle.
+
+**Réponse 200 :**
+```json
+{
+  "labels": [{ "key": "goproxify.host", "value": "app.example.fr" }, { "key": "goproxify.headers.add", "value": "Authorization:${GPX_HDR_AUTHORIZATION}" }],
+  "env": ["GPX_HDR_AUTHORIZATION"],
+  "unsupported": ["locations", "compression"],
+  "formats": {
+    "compose": { "text": "services:\n  app: …", "env": "GPX_HDR_AUTHORIZATION=\n" },
+    "portainer": { "text": "…", "env": "…" },
+    "portainer_inline": { "text": "…" },
+    "docker_run": { "text": "…", "env": "export GPX_HDR_AUTHORIZATION=\n" },
+    "kubernetes": { "text": "…" }
+  }
+}
+```
+
+- **Secrets** : la valeur d'un en-tête `Authorization`/`X-Api-Key`…, ou d'une clé de plugin dont le nom est sensible, ne sort jamais. Elle devient `${GPX_…}` (`env` les liste ; `compose`, `portainer` et `docker_run` livrent le fichier de variables) ou `CHANGE_ME` (`portainer_inline`, `kubernetes`).
+- **`unsupported`** : réglages du proxy qu'aucun label ne porte, ou qu'il porte en partie (locations, compression, split, maintenance, TLS vers le backend non vérifié, clé ou quota de rate limit, backends multiples, flux TCP/UDP…).
+- `409` pour un proxy implicite (généré par GoProxify) ; `404` s'il n'existe pas.
+
 ### `POST /api/v1/proxies/dry-run`
 
 Valide une config de proxy **sans rien enregistrer ni pousser** (éditeur YAML de la modale proxy, bouton « Tester (dry run) »). Scope `proxies:write` + droit d'écriture sur le domaine.
