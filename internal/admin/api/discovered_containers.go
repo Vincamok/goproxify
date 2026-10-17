@@ -21,7 +21,7 @@ type DiscoveredContainersHandler struct {
 	Log *slog.Logger
 }
 
-type discoveredContainer struct {
+type DiscoveredContainer struct {
 	ID           string         `json:"id"`
 	Host         string         `json:"host"`
 	Aliases      []string       `json:"aliases,omitempty"`
@@ -39,17 +39,18 @@ func (h *DiscoveredContainersHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 		writeErr(w, r, http.StatusMethodNotAllowed, "api.err.method")
 		return
 	}
-	result := h.fetchFromEdges(r.Context())
+	result := h.FetchFromEdges(r.Context())
 	jsonOK(w, result)
 }
 
-func (h *DiscoveredContainersHandler) fetchFromEdges(ctx context.Context) []discoveredContainer {
+// FetchFromEdges liste les routes découvertes par les labels (Docker, Kubernetes…) sur toutes les passerelles.
+func (h *DiscoveredContainersHandler) FetchFromEdges(ctx context.Context) []DiscoveredContainer {
 	rows, err := h.DB.QueryContext(ctx,
 		`SELECT node_name, node_endpoint, token FROM tokens
 		 WHERE role='edge' AND revoked=0 AND node_endpoint != ''
 		   AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)`)
 	if err != nil {
-		return []discoveredContainer{}
+		return []DiscoveredContainer{}
 	}
 	defer rows.Close()
 
@@ -64,7 +65,7 @@ func (h *DiscoveredContainersHandler) fetchFromEdges(ctx context.Context) []disc
 	}
 
 	var mu sync.Mutex
-	var result []discoveredContainer
+	var result []DiscoveredContainer
 	var wg sync.WaitGroup
 
 	for _, c := range edges {
@@ -84,7 +85,7 @@ func (h *DiscoveredContainersHandler) fetchFromEdges(ctx context.Context) []disc
 	return result
 }
 
-func (h *DiscoveredContainersHandler) fetchContainersFromEdge(ctx context.Context, edgeEndpoint, token string) []discoveredContainer {
+func (h *DiscoveredContainersHandler) fetchContainersFromEdge(ctx context.Context, edgeEndpoint, token string) []DiscoveredContainer {
 	warn := func(msg string, args ...any) {
 		if h.Log != nil {
 			h.Log.Warn(msg, args...)
@@ -107,7 +108,7 @@ func (h *DiscoveredContainersHandler) fetchContainersFromEdge(ctx context.Contex
 		warn("discovered-containers: Passerelle a refusé", "endpoint", edgeEndpoint, "status", resp.StatusCode)
 		return nil
 	}
-	var items []discoveredContainer
+	var items []DiscoveredContainer
 	if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
 		warn("discovered-containers: JSON invalide", "endpoint", edgeEndpoint, "err", err)
 		return nil

@@ -63,6 +63,11 @@ func (s *Server) loadProductionProxies() {
 			s.log.Warn("proxystore: route invalide ignorée", "id", env.ID, "err", err)
 			continue
 		}
+		if isImplicitRoute(env.ID) {
+			s.refreshImplicitRoute(env.ID)
+			applied++
+			continue
+		}
 		s.table.Upsert(route)
 		applied++
 	}
@@ -145,6 +150,10 @@ func (s *Server) ApplyFileProxy(env *proxystore.Envelope) error {
 	if env == nil {
 		return nil
 	}
+	if isImplicitRoute(env.ID) {
+		s.refreshImplicitRoute(env.ID)
+		return nil
+	}
 	if !env.Enabled {
 		s.table.Delete(env.ID)
 		s.invalidateRouteCache(env.ID)
@@ -200,7 +209,8 @@ func (s *Server) mergePushPreservingFileProxies(incoming []*router.Route) []*rou
 	if s.proxyStore != nil {
 		if list, err := s.proxyStore.ListProd(); err == nil {
 			for _, env := range list {
-				if !env.Enabled {
+				// Une surcouche n'est pas une route : la route générée (déjà gardée ci-dessus) la porte.
+				if !env.Enabled || isImplicitRoute(env.ID) {
 					continue
 				}
 				route, err := proxypipeline.ParseRoute(env)

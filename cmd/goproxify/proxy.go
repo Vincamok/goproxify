@@ -45,6 +45,9 @@ func runProxy() {
 				status = "actif"
 			}
 			host := proxyHost(p)
+			if implicit, _ := p["implicit"].(bool); implicit {
+				host += "  (implicite)"
+			}
 			fmt.Printf("%-40s  %-8s  %-10s  %s\n", id, typ, status, host)
 		}
 

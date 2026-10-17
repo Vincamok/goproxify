@@ -229,7 +229,7 @@ var tools = []map[string]any{
 	// Proxies
 	{
 		"name":        "list_proxies",
-		"description": "Liste toutes les routes proxy (HTTP, TCP, UDP) configurées.",
+		"description": "Liste toutes les routes proxy (HTTP, TCP, UDP) : celles gérées depuis l'Admin (source \"managed\"), les proxies implicites générés par GoProxify — portail Access, délégations — dont seule la surcouche est modifiable (source \"implicit\") et celles découvertes par les labels des conteneurs (source \"docker\", \"k8s\"…, lecture seule).",
 		"inputSchema": schema(),
 	},
 	{
@@ -944,8 +944,21 @@ func (h *Handler) toolListProxies(r *http.Request) (any, error) {
 		if host == "" {
 			host = e.Host
 		}
+		source := "managed"
+		if e.Implicit {
+			source = "implicit"
+		}
 		out = append(out, map[string]any{
 			"id": e.ID, "name": e.Host, "enabled": e.Enabled, "host": host, "type": rtype, "tls": tls,
+			"source": source,
+		})
+	}
+	dc := &api.DiscoveredContainersHandler{DB: h.DB, Log: h.Log}
+	for _, d := range dc.FetchFromEdges(r.Context()) {
+		out = append(out, map[string]any{
+			"id": d.ID, "name": d.Host, "enabled": true, "host": d.Host, "type": "http", "tls": d.TLS,
+			"source": d.Source, "read_only": true, "aliases": d.Aliases, "backends": d.Backends,
+			"edge": d.EdgeName, "agent": d.AgentName,
 		})
 	}
 	return out, nil

@@ -643,7 +643,24 @@ window.exportProxies = function(fmt) {
   }
 };
 
-window.duplicateProxy = id => openProxyModal(id, undefined, undefined, { clone: true });
+// Proxy implicite (portail Access, délégation) : GoProxify génère l'hôte, le backend et le TLS entrant ;
+// la passerelle ignore ces champs à l'enregistrement, on les grise pour que ce soit visible.
+function lockImplicitProxyFields() {
+  const sel = '.p-domain-val, .p-backend-url, .p-backend-weight, #p-https, #p-lb';
+  const lock = () => document.querySelectorAll(sel).forEach(el => { el.disabled = true; });
+  lock();
+  document.querySelectorAll('#p-domains-list + button, #p-backends-list + button, .p-domain-row .btn-icon, .p-backend-row .btn-icon')
+    .forEach(el => { el.disabled = true; });
+  const shell = document.querySelector('#modal-overlay .pm-shell');
+  if (shell && !shell.querySelector('.pm-implicit-note')) {
+    shell.insertAdjacentHTML('afterbegin', `<div class="pm-implicit-note" style="margin:0 0 10px;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg2);font-size:12px;color:var(--text2);">${esc(t('trafic.implicit_hint'))} — l'hôte, le backend et le TLS entrant restent ceux générés ; tout le reste est modifiable.</div>`);
+  }
+  // La vue « Parcours » reconstruit les panneaux : réappliquer le verrou à chaque rendu.
+  document.getElementById('pm-detail')?.addEventListener('click', () => setTimeout(lock, 0));
+  document.getElementById('pm-list')?.addEventListener('click', () => setTimeout(lock, 0));
+}
+
+window.duplicateProxy = id =>openProxyModal(id, undefined, undefined, { clone: true });
 
 window.openProxyModal = async function(id, initialTab, secTab, opts = {}) {
   if (initialTab === 'protection' && secTab === 'waf') { initialTab = 'waf'; secTab = undefined; }
@@ -1311,6 +1328,7 @@ window.openProxyModal = async function(id, initialTab, secTab, opts = {}) {
   if (initialTab) switchProxyTab(initialTab);
   window._pmRefresh?.();
   updateProxyForm();
+  if (existing?.implicit && !cloning) lockImplicitProxyFields();
   // Peupler le sélecteur de certificats
   const certSel = document.getElementById('p-cert');
   if (certSel) {

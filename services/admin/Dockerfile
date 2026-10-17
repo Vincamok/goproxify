@@ -46,7 +46,9 @@ COPY --from=backend-builder /goproxify /goproxify
 
 EXPOSE 9443
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+# --start-interval : sans lui, la 1re sonde part après --interval (30 s) et le conteneur
+# reste « starting » (et bloque les depends_on: service_healthy) alors qu'Admin répond en ~1 s.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --start-interval=1s --retries=3 \
   CMD wget -qO- http://localhost:9443/api/v1/health || exit 1
 
 ENTRYPOINT ["/goproxify", "admin"]

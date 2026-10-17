@@ -113,6 +113,9 @@ components:
           description: Configuration de route (JSON arbitraire)
         enabled:
           type: boolean
+        implicit:
+          type: boolean
+          description: Route générée par GoProxify (portail Access, délégation). Hôte, backend et TLS entrant restent générés ; le reste se modifie par PUT, et DELETE retire la surcouche.
         created_at:
           type: string
           format: date-time

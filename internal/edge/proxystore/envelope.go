@@ -42,6 +42,8 @@ type Envelope struct {
 	CreatedBy     string          `json:"created_by,omitempty"`
 	DryRun        *DryRunResult  `json:"dry_run,omitempty"`
 	Config        json.RawMessage `json:"config"`
+	// Implicit marque (dans les réponses de l'API, jamais sur disque) une route générée par GoProxify : seule sa surcouche est éditable.
+	Implicit bool `json:"implicit,omitempty"`
 }
 
 // Validate checks required envelope fields (not full route dry-run).

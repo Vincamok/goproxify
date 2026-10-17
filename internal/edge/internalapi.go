@@ -199,6 +199,8 @@ func (s *Server) applyDelegationRoutes(routes []*router.Route) {
 				"tls_passthrough", route.TLSPassthrough,
 				"backend", backendURL(route),
 			)
+			s.upsertImplicitRoute(route)
+			continue
 		}
 		s.table.Upsert(route)
 	}
@@ -1111,7 +1113,7 @@ func (s *Server) ensurePortalPublicRoute() {
 	cfg.Defaults()
 	backend := fmt.Sprintf("http://127.0.0.1:%d", cfg.HTTPPort)
 	for id, host := range wanted {
-		s.table.Upsert(&router.Route{
+		s.upsertImplicitRoute(&router.Route{
 			ID:         id,
 			Host:       host,
 			Type:       router.RouteHTTP,

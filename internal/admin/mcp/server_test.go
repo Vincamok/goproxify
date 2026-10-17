@@ -51,6 +51,9 @@ func fakeEdgeServer(t *testing.T) *httptest.Server {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"production": list})
 	})
+	mux.HandleFunc("GET /internal/v1/agent/containers", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[{"id":"docker-host:lab.example.com","host":"lab.example.com","backends":["http://172.18.0.5:80"],"tls":true,"source":"docker","agent_name":"agent-1"}]`))
+	})
 	mux.HandleFunc("DELETE /internal/v1/proxies/{id}", func(w http.ResponseWriter, r *http.Request) {
 		delete(store, r.PathValue("id"))
 		w.WriteHeader(http.StatusNoContent)
@@ -110,6 +113,30 @@ func TestCreateUpdateEnableProxy(t *testing.T) {
 	}
 	if disabled.(map[string]any)["enabled"] != false {
 		t.Fatalf("disable: %v", disabled)
+	}
+}
+
+func TestListProxiesIncludesLabelProxies(t *testing.T) {
+	h := setupMCPDB(t)
+	r := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	if _, err := h.toolCreateProxy(r, map[string]any{"host": "app.example.com", "backend": "http://10.0.0.5:3000"}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := h.toolListProxies(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bySource := map[string]map[string]any{}
+	for _, p := range res.([]map[string]any) {
+		bySource[p["source"].(string)] = p
+	}
+	if bySource["managed"]["host"] != "app.example.com" {
+		t.Fatalf("proxy géré absent: %v", bySource)
+	}
+	d := bySource["docker"]
+	if d == nil || d["host"] != "lab.example.com" || d["read_only"] != true || d["edge"] != "edge-test" || d["tls"] != true {
+		t.Fatalf("proxy issu des labels absent ou incomplet: %v", d)
 	}
 }
 

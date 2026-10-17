@@ -108,6 +108,8 @@ type proxyRow struct {
 	Name      string          `json:"name"`
 	Config    json.RawMessage `json:"config"`
 	Enabled   bool            `json:"enabled"`
+	// Implicit : route générée par GoProxify (portail Access, délégation) — hôte, backend et TLS restent générés, le reste se surcharge.
+	Implicit  bool            `json:"implicit,omitempty"`
 	CreatedAt time.Time       `json:"created_at"`
 	UpdatedAt time.Time       `json:"updated_at"`
 }

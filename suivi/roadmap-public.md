@@ -87,6 +87,7 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - [x] **Portail Access : sessions en direct** (lister, terminer ; API, CLI, MCP) — livré
 - [x] **Portail Access : accès temporaires avec approbation** (demande depuis le portail, onglet Approbations, expiration automatique ; API, CLI, MCP) — livré
 - [x] **Portail Access : politiques d'accès** (plages horaires, IP autorisées, déconnexion sur inactivité ; onglet Politiques, API, CLI, MCP) — livré
+- [x] **Proxies implicites modifiables** (hôtes du portail Access, délégations de domaine : WAF, débit, en-têtes, filtre IP, cache… par surcouche locale à la passerelle ; hôte, backend et TLS restent générés ; badge « implicite » et « Réinitialiser » dans l'Admin ; API, CLI, MCP) — livré
 - [x] **Portail Access : enregistrement et rejeu des sessions** (sortie du terminal chiffrée sur la passerelle, conservation réglable, lecteur dans l'admin ; API, CLI, MCP) — livré
 - [x] **Portail Access : observation en direct d'une session** (sortie du terminal, journalisée ; UI, API, CLI) et **notification email** des demandes d'accès — livré
 - [x] SBOM attaché à chaque Release (workflow sbom-sign.yml)

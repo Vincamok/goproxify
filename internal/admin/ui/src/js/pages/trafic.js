@@ -392,6 +392,7 @@ async function renderTraficPage(ctx) {
         p, id: p.id, cfg, type, host, isStr,
         enabled: p.enabled !== false,
         isAuto: isDockerP(p) || isK8sP(p),
+        isImplicit: !!p.implicit,
         isSel: selSet.has(p.id),
         hasTLS: !!(cfg.tls_enabled || cfg.tls_passthrough || type === 'https'),
         allDomains: [host, ...(cfg.aliases || [])].filter(Boolean),
@@ -457,11 +458,11 @@ async function renderTraficPage(ctx) {
         !m.isStr && item('shield', esc(t('trafic.security')), `openProxySecModal('${id}')`),
         item('logs', esc(t('trafic.access_logs')), `logsFilters.domain='${host}';navigate('logs')`),
         item('prism', 'Prism', `openPrismForProxy('${host}','${esc(m.p.node_id || m.p.edge_id || '')}')`),
-        !m.isStr && Role.canWrite() && !m.isAuto && item('edit', esc(t('trafic.duplicate')), `duplicateProxy('${id}')`),
+        !m.isStr && Role.canWrite() && !m.isAuto && !m.isImplicit && item('edit', esc(t('trafic.duplicate')), `duplicateProxy('${id}')`),
         !m.isStr && item('hist', esc(t('backups.history.title') || 'Historique'), `openProxyVersionsModal('${id}','${host}')`),
         item('flow', esc(t('trafic.flow_title')), `openTrafficFlowModal('proxy','${id}')`),
         item('labels', esc(t('trafic.docker_labels')), `openDockerLabelsFromProxy('${id}')`),
-        Role.canDelete() && !m.isAuto && `<div class="trafic-menu-sep"></div>` + item('trash', esc(t('common.delete')), `traficDelete('${id}')`, 'is-danger'),
+        Role.canDelete() && !m.isAuto && `<div class="trafic-menu-sep"></div>` + item('trash', esc(t(m.isImplicit ? 'trafic.reset_implicit' : 'common.delete')), `traficDelete('${id}',${m.isImplicit})`, 'is-danger'),
       ].filter(Boolean).join('');
       const more = `<button type="button" class="btn btn-ghost btn-icon" title="${esc(t('trafic.more_actions'))}" onclick="traficMenu(event,this)">${ico(ICO.more)}</button><div class="trafic-menu">${items}</div>`;
       return { toggle, edit, secWarn, more };
@@ -521,7 +522,7 @@ async function renderTraficPage(ctx) {
           <input type="checkbox" ${m.isSel ? 'checked' : ''} onchange="traficSelToggle('${esc(m.id)}','${m.stype}')" style="width:14px;height:14px;cursor:pointer;accent-color:var(--accent);flex-shrink:0">
           ${c.toggle}
           <div class="trafic-tile-host">${domainLink(master, true, m.hasTLS)}</div>
-          ${typeBadge(m.type)}
+          ${typeBadge(m.type)}${m.isImplicit ? `<span class="chip" title="${esc(t('trafic.implicit_hint'))}">${esc(t('trafic.implicit'))}</span>` : ''}
           <div class="trafic-tile-actions">${c.secWarn}${c.edit}${c.more}</div>
         </div>
         ${aliasesAndChips(m, aliases, '')}
@@ -1049,9 +1050,11 @@ async function renderTraficPage(ctx) {
       renderPage();
     };
 
-    window.traficDelete = async (id) => {
-      if (!confirm(t('trafic.delete_proxy'))) return;
+    window.traficDelete = async (id, implicit) => {
+      if (!confirm(t(implicit ? 'trafic.reset_implicit_confirm' : 'trafic.delete_proxy'))) return;
       await api('DELETE', `/proxies/${id}`);
+      // Une route implicite reste : seule sa surcouche disparaît.
+      if (implicit) { refreshProxies(); return; }
       allP.splice(0, allP.length, ...allP.filter(p => p.id !== id));
       proxyItems.splice(0, proxyItems.length,  ...proxyItems.filter(p => p.id !== id));
       streamItems.splice(0, streamItems.length, ...streamItems.filter(p => p.id !== id));

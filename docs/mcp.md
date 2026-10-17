@@ -109,7 +109,7 @@ claude mcp add goproxify \
 
 ### `list_proxies`
 
-Liste toutes les routes proxy configurées.
+Liste toutes les routes proxy : celles gérées depuis l'Admin (`source: "managed"`), les proxies implicites générés par GoProxify — portail Access, délégations — dont seule la surcouche est modifiable (`source: "implicit"`) et celles découvertes par les labels des conteneurs (`source: "docker"`, `"k8s"`…, `read_only: true`, avec `aliases`, `backends`, `edge`, `agent`).
 
 **Paramètres :** aucun
 
@@ -122,7 +122,8 @@ Liste toutes les routes proxy configurées.
     "enabled": true,
     "host": "app.example.com",
     "type": "http",
-    "tls": true
+    "tls": true,
+    "source": "managed"
   }
 ]
 ```

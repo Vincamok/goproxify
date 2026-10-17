@@ -96,6 +96,8 @@ type Server struct {
 	portalRepl *portalReplicator // réplication du portail vers les pairs du groupe HA
 	agentRepl  agentReplicator   // réplication des HMAC d'Agents vers les pairs du groupe HA
 
+	implicitSkeleton sync.Map // ID de route implicite → route telle que générée, sans surcouche
+
 	tracingShutdown func(context.Context) error
 	clusterGroup    *cluster.Group
 	wafEngine       *waf.Engine

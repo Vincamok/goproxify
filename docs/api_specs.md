@@ -188,6 +188,8 @@ Liste tous les proxies (manuels + labels).
 `source` : `manual` | `label`
 `readonly: true` pour les proxies issus de labels.
 
+**Proxies implicites** (Admin `0.151.0`, Edge `0.67.0`) : les routes que GoProxify génère lui-même — hôtes du portail Access (`gpx-portal-public`, `gpx-portal-public:<hôte>`) et délégations de domaine en terminaison TLS (`deleg-<id>`) — sont listées avec `"implicit": true`. Elles se lisent (`GET /api/v1/proxies/{id}`) et se modifient (`PUT`, `PATCH` pour l'activation) comme les autres, mais seule leur **surcouche** est prise en compte : l'hôte, les alias, les backends et le TLS entrant restent ceux du générateur (ils suivent le réglage du portail ou de la délégation), les champs qui détournent le trafic (`static`, `split`, `canary`, `shadow`) sont ignorés, tout le reste (WAF, limites de débit, en-têtes, filtre IP, cache…) s'applique. `enabled: false` retire la route. `DELETE` supprime la surcouche et rend la route à son état généré ; la route elle-même n'est supprimée que par son réglage d'origine. Un passthrough TLS (délégation) n'est pas listé : aucun réglage HTTP à surcharger. La surcouche est un fichier `proxies/<id>.yaml` sur la passerelle : elle survit à une coupure de l'Admin et à un redémarrage.
+
 ### `POST /api/v1/proxies/dry-run`
 
 Valide une config de proxy **sans rien enregistrer ni pousser** (éditeur YAML de la modale proxy, bouton « Tester (dry run) »). Scope `proxies:write` + droit d'écriture sur le domaine.

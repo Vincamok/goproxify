@@ -202,6 +202,7 @@ goproxify proxy option <id> <option> <json|@fichier|off> [-admin-url …] [-toke
   Pose ou retire une option avancée du proxy : split, maintenance, signed_url, graphql, bandwidth, redact_json, html_inject, hedge, static, request_schema, openapi, grpc_transcode, grpc_web, rate_limit, conditions (`off` la retire)
 goproxify proxy delete  <id> [-y] [-admin-url …] [-token …]
   -y  Confirmation automatique
+  Sur un proxy implicite (marqué « (implicite) » par `proxy list` : portail Access, délégation), retire seulement la surcouche — la route redevient celle que GoProxify génère
   -method  Validation ACME par la passerelle (sans fournisseur DNS) : `http-01` (port 80) ou `tls-alpn-01` (port 443), sans wildcard ; `renew` réutilise la méthode du domaine
 ```
 

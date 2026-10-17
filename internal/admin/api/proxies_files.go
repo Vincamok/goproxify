@@ -604,6 +604,7 @@ func envelopeToRow(env *proxystore.Envelope) proxyRow {
 		Name:    env.Host,
 		Config:  env.Config,
 		Enabled: env.Enabled,
+		Implicit: env.Implicit,
 		UpdatedAt: env.UpdatedAt,
 	}
 	if env.CreatedAt != nil {

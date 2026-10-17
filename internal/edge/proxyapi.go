@@ -38,6 +38,16 @@ func (s *Server) handleListFileProxies(w http.ResponseWriter, r *http.Request) {
 	if revs == nil {
 		revs = []*proxystore.Envelope{}
 	}
+	hasFile := make(map[string]bool, len(prods))
+	for i, env := range prods {
+		hasFile[env.ID] = true
+		if isImplicitRoute(env.ID) {
+			cp := *env
+			cp.Implicit = true
+			prods[i] = &cp
+		}
+	}
+	prods = append(prods, s.implicitEnvelopes(hasFile)...)
 	writeJSON(w, map[string]any{
 		"production": prods,
 		"revisions":  revs,
@@ -47,6 +57,14 @@ func (s *Server) handleListFileProxies(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetFileProxy(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	env, err := s.proxyStore.ReadProdByID(id)
+	if errors.Is(err, proxystore.ErrNotFound) && isImplicitRoute(id) {
+		if rt, ok := s.table.ByID(id); ok {
+			if env = implicitEnvelope(rt); env != nil {
+				writeJSON(w, env)
+				return
+			}
+		}
+	}
 	if errors.Is(err, proxystore.ErrNotFound) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
@@ -54,6 +72,9 @@ func (s *Server) handleGetFileProxy(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	if isImplicitRoute(id) {
+		env.Implicit = true
 	}
 	writeJSON(w, env)
 }
@@ -185,8 +206,13 @@ func (s *Server) handleDeleteFileProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.table.Delete(id)
-	s.invalidateRouteCache(id)
+	if isImplicitRoute(id) {
+		// Supprimer la surcouche rend la route à son générateur ; la route elle-même disparaît avec son réglage d'origine.
+		s.refreshImplicitRoute(id)
+	} else {
+		s.table.Delete(id)
+		s.invalidateRouteCache(id)
+	}
 	metrics.Edge.RouteCount.Set(float64(s.table.Len()))
 	s.saveCache()
 	w.WriteHeader(http.StatusNoContent)
