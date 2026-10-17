@@ -696,45 +696,22 @@ window.openProxyModal = async function(id, initialTab, secTab, opts = {}) {
     ['OpenAPI', '#fb923c', 'avance', cfg.openapi?.enabled],
     ['gRPC REST', '#60a5fa', 'avance', cfg.grpc_transcode?.enabled],
   ].filter(f => on(f[3]));
-  const tabCount = tab => active.filter(f => f[2] === tab).length;
   const score = typeof computeProxyHeaderScore === 'function' && id ? computeProxyHeaderScore(cfg) : null;
   const gradeColor = !score ? '' : score.grade.startsWith('A') ? '#34d399' : score.grade === 'B' ? '#4ade80' : score.grade === 'C' ? '#f59e0b' : score.grade === 'D' ? '#f97316' : '#ef4444';
-  const summaryHtml = active.length || score ? `<div class="pm-summary">
-      <span class="pm-summary-lbl">Actif</span>
-      ${active.map(([label, color, tab]) => `<button type="button" class="pm-chip" style="--c:${color}" onclick="switchProxyTab('${tab}')">${esc(label)}</button>`).join('')}
-      ${score ? `<button type="button" class="pm-chip pm-score" style="--c:${gradeColor}" title="Score des en-têtes de sécurité" onclick="switchProxyTab('protection','recap')">Score ${esc(score.grade)}</button>` : ''}
-    </div>` : '';
-  const wafPlats = (cfg.waf?.exclude_platforms || []).filter(p => p !== 'auto').length;
-  const navIcons = {
-    general: '<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
-    entetes: '<line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="14" y2="18"/>',
-    auth: '<circle cx="8" cy="15" r="4"/><path d="m11 12 9-9m-3 3 3 3"/>',
-    protection: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
-    waf: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',
-    resilience: '<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
-    avance: '<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>',
-    yaml: '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
-  };
-  const tabGroups = [
-    ['Trafic', [['general', 'Général'], ['entetes', 'En-têtes'], ['auth', 'Auth / SSO']]],
-    ['Sécurité', [['protection', 'Protection'], ['waf', 'WAF']]],
-    ['Fiabilité', [['resilience', 'Résilience']]],
-    ['Expert', [['avance', 'Avancé'], ['yaml', 'YAML']]],
-  ];
-  const tabsHtml = tabGroups.map(([group, items]) => `<h6>${group}</h6>` + items.map(([key, label]) => {
-    const n = key === 'waf' ? wafPlats : tabCount(key);
-    const badge = key === 'waf' && !n && cfg.waf?.enabled ? '<span class="pm-dot"></span>' : (n ? `<span class="pm-cnt">${n}</span>` : '');
-    return `<button type="button" class="pm-ni${key === 'general' ? ' active' : ''}" data-tab="${key}" onclick="switchProxyTab('${key}')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${navIcons[key]}</svg>${label}${badge}</button>`;
-  }).join('')).join('');
-
+  const pipelineHtml = `<div class="pm-pipew">
+      <div class="pm-pipe-cap"><span>Client</span><span>Parcours d'une requête</span><span>Backend</span></div>
+      <div class="pm-pipe" id="pm-pipe" aria-label="Étapes du parcours d'une requête"></div>
+    </div>`;
   const body = `
     <div class="pm-shell">
-      ${summaryHtml}
+      ${pipelineHtml}
       <div class="pm-main">
-      <nav id="proxy-tabs" class="pm-nav" aria-label="Sections du proxy">${tabsHtml}</nav>
+      <aside id="pm-list" class="pm-list" aria-label="Réglages de l'étape"></aside>
 
       <!-- Content panels -->
       <div class="pm-content">
+        <div id="pm-detail" class="pm-detail"></div>
+        <div id="pm-stash" hidden>
 
         <!-- Panel Général -->
         <div id="ptab-general" style="padding:16px 20px;display:flex;flex-direction:column;gap:14px;">
@@ -859,7 +836,7 @@ window.openProxyModal = async function(id, initialTab, secTab, opts = {}) {
           <!-- Locations (pleine largeur) — pas de display:contents (casse closest/querySelector) -->
           <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;">
             <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:10px;">Locations — routage par chemin</div>
-            <div style="display:grid;grid-template-columns:1.4fr 0.7fr 2.5fr 28px;gap:4px 6px;align-items:center;margin-bottom:4px;">
+            <div style="display:grid;grid-template-columns:minmax(0,1.4fr) 104px minmax(0,2.5fr) 28px;gap:4px 6px;align-items:center;margin-bottom:4px;">
               <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);padding:0 2px;">Chemin</span>
               <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);padding:0 2px;">Type</span>
               <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);padding:0 2px;">Backend</span>
@@ -868,7 +845,7 @@ window.openProxyModal = async function(id, initialTab, secTab, opts = {}) {
             <div id="p-locations-list" style="display:flex;flex-direction:column;gap:4px;">
               ${(cfg.locations||[]).map((loc,i)=>`
               <div id="ploc-${i}" class="p-loc-row" style="display:flex;flex-direction:column;gap:3px;">
-                <div style="display:grid;grid-template-columns:1.4fr 0.7fr 2.5fr 28px;gap:4px 6px;align-items:center;">
+                <div style="display:grid;grid-template-columns:minmax(0,1.4fr) 104px minmax(0,2.5fr) 28px;gap:4px 6px;align-items:center;">
                   <input id="p-loc-path-${i}" class="input p-loc-path" placeholder="/api" value="${esc(loc.path||'')}" style="margin:0;">
                   <select id="p-loc-pathtype-${i}" class="input p-loc-pathtype" style="margin:0;" onchange="toggleLocRewrite(this)">${['prefix','exact','regex'].map(t=>`<option${(loc.path_type||'prefix')===t?' selected':''}>${t}</option>`).join('')}</select>
                   <input id="p-loc-dest-${i}" class="input p-loc-dest" placeholder="http://backend:8080" value="${esc(backendURL((loc.backends&&loc.backends[0])||''))}" style="margin:0;">
@@ -1271,6 +1248,8 @@ window.openProxyModal = async function(id, initialTab, secTab, opts = {}) {
         <!-- Panel WAF (contenu déplacé ici par _psecMount) -->
         <div id="ptab-waf" style="display:none;padding:22px 26px 28px;flex-direction:column;gap:14px;"></div>
 
+        </div><!-- end pm-stash -->
+
         <!-- Panel YAML brut -->
         <div id="ptab-yaml" style="padding:16px 20px;display:none;flex-direction:column;gap:10px;height:100%;box-sizing:border-box;">
           <div style="display:flex;align-items:center;justify-content:space-between;">
@@ -1312,12 +1291,15 @@ window.openProxyModal = async function(id, initialTab, secTab, opts = {}) {
     <button class="btn btn-primary" onclick="saveProxy('${esc(id||'')}')">Enregistrer</button>`;
 
   const modeSwitch = id ? '' : `<div class="pm-mode"><button type="button" data-mode="simple" onclick="pmSetMode('simple')">Simple</button><button type="button" data-mode="advanced" onclick="pmSetMode('advanced')">Avancé</button></div>`;
-  const headerRight = modeSwitch + `<label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:400;cursor:pointer;">
+  const pmTools = `<div class="pm-srch"><input id="pm-q" class="input" placeholder="Aller à un réglage…" autocomplete="off" aria-label="Rechercher un réglage"><kbd>Ctrl K</kbd><div id="pm-pop" class="pm-pop" hidden></div></div>
+    <div class="pm-view"><button type="button" class="on" data-view="flow">Parcours</button><button type="button" data-view="yaml">YAML</button></div>`;
+  const headerRight = modeSwitch + pmTools + `<label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:400;cursor:pointer;">
     <label class="toggle"><input type="checkbox" id="p-enabled" ${existing?.enabled!==false?'checked':''}><span class="toggle-slider"></span></label>
     <span style="color:var(--text2);">Activé</span>
   </label>`;
   modal(cloning ? 'Dupliquer le proxy' : id ? 'Modifier le proxy' : 'Nouveau proxy', body, footer, true, headerRight);
   document.querySelector('#modal-overlay .dialog')?.classList.add('pm-dialog');
+  window._pmMount({ active, score, gradeColor });
   if (!id) {
     let mode = 'simple', saved = null;
     try { saved = localStorage.getItem('gpx_proxy_mode'); mode = saved === 'advanced' ? 'advanced' : 'simple'; } catch {}
@@ -1327,6 +1309,7 @@ window.openProxyModal = async function(id, initialTab, secTab, opts = {}) {
     pmSimpleTLS('https'); // nouveau proxy : HTTPS (certificat automatique) par défaut, dans les deux modes
   }
   if (initialTab) switchProxyTab(initialTab);
+  window._pmRefresh?.();
   updateProxyForm();
   // Peupler le sélecteur de certificats
   const certSel = document.getElementById('p-cert');
@@ -1382,15 +1365,10 @@ window.updateProxyForm = function() {
 
 window.switchProxyTab = function(tab, secTab) {
   if (tab === 'protection' && secTab === 'waf') { tab = 'waf'; secTab = undefined; }
-  ['general','entetes','auth','protection','waf','resilience','avance','yaml'].forEach(t => {
-    const panel = document.getElementById('ptab-' + t);
-    if (panel) panel.style.display = t === tab ? (t === 'protection' ? 'block' : 'flex') : 'none';
-  });
-  document.querySelectorAll('#proxy-tabs [data-tab]').forEach(el => {
-    el.classList.toggle('active', el.dataset.tab === tab);
-  });
+  if (tab === 'yaml') { window._pmView('yaml'); return; }
+  window._pmView('flow');
+  window._pmShow(window._pmItemOfTab(tab));
   if (tab === 'protection' && secTab && typeof switchSecTab === 'function') switchSecTab(secTab);
-  if (tab === 'yaml') window._refreshYamlTab();
 };
 
 // Collecte la config depuis les autres onglets et l'affiche en YAML dans la textarea.
@@ -1459,7 +1437,7 @@ window.addLocationRow = function() {
   div.className = 'p-loc-row';
   div.style.cssText = 'display:flex;flex-direction:column;gap:3px;';
   div.innerHTML = `
-    <div style="display:grid;grid-template-columns:1.4fr 0.7fr 2.5fr 28px;gap:4px 6px;align-items:center;">
+    <div style="display:grid;grid-template-columns:minmax(0,1.4fr) 104px minmax(0,2.5fr) 28px;gap:4px 6px;align-items:center;">
       <input id="p-loc-path-${i}" class="input p-loc-path" placeholder="/api" style="margin:0;">
       <select id="p-loc-pathtype-${i}" class="input p-loc-pathtype" style="margin:0;" onchange="toggleLocRewrite(this)">
         ${['prefix','exact','regex'].map(t=>`<option>${t}</option>`).join('')}
@@ -2250,7 +2228,7 @@ window.pmSetMode = function(mode) {
   shell.classList.toggle('is-simple', mode === 'simple');
   document.querySelectorAll('.pm-mode button').forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
   try { localStorage.setItem('gpx_proxy_mode', mode); } catch {}
-  if (mode !== 'simple') switchProxyTab(document.querySelector('.pm-ni.active')?.dataset.tab || 'general');
+  if (mode !== 'simple') switchProxyTab(window._pmCurId || 'general');
 };
 
 function _buildStreamModalHtml(cfg, enabled, editing) {
