@@ -408,6 +408,12 @@ func (s *Server) handleAgentContainerStart(w http.ResponseWriter, r *http.Reques
 			routeID = folded.ID
 		}
 	}
+	// Un proxy configuré peut tenir l'hôte : la route des labels existe alors sans en être le possesseur, et ByHost ne la rend pas.
+	if existing == nil {
+		if rt, ok := s.table.ByID(routeID); ok && (isPortainer && strings.HasPrefix(rt.ID, "portainer:") || !isPortainer && isDockerDiscoveryRoute(rt)) {
+			existing = rt
+		}
+	}
 	if existing == nil {
 		if rt, ok := s.table.ByHost(p.Host); ok {
 			if isPortainer && strings.HasPrefix(rt.ID, "portainer:") {
@@ -978,6 +984,10 @@ func (s *Server) handleListAgentContainers(w http.ResponseWriter, r *http.Reques
 		Source       string         `json:"source"`
 		AgentName    string         `json:"agent_name,omitempty"`
 		Config       map[string]any `json:"config,omitempty"`
+		// ShadowedBy : proxy configuré qui sert l'hôte à la place de la route des labels.
+		ShadowedBy string `json:"shadowed_by,omitempty"`
+		// ProxyConfig : la route complète, prête à devenir un proxy configuré (conversion depuis l'Admin).
+		ProxyConfig json.RawMessage `json:"proxy_config,omitempty"`
 	}
 	filterAgent := r.URL.Query().Get("agent")
 	all := s.table.All()
@@ -1027,6 +1037,7 @@ func (s *Server) handleListAgentContainers(w http.ResponseWriter, r *http.Reques
 				containerIDs = append(containerIDs, rt.Shadow.ContainerID)
 			}
 		}
+		shadowedBy, _ := s.table.ShadowedBy(rt)
 		result = append(result, containerRoute{
 			ID:           rt.ID,
 			Host:         rt.Host,
@@ -1037,6 +1048,8 @@ func (s *Server) handleListAgentContainers(w http.ResponseWriter, r *http.Reques
 			Source:       src,
 			AgentName:    rt.AgentName,
 			Config:       discoveryRouteConfig(rt),
+			ShadowedBy:   shadowedBy,
+			ProxyConfig:  discoveryProxyConfig(rt),
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -1045,6 +1058,32 @@ func (s *Server) handleListAgentContainers(w http.ResponseWriter, r *http.Reques
 
 // discoveryRouteConfig expose les champs utiles aux badges UI Trafic (même forme que config proxy).
 // Le badge LB Adaptatif n'est exposé que lorsqu'il y a réellement un pool multi-backends.
+// discoveryProxyConfig sérialise la route issue des labels comme la config d'un proxy configuré. Ce qui lie la route à
+// un conteneur précis (identifiants de conteneur et d'Agent, canary, shadow, backends appris d'une autre passerelle)
+// n'est pas repris : le proxy converti ne suit plus le cycle de vie du conteneur.
+func discoveryProxyConfig(rt *router.Route) json.RawMessage {
+	if rt == nil {
+		return nil
+	}
+	c := *rt
+	c.ID = ""
+	c.AgentName = ""
+	c.Canary = nil
+	c.Shadow = nil
+	c.Backends = make([]router.Backend, 0, len(rt.Backends))
+	for _, b := range rt.Backends {
+		if b.OwnerEdgeEndpoint != "" {
+			continue
+		}
+		c.Backends = append(c.Backends, router.Backend{URL: b.URL, Weight: b.Weight})
+	}
+	b, err := json.Marshal(&c)
+	if err != nil {
+		return nil
+	}
+	return b
+}
+
 func discoveryRouteConfig(rt *router.Route) map[string]any {
 	if rt == nil {
 		return nil

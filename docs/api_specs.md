@@ -214,6 +214,22 @@ Labels qui reproduisent un proxy (Admin `0.152.0`), pour le déclarer sur un con
 - **`unsupported`** : réglages du proxy qu'aucun label ne porte, ou qu'il porte en partie (locations, compression, split, maintenance, TLS vers le backend non vérifié, clé ou quota de rate limit, backends multiples, flux TCP/UDP…).
 - `409` pour un proxy implicite (généré par GoProxify) ; `404` s'il n'existe pas.
 
+### `GET /api/v1/discovered-containers`
+
+Routes découvertes par les labels (Docker, Podman, Portainer, Kubernetes…), agrégées sur les passerelles connectées. Scope `nodes:read`. Chaque entrée : `id`, `host`, `aliases`, `backends`, `container_ids`, `tls`, `source`, `edge_name`, `agent_name`, `config` (réglages issus des labels) et, depuis Admin `0.153.0`, **`shadowed_by`** : l'ID du proxy configuré qui sert l'hôte à la place de la route des labels (absent quand c'est la route des labels qui sert).
+
+**Priorité sur un hôte** (Edge `0.68.0`) : un proxy configuré (créé depuis l'Admin, portail, délégation) passe toujours avant la route issue des labels du même hôte ou alias, quel que soit l'ordre d'arrivée du conteneur et des poussées de l'Admin. La route des labels reste dans la table et reprend l'hôte quand le proxy est **désactivé ou supprimé**.
+
+### `POST /api/v1/proxies/from-discovered`
+
+Convertit une route découverte en proxy configuré (Admin `0.153.0`). Scope `proxies:write` + droit d'écriture sur le domaine.
+
+Corps : `{ "id": "docker-host:app.example.fr", "edge": "edge-1" }` — `id` est l'`id` de `GET /discovered-containers` **ou** l'hôte ; `edge` (nom de la passerelle) n'est requis que si plusieurs passerelles annoncent la même route.
+
+Le proxy reprend la configuration complète de la route (hôte, alias, backends, TLS, sécurité, timeouts, locations… tout ce que portent les labels) et est publié comme n'importe quel proxy. Ne sont pas repris : les liens au conteneur (identifiants de conteneur et d'Agent), le canary et le shadow. Les backends restent les adresses du conteneur, à revoir si elles changent à chaque redémarrage.
+
+Réponses : `201` (le proxy créé, secrets masqués), `404` (route introuvable), `409` (déjà remplacée par un proxy, ou plusieurs passerelles : préciser `edge`), `403` (hors périmètre).
+
 ### `POST /api/v1/proxies/dry-run`
 
 Valide une config de proxy **sans rien enregistrer ni pousser** (éditeur YAML de la modale proxy, bouton « Tester (dry run) »). Scope `proxies:write` + droit d'écriture sur le domaine.

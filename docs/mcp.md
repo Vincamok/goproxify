@@ -20,7 +20,7 @@ Chaque outil exige un scope, le même que sa route REST équivalente. Les outils
 | Scope | Outils |
 |-------|--------|
 | `proxies:read` | `list_proxies`, `get_proxy`, `get_proxy_labels` |
-| `proxies:write` | `create_proxy`, `update_proxy`, `set_proxy_enabled`, `purge_proxy_cache` |
+| `proxies:write` | `create_proxy`, `convert_discovered_container`, `update_proxy`, `set_proxy_enabled`, `purge_proxy_cache` |
 | `proxies:delete` | `delete_proxy` |
 | `nodes:read` | `list_nodes`, `list_declared_nodes`, `get_topology_live`, `list_agents` †, `get_architecture` †, `list_discovery_sources` † |
 | `nodes:write` | `create_declared_node`, `delete_declared_node`, `create_bootstrap_ticket`, `accept_node`, `reject_node`, `approve_agent` †, `revoke_agent` † |
@@ -109,7 +109,7 @@ claude mcp add goproxify \
 
 ### `list_proxies`
 
-Liste toutes les routes proxy : celles gérées depuis l'Admin (`source: "managed"`), les proxies implicites générés par GoProxify — portail Access, délégations — dont seule la surcouche est modifiable (`source: "implicit"`) et celles découvertes par les labels des conteneurs (`source: "docker"`, `"k8s"`…, `read_only: true`, avec `aliases`, `backends`, `edge`, `agent`).
+Liste toutes les routes proxy : celles gérées depuis l'Admin (`source: "managed"`), les proxies implicites générés par GoProxify — portail Access, délégations — dont seule la surcouche est modifiable (`source: "implicit"`) et celles découvertes par les labels des conteneurs (`source: "docker"`, `"k8s"`…, `read_only: true`, avec `aliases`, `backends`, `edge`, `agent` et `shadowed_by`, l'ID du proxy configuré qui sert l'hôte à la place de la route des labels).
 
 **Paramètres :** aucun
 
@@ -152,6 +152,19 @@ Donne les labels qui reproduisent un proxy : de quoi le déclarer sur un contene
 | `format`  | string | —      | `compose`, `portainer` (avec `stack.env`), `portainer_inline` (sans), `docker_run`, `kubernetes` ; omis : tous |
 
 **Réponse :** avec `format`, `{ format, text, env, unsupported }` ; sans, `{ labels, env, unsupported, formats }`.
+
+---
+
+### `convert_discovered_container`
+
+Convertit une route découverte par les labels d'un conteneur (`list_proxies`, `source` `docker`, `k8s`…) en proxy configuré modifiable, avec sa configuration actuelle (hôte, alias, backends, TLS, sécurité, timeouts…). Le proxy prend la place de la route des labels sur son hôte ; désactivé ou supprimé, il la lui rend. Les backends doivent appartenir à l'allowlist de destinations MCP, comme pour `create_proxy`.
+
+| Paramètre | Type   | Requis | Description |
+|-----------|--------|--------|-------------|
+| `id`      | string | ✓      | `id` de la route découverte (`list_proxies`) ou son domaine |
+| `edge`    | string | —      | Nom de la passerelle, si plusieurs annoncent la même route |
+
+**Réponse :** `{ id, host, backends, converted_from }`. Refusé si la route est déjà remplacée par un proxy.
 
 ---
 

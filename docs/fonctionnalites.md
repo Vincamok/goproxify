@@ -163,6 +163,7 @@ Operator portal served by the **Edge** (not Admin):
 - Optional **2FA** (TOTP / OTP email); TTL / one-shot sessions / revocation; metadata audit
 - Config & catalogue pushed from Admin (see §3)
 - **Labels of an existing proxy**: *Proxies › ⋯ › Docker / Kubernetes labels* shows, read-only, the labels that reproduce the proxy as Docker Compose, Portainer (with or without `stack.env`), `docker run` or a Kubernetes Service, with a copy button per target. Secrets become `${GPX_…}` variables (never written in clear), and settings that no label can carry are listed. API `GET /proxies/{id}/labels`, CLI `proxy labels`, MCP `get_proxy_labels`
+- **Discovered containers → proxy**: *Traffic › Discovered containers* tiles have a **Convert to proxy** button that creates a regular, editable proxy from the label route (host, aliases, backends, TLS, security, timeouts… everything the labels carry) and opens it in the editor. A proxy always takes priority over the label route of the same host or alias, whatever the order in which the container and the Admin pushes arrive; the label route stays in the table and takes the host back when the proxy is **disabled or deleted**. Tiles show the proxy that replaces them (*identical* or *different backends*), and proxies whose domains and backends match a discovered container get a badge. API `POST /proxies/from-discovered`, CLI `containers convert`, MCP `convert_discovered_container` (Admin `0.153.0` / Edge `0.68.0`)
 - **Editable implicit proxies**: the portal's public hosts (and TLS-terminating domain delegations) appear in the proxy list with an *implicit* badge; WAF, rate limits, headers, IP filter, cache… can be set on them while host, backend and inbound TLS stay generated. The customisation is a local file on the Edge (survives an Admin outage and a restart); *Reset* removes it
 
 ---
@@ -402,7 +403,7 @@ Supported formats: nginx, HAProxy, Traefik YAML, Traefik TOML, Caddy, GoProxify 
 ### Web interface
 
 - Dashboard in three tabs sharing one dataset — Health (status verdict, to-do list, services), Cockpit (KPIs, 1 h traffic chart, edges, busiest hosts, certificate expiry), Map (traffic origin by country, blocks per layer, p95 per edge); the chosen tab is remembered
-- Unified proxy list view (HTTP/HTTPS + TCP + UDP) — Docker labels greyed out read-only
+- Unified proxy list view (HTTP/HTTPS + TCP + UDP) — label-discovered containers are read-only tiles that can be converted into a regular proxy
 - Adaptive create/edit form by proxy type
 - **Proxy edit modal as a request path** (Admin `0.150.0`): seven steps following a request — Entry, Security, Routing, Transformation, Backends, Resilience, Observability — each showing what it enables; a step lists its settings (green dot, plain summary, direct switch) and opens one at a time in a full-width pane with previous/next; setting search (Ctrl/Cmd+K) and a Path / YAML switch in the header. Path-based routing, `proxy_redirect`, cookies, `sub_filter` and request variables each have their own entry. Fields and save logic are unchanged
 - Interactive Docker Compose label generator (HTTP, TCP, UDP)

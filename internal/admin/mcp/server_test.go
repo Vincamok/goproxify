@@ -52,7 +52,7 @@ func fakeEdgeServer(t *testing.T) *httptest.Server {
 		_ = json.NewEncoder(w).Encode(map[string]any{"production": list})
 	})
 	mux.HandleFunc("GET /internal/v1/agent/containers", func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`[{"id":"docker-host:lab.example.com","host":"lab.example.com","backends":["http://172.18.0.5:80"],"tls":true,"source":"docker","agent_name":"agent-1"}]`))
+		_, _ = w.Write([]byte(`[{"id":"docker-host:lab.example.com","host":"lab.example.com","backends":["http://172.18.0.5:80"],"tls":true,"source":"docker","agent_name":"agent-1","proxy_config":{"host":"lab.example.com","type":"http","backends":[{"url":"http://172.18.0.5:80","weight":0}],"tls_enabled":true,"lb":"adaptive"}}]`))
 	})
 	mux.HandleFunc("DELETE /internal/v1/proxies/{id}", func(w http.ResponseWriter, r *http.Request) {
 		delete(store, r.PathValue("id"))
@@ -213,5 +213,32 @@ func TestListAgentsApprove(t *testing.T) {
 	}
 	if revoked != "ag1" {
 		t.Fatalf("revoked=%q", revoked)
+	}
+}
+
+func TestConvertDiscoveredContainerCreatesManagedProxy(t *testing.T) {
+	h := setupMCPDB(t)
+	r := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+
+	if _, err := h.toolConvertDiscoveredContainer(r, map[string]any{"id": "docker-host:absent.example.com"}); err == nil {
+		t.Fatal("un conteneur inconnu doit être refusé")
+	}
+
+	res, err := h.toolConvertDiscoveredContainer(r, map[string]any{"id": "docker-host:lab.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := res.(map[string]any)["id"].(string)
+	if id == "" {
+		t.Fatalf("pas d'ID de proxy : %v", res)
+	}
+
+	got, err := h.toolGetProxy(r, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := got.(map[string]any)
+	if cfg["host"] != "lab.example.com" || cfg["tls_enabled"] != true || cfg["lb"] != "adaptive" {
+		t.Fatalf("la config des labels doit être reprise : %v", cfg)
 	}
 }

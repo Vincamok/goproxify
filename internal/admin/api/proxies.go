@@ -65,6 +65,11 @@ func (h *ProxiesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if id == "from-discovered" && sub == "" && r.Method == http.MethodPost {
+		h.fromDiscovered(w, r)
+		return
+	}
+
 	if id == "path-test" && sub == "" {
 		(&ProxyPathTestHandler{DB: h.DB}).handleInline(w, r)
 		return

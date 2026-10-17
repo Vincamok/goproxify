@@ -7,8 +7,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/vincamok/goproxify/internal/admin/auth"
@@ -32,6 +34,10 @@ type DiscoveredContainer struct {
 	EdgeName     string         `json:"edge_name"`
 	AgentName    string         `json:"agent_name,omitempty"`
 	Config       map[string]any `json:"config,omitempty"`
+	// ShadowedBy : ID du proxy configuré qui sert l'hôte à la place de la route des labels.
+	ShadowedBy string `json:"shadowed_by,omitempty"`
+	// ProxyConfig : route complète pour la conversion en proxy ; n'est jamais renvoyée par GET /discovered-containers.
+	ProxyConfig json.RawMessage `json:"proxy_config,omitempty"`
 }
 
 func (h *DiscoveredContainersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -40,7 +46,35 @@ func (h *DiscoveredContainersHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 		return
 	}
 	result := h.FetchFromEdges(r.Context())
+	for i := range result {
+		result[i].ProxyConfig = nil
+	}
 	jsonOK(w, result)
+}
+
+var (
+	ErrContainerNotFound         = errors.New("conteneur découvert introuvable")
+	ErrContainerEdgeRequired     = errors.New("plusieurs passerelles annoncent ce conteneur : précisez la passerelle")
+	ErrContainerAlreadyConverted = errors.New("ce conteneur est déjà remplacé par un proxy")
+)
+
+// ForConversion retrouve la route découverte (par son ID ou son hôte, sur la passerelle edge si elle est donnée) avec sa config de proxy.
+func (h *DiscoveredContainersHandler) ForConversion(ctx context.Context, id, edge string) (*DiscoveredContainer, error) {
+	var matches []DiscoveredContainer
+	for _, c := range h.FetchFromEdges(ctx) {
+		if (c.ID == id || strings.EqualFold(c.Host, id)) && (edge == ""|| c.EdgeName == edge) && len(c.ProxyConfig) > 0 {
+			matches = append(matches, c)
+		}
+	}
+	switch {
+	case len(matches) == 0:
+		return nil, ErrContainerNotFound
+	case len(matches) > 1:
+		return nil, ErrContainerEdgeRequired
+	case matches[0].ShadowedBy != "":
+		return nil, ErrContainerAlreadyConverted
+	}
+	return &matches[0], nil
 }
 
 // FetchFromEdges liste les routes découvertes par les labels (Docker, Kubernetes…) sur toutes les passerelles.

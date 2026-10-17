@@ -6,6 +6,7 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 
 ### v0.3 — Sécurité avancée et observabilité _(septembre 2026)_
 
+- **Conteneurs découverts → proxy** : bouton « Convertir en proxy » sur les conteneurs découverts (API, CLI `containers convert`, MCP) ; un proxy configuré passe toujours avant la route issue des labels du même hôte, qui reprend la main s'il est désactivé ou supprimé ; les tuiles signalent les proxys qui remplacent ou recoupent un conteneur — livré
 - **WAF avancé** : scoring anomalie, inspection requête (JSON/form/URI/headers/cookies) **et réponse** (CRS 951xxx), 13 jeux de règles OWASP CRS-4, règles custom hot-reload, métriques `gpx_waf_*`
 - **WAF — nouveaux jeux de règles** : Java/Log4Shell (944xxx), RFI (931xxx), NodeJS/Prototype Pollution (934xxx), HTTP Request Smuggling (920xxx), Fichiers sensibles (930xxx), Fuites de données en réponse (951xxx)
 - **Sentinel** : moteur de détection comportementale stateful par IP — fenêtre glissante, ban immédiat sur signal, paramètres anti-DDoS configurables depuis l’UI (GlobalRPS, rate_window, rate_ban_threshold), detect mode, listes custom allowlist/denylist

@@ -74,6 +74,66 @@ func hostKeys(r *Route) []string {
 	return keys
 }
 
+var discoveredPrefixes = []string{"docker:", "docker-host:", "k8s:", "portainer:", "podman:"}
+
+// IsDiscoveredID indique si l'ID est celui d'une route issue de la découverte (labels des conteneurs).
+func IsDiscoveredID(id string) bool {
+	for _, p := range discoveredPrefixes {
+		if strings.HasPrefix(id, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// mayOwn dit si r peut posséder l'hôte face au possesseur actuel. Une route découverte cède toujours devant une route
+// configurée (proxy fichier, portail, délégation) ; entre routes de même nature, la dernière écrite l'emporte.
+func mayOwn(r, owner *Route) bool {
+	if !IsDiscoveredID(r.ID) {
+		return true
+	}
+	return owner == nil || owner.ID == r.ID || IsDiscoveredID(owner.ID)
+}
+
+// resolveLocked recalcule le possesseur de l'hôte k : une route configurée avant une route découverte, et le possesseur
+// actuel s'il reste candidat (pas de bascule inutile). Appelé quand l'hôte perd son possesseur.
+func (d *tableData) resolveLocked(k string) {
+	var cur *Route
+	if v, ok := d.byHost.Load(k); ok {
+		cur = v.(*Route)
+	}
+	var best *Route
+	d.routes.Range(func(_, val any) bool {
+		c := val.(*Route)
+		claims := false
+		for _, ck := range hostKeys(c) {
+			if ck == k {
+				claims = true
+				break
+			}
+		}
+		if !claims {
+			return true
+		}
+		switch {
+		case best == nil:
+			best = c
+		case IsDiscoveredID(best.ID) && !IsDiscoveredID(c.ID):
+			best = c
+		case IsDiscoveredID(best.ID) == IsDiscoveredID(c.ID):
+			if c == cur || (best != cur && c.ID < best.ID) {
+				best = c
+			}
+		}
+		return true
+	})
+	if best == nil {
+		d.byHost.Delete(k)
+		return
+	}
+	d.byHost.Store(k, best)
+}
+
 // upsertLocked écrit la route dans d. Les nouvelles clés sont posées avant le retrait de celles que l'ancienne
 // version possédait et que la nouvelle n'a plus : un hôte conservé n'est jamais absent de la table, même un instant.
 func (d *tableData) upsertLocked(r *Route) {
@@ -84,7 +144,13 @@ func (d *tableData) upsertLocked(r *Route) {
 	kept := map[string]bool{}
 	for _, k := range hostKeys(r) {
 		kept[k] = true
-		d.byHost.Store(k, r)
+		var owner *Route
+		if v, ok := d.byHost.Load(k); ok {
+			owner = v.(*Route)
+		}
+		if mayOwn(r, owner) {
+			d.byHost.Store(k, r)
+		}
 	}
 	if r.ListenPort > 0 {
 		d.byPort.Store(r.ListenPort, r)
@@ -94,8 +160,11 @@ func (d *tableData) upsertLocked(r *Route) {
 	}
 	old := prev.(*Route)
 	for _, k := range hostKeys(old) {
-		if !kept[k] {
-			d.byHost.Delete(k)
+		if kept[k] {
+			continue
+		}
+		if v, ok := d.byHost.Load(k); ok && v.(*Route).ID == old.ID {
+			d.resolveLocked(k)
 		}
 	}
 	if old.ListenPort > 0 && old.ListenPort != r.ListenPort {
@@ -111,7 +180,8 @@ func (t *Table) Upsert(r *Route) {
 	t.changed()
 }
 
-// Delete supprime une route par son ID.
+// Delete supprime une route par son ID. Les hôtes qu'elle possédait passent à une autre route qui les revendique
+// (la route des labels reprend l'hôte d'un proxy supprimé ou désactivé).
 func (t *Table) Delete(id string) bool {
 	t.mu.Lock()
 	d := t.d()
@@ -122,7 +192,9 @@ func (t *Table) Delete(id string) bool {
 	}
 	r := val.(*Route)
 	for _, k := range hostKeys(r) {
-		d.byHost.Delete(k)
+		if v, ok := d.byHost.Load(k); ok && v.(*Route).ID == id {
+			d.resolveLocked(k)
+		}
 	}
 	if r.ListenPort > 0 {
 		d.byPort.Delete(r.ListenPort)
@@ -131,6 +203,22 @@ func (t *Table) Delete(id string) bool {
 	t.mu.Unlock()
 	t.changed()
 	return true
+}
+
+// ShadowedBy retourne l'ID du proxy configuré qui sert l'hôte d'une route découverte à sa place.
+func (t *Table) ShadowedBy(r *Route) (string, bool) {
+	if r == nil || !IsDiscoveredID(r.ID) {
+		return "", false
+	}
+	d := t.d()
+	for _, k := range hostKeys(r) {
+		if v, ok := d.byHost.Load(k); ok {
+			if o := v.(*Route); o.ID != r.ID && !IsDiscoveredID(o.ID) {
+				return o.ID, true
+			}
+		}
+	}
+	return "", false
 }
 
 // DisableByIDOrHost retire de la table la route correspondant à l'ID ou au host.
@@ -235,10 +323,10 @@ func (t *Table) Replace(routes []*Route) error {
 		}
 	}
 	next := &tableData{}
+	t.mu.Lock()
 	for _, r := range routes {
 		next.upsertLocked(r)
 	}
-	t.mu.Lock()
 	t.data.Store(next)
 	t.mu.Unlock()
 	t.changed()

@@ -522,7 +522,7 @@ async function renderTraficPage(ctx) {
           <input type="checkbox" ${m.isSel ? 'checked' : ''} onchange="traficSelToggle('${esc(m.id)}','${m.stype}')" style="width:14px;height:14px;cursor:pointer;accent-color:var(--accent);flex-shrink:0">
           ${c.toggle}
           <div class="trafic-tile-host">${domainLink(master, true, m.hasTLS)}</div>
-          ${typeBadge(m.type)}${m.isImplicit ? `<span class="chip" title="${esc(t('trafic.implicit_hint'))}">${esc(t('trafic.implicit'))}</span>` : ''}
+          ${typeBadge(m.type)}${m.isImplicit ? `<span class="chip" title="${esc(t('trafic.implicit_hint'))}">${esc(t('trafic.implicit'))}</span>` : ''}${m.isImplicit ? '' : discoveredMatchBadge(p)}
           <div class="trafic-tile-actions">${c.secWarn}${c.edit}${c.more}</div>
         </div>
         ${aliasesAndChips(m, aliases, '')}
@@ -560,7 +560,7 @@ async function renderTraficPage(ctx) {
           </div>
         </td>
         <td style="padding:8px 10px;max-width:260px">
-          <div style="display:flex;align-items:center;gap:6px;min-width:0"><div class="trafic-tile-host">${domainLink(master, true, m.hasTLS)}</div>${typeBadge(m.type)}</div>
+          <div style="display:flex;align-items:center;gap:6px;min-width:0"><div class="trafic-tile-host">${domainLink(master, true, m.hasTLS)}</div>${typeBadge(m.type)}${m.isImplicit ? '' : discoveredMatchBadge(p)}</div>
           ${aliasesAndChips(m, aliases, 'margin-top:3px')}
         </td>
         <td style="padding:8px 10px;max-width:280px">${backendsInline(m.allBackends, 'tr')}</td>
@@ -1333,7 +1333,7 @@ async function renderTraficPage(ctx) {
         const hosts = [c.host, ...(c.aliases || [])].filter(Boolean);
         const isLB = backends.length >= 2 || ids.length >= 2;
         if (isLB) {
-          tiles.push({ ...c, hosts, backends: [...backends] });
+          tiles.push({ ...c, hosts, backends: [...backends], routes: [c] });
           continue;
         }
         const cid = ids[0] || '';
@@ -1342,9 +1342,10 @@ async function renderTraficPage(ctx) {
           : `${c.edge_name || ''}|${c.source || ''}|be:${backends[0] || c.id || ''}`;
         const existing = pending.get(key);
         if (!existing) {
-          pending.set(key, { ...c, hosts: [...hosts], backends: [...backends] });
+          pending.set(key, { ...c, hosts: [...hosts], backends: [...backends], routes: [c] });
           continue;
         }
+        existing.routes.push(c);
         for (const h of hosts) {
           if (h && !existing.hosts.includes(h)) existing.hosts.push(h);
         }
@@ -1369,6 +1370,41 @@ async function renderTraficPage(ctx) {
         tiles.push(tile);
       }
       return tiles;
+    }
+
+    // Domaines et backends d'un proxy, normalisés pour être comparés à ceux d'une route découverte.
+    const hostKey = h => String(h || '').trim().toLowerCase().replace(/\.$/, '');
+    const backendKey = b => String(b || '').trim().toLowerCase().replace(/\/+$/, '');
+    function proxyDomainsBackends(p) {
+      const cfg = (p.config && typeof p.config === 'object') ? p.config : (tryJSON(p.config) || {});
+      const type = String(cfg.type || p.type || 'http').toLowerCase();
+      if (type === 'tcp' || type === 'udp' || type === 'both') return { hosts: [], backends: [] };
+      return {
+        hosts: [cfg.host || p.host || p.name, ...(cfg.aliases || [])].map(hostKey).filter(Boolean),
+        backends: (cfg.backends || p.backends || []).map(b => backendKey(b.url || b)).filter(Boolean),
+      };
+    }
+    const sameSet = (a, b) => a.length === b.length && a.every(x => b.includes(x));
+    // 'same' : mêmes domaines et mêmes backends ; 'domain' : au moins un domaine en commun ; null : rien en commun.
+    function proxyContainerRelation(px, route) {
+      const hosts = [route.host, ...(route.aliases || [])].map(hostKey).filter(Boolean);
+      if (!px.hosts.some(h => hosts.includes(h))) return null;
+      const backends = (route.backends || []).map(b => backendKey(b.url || b)).filter(Boolean);
+      return sameSet(px.hosts, hosts) && sameSet(px.backends, backends) ? 'same' : 'domain';
+    }
+    // Pastille d'un proxy dont les domaines (et backends) recoupent ceux d'un conteneur découvert.
+    function discoveredMatchBadge(p) {
+      const px = proxyDomainsBackends(p);
+      let best = null, hit = null;
+      for (const r of (window._traficDiscovered || [])) {
+        const rel = proxyContainerRelation(px, r);
+        if (rel === 'same') { best = rel; hit = r; break; }
+        if (rel && !best) { best = rel; hit = r; }
+      }
+      if (!best) return '';
+      const label = t(best === 'same' ? 'trafic.matches_container' : 'trafic.matches_container_diff');
+      const tip = `${label} (${[hit.edge_name, hit.agent_name].filter(Boolean).join(' / ')}) : ${(hit.backends || []).join(', ')}`;
+      return `<span class="chip" style="color:${best === 'same' ? 'var(--accent)' : 'var(--yellow,#f59e0b)'}" title="${esc(tip)}">${esc(label)}</span>`;
     }
 
     function buildContainerTile(c) {
@@ -1398,7 +1434,35 @@ async function renderTraficPage(ctx) {
       const flowKey = c.id || `${c.edge_name || ''}|${c.source || ''}|${hosts.join(',')}|${allBackends.join(',')}`;
       window._traficContainers = window._traficContainers || {};
       window._traficContainers[flowKey] = c;
-      const flowBtn = `<button class="btn btn-ghost btn-icon" onclick="openTrafficFlowModal('container','${esc(flowKey)}')" title="${esc(t('trafic.flow_title'))}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><circle cx="6" cy="5" r="2"/><path d="M18 7v4a2 2 0 0 1-2 2H8a2 2 0 0 0-2 2v2"/></svg></button>`;
+      // Une tuile peut regrouper plusieurs routes (un conteneur, plusieurs hôtes) : chacune se convertit ou est déjà remplacée.
+      const routes = c.routes || [c];
+      const convertible = routes.filter(r => !r.shadowed_by);
+      const proxyLabel = (p) => proxyDomainsBackends(p).hosts[0] || p.id;
+      const related = new Map();
+      for (const p of (window._traficAll || [])) {
+        const px = proxyDomainsBackends(p);
+        let rel = null;
+        for (const r of routes) {
+          const x = proxyContainerRelation(px, r);
+          if (x === 'same') { rel = 'same'; break; }
+          if (x) rel = 'domain';
+        }
+        const active = routes.some(r => r.shadowed_by === p.id);
+        if (rel && (active || p.enabled === false)) related.set(p.id, { p, rel, active });
+      }
+      for (const pid of new Set(routes.map(r => r.shadowed_by).filter(Boolean))) {
+        if (!related.has(pid)) related.set(pid, { p: { id: pid }, rel: 'same', active: true });
+      }
+      const replacedChips = [...related.values()].map(({ p, rel, active }) => {
+        const key = active ? (rel === 'same' ? 'trafic.replaced_by' : 'trafic.replaced_by_diff') : (rel === 'same' ? 'trafic.proxy_off_same' : 'trafic.proxy_off_diff');
+        const label = t(key, { proxy: proxyLabel(p) });
+        const color = rel === 'same' ? 'var(--accent)' : 'var(--yellow,#f59e0b)';
+        return `<a href="#" onclick="event.preventDefault();openProxyModal('${esc(p.id)}')" style="display:inline-flex;align-items:center;font-size:10px;color:${color};background:var(--bg3);padding:1px 6px;border-radius:4px;border:1px solid var(--border);white-space:nowrap" title="${esc(label)}">${esc(label)}</a>`;
+      }).join('');
+      if (replacedChips) chips += replacedChips;
+      const convertBtn = (Role.canWrite() && convertible.length)
+        ? `<button class="btn btn-ghost btn-icon" onclick="convertDiscoveredContainer('${esc(flowKey)}')" title="${esc(t('trafic.convert_proxy'))}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m17 1 4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="m7 23-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></button>` : '';
+      const flowBtn = `${convertBtn}<button class="btn btn-ghost btn-icon" onclick="openTrafficFlowModal('container','${esc(flowKey)}')" title="${esc(t('trafic.flow_title'))}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><circle cx="6" cy="5" r="2"/><path d="M18 7v4a2 2 0 0 1-2 2H8a2 2 0 0 0-2 2v2"/></svg></button>`;
 
       return `<div class="trafic-tile" title="${esc(c.id||'')}" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
         <div class="trafic-tile-head">
@@ -1426,6 +1490,8 @@ async function renderTraficPage(ctx) {
         const all = await api('GET', '/discovered-containers') || [];
         const edgeName = edge ? (edge.node_name || edge.display_name || '') : '';
         const raw = edgeName ? all.filter(c => c.edge_name === edgeName) : all;
+        window._traficDiscovered = raw;
+        if (typeof window.renderPage === 'function') window.renderPage();
         const items = groupDiscoveredContainers(raw);
         window._traficContainers = {};
         if (cnt) cnt.textContent = items.length ? items.length : '';
@@ -1448,6 +1514,28 @@ async function renderTraficPage(ctx) {
         }
         el.innerHTML = html;
       } catch(e) { if (el) el.innerHTML = `<p style="color:var(--red);font-size:13px">${esc(e.message)}</p>`; }
+    };
+
+    // Convertit les routes encore issues des labels d'une tuile en proxys configurés ; un seul proxy créé s'ouvre dans l'éditeur.
+    window.convertDiscoveredContainer = async (flowKey) => {
+      const tile = (window._traficContainers || {})[flowKey];
+      const routes = ((tile && tile.routes) || []).filter(r => !r.shadowed_by);
+      if (!routes.length) return;
+      const hosts = routes.map(r => r.host).join(', ');
+      if (!confirm(t('trafic.convert_confirm', { hosts }))) return;
+      const created = [];
+      try {
+        for (const r of routes) {
+          created.push(await api('POST', '/proxies/from-discovered', { id: r.id, edge: r.edge_name || '' }));
+        }
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+      if (created.length) {
+        toast(created.length === 1 ? t('trafic.convert_done', { host: routes[0].host }) : t('trafic.convert_done_n', { n: created.length }), 'success');
+        await refreshProxies();
+        if (created.length === 1) openProxyModal(created[0].id);
+      }
     };
 
     renderPage();

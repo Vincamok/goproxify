@@ -169,7 +169,7 @@ Commandes d'administration (API Admin — -admin-url / -token) :
   plugin         Plugins WebAssembly des passerelles (list/get/install/update/delete)
   teams          Équipes RBAC (list/get/create/update/members/delete)
   ip-profile     Profils IP GeoIP/réputation (list/get/create/update/delete)
-  containers     Conteneurs Docker découverts par les Agents (lecture seule)
+  containers     Conteneurs découverts par les Agents (list/convert en proxy)
   me             Profil courant + tokens API personnels (PAT)
   security       Sentinel (threat engine), bans, WAF par proxy
   automation     Flux d'automatisation : règles, planifications, playbooks, approbations

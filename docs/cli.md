@@ -984,19 +984,23 @@ goproxify automation templates install schedule-nightly-backup -set "cron=0 2 * 
 
 ### `goproxify containers`
 
-Conteneurs Docker découverts par les Agents (lecture seule). Agrège les résultats de toutes les passerelles connectées.
+Conteneurs découverts par les Agents. Agrège les résultats de toutes les passerelles connectées.
 
 ```
 goproxify containers [list] [-admin-url …] [-token …]
+goproxify containers convert <hôte|id> [-edge <passerelle>] [-admin-url …] [-token …]
 ```
 
-Affiche pour chaque conteneur : le host, TLS, la passerelle source, l'Agent et les backends.
+`list` affiche pour chaque conteneur : le host, TLS, la passerelle source, l'Agent, le proxy qui le remplace (`REMPLACÉ PAR`, `-` s'il est servi par ses labels) et les backends.
+
+`convert` crée un proxy modifiable à partir de la route issue des labels (`POST /api/v1/proxies/from-discovered`). Le proxy prend la place de la route des labels sur son hôte ; désactivé ou supprimé, il la lui rend. `-edge` n'est utile que si plusieurs passerelles annoncent la même route.
 
 Exemples :
 
 ```bash
 goproxify containers
 goproxify containers list
+goproxify containers convert app.example.fr
 ```
 
 ---

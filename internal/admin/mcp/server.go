@@ -257,6 +257,14 @@ var tools = []map[string]any{
 		),
 	},
 	{
+		"name":        "convert_discovered_container",
+		"description": "Convertit une route découverte par les labels d'un conteneur (list_proxies, source \"docker\", \"k8s\"…) en proxy configuré modifiable, avec sa configuration actuelle. Le proxy prend la place de la route des labels sur son hôte ; désactivé ou supprimé, il la lui rend. Les backends sont repris tels quels (adresses de conteneur). Retourne l'ID du proxy créé.",
+		"inputSchema": schema(
+			req("id", "string", "ID de la route découverte (champ id de list_proxies) ou son domaine"),
+			opt("edge", "string", "Nom de la passerelle, si plusieurs annoncent la même route"),
+		),
+	},
+	{
 		"name":        "update_proxy",
 		"description": "Met à jour un proxy existant (host, backend, tls, lb, enabled, options avancées).",
 		"inputSchema": schema(
@@ -628,6 +636,8 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 		result, toolErr = h.toolGetProxyLabels(r, id, format)
 	case "create_proxy":
 		result, toolErr = h.toolCreateProxy(r, p.Arguments)
+	case "convert_discovered_container":
+		result, toolErr = h.toolConvertDiscoveredContainer(r, p.Arguments)
 	case "update_proxy":
 		result, toolErr = h.toolUpdateProxy(r, p.Arguments)
 	case "set_proxy_enabled":
@@ -970,7 +980,7 @@ func (h *Handler) toolListProxies(r *http.Request) (any, error) {
 		out = append(out, map[string]any{
 			"id": d.ID, "name": d.Host, "enabled": true, "host": d.Host, "type": "http", "tls": d.TLS,
 			"source": d.Source, "read_only": true, "aliases": d.Aliases, "backends": d.Backends,
-			"edge": d.EdgeName, "agent": d.AgentName,
+			"edge": d.EdgeName, "agent": d.AgentName, "shadowed_by": d.ShadowedBy,
 		})
 	}
 	return out, nil
@@ -1056,6 +1066,40 @@ func (h *Handler) toolCreateProxy(r *http.Request, args map[string]any) (any, er
 	}
 	_ = admindb.WriteAudit(h.DB, actor, "create", "proxy:"+id, host)
 	return map[string]any{"id": id, "host": host, "backend": backend, "type": rtype, "lb": lb}, nil
+}
+
+func (h *Handler) toolConvertDiscoveredContainer(r *http.Request, args map[string]any) (any, error) {
+	id, _ := args["id"].(string)
+	edge, _ := args["edge"].(string)
+	if id == "" {
+		return nil, fmt.Errorf("id requis")
+	}
+	c, err := (&api.DiscoveredContainersHandler{DB: h.DB, Log: h.Log}).ForConversion(r.Context(), id, edge)
+	if err != nil {
+		return nil, err
+	}
+	for _, b := range c.Backends {
+		if err := mcpaccess.CheckBackend(h.DB, b); err != nil {
+			return nil, err
+		}
+	}
+	var m map[string]any
+	if err := json.Unmarshal(c.ProxyConfig, &m); err != nil {
+		return nil, err
+	}
+	proxyID := uuid.New().String()
+	m["id"] = proxyID
+	m["updated_at"] = time.Now().UTC()
+	cfgJSON, err := json.Marshal(m)
+	if err != nil {
+		return nil, err
+	}
+	actor := adminauth.ActorFromContext(r.Context())
+	if err := h.publishToEdges(r.Context(), proxyID, c.Host, true, cfgJSON, actor); err != nil {
+		return nil, err
+	}
+	_ = admindb.WriteAudit(h.DB, actor, "create", "proxy:"+proxyID, c.Host)
+	return map[string]any{"id": proxyID, "host": c.Host, "backends": c.Backends, "converted_from": c.ID}, nil
 }
 
 func (h *Handler) resolveProxyEnvelope(ctx context.Context, ref string) (*proxystore.Envelope, error) {
