@@ -18,7 +18,7 @@ import (
 	"github.com/vincamok/goproxify/internal/config"
 )
 
-//go:embed ui/index.html ui/img
+//go:embed ui/index.html ui/classic.html ui/img
 var uiFiles embed.FS
 
 // Server sert la page de présentation statique.
@@ -32,7 +32,7 @@ func New(cfg *config.LandingConfig, logger *slog.Logger) *Server {
 	return &Server{cfg: cfg, logger: logger}
 }
 
-func (s *Server) Start(ctx context.Context) error {
+func (s *Server) handler() (http.Handler, error) {
 	mux := http.NewServeMux()
 
 	// config.js généré dynamiquement depuis la config
@@ -41,14 +41,27 @@ func (s *Server) Start(ctx context.Context) error {
 	// fichiers statiques embarqués
 	static, err := fs.Sub(uiFiles, "ui")
 	if err != nil {
-		return fmt.Errorf("landing: embed sub: %w", err)
+		return nil, fmt.Errorf("landing: embed sub: %w", err)
 	}
 	mux.Handle("/", http.FileServer(http.FS(static)))
+	// ancienne présentation, gardée en choix alternatif
+	mux.HandleFunc("/classic", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, static, "classic.html")
+	})
+	mux.Handle("/editorial", http.RedirectHandler("/", http.StatusMovedPermanently))
+	return mux, nil
+}
+
+func (s *Server) Start(ctx context.Context) error {
+	h, err := s.handler()
+	if err != nil {
+		return err
+	}
 
 	addr := fmt.Sprintf("%s:%d", s.cfg.Server.ListenAddr, s.cfg.Server.Port)
 	s.http = httpx.Harden(&http.Server{
 		Addr:         addr,
-		Handler:      mux,
+		Handler:      h,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	})
