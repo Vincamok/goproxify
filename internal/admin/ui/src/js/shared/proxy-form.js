@@ -35,7 +35,7 @@ const _yaml = (function () {
     if (Array.isArray(val)) {
       if (!val.length) return '[]';
       if (val.every(v => v === null || typeof v !== 'object')) {
-        const inline = '[' + val.map(v => ser(v, 0)).join(', ') + ']';
+        const inline = '[' + val.map(v => typeof v === 'string' && /[,\[\]{}]/.test(v) ? JSON.stringify(v) : ser(v, 0)).join(', ') + ']';
         if (inline.length <= 80) return inline;
       }
       return '\n' + val.map(v => {
@@ -77,10 +77,31 @@ const _yaml = (function () {
     if (s.startsWith('"') && s.endsWith('"'))
       return s.slice(1,-1).replace(/\\"/g,'"').replace(/\\\\/g,'\\');
     if (s.startsWith("'") && s.endsWith("'")) return s.slice(1,-1).replace(/''/g,"'");
-    if ((s.startsWith('[') && s.endsWith(']')) || (s.startsWith('{') && s.endsWith('}')))
+    if (s.startsWith('[') && s.endsWith(']'))
+      return splitFlow(s.slice(1, -1)).map(scalar);
+    if (s.startsWith('{') && s.endsWith('}'))
       { try { return JSON.parse(s); } catch { return s; } }
     const n = Number(s);
     return (s !== '' && !isNaN(n)) ? n : s;
+  }
+
+  // Éléments d'une liste inline : dump() écrit [a.fr, b.fr] sans guillemets, ce que JSON.parse refuse.
+  function splitFlow(s) {
+    const out = []; let cur = '', depth = 0, q = null;
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (q) {
+        cur += ch;
+        if (ch === '\\' && q === '"') cur += s[++i] ?? '';
+        else if (ch === q) q = null;
+      } else if (ch === '"' || ch === "'") { q = ch; cur += ch; }
+      else if (ch === '[' || ch === '{') { depth++; cur += ch; }
+      else if (ch === ']' || ch === '}') { depth--; cur += ch; }
+      else if (ch === ',' && depth === 0) { out.push(cur.trim()); cur = ''; }
+      else cur += ch;
+    }
+    if (cur.trim() || out.length) out.push(cur.trim());
+    return out;
   }
 
   function nextNE(lines, from) {

@@ -167,9 +167,10 @@ Complètent les agrégats globaux `gpx_edge_bytes_received_total` / `gpx_edge_by
 
 | Métrique | Type | Labels | Description |
 |---|---|---|---|
-| `gpx_peer_sync_duration_seconds` | Histogram | `peer` | Durée d'une synchronisation avec une passerelle pair (scores LB + profils WAF) |
+| `gpx_peer_sync_duration_seconds` | Histogram | `peer` | Durée d'une synchronisation menée à terme avec une passerelle pair (scores LB + profils WAF) ; un pair injoignable n'y figure pas |
+| `gpx_peer_up` | Gauge | `peer` | 1 si le pair a répondu au dernier sondage de synchronisation, 0 sinon (un pair muet est resondé après 15 s, 30 s, 60 s, puis toutes les 2 min) |
 
-Buckets : 10 ms → 5 s.
+Buckets : 10 ms → 20 s.
 
 ---
 

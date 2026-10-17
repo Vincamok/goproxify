@@ -101,15 +101,13 @@ func (s *ProxyMetricsSampler) Summary() map[string]any {
 	global, edges, certs := s.Overview()
 
 	s.mu.RLock()
-	var wsAdmin, wsAgent, peerSum, peerCount, oneShot, multi, wafProfiles float64
+	var wsAdmin, wsAgent, oneShot, multi, wafProfiles float64
 	pipe := map[string]float64{}
 	type tlsAgg struct{ p95, conns float64 }
 	tlsHosts := map[string]tlsAgg{}
 	for _, sum := range s.summ {
 		wsAdmin += sum.WS.AdminConnections
 		wsAgent += sum.WS.AgentConnections
-		peerSum += sum.Peers.SyncSumS
-		peerCount += sum.Peers.SyncCount
 		oneShot += sum.Portal.Sessions.OneShot
 		multi += sum.Portal.Sessions.Multi
 		wafProfiles += sum.WAF.ProfilesActive
@@ -123,6 +121,11 @@ func (s *ProxyMetricsSampler) Summary() map[string]any {
 			tlsHosts[strings.ToLower(h.Host)] = a
 		}
 	}
+	var peerSyncMs float64
+	for _, ms := range s.peerSyncMs {
+		peerSyncMs += ms
+	}
+	peerEdges := len(s.peerSyncMs)
 	s.mu.RUnlock()
 
 	certList := make([]map[string]any, 0, len(certs))
@@ -149,8 +152,8 @@ func (s *ProxyMetricsSampler) Summary() map[string]any {
 		"pipeline": pipeline,
 		"tls":      map[string]any{"certs": certList},
 	}
-	if peerCount > 0 {
-		out["peers"] = map[string]any{"avg_sync_ms": peerSum / peerCount * 1000}
+	if peerEdges > 0 {
+		out["peers"] = map[string]any{"avg_sync_ms": peerSyncMs / float64(peerEdges)}
 	}
 
 	a := readAdminLocal()

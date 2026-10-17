@@ -373,7 +373,7 @@ processus Admin. Une section est **absente** tant que sa source n'a rien publié
 |-----|---------|
 | `global`, `edges`, `tls.certs` | comme `/metrics/proxies` ; chaque entrée de `tls.certs` porte en plus `handshake_p95_ms` (pire passerelle) et `active_connections` (somme) quand le domaine a servi des connexions TLS ; `edges[]` ajoute `error_rate` (fraction) |
 | `ws` | `admin_connections`, `agent_connections` — connexions WebSocket du plan de contrôle, somme des passerelles |
-| `peers` | `avg_sync_ms` — durée moyenne de synchronisation entre passerelles pairs (absent sans pair) |
+| `peers` | `avg_sync_ms` — durée moyenne des dernières synchronisations entre passerelles pairs, moyennée sur les passerelles (absent tant qu'aucune synchronisation n'a abouti) |
 | `portal.sessions` | `one_shot`, `multi` — sessions du portail actives |
 | `waf` | `profiles_active` — profils comportementaux en mémoire |
 | `pipeline` | `[{stage, blocked_total}]` — requêtes bloquées par étape du pipeline de sécurité |

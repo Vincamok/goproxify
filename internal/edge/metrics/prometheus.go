@@ -359,13 +359,20 @@ var BackendUp = promauto.NewGaugeVec(prometheus.GaugeOpts{
 // PeerSync expose les métriques de synchronisation inter-passerelles.
 var PeerSync = struct {
 	Duration *prometheus.HistogramVec
+	Up       *prometheus.GaugeVec
 }{
 	Duration: promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "gpx",
 		Subsystem: "peer",
 		Name:      "sync_duration_seconds",
-		Help:      "Durée de synchronisation d'une passerelle pair.",
-		Buckets:   []float64{.01, .05, .1, .25, .5, 1, 2.5, 5},
+		Help:      "Durée de synchronisation d'une passerelle pair (tours menés à terme ; un pair injoignable n'y figure pas).",
+		Buckets:   []float64{.01, .05, .1, .25, .5, 1, 2.5, 5, 10, 20},
+	}, []string{"peer"}),
+	Up: promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "gpx",
+		Subsystem: "peer",
+		Name:      "up",
+		Help:      "1 si le pair a répondu au dernier sondage de synchronisation, 0 sinon.",
 	}, []string{"peer"}),
 }
 

@@ -205,6 +205,36 @@ func TestOverview(t *testing.T) {
 	}
 }
 
+func TestSummaryPeerSyncIsRecent(t *testing.T) {
+	s := NewProxyMetricsSampler(nil, nil)
+	at := func(sumS, count float64) edgeSummary {
+		var e edgeSummary
+		e.Peers.SyncSumS, e.Peers.SyncCount = sumS, count
+		return e
+	}
+	avg := func() float64 {
+		p, ok := s.Summary()["peers"].(map[string]any)
+		if !ok {
+			t.Fatal("peers absent")
+		}
+		return p["avg_sync_ms"].(float64)
+	}
+
+	s.recordEdgeExtras("e1", at(300, 10)) // 30 s de moyenne depuis le démarrage : des timeouts passés
+	s.recordEdgeExtras("e1", at(300.2, 12))
+	if got := avg(); got < 99.9 || got > 100.1 {
+		t.Errorf("avg_sync_ms = %v, attendu 100 (2 dernières synchronisations)", got)
+	}
+	s.recordEdgeExtras("e1", at(300.2, 12)) // pas de nouvelle synchronisation sur cet intervalle
+	if got := avg(); got < 99.9 || got > 100.1 {
+		t.Errorf("sans nouveauté la dernière moyenne reste : %v", got)
+	}
+	s.recordEdgeExtras("e1", at(0.05, 1)) // passerelle redémarrée
+	if got := avg(); got < 49.9 || got > 50.1 {
+		t.Errorf("après redémarrage = %v, attendu 50", got)
+	}
+}
+
 func TestSummaryMergesEdges(t *testing.T) {
 	s := NewProxyMetricsSampler(nil, nil)
 	mk := func(admin, agent, one, multi, waf, peerSum, peerCount float64, p95, conns float64) edgeSummary {

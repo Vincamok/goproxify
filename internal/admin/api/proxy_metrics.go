@@ -74,6 +74,8 @@ type ProxyMetricsSampler struct {
 	bytes    map[string][2]float64 // passerelle → octets entrants / sortants cumulés
 	certs    map[string][]edgeCert
 	summ     map[string]edgeSummary // dernier relevé complet par passerelle
+	// Durée moyenne des dernières synchronisations entre pairs, par passerelle (ms).
+	peerSyncMs map[string]float64
 	evals    []evalPoint            // compteur du moteur de règles (débit de cycles)
 	global   globalWindow
 }
@@ -89,6 +91,8 @@ func NewProxyMetricsSampler(db *sql.DB, log *slog.Logger) *ProxyMetricsSampler {
 		bytes:    map[string][2]float64{},
 		certs:    map[string][]edgeCert{},
 		summ:     map[string]edgeSummary{},
+
+		peerSyncMs: map[string]float64{},
 	}
 }
 
@@ -427,6 +431,18 @@ type globalWindow struct{ RPS, ErrRate float64 }
 // recordEdgeExtras retient les octets cumulés et les certificats d'une passerelle.
 func (s *ProxyMetricsSampler) recordEdgeExtras(edge string, sum edgeSummary) {
 	s.mu.Lock()
+	if prev, ok := s.summ[edge]; ok {
+		dCount := sum.Peers.SyncCount - prev.Peers.SyncCount
+		dSum := sum.Peers.SyncSumS - prev.Peers.SyncSumS
+		if dCount < 0 { // passerelle redémarrée : tout le cumul est neuf
+			dCount, dSum = sum.Peers.SyncCount, sum.Peers.SyncSumS
+		}
+		if dCount > 0 { // une synchronisation toutes les 15 s : sans nouveauté, la dernière moyenne reste
+			s.peerSyncMs[edge] = dSum / dCount * 1000
+		}
+	} else if sum.Peers.SyncCount > 0 {
+		s.peerSyncMs[edge] = sum.Peers.SyncSumS / sum.Peers.SyncCount * 1000
+	}
 	s.bytes[edge] = [2]float64{sum.BytesIn, sum.BytesOut}
 	s.certs[edge] = sum.Certs
 	s.summ[edge] = sum
@@ -445,6 +461,7 @@ func (s *ProxyMetricsSampler) pruneEdges(active map[string]bool) {
 			delete(s.bytes, name)
 			delete(s.certs, name)
 			delete(s.summ, name)
+			delete(s.peerSyncMs, name)
 		}
 	}
 }

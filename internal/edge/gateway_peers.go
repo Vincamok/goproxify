@@ -154,16 +154,40 @@ func (s *Server) syncPeersOnce(ctx context.Context) {
 	if len(peers) == 0 {
 		return
 	}
+	s.peerHealth.retain(peers)
 	for _, p := range peers {
+		if !s.peerHealth.due(p.Name, time.Now()) {
+			continue
+		}
 		s.syncPeer(ctx, p)
 	}
 }
 
+// syncPeer sonde le pair avant de lui demander quoi que ce soit : un pair injoignable coûte un appel de 2 s et
+// une attente croissante, pas la file de huit appels de 8 s. Seuls les tours menés à terme alimentent
+// gpx_peer_sync_duration_seconds.
 func (s *Server) syncPeer(ctx context.Context, p proxy.PeerInfo) {
+	up := probePeer(ctx, p)
+	if up {
+		metrics.PeerSync.Up.WithLabelValues(p.Name).Set(1)
+	} else {
+		metrics.PeerSync.Up.WithLabelValues(p.Name).Set(0)
+		s.log.Debug("gateway: pair injoignable, synchronisation reportée", "peer", p.Name)
+		s.peerHealth.record(p.Name, false, time.Now())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, peerSyncBudget)
+	defer cancel()
 	start := time.Now()
 	defer func() {
 		metrics.PeerSync.Duration.WithLabelValues(p.Name).Observe(time.Since(start).Seconds())
+		s.peerHealth.record(p.Name, ctx.Err() == nil, time.Now())
 	}()
+	s.exchangeWithPeer(ctx, p)
+}
+
+func (s *Server) exchangeWithPeer(ctx context.Context, p proxy.PeerInfo) {
 	client := &http.Client{Timeout: 8 * time.Second}
 
 	// Scores LB

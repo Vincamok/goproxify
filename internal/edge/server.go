@@ -84,6 +84,7 @@ type Server struct {
 	health     *proxy.BackendHealth
 	metrics    *proxy.AgentMetricsStore
 	peers      *proxy.PeerRegistry
+	peerHealth peerHealth
 	nodeStore  *edgeagent.NodeStore
 	tokenStore *edgetokens.Store
 
