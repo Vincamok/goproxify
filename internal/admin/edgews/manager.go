@@ -25,6 +25,7 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/auth"
 	"github.com/vincamok/goproxify/internal/admin/delegation"
 	"github.com/vincamok/goproxify/internal/admin/edgeproxy"
+	"github.com/vincamok/goproxify/internal/admin/gdpr"
 	"github.com/vincamok/goproxify/internal/admin/mailer"
 	"github.com/vincamok/goproxify/internal/admin/ech"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
@@ -1072,6 +1073,26 @@ func (m *Manager) PushUnban(ctx context.Context, ips []string) {
 	}
 }
 
+// PushEraseIP efface une IP des passerelles (access log et historique des bans, droit à l'effacement RGPD).
+// Les passerelles hors ligne la recevront à leur connexion : l'ordre est gardé, IP chiffrée, jusqu'à la
+// fin de la conservation de leurs fichiers.
+func (m *Manager) PushEraseIP(ctx context.Context, ip string) {
+	if key, err := gdpr.EnsureKey(m.db); err != nil {
+		m.log.Warn("edgews/manager: clé RGPD indisponible, effacement non rejoué aux passerelles hors ligne", "err", err)
+	} else if err := gdpr.QueueEdgeErasure(m.db, key, ip); err != nil {
+		m.log.Warn("edgews/manager: file d'effacement", "err", err)
+	}
+	entries := []edgeWS.EraseEntry{{IP: ip}}
+	for _, e := range m.allEntries() {
+		e := e
+		go func() {
+			if err := e.client.PushJSON(edgeWS.TypeEraseIPs, entries); err != nil {
+				m.log.Warn("edgews/manager: push erase", "edge", e.nodeName, "err", err)
+			}
+		}()
+	}
+}
+
 // loadRecentUnbans retourne le dernier déban de chaque IP sur 30 jours, rejoué à la reconnexion d'une
 // passerelle qui aurait manqué l'envoi.
 func (m *Manager) loadRecentUnbans(ctx context.Context) ([]edgeWS.UnbanEntry, error) {
@@ -1473,6 +1494,20 @@ func (m *Manager) pushAllToEntry(ctx context.Context, e *edgeEntry, s Settings) 
 		m.log.Warn("edgews/manager: lecture error pages", "edge", e.nodeName, "err", err)
 	} else if err := e.client.PushJSON(edgeWS.TypePushErrorPages, tpls); err != nil {
 		m.log.Warn("edgews/manager: push error pages", "edge", e.nodeName, "err", err)
+	}
+	// Effacements RGPD manqués pendant la déconnexion.
+	if key, err := gdpr.EnsureKey(m.db); err == nil {
+		if ips, err := gdpr.PendingEdgeErasures(m.db, key); err != nil {
+			m.log.Warn("edgews/manager: lecture effacements", "edge", e.nodeName, "err", err)
+		} else if len(ips) > 0 {
+			erasures := make([]edgeWS.EraseEntry, 0, len(ips))
+			for _, ip := range ips {
+				erasures = append(erasures, edgeWS.EraseEntry{IP: ip})
+			}
+			if err := e.client.PushJSON(edgeWS.TypeEraseIPs, erasures); err != nil {
+				m.log.Warn("edgews/manager: push erase", "edge", e.nodeName, "err", err)
+			}
+		}
 	}
 	// Débans avant full_sync : les bans qu'il contient, même sur une IP débannie, sont reposés ensuite.
 	if unbans, err := m.loadRecentUnbans(ctx); err != nil {

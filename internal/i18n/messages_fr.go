@@ -80,6 +80,7 @@ var messagesFR = map[string]string{
 	"api.err.missing_ip":            "adresse IP requise",
 	"api.err.invalid_ip":            "adresse IP invalide",
 	"api.err.missing_user":          "identifiant utilisateur requis",
+	"api.err.missing_subject":       "exactement un des champs ip ou user_id est requis",
 	"api.err.ip_mode_conflict":      "anonymisation et pseudonymisation des IP ne peuvent pas être actives en même temps",
 	"api.err.gdpr_reveal_forbidden": "scope insuffisant : gdpr:reveal",
 	"api.err.fail2ban":              "fail2ban non initialisé",

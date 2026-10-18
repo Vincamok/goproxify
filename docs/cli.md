@@ -401,10 +401,16 @@ goproxify logs delete
   -by-ip <ip> | -by-user <user_id>
   [-reason "<motif>"]
   [-admin-url …] [-token …]
+
+goproxify logs subject-export
+  -by-ip <ip> | -by-user <user_id>
+  [-reason "<motif>"] [-output <fichier>]
+  [-admin-url …] [-token …]
 ```
 
 - `reveal-ip` affiche l'IP réelle d'une entrée pseudonymisée (RGPD) ; réservé au superadmin (scope `gdpr:reveal` avec un token API). Fonctionne aussi après la désactivation de la pseudonymisation, tant que l'entrée est conservée.
 - `delete` efface les logs d'une IP (entrées pseudonymisées comprises) ou d'un utilisateur (droit à l'effacement, Art. 17) et affiche le nombre d'entrées supprimées ; avec `-by-ip`, supprime aussi les bans de l'IP, leur historique et son entrée du cache GeoIP (et lève ses bans sur les passerelles) ; rôle admin, scope `logs:write` avec un token API. Le journal d'audit garde le motif et le nombre d'entrées, pas l'IP en clair.
+- `subject-export` produit le fichier JSON du droit d'accès et de portabilité (RGPD Art. 15 et 20) : pour une IP, ses logs (pseudonymisés compris), bans, historique des bans, position GeoIP et entrées d'audit ; pour un compte, son profil (jamais le mot de passe), ses équipes, ses logs et ses entrées d'audit. Sans `-output`, le JSON va sur la sortie standard. L'IP voyage dans le corps de la requête ; l'audit garde le motif et les compteurs, pas l'IP. Rôle admin, scope `logs:write` avec un token API.
 
 Exemples :
 
@@ -414,6 +420,7 @@ goproxify logs list -ip 1.2.3.4 -from 2026-09-01T00:00:00Z
 goproxify logs export -format json -output access.json
 goproxify logs reveal-ip --entry-id 4821 --reason "Réquisition judiciaire n° 2026/1234"
 goproxify logs delete --by-ip 203.0.113.42 --reason "Demande RGPD Art. 17"
+goproxify logs subject-export --by-ip 203.0.113.42 --reason "Demande RGPD Art. 15" --output export.json
 ```
 
 ---

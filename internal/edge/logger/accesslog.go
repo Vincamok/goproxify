@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -69,8 +70,10 @@ type AccessLogger struct {
 	ch     chan accessEntry
 	shipCh chan accessEntry
 
-	mu  sync.Mutex
-	enc *json.Encoder
+	mu     sync.Mutex
+	enc    *json.Encoder
+	path   string    // fichier courant ("" : stdout)
+	closer io.Closer // writer du fichier courant, fermé avant réécriture
 
 	remoteMu    sync.RWMutex
 	remoteURL   string
@@ -138,26 +141,13 @@ type ShipEntry struct {
 }
 
 func NewAccessLogger(path string) *AccessLogger {
-	var enc *json.Encoder
-	if path != "" {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err == nil {
-			w := &lumberjack.Logger{
-				Filename:   path,
-				MaxSize:    200,
-				MaxBackups: 7,
-				MaxAge:     90,
-				Compress:   true,
-			}
-			enc = json.NewEncoder(w)
-		}
-	}
-	if enc == nil {
-		enc = json.NewEncoder(os.Stdout)
-	}
+	enc, closer, path := openAccessWriter(path)
 	al := &AccessLogger{
 		ch:     make(chan accessEntry, 8192),
 		shipCh: make(chan accessEntry, 8192),
 		enc:    enc,
+		path:   path,
+		closer: closer,
 	}
 	go al.drain()
 	go al.ship()
@@ -368,7 +358,23 @@ func (a *AccessLogger) SetRemote(adminURL, token string) {
 // Reopen recrée le writer vers un nouveau chemin (hot-reload).
 // Si path est vide, bascule vers stdout.
 func (a *AccessLogger) Reopen(path string) {
-	var enc *json.Encoder
+	enc, closer, path := openAccessWriter(path)
+	a.mu.Lock()
+	if a.closer != nil {
+		a.closer.Close() //nolint:errcheck
+	}
+	a.enc, a.closer, a.path = enc, closer, path
+	a.mu.Unlock()
+}
+
+// reopenLocked rouvre le fichier courant ; a.mu doit être tenu.
+func (a *AccessLogger) reopenLocked() {
+	a.enc, a.closer, a.path = openAccessWriter(a.path)
+}
+
+// openAccessWriter ouvre le fichier d'access log avec rotation ; sans chemin, ou si le dossier
+// est inutilisable, il écrit sur stdout et retourne un chemin vide.
+func openAccessWriter(path string) (*json.Encoder, io.Closer, string) {
 	if path != "" {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err == nil {
 			w := &lumberjack.Logger{
@@ -378,15 +384,10 @@ func (a *AccessLogger) Reopen(path string) {
 				MaxAge:     90,
 				Compress:   true,
 			}
-			enc = json.NewEncoder(w)
+			return json.NewEncoder(w), w, path
 		}
 	}
-	if enc == nil {
-		enc = json.NewEncoder(os.Stdout)
-	}
-	a.mu.Lock()
-	a.enc = enc
-	a.mu.Unlock()
+	return json.NewEncoder(os.Stdout), nil, ""
 }
 
 // Middleware wraps un http.Handler pour loguer chaque requête.

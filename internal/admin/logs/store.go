@@ -21,12 +21,15 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/gdpr"
 )
 
+// edgeLogMaxAgeDays est la conservation maximale des fichiers d'access log d'une passerelle (rotation lumberjack).
+const edgeLogMaxAgeDays = 90
+
 // Durées de rétention par défaut — modifiables via settings DB (clés logs.retention_access_days,
 // logs.retention_system_days, logs.retention_ban_days).
 const (
-	DefaultRetentionAccessDays = 365 // logs HTTP (RGPD : 1 an max recommandé)
+	DefaultRetentionAccessDays = 90  // logs HTTP (RGPD : durée courte par défaut, CNIL : 13 mois au plus)
 	DefaultRetentionSystemDays = 90  // logs système/agent
-	DefaultRetentionBanDays    = 730 // entrées de ban (2 ans)
+	DefaultRetentionBanDays    = 365 // historique et bans expirés (1 an)
 )
 
 // Entry représente une ligne de log.
@@ -757,6 +760,7 @@ func (s *Store) purgeIPTraces() {
 		time.Now().UTC().AddDate(0, 0, -banDays).Format(time.RFC3339))
 	s.db.Exec(`DELETE FROM geoip_cache WHERE cached_at < datetime('now', ?)`, //nolint:errcheck
 		fmt.Sprintf("-%d days", accessDays))
+	gdpr.PurgeEdgeErasures(s.db, edgeLogMaxAgeDays) //nolint:errcheck
 }
 
 // IPErasure détaille ce qu'un effacement par IP a supprimé.
@@ -765,6 +769,9 @@ type IPErasure struct {
 	BanHistory int64 `json:"ban_history_deleted"`
 	Bans       int64 `json:"bans_deleted"`
 	GeoCache   int64 `json:"geoip_cache_deleted"`
+	// AuditIP compte les entrées d'audit dont l'adresse a été vidée : l'entrée (qui a fait quoi, quand)
+	// reste, seule l'IP de l'acteur disparaît.
+	AuditIP int64 `json:"audit_ip_cleared"`
 }
 
 // EraseIP supprime d'une IP tout ce que l'Admin en garde : logs (pseudonymisés compris), bans,
@@ -792,7 +799,12 @@ func (s *Store) EraseIP(ip string) (IPErasure, error) {
 			return out, err
 		}
 	}
-	return out, nil
+	res, err := s.db.Exec(`UPDATE audit_log SET ip = '' WHERE ip IN (?, ?)`, ip, canon)
+	if err != nil {
+		return out, err
+	}
+	out.AuditIP, err = res.RowsAffected()
+	return out, err
 }
 
 // DeleteByIP supprime tous les logs d'une IP (droit à l'effacement RGPD), entrées

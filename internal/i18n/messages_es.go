@@ -79,6 +79,7 @@ var messagesES = map[string]string{
 	"api.err.missing_ip":            "la dirección IP es obligatoria",
 	"api.err.invalid_ip":            "dirección IP no válida",
 	"api.err.missing_user":          "el identificador de usuario es obligatorio",
+	"api.err.missing_subject":       "se requiere exactamente uno de ip o user_id",
 	"api.err.ip_mode_conflict":      "la anonimización y la seudonimización de IP no pueden estar activas a la vez",
 	"api.err.gdpr_reveal_forbidden": "alcance insuficiente: gdpr:reveal",
 	"api.err.fail2ban":              "fail2ban no inicializado",

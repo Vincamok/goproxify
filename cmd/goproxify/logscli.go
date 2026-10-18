@@ -4,6 +4,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -164,6 +165,45 @@ func runLogs() {
 				result.Bans, result.BanHistory, result.GeoCache)
 		}
 
+	case "subject-export":
+		args := parseFlags(os.Args[3:])
+		client, err := newAdminClient(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+			os.Exit(1)
+		}
+		ip := flagValue(args, "-by-ip", "")
+		user := flagValue(args, "-by-user", "")
+		if (ip == "") == (user == "") {
+			fmt.Fprintln(os.Stderr, "usage: goproxify logs subject-export --by-ip <ip> | --by-user <user_id> [--reason \"motif\"] [--output fichier.json]")
+			os.Exit(1)
+		}
+		body := map[string]string{"ip": ip, "user_id": user}
+		if ip == "" {
+			delete(body, "ip")
+		} else {
+			delete(body, "user_id")
+		}
+		if reason := flagValue(args, "-reason", ""); reason != "" {
+			body["reason"] = reason
+		}
+		payload, _ := json.Marshal(body)
+		data, _, _, err := client.DoRaw("POST", "/api/v1/logs/subject-export", payload, "application/json", 200)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "logs subject-export : %v\n", err)
+			os.Exit(1)
+		}
+		output := flagValue(args, "-output", "")
+		if output == "" {
+			os.Stdout.Write(data) //nolint:errcheck
+			return
+		}
+		if err := os.WriteFile(output, data, 0o600); err != nil {
+			fmt.Fprintf(os.Stderr, "écriture fichier : %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Export RGPD écrit : %s (%d octets)\n", output, len(data))
+
 	case "help":
 		fmt.Print(`Usage: goproxify logs <sous-commande> [options]
 
@@ -172,6 +212,7 @@ Sous-commandes :
   export     Exporte les logs en CSV ou JSON
   reveal-ip  Révèle l'IP réelle d'une entrée pseudonymisée (scope gdpr:reveal requis)
   delete     Efface les logs d'une IP ou d'un utilisateur (RGPD Art. 17, admin, scope logs:write)
+  subject-export  Exporte les données d'une IP ou d'un compte (RGPD Art. 15 et 20, admin, scope logs:write)
 
 goproxify logs list
   [-level debug|info|warn|error]  Niveau de log
@@ -202,6 +243,14 @@ goproxify logs reveal-ip
 goproxify logs delete
   --by-ip <ip> | --by-user <user_id>  Entrées à effacer (entrées pseudonymisées comprises)
   [--reason "<motif>"]                Motif inscrit au journal d'audit
+  [-admin-url …] [-token …]
+  Rôle admin ; avec un token API, scope logs:write.
+  Une IP efface aussi ses bans, leur historique, son entrée GeoIP et ses lignes d'access log sur les passerelles.
+
+goproxify logs subject-export
+  --by-ip <ip> | --by-user <user_id>  Données à exporter (JSON : logs, bans, GeoIP, audit, profil du compte)
+  [--reason "<motif>"]                Motif inscrit au journal d'audit
+  [--output <fichier>]                Fichier de sortie (défaut : sortie standard)
   [-admin-url …] [-token …]
   Rôle admin ; avec un token API, scope logs:write.
 `)

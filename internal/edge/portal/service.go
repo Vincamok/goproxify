@@ -424,7 +424,7 @@ func (s *Service) reapLoop(stop <-chan struct{}) {
 		case <-tk.C:
 			ticks++
 			if ticks%120 == 0 {
-				if days := s.Policy().RecordRetentionDays; days > 0 {
+				if days := s.Policy().EffectiveRecordRetentionDays(); days > 0 {
 					if n := s.recordingStore().Purge(days, time.Now()); n > 0 {
 						s.log.Info("portal: enregistrements expirés supprimés", "count", n)
 					}

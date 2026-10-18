@@ -21,7 +21,7 @@ type Policy struct {
 	IPAllow             []string `json:"ip_allow,omitempty"`   // IP ou CIDR ; vide = pas de restriction
 	IdleTimeoutMin      int      `json:"idle_timeout_min,omitempty"`
 	RecordSessions      bool     `json:"record_sessions,omitempty"`       // enregistre la sortie des terminaux
-	RecordRetentionDays int      `json:"record_retention_days,omitempty"` // 0 = conservation illimitée
+	RecordRetentionDays int      `json:"record_retention_days,omitempty"` // 0 = 90 jours (défaut), -1 = conservation illimitée
 }
 
 func parseHM(s string) (int, error) {
@@ -65,8 +65,8 @@ func (p Policy) Validate() error {
 			return err
 		}
 	}
-	if p.RecordRetentionDays < 0 || p.RecordRetentionDays > 3650 {
-		return fmt.Errorf("conservation entre 0 et 3650 jours")
+	if p.RecordRetentionDays < -1 || p.RecordRetentionDays > 3650 {
+		return fmt.Errorf("conservation entre 1 et 3650 jours (0 : 90 jours, -1 : illimitée)")
 	}
 	if p.IdleTimeoutMin < 0 || p.IdleTimeoutMin > 1440 {
 		return fmt.Errorf("inactivité entre 0 et 1440 minutes")
@@ -182,4 +182,22 @@ func (h *HTTPServer) policyBlocks(w http.ResponseWriter, r *http.Request) bool {
 	h.emitAudit(AuditEvent{Actor: clientIP(r).String(), Success: false, Detail: "policy: " + why})
 	http.Error(w, why, http.StatusForbidden)
 	return true
+}
+
+// DefaultRecordRetentionDays est la conservation des enregistrements quand la politique n'en fixe pas :
+// des sorties de terminal peuvent contenir des données personnelles, elles ne restent pas sans limite
+// par omission (RGPD, Art. 5-1-e).
+const DefaultRecordRetentionDays = 90
+
+// EffectiveRecordRetentionDays retourne la conservation appliquée aux enregistrements, en jours ;
+// 0 : conservation illimitée, demandée explicitement par -1.
+func (p Policy) EffectiveRecordRetentionDays() int {
+	switch {
+	case p.RecordRetentionDays < 0:
+		return 0
+	case p.RecordRetentionDays == 0:
+		return DefaultRecordRetentionDays
+	default:
+		return p.RecordRetentionDays
+	}
 }

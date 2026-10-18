@@ -484,6 +484,12 @@ func migrate(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_logs_ip_hmac ON logs (ip_hmac) WHERE ip_hmac != ''`,
 		// Clé de chiffrement RGPD (32 bytes random base64) — générée au premier démarrage.
 		`CREATE TABLE IF NOT EXISTS gdpr_keys (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')`,
+		// Effacements d'IP à rejouer aux passerelles à leur connexion (IP chiffrée par la clé RGPD, purgée avec la rétention des logs).
+		`CREATE TABLE IF NOT EXISTS edge_erasure_queue (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			ip_enc     TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
 		// node_id : identifiant stable du nœud (edgeID/token), insensible à un
 		// renommage de node_name — évite qu'un re-pairing (nouveau token_id
 		// après régénération de edge.json) ne rende l'historique des logs

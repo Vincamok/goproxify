@@ -79,6 +79,7 @@ var messagesDE = map[string]string{
 	"api.err.missing_ip":            "IP-Adresse ist erforderlich",
 	"api.err.invalid_ip":            "ungültige IP-Adresse",
 	"api.err.missing_user":          "Benutzer-ID ist erforderlich",
+	"api.err.missing_subject":       "genau eines von ip oder user_id ist erforderlich",
 	"api.err.ip_mode_conflict":      "IP-Anonymisierung und -Pseudonymisierung können nicht gleichzeitig aktiv sein",
 	"api.err.gdpr_reveal_forbidden": "unzureichender Scope: gdpr:reveal",
 	"api.err.fail2ban":              "fail2ban nicht initialisiert",

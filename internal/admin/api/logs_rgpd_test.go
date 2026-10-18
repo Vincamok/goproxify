@@ -170,9 +170,10 @@ func TestDeleteByIPDoesNotRecordTheErasedIP(t *testing.T) {
 
 func TestDeleteByIPErasesBansHistoryAndGeoCacheAndLiftsGatewayBans(t *testing.T) {
 	f := newRGPDFixture(t)
-	var lifted []string
+	var lifted, erased []string
 	f.h = adminauth.RequireJWT("secret")(&LogsHandler{Log: slog.Default(), Store: f.store, DB: f.db,
-		OnUnban: func(ip string) { lifted = append(lifted, ip) }})
+		OnUnban:   func(ip string) { lifted = append(lifted, ip) },
+		OnEraseIP: func(ip string) { erased = append(erased, ip) }})
 	for _, q := range []string{
 		`INSERT INTO security_bans (id, ip) VALUES ('b1', '203.0.113.42')`,
 		`INSERT INTO security_bans (id, ip) VALUES ('b2', '198.51.100.9')`,
@@ -200,6 +201,9 @@ func TestDeleteByIPErasesBansHistoryAndGeoCacheAndLiftsGatewayBans(t *testing.T)
 	}
 	if len(lifted) != 1 || lifted[0] != "203.0.113.42" {
 		t.Fatalf("OnUnban appelé avec %v", lifted)
+	}
+	if len(erased) != 1 || erased[0] != "203.0.113.42" {
+		t.Fatalf("OnEraseIP appelé avec %v", erased)
 	}
 	var left int
 	f.db.QueryRow(`SELECT (SELECT COUNT(*) FROM security_bans WHERE ip = '203.0.113.42')
@@ -236,5 +240,108 @@ func TestLogsSettingsBanRetention(t *testing.T) {
 	json.Unmarshal(rec.Body.Bytes(), &out) //nolint:errcheck
 	if out.Ban != 180 || f.store.BanRetentionDays() != 180 {
 		t.Fatalf("retention_ban_days = %d (store %d), attendu 180", out.Ban, f.store.BanRetentionDays())
+	}
+}
+
+func TestSubjectExportByIPAndUser(t *testing.T) {
+	f := newRGPDFixture(t)
+	f.store.SetPseudonymize(true)
+	f.store.Write(logs.Entry{Status: 200, Domain: "a.test", IP: "203.0.113.0", RealIP: "203.0.113.42", UserID: "a"})
+	f.store.Write(logs.Entry{Status: 200, Domain: "b.test", IP: "198.51.100.0", RealIP: "198.51.100.9"})
+	for _, q := range []string{
+		`INSERT INTO security_bans (id, ip, reason, source) VALUES ('b1', '203.0.113.42', 'scan', 'fail2ban')`,
+		`INSERT INTO security_ban_history (ip, action, source) VALUES ('203.0.113.42', 'banned', 'fail2ban')`,
+		`INSERT INTO geoip_cache (ip, country_code, country_name, city) VALUES ('203.0.113.42', 'FR', 'France', 'Paris')`,
+		`INSERT INTO audit_log (actor, action, resource, ip, user_id) VALUES ('a@t.local', 'login', 'session', '203.0.113.42', 'a')`,
+		`INSERT INTO teams (id, name) VALUES ('t1', 'ops')`,
+		`INSERT INTO team_members (team_id, user_id) VALUES ('t1', 'a')`,
+	} {
+		if _, err := f.db.Exec(q); err != nil {
+			t.Fatalf("%s : %v", q, err)
+		}
+	}
+
+	if rec := f.do(http.MethodPost, "/api/v1/logs/subject-export", "a", map[string]string{}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("sans sujet : status %d, attendu 400", rec.Code)
+	}
+	if rec := f.do(http.MethodPost, "/api/v1/logs/subject-export", "a", map[string]string{"ip": "203.0.113.42", "user_id": "a"}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("deux sujets : status %d, attendu 400", rec.Code)
+	}
+	if rec := f.do(http.MethodPost, "/api/v1/logs/subject-export", "a", map[string]string{"ip": "pas-une-ip"}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("IP invalide : status %d, attendu 400", rec.Code)
+	}
+
+	rec := f.do(http.MethodPost, "/api/v1/logs/subject-export", "a", map[string]string{"ip": "203.0.113.42", "reason": "demande de la personne"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export IP : status %d %s", rec.Code, rec.Body)
+	}
+	if !bytes.Contains([]byte(rec.Header().Get("Content-Disposition")), []byte("attachment")) {
+		t.Errorf("Content-Disposition = %q", rec.Header().Get("Content-Disposition"))
+	}
+	var ipOut struct {
+		IP   string
+		Logs []struct {
+			IP     string
+			Domain string
+		}
+		Bans       []struct{ Reason string }
+		BanHistory []struct{ Action string } `json:"ban_history"`
+		GeoIP      struct{ City string }     `json:"geoip"`
+		Audit      []struct{ Action string }
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &ipOut); err != nil {
+		t.Fatal(err)
+	}
+	if len(ipOut.Logs) != 1 || ipOut.Logs[0].Domain != "a.test" || ipOut.Logs[0].IP != "203.0.113.42" {
+		t.Fatalf("logs de l'IP : %+v (les entrées pseudonymisées doivent être retrouvées, les autres IP exclues)", ipOut.Logs)
+	}
+	if len(ipOut.Bans) != 1 || len(ipOut.BanHistory) != 1 || ipOut.GeoIP.City != "Paris" || len(ipOut.Audit) != 1 {
+		t.Fatalf("export IP incomplet : %s", rec.Body)
+	}
+
+	rec = f.do(http.MethodPost, "/api/v1/logs/subject-export", "a", map[string]string{"user_id": "a"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export user : status %d %s", rec.Code, rec.Body)
+	}
+	var userOut struct {
+		Account struct {
+			Email string
+			Teams []string
+		}
+		Logs  []struct{ Domain string }
+		Audit []struct{ Action string }
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &userOut); err != nil {
+		t.Fatal(err)
+	}
+	if userOut.Account.Email != "a@t.local" || len(userOut.Account.Teams) != 1 || len(userOut.Logs) != 1 || len(userOut.Audit) < 2 {
+		t.Fatalf("export compte (attendu : profil, 1 log, au moins l'audit de connexion et celui de l'export IP) : %s", rec.Body)
+	}
+	if bytes.Contains(rec.Body.Bytes(), []byte("password")) {
+		t.Errorf("l'export d'un compte ne doit pas contenir de mot de passe : %s", rec.Body)
+	}
+
+	if n := f.auditCount("rgpd_export_ip"); n != 1 {
+		t.Errorf("audit rgpd_export_ip : %d, attendu 1", n)
+	}
+	if n := f.auditCount("rgpd_export_user"); n != 1 {
+		t.Errorf("audit rgpd_export_user : %d, attendu 1", n)
+	}
+	var leaks int
+	f.db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action LIKE 'rgpd_export%' AND detail LIKE '%203.0.113.42%'`).Scan(&leaks) //nolint:errcheck
+	if leaks != 0 {
+		t.Errorf("l'IP exportée apparaît en clair dans l'audit de l'export")
+	}
+
+	// L'effacement vide aussi l'IP des entrées d'audit sans supprimer l'entrée.
+	if rec := f.do(http.MethodDelete, "/api/v1/logs/by-ip/203.0.113.42", "a", nil); rec.Code != http.StatusOK {
+		t.Fatalf("by-ip : %d %s", rec.Code, rec.Body)
+	}
+	var auditIP string
+	f.db.QueryRow(`SELECT ip FROM audit_log WHERE action = 'login'`).Scan(&auditIP) //nolint:errcheck
+	var rows int
+	f.db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'login'`).Scan(&rows) //nolint:errcheck
+	if auditIP != "" || rows != 1 {
+		t.Errorf("audit après effacement : ip=%q lignes=%d, attendu ip vide et ligne conservée", auditIP, rows)
 	}
 }

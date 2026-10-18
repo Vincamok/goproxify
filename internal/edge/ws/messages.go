@@ -30,6 +30,7 @@ const (
 	TypePushIPProfiles      = "push_ip_profiles"
 	TypePushBans            = "push_bans"
 	TypeUnbanIPs            = "unban_ips" // lève les bans d'IPs débannies depuis l'Admin, toutes sources confondues (payload : []UnbanEntry)
+	TypeEraseIPs            = "erase_ips" // efface d'une passerelle les traces d'IPs (droit à l'effacement RGPD) : fichiers d'access log et historique des bans (payload : []EraseEntry)
 	TypePushSettings        = "push_settings"
 	TypePushClusterPeers    = "push_cluster_peers"
 	TypePushGatewayPeers    = "push_gateway_peers"
@@ -148,6 +149,12 @@ type F2BBanPayload struct {
 type UnbanEntry struct {
 	IP string     `json:"ip"`
 	At *time.Time `json:"at,omitempty"`
+}
+
+// EraseEntry est une IP à effacer de la passerelle. L'ordre est rejoué à chaque connexion pendant la
+// durée de conservation des fichiers : effacer une IP absente est sans effet.
+type EraseEntry struct {
+	IP string `json:"ip"`
 }
 
 // PluginBanSourcePrefix préfixe la source du ban d'un plugin de détection : "plugin:coraza".

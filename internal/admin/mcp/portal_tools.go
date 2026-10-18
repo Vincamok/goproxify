@@ -363,7 +363,7 @@ func portalTools() []map[string]any {
 				opt("ip_allow", "array", "IP ou CIDR autorisés ; vide = tous"),
 				opt("idle_timeout_min", "number", "Fermeture après N minutes sans saisie ; 0 = jamais"),
 				opt("record_sessions", "boolean", "Enregistrer la sortie des terminaux (rejeu dans l'admin)"),
-				opt("record_retention_days", "number", "Jours de conservation des enregistrements ; 0 = illimitée"),
+				opt("record_retention_days", "number", "Jours de conservation des enregistrements ; 0 = 90 jours (défaut), -1 = illimitée"),
 			),
 		},
 		{

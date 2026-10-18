@@ -5,6 +5,7 @@ package analytics
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -55,5 +56,12 @@ func TestGeoResolverLocalDB(t *testing.T) {
 	}
 	if r, ok := get("203.0.113.5"); !ok || r.cc != "XX" {
 		t.Errorf("IP de documentation : %+v (ok=%v)", r, ok)
+	}
+}
+
+func TestLookupWithoutLocalDBRefusesIPAPIUnlessAllowed(t *testing.T) {
+	g := &GeoResolver{}
+	if _, err := g.lookup(context.Background(), []string{"203.0.113.1"}); !errors.Is(err, ErrExternalLookupDisabled) {
+		t.Fatalf("err = %v, attendu ErrExternalLookupDisabled (aucune IP ne doit sortir)", err)
 	}
 }

@@ -1549,7 +1549,7 @@ Groupes de destinations (machines du catalogue) par passerelle : une entrée du 
 
 ### Politique d'accès — `get_portal_policy`, `set_portal_policy`
 
-`get_portal_policy` (`edge`, scope `portal:read`) lit la politique ; `set_portal_policy` (`edge` + `hours_enabled`, `days`, `start_time`, `end_time`, `timezone`, `ip_allow`, `idle_timeout_min`, `record_sessions`, `record_retention_days`, scope `portal:write`) la remplace en entier : un champ absent revient à « pas de restriction ».
+`get_portal_policy` (`edge`, scope `portal:read`) lit la politique ; `set_portal_policy` (`edge` + `hours_enabled`, `days`, `start_time`, `end_time`, `timezone`, `ip_allow`, `idle_timeout_min`, `record_sessions`, `record_retention_days` : 0 = 90 jours, -1 = illimitée, scope `portal:write`) la remplace en entier : un champ absent revient à « pas de restriction ».
 
 ### Enregistrements — `list_portal_recordings`, `delete_portal_recording`
 

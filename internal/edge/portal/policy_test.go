@@ -84,3 +84,20 @@ func TestClientIPTrustsProxyOnlyFromLoopback(t *testing.T) {
 		t.Fatalf("pair distant: en-tête ignoré attendu, reçu %v", got)
 	}
 }
+
+func TestRecordRetentionDefaultsToNinetyDaysAndUnlimitedIsExplicit(t *testing.T) {
+	cases := []struct{ in, want int }{{0, 90}, {30, 30}, {3650, 3650}, {-1, 0}}
+	for _, c := range cases {
+		if got := (Policy{RecordRetentionDays: c.in}).EffectiveRecordRetentionDays(); got != c.want {
+			t.Errorf("record_retention_days=%d : %d jours appliqués, attendu %d (0 = illimitée)", c.in, got, c.want)
+		}
+		if err := (Policy{RecordRetentionDays: c.in}).Validate(); err != nil {
+			t.Errorf("record_retention_days=%d refusé : %v", c.in, err)
+		}
+	}
+	for _, bad := range []int{-2, 3651} {
+		if err := (Policy{RecordRetentionDays: bad}).Validate(); err == nil {
+			t.Errorf("record_retention_days=%d accepté", bad)
+		}
+	}
+}

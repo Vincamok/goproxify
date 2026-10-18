@@ -1,6 +1,6 @@
 # GoProxify — RGPD / GDPR Compliance Guide
 
-> This document applies to operators running GoProxify. GoProxify is a **self-hosted** tool: the operator is the data controller for all personal data processed through it.
+> This document applies to operators running GoProxify. GoProxify is a **self-hosted** tool: the operator is the data controller for all personal data processed through it. Register of processing, impact assessment, privacy notice and data-subject procedures: [rgpd-conformite.md](rgpd-conformite.md).
 
 ---
 
@@ -8,12 +8,12 @@
 
 | Data | Component | Storage | Default retention |
 |---|---|---|---|
-| Client IP address | Edge (access log) | Log file on Edge + forwarded to Admin SQLite | 365 days |
-| HTTP method, path, host, status, latency | Edge (access log) | Log file on Edge + Admin SQLite | 365 days |
-| User-Agent header | Edge (access log) | Log file on Edge + Admin SQLite | 365 days |
-| Referrer header | Edge (access log) | Log file on Edge + Admin SQLite | 365 days |
-| WAF rule matches (categories only, no payload) | Passerelle (access log) | Admin SQLite | 365 days |
-| Banned IP + ban reason + expiry, ban history | Passerelle / Admin | Admin SQLite (`security_bans`, `security_ban_history`, IP in clear) | History and expired bans: 730 days (`retention_ban_days`); an active ban is kept until it expires |
+| Client IP address | Edge (access log) | Log file on Edge + forwarded to Admin SQLite | 90 days |
+| HTTP method, path, host, status, latency | Edge (access log) | Log file on Edge + Admin SQLite | 90 days |
+| User-Agent header | Edge (access log) | Log file on Edge + Admin SQLite | 90 days |
+| Referrer header | Edge (access log) | Log file on Edge + Admin SQLite | 90 days |
+| WAF rule matches (categories only, no payload) | Passerelle (access log) | Admin SQLite | 90 days |
+| Banned IP + ban reason + expiry, ban history | Passerelle / Admin | Admin SQLite (`security_bans`, `security_ban_history`, IP in clear) | History and expired bans: 365 days (`retention_ban_days`); an active ban is kept until it expires |
 | GeoIP cache of observed IPs (country, city, coordinates) | Admin | Admin SQLite (`geoip_cache`, IP in clear) | Same as access logs (`retention_access_days`) |
 | Admin user email + bcrypt password hash | Admin | Admin SQLite | Until deleted |
 | Admin user session JWT | Admin | In-memory + cookie (browser session) | Until logout or expiry |
@@ -69,9 +69,9 @@ PUT /api/v1/logs/settings
 
 | Setting | Default | GDPR recommendation |
 |---|---|---|
-| `retention_access_days` | 365 | ≤ 90 days (or 13 months max, CNIL) — also applies to the GeoIP cache |
+| `retention_access_days` | 90 | 90 days is already the default; 13 months is the CNIL maximum — also applies to the GeoIP cache |
 | `retention_system_days` | 90 | 90 days |
-| `retention_ban_days` | 730 | Legitimate interest — adjust to policy. Applies to the ban history and to expired bans (API only, no field in the UI yet) |
+| `retention_ban_days` | 365 | Legitimate interest — adjust to policy. Applies to the ban history and to expired bans (API only, no field in the UI yet) |
 
 Older entries are purged automatically every night: access and system logs, the ban history, bans expired for longer than `retention_ban_days`, and GeoIP cache entries older than `retention_access_days`. A ban that is still active (or permanent) is never purged.
 
@@ -118,12 +118,32 @@ Removes all log entries of the given IP, **including pseudonymised entries**: ea
 The erasure also covers what the Admin keeps about that IP **outside the logs**, all stored in clear: the bans (`security_bans`), the ban history (`security_ban_history`) and the GeoIP cache entry (`geoip_cache`: country, city, coordinates). The response counts each one:
 
 ```json
-{ "deleted": 12, "bans_deleted": 1, "ban_history_deleted": 3, "geoip_cache_deleted": 1, "ip": "203.0.113.42" }
+{ "deleted": 12, "bans_deleted": 1, "ban_history_deleted": 3, "geoip_cache_deleted": 1, "audit_ip_cleared": 2, "ip": "203.0.113.42" }
 ```
 
-Deleting a ban also lifts it on the gateways, like an unban, including bans a gateway set itself. The IP is matched whatever its notation (IPv6).
+Deleting a ban also lifts it on the gateways, like an unban, including bans a gateway set itself. The IP is matched whatever its notation (IPv6). `audit_ip_cleared` counts the audit entries whose address was blanked: the entry (who did what, when) stays, only the actor's IP goes.
 
-**Not covered by the erasure** (to handle separately if the request requires it): the audit log (it holds the addresses of administrators), the access log files kept on the gateways when anonymisation is off, and the state local to each gateway (Ephor, local Fail2Ban). Erasing the history of an IP also means a gateway that missed its unban can no longer be replayed it.
+**On the gateways** (Admin `0.163.0`, Edge `0.73.0`): the Admin also sends an `erase_ips` order. Each gateway rewrites its access log file and its rotations (including the compressed ones) without the lines of that IP, and deletes the IP from its local ban history. A gateway that is offline when you erase receives the order when it reconnects: the Admin keeps it in `edge_erasure_queue`, **the IP encrypted with the GDPR key**, for 90 days (the longest a gateway keeps its log files), then drops it. While a gateway rewrites its file, its writes are paused for a moment.
+
+**Not covered by the erasure** (see [rgpd-conformite.md §4](rgpd-conformite.md#4-exercer-les-droits-des-personnes) for the full list): backups already taken, the in-memory state of the gateways' Fail2Ban and Ephor (gone at restart or expiry), the unban records of the gateways (`unbans`: they stop a lifted ban from being set again), and third-party services (CrowdSec, alert channels). Erasing the history of an IP also means a gateway that missed its unban can no longer be replayed it.
+
+### Right of access and portability (Articles 15 and 20)
+
+```http
+POST /api/v1/logs/subject-export
+{ "ip": "203.0.113.42", "reason": "GDPR Art.15 request" }
+```
+
+or `{ "user_id": "…" }` (exactly one of the two). Admin only (`logs:write` for an API token). The IP travels in the body, not in the URL. The answer is a JSON file to download with everything the Admin keeps:
+
+- for an IP: the log entries (pseudonymised ones are found through their fingerprint and show the IP you asked for, never decrypted), the bans, the ban history, the GeoIP position and the audit entries carrying that address;
+- for an account: the profile (e-mail, role, teams, creation date — never the password hash), the log entries attributed to it and its audit entries.
+
+Logs are capped at 100 000 lines (`logs_truncated`). The gateways' access log files are not part of the export. The export is audited (`rgpd_export_ip`, `rgpd_export_user`) with the reason and the counts, not the IP in clear.
+
+```bash
+goproxify logs subject-export --by-ip 203.0.113.42 --reason "GDPR Art.15 request" --output export.json
+```
 
 `{ip}` must be a valid IP address (`400` otherwise). An audit entry (`rgpd_erasure_ip`) and a system log are created with the reason and the number of deleted entries; neither contains the erased IP in clear, only its fingerprint (`hmac:…`), or its truncated form if the pseudonymisation key is unavailable.
 
@@ -228,7 +248,7 @@ To disable auto-download, set `geoip.auto_download: false` in `edge.json` and su
 The Admin geolocates client IPs to draw the Prism map (country, city, region). Two modes:
 
 - **Local database (default when available)**: the Admin downloads **GeoLite2-City** in the background at startup (`geoip.auto_download: true`, path `geoip.city_db_path`, source `geoip.city_db_url`, default `/etc/goproxify/geoip/GeoLite2-City.mmdb`). IPs are resolved offline and never leave the Admin.
-- **Fallback: ip-api.com**: while the database is absent (download in progress, disabled, or unreachable), the Admin queries the public service ip-api.com over plain HTTP, **which sends the client IPs to that third party**. Set `geoip.auto_download: true` (or place the file yourself) to avoid it, and block outbound access to `ip-api.com` if it must never be used.
+- **Fallback: ip-api.com (off by default)**: while the database is absent (download in progress, disabled, or unreachable), IPs stay without a position and **nothing leaves the Admin**. Setting `geoip.allow_external_lookup: true` in `admin.json` lets the Admin query the public service ip-api.com over plain HTTP in that window, **which sends the client IPs to that third party** (outside the EU, no contract): do not enable it without a legal basis and a processor agreement. Meanwhile the Prism map and the country of log entries fill in once the database has downloaded.
 
 Results (IP, country, city, region, latitude, longitude) are cached in the Admin database (`geoip_cache`). Positions are approximate (city level).
 
@@ -254,7 +274,9 @@ Before going to production, ensure:
 
 - [ ] IP anonymisation enabled (`ip_anonymize: true`) if no legitimate need to store full IPs — or pseudonymisation if real IPs must remain obtainable for legal requests
 - [ ] Only the accounts that need it are admins (they can change these settings and erase logs) or can reveal pseudonymised IPs (superadmin, `dpo` role, right granted to an account or a team — review the GDPR badges on the Users page)
-- [ ] Log retention set to the shortest period that meets your legal obligations
+- [ ] Log retention set to the shortest period that meets your legal obligations (defaults: 90 days for logs, 365 for the ban history, 90 for portal session recordings)
+- [ ] `geoip.allow_external_lookup` left at `false`
+- [ ] Register of processing, impact assessment and privacy notice done from [rgpd-conformite.md](rgpd-conformite.md)
 - [ ] Admin user list reviewed — remove test accounts
 - [ ] SSH portal vault entries reviewed — remove unused targets
 - [ ] Alert channel configurations reviewed — confirm no personal data is included in alert payloads

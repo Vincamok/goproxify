@@ -22,11 +22,14 @@ type AdminConfig struct {
 	} `mapstructure:"server"`
 
 	// GeoIP : base MaxMind GeoLite2-City locale (position des IPs pour la carte Prism). Sans elle,
-	// la géolocalisation passe par ip-api.com (les IPs y sont envoyées).
+	// les IP restent sans position, sauf si allow_external_lookup autorise ip-api.com (les IPs y sont envoyées).
 	GeoIP struct {
 		AutoDownload bool   `mapstructure:"auto_download"` // télécharge la base si absente
 		CityDBPath   string `mapstructure:"city_db_path"`  // chemin .mmdb sur le volume Admin
 		CityDBURL    string `mapstructure:"city_db_url"`   // URL de téléchargement si absente
+		// AllowExternalLookup autorise le repli sur ip-api.com (HTTP, tiers) tant que la base locale manque :
+		// les IP des clients y sont envoyées. Désactivé par défaut (RGPD).
+		AllowExternalLookup bool `mapstructure:"allow_external_lookup"`
 	} `mapstructure:"geoip"`
 
 	Storage struct {

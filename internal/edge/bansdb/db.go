@@ -405,3 +405,20 @@ func (d *DB) PurgeProxyErrors(before time.Time) error {
 	)
 	return err
 }
+
+// EraseIP supprime les bans et l'historique d'une IP (droit à l'effacement RGPD) et retourne le
+// nombre de lignes retirées. Le déban (table unbans) reste : il empêche de reposer un ban levé.
+func (d *DB) EraseIP(ips ...string) (int64, error) {
+	var total int64
+	for _, ip := range ips {
+		for _, table := range []string{"bans", "ban_history"} {
+			res, err := d.db.Exec(`DELETE FROM `+table+` WHERE ip = ?`, ip)
+			if err != nil {
+				return total, err
+			}
+			n, _ := res.RowsAffected()
+			total += n
+		}
+	}
+	return total, nil
+}

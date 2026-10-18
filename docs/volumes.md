@@ -29,7 +29,7 @@ Chaque service persiste ses données dans `/etc/goproxify` via un volume Docker 
 | `agent-states/` | Fichiers d'état des Agents approuvés, copiés par chaque Agent (rendus à un Agent au volume perdu) |
 | `edge-node-id` | Identité stable du nœud passerelle |
 | `geoip/GeoLite2-Country.mmdb` | Base GeoIP téléchargée automatiquement (clé `geoip.auto_download` de `edge.json`, activée par défaut) |
-| `geoip/GeoLite2-City.mmdb` | Base GeoIP ville de l'Admin (carte Prism), téléchargée automatiquement (clé `geoip.auto_download` de `admin.json`, activée par défaut) ; sans elle, repli sur ip-api.com |
+| `geoip/GeoLite2-City.mmdb` | Base GeoIP ville de l'Admin (carte Prism), téléchargée automatiquement (clé `geoip.auto_download` de `admin.json`, activée par défaut) ; sans elle, les IP restent sans position (le repli sur ip-api.com n'est actif qu'avec `geoip.allow_external_lookup: true`, hors RGPD par défaut) |
 | `bans/` | Bannissements IP persistés |
 | `threat-lists/` | Listes de menaces téléchargées (IPs malveillantes, etc.) |
 | `threat-config.gpx` | Copie chiffrée de la configuration Ephor reçue de l'Admin, rechargée au démarrage sans l'Admin |

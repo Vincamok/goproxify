@@ -179,3 +179,45 @@ func TestBanCountForIP(t *testing.T) {
 		t.Fatalf("ban postérieur au déban : %d, attendu 1", n)
 	}
 }
+
+func TestEraseIPRemovesBansAndHistoryButKeepsTheUnban(t *testing.T) {
+	d, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	for _, ip := range []string{"203.0.113.42", "198.51.100.9"} {
+		if err := d.UpsertBan("b-"+ip, ip, "", "test", "native", nil); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.RecordBanEvent(ip, "native"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := d.Unban("203.0.113.42", time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.UpsertBan("again", "203.0.113.42", "", "test", "native", nil); err != nil {
+		t.Fatal(err)
+	}
+	n, err := d.EraseIP("203.0.113.42", "203.0.113.42")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n < 2 {
+		t.Fatalf("%d lignes supprimées, attendu au moins 2 (ban + historique)", n)
+	}
+	var left int
+	d.db.QueryRow(`SELECT (SELECT COUNT(*) FROM bans WHERE ip='203.0.113.42') + (SELECT COUNT(*) FROM ban_history WHERE ip='203.0.113.42')`).Scan(&left) //nolint:errcheck
+	if left != 0 {
+		t.Fatalf("%d lignes de l'IP effacée subsistent", left)
+	}
+	var other int
+	d.db.QueryRow(`SELECT (SELECT COUNT(*) FROM bans) + (SELECT COUNT(*) FROM ban_history)`).Scan(&other) //nolint:errcheck
+	if other != 2 {
+		t.Fatalf("les données d'une autre IP ont été touchées : %d lignes, attendu 2", other)
+	}
+	if un, _ := d.Unbans(); len(un) != 1 {
+		t.Fatalf("le déban doit rester : %v", un)
+	}
+}

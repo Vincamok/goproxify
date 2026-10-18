@@ -20,6 +20,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	edgecrowdsec "github.com/vincamok/goproxify/internal/edge/crowdsec"
 	"github.com/vincamok/goproxify/internal/edge/errorpages"
+	edgelog "github.com/vincamok/goproxify/internal/edge/logger"
 	edgef2b "github.com/vincamok/goproxify/internal/edge/fail2ban"
 	"github.com/vincamok/goproxify/internal/edge/metrics"
 	"github.com/vincamok/goproxify/internal/edge/portal"
@@ -1572,4 +1573,33 @@ func bucketQuantile(buckets map[float64]float64, count, sum, q float64) float64 
 		prevBound, prevCount = bound, c
 	}
 	return sum / count
+}
+
+// applyEraseIPs retire d'une passerelle les traces d'IPs que l'Admin a effacées : lignes d'access
+// log (fichier courant et rotations) et historique des bans. L'ordre arrive aussi à chaque
+// connexion tant qu'il est conservé, d'où l'absence de journal par IP (elle ne doit pas y réapparaître).
+func (s *Server) applyEraseIPs(list []edgews.EraseEntry) {
+	var lines int
+	var bans int64
+	for _, e := range list {
+		if e.IP == "" {
+			continue
+		}
+		n, err := s.accessLog.EraseIP(e.IP)
+		if err != nil {
+			s.log.Warn("rgpd: effacement d'une IP dans l'access log échoué", "err", err)
+		}
+		lines += n
+		if s.bansDB != nil {
+			canon := edgelog.CanonicalIP(e.IP)
+			b, err := s.bansDB.EraseIP(e.IP, canon)
+			if err != nil {
+				s.log.Warn("rgpd: effacement d'une IP dans l'historique des bans échoué", "err", err)
+			}
+			bans += b
+		}
+	}
+	if lines > 0 || bans > 0 {
+		s.log.Info("rgpd: IP effacées de la passerelle", "access_log_lines", lines, "ban_rows", bans)
+	}
 }

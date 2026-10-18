@@ -52,7 +52,7 @@ func TestPurgeRetainedDropsOldIPTraces(t *testing.T) {
 	recent := time.Now().UTC().AddDate(0, 0, -1).Format(time.RFC3339)
 	future := time.Now().UTC().AddDate(0, 0, 1).Format(time.RFC3339)
 	for _, q := range []string{
-		`INSERT INTO security_ban_history (ip, action, created_at) VALUES ('198.51.100.1', 'banned', datetime('now', '-731 days'))`,
+		`INSERT INTO security_ban_history (ip, action, created_at) VALUES ('198.51.100.1', 'banned', datetime('now', '-366 days'))`,
 		`INSERT INTO security_ban_history (ip, action, created_at) VALUES ('198.51.100.2', 'banned', datetime('now', '-10 days'))`,
 		`INSERT INTO security_bans (id, ip, expires_at) VALUES ('old', '198.51.100.1', '` + old + `')`,
 		`INSERT INTO security_bans (id, ip, expires_at) VALUES ('recent', '198.51.100.2', '` + recent + `')`,

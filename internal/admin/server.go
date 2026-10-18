@@ -607,12 +607,12 @@ func (s *Server) Start(ctx context.Context) error {
 		},
 	}
 
-	geoResolver := &analytics.GeoResolver{DB: s.db, Log: s.log, MMDBPath: s.cfg.GeoIP.CityDBPath}
+	geoResolver := &analytics.GeoResolver{DB: s.db, Log: s.log, MMDBPath: s.cfg.GeoIP.CityDBPath, AllowExternal: s.cfg.GeoIP.AllowExternalLookup}
 	if s.cfg.GeoIP.AutoDownload && s.cfg.GeoIP.CityDBPath != "" {
 		// Téléchargement en arrière-plan (plusieurs dizaines de Mo) : d'ici là, ip-api.com sert de repli.
 		go func() {
 			if err := geoip.Ensure(s.cfg.GeoIP.CityDBPath, s.cfg.GeoIP.CityDBURL, s.log); err != nil {
-				s.log.Warn("geoip: base GeoLite2-City indisponible, repli sur ip-api.com", "err", err)
+				s.log.Warn("geoip: base GeoLite2-City indisponible", "err", err)
 			}
 		}()
 	}

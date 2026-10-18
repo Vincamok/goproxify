@@ -604,7 +604,7 @@ pages['portal-policy'] = async function() {
         <input type="checkbox" id="ppol-rec" ${p.record_sessions ? 'checked' : ''}/>
         <span style="font-size:13px">Enregistrer les sessions</span>
       </label>
-      <div class="field" style="max-width:220px"><label class="field-label">Conservation (jours, 0 = illimitée)</label><input class="input" id="ppol-ret" type="number" min="0" max="3650" value="${p.record_retention_days || 0}"/></div>
+      <div class="field" style="max-width:220px"><label class="field-label">Conservation (jours, 0 = 90 par défaut, -1 = illimitée)</label><input class="input" id="ppol-ret" type="number" min="-1" max="3650" value="${p.record_retention_days || 0}"/></div>
     </div>
     <div class="card blueprint" style="padding:16px 18px;max-width:640px">
       <div style="font-size:13px;font-weight:600;margin-bottom:4px">Inactivité</div>

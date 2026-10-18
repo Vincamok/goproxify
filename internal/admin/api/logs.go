@@ -37,6 +37,8 @@ type LogsHandler struct {
 	// OnUnban (optionnel) lève les bans d'une IP sur les passerelles : l'effacement RGPD d'une IP
 	// supprime ses bans de la base Admin.
 	OnUnban func(ip string)
+	// OnEraseIP (optionnel) efface l'IP des passerelles : access log et historique des bans.
+	OnEraseIP func(ip string)
 }
 
 func (h *LogsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -63,6 +65,9 @@ func (h *LogsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// RGPD : révélation IP pseudonymisée (scope gdpr:reveal requis)
 	case r.Method == http.MethodPost && path == "reveal-ip":
 		h.revealIP(w, r)
+	// RGPD : export d'accès et de portabilité (Art. 15 et 20), par IP ou par compte
+	case r.Method == http.MethodPost && path == "subject-export":
+		h.subjectExport(w, r)
 	// RGPD : effacement par IP ou utilisateur
 	case r.Method == http.MethodDelete && strings.HasPrefix(path, "by-ip/"):
 		h.deleteByIP(w, r, strings.TrimPrefix(path, "by-ip/"))
@@ -411,11 +416,14 @@ func (h *LogsHandler) deleteByIP(w http.ResponseWriter, r *http.Request, ip stri
 	if h.OnUnban != nil {
 		h.OnUnban(ip)
 	}
+	if h.OnEraseIP != nil {
+		h.OnEraseIP(ip)
+	}
 
 	// Trace de l'effacement sans réinscrire l'IP effacée en clair (audit et logs système).
 	ref := h.Store.IPReference(ip)
-	detail := fmt.Sprintf("ip=%s deleted=%d bans=%d ban_history=%d geoip_cache=%d reason=%q",
-		ref, res.Logs, res.Bans, res.BanHistory, res.GeoCache, reason)
+	detail := fmt.Sprintf("ip=%s deleted=%d bans=%d ban_history=%d geoip_cache=%d audit_ip=%d reason=%q",
+		ref, res.Logs, res.Bans, res.BanHistory, res.GeoCache, res.AuditIP, reason)
 	_ = admindb.WriteAudit(h.DB, actor, "rgpd_erasure_ip", "logs", detail)
 	h.Store.Write(logs.Entry{
 		Level:     "info",
@@ -429,6 +437,7 @@ func (h *LogsHandler) deleteByIP(w http.ResponseWriter, r *http.Request, ip stri
 		"bans_deleted":        res.Bans,
 		"ban_history_deleted": res.BanHistory,
 		"geoip_cache_deleted": res.GeoCache,
+		"audit_ip_cleared":    res.AuditIP,
 		"ip":                  ip,
 	})
 }
@@ -476,4 +485,60 @@ func logsJSONErr(w http.ResponseWriter, err error, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": err.Error()}) //nolint:errcheck
+}
+
+// subjectExport rend ce que l'Admin garde d'une IP ou d'un compte (RGPD Art. 15 et 20), en JSON à
+// télécharger. L'IP voyage dans le corps, pas dans l'URL ; l'audit n'en garde que l'empreinte.
+// Body JSON : {"ip": "…"} ou {"user_id": "…"}, plus un "reason" facultatif.
+func (h *LogsHandler) subjectExport(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IP     string `json:"ip"`
+		UserID string `json:"user_id"`
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, r, http.StatusBadRequest, "api.err.json")
+		return
+	}
+	if (body.IP == "") == (body.UserID == "") {
+		writeErr(w, r, http.StatusBadRequest, "api.err.missing_subject")
+		return
+	}
+	reason := body.Reason
+	if reason == "" {
+		reason = "non précisé"
+	}
+	actor := adminauth.UserIDFromContext(r.Context())
+
+	var out any
+	var detail, action, name string
+	if body.IP != "" {
+		if _, err := netip.ParseAddr(body.IP); err != nil {
+			writeErr(w, r, http.StatusBadRequest, "api.err.invalid_ip")
+			return
+		}
+		res, err := h.Store.ExportIP(body.IP)
+		if err != nil {
+			logsJSONErr(w, err, http.StatusInternalServerError)
+			return
+		}
+		out, action, name = res, "rgpd_export_ip", "ip"
+		detail = fmt.Sprintf("ip=%s logs=%d bans=%d ban_history=%d audit=%d reason=%q",
+			h.Store.IPReference(body.IP), len(res.Logs), len(res.Bans), len(res.BanHistory), len(res.Audit), reason)
+	} else {
+		res, err := h.Store.ExportUser(body.UserID)
+		if err != nil {
+			logsJSONErr(w, err, http.StatusInternalServerError)
+			return
+		}
+		out, action, name = res, "rgpd_export_user", "user"
+		detail = fmt.Sprintf("user_id=%s logs=%d audit=%d reason=%q", body.UserID, len(res.Logs), len(res.Audit), reason)
+	}
+	_ = admindb.WriteAudit(h.DB, actor, action, "logs", detail)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", `attachment; filename="rgpd-export-`+name+`.json"`)
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	enc.Encode(out) //nolint:errcheck
 }

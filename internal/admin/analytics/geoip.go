@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -35,8 +36,10 @@ type GeoResolver struct {
 	DB  *sql.DB
 	Log *slog.Logger
 	// MMDBPath : base GeoLite2-City locale. Présente, elle remplace ip-api.com (aucune IP ne sort) ;
-	// absente ou illisible, on retombe sur ip-api.com.
+	// absente ou illisible, on ne retombe sur ip-api.com que si AllowExternal est vrai.
 	MMDBPath string
+	// AllowExternal autorise l'envoi des IP à ip-api.com faute de base locale (tiers, HTTP : RGPD).
+	AllowExternal bool
 
 	mu     sync.Mutex
 	reader *maxminddb.Reader
@@ -116,7 +119,10 @@ func lookupLocal(r *maxminddb.Reader, ip string) ipAPIResult {
 	return res
 }
 
-// lookup résout des IPs : base locale si présente, sinon ip-api.com.
+// ErrExternalLookupDisabled : pas de base locale et le repli sur ip-api.com n'est pas autorisé.
+var ErrExternalLookupDisabled = errors.New("geoip: base locale absente et repli ip-api.com non autorisé")
+
+// lookup résout des IPs : base locale si présente, sinon ip-api.com si autorisé.
 func (g *GeoResolver) lookup(ctx context.Context, ips []string) ([]ipAPIResult, error) {
 	if r := g.local(); r != nil {
 		out := make([]ipAPIResult, len(ips))
@@ -124,6 +130,9 @@ func (g *GeoResolver) lookup(ctx context.Context, ips []string) ([]ipAPIResult, 
 			out[i] = lookupLocal(r, ip)
 		}
 		return out, nil
+	}
+	if !g.AllowExternal {
+		return nil, ErrExternalLookupDisabled
 	}
 	return g.lookupBatch(ctx, ips)
 }
@@ -279,6 +288,9 @@ func (g *GeoResolver) backfillPositions(ctx context.Context) {
 		return
 	}
 	results, err := g.lookup(ctx, queries)
+	if errors.Is(err, ErrExternalLookupDisabled) {
+		return
+	}
 	if err != nil {
 		g.log().Warn("geoip: complément de positions échoué (réessai au prochain cycle)", "err", err)
 		return
@@ -348,6 +360,9 @@ func (g *GeoResolver) resolve(ctx context.Context) {
 
 	// Ne pas cacher en cas d'échec réseau : on réessaiera au prochain tick.
 	results, err := g.lookup(ctx, queries)
+	if errors.Is(err, ErrExternalLookupDisabled) {
+		return
+	}
 	if err != nil {
 		g.log().Warn("geoip: appel ip-api.com échoué (réessai au prochain cycle)", "err", err, "n", len(queries))
 		return
