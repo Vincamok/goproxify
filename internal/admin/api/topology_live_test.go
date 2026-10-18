@@ -98,3 +98,32 @@ func TestNodesLiveEndpoint(t *testing.T) {
 		t.Fatalf("window: %d", res.WindowSec)
 	}
 }
+
+func TestTrafficByNodeUsesAccessIndex(t *testing.T) {
+	db, err := admindb.Open(filepath.Join(t.TempDir(), "admin.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC()
+	for i, c := range []struct {
+		comp, node string
+		status     int
+		age        time.Duration
+	}{
+		{"edge", "e1", 200, time.Second}, {"edge", "e1", 403, 2 * time.Second},
+		{"edge", "e1", 200, 5 * time.Minute}, {"admin", "", 200, time.Second},
+	} {
+		if _, err := db.Exec(`INSERT INTO logs (ts, component, node_name, status) VALUES (?,?,?,?)`,
+			now.Add(-c.age).Format(time.RFC3339Nano), c.comp, c.node, c.status); err != nil {
+			t.Fatal(i, err)
+		}
+	}
+	got, err := trafficByNode(db, httptest.NewRequest(http.MethodGet, "/", nil), now.Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tc := got["e1"]; tc.total != 2 || tc.blocked != 1 || len(got) != 1 {
+		t.Errorf("trafficByNode = %+v, attendu e1 = 2 requêtes dont 1 refusée, sans le nœud admin ni la requête de 5 min", got)
+	}
+}

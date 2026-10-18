@@ -104,13 +104,15 @@ func computeNodeLive(n nodeLive, tc trafficCounts, window time.Duration) nodeLiv
 	return n
 }
 
-// trafficByNode agrège les access logs de la dernière fenêtre par nœud (index partiel ts WHERE status>0).
+// trafficByNode agrège les access logs de la dernière fenêtre par nœud. INDEXED BY : sans statistiques
+// (jamais de ANALYZE), SQLite préfère parcourir tout idx_logs_analytics_node pour le GROUP BY — sur des
+// millions de lignes, plus d'une seconde à chaque sonde de 5 s.
 func trafficByNode(db *sql.DB, r *http.Request, since time.Time) (map[string]trafficCounts, error) {
 	rows, err := db.QueryContext(r.Context(),
 		`SELECT COALESCE(node_name,''), COUNT(*),
 		        COALESCE(SUM(CASE WHEN status IN (403,429) THEN 1 ELSE 0 END),0),
 		        COALESCE(SUM(CASE WHEN status >= 500 THEN 1 ELSE 0 END),0)
-		 FROM logs WHERE status > 0 AND component <> 'admin' AND ts >= ?
+		 FROM logs INDEXED BY idx_logs_access_ts_status WHERE status > 0 AND component <> 'admin' AND ts >= ?
 		 GROUP BY node_name`, since.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
