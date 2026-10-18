@@ -1403,6 +1403,19 @@ textarea.input { resize: vertical; min-height: 80px; }
   border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text);
 }
 .arch-input:focus, .arch-select:focus { outline: none; border-color: var(--accent); }
+.arch-dom-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+.arch-dom-chip {
+  font: inherit; font-size: 11.5px; padding: 3px 8px; border-radius: 999px; cursor: pointer;
+  border: 1px dashed var(--border); background: var(--bg); color: var(--text2);
+}
+.arch-dom-chip:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+.arch-dom-chip[data-state="in"] {
+  border-style: solid; border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg)); color: var(--text); font-weight: 600;
+}
+.arch-dom-chip:disabled { opacity: .5; cursor: not-allowed; }
+.arch-dom-add { display: flex; gap: 6px; margin-bottom: 9px; }
+.arch-dom-add .arch-input { flex: 1; min-width: 0; }
 
 /* Ligne capacité : case + libellé + explication */
 .arch-cap {

@@ -362,6 +362,7 @@ function _archLoad() {
     const declared = archFile && Array.isArray(archFile.nodes) ? archFile.nodes : null;
     _arch.nodes = Array.isArray(nodes) ? nodes : [];
     _arch.acmeProviders = Array.isArray(acmeProviders) ? acmeProviders : [];
+    _arch.knownDomains = Array.isArray(domains) ? domains.map(d => d.domain).filter(Boolean) : [];
     const portalEdges = portalEnabled?.edges || {};
     _arch.pairingSecret = sec?.secret || '';
     _wiz.pairingSecret = _arch.pairingSecret;
@@ -1059,6 +1060,7 @@ function _archEdgeCapsHTML(svc) {
     _archCapRow(tls, t('arch.svc.domains') + _archImpactBadge('restart', svc.existing), t('arch.cap.tls_desc'),
       `_archSetTLS('${svc.id}',this.checked)`,
       _archField(t('arch.opt.domains'), `<input class="arch-input" value="${esc(svc.domains || '')}" placeholder="app.example.fr, api.example.fr" oninput="_archSetField('${svc.id}','domains',this.value)">` + _archBefore(svc, 'domains')) +
+      `<div id="arch-dom-picker-${svc.id}">${_archDomainPickerHTML(svc)}</div>` +
       _archCapRow(!!svc.acme, t('arch.opt.acme'), t('arch.cap.acme_desc'),
         `_archSetOpt('${svc.id}','acme',this.checked)`,
         _archField(t('arch.opt.acme_email'), `<input class="arch-input" value="${esc(svc.acmeEmail || '')}" placeholder="admin@example.fr" oninput="_archSetField('${svc.id}','acmeEmail',this.value)">`) +
@@ -1066,6 +1068,62 @@ function _archEdgeCapsHTML(svc) {
         `<div class="arch-cap-desc">${t('arch.opt.acme_admin_hint')}</div>`,
         _archBefore(svc, 'acme')),
       _archBeforeState(svc, bTls, tls, t(bTls ? 'as.ins.on' : 'as.ins.off')));
+}
+
+function _archDomainList(str) {
+  return String(str || '').split(',').map(d => d.trim()).filter(Boolean);
+}
+
+/**
+ * Domaines connus (table /domains + ceux saisis sur les autres passerelles du brouillon) à inclure / exclure
+ * sur cette passerelle, plus un ajout manuel. Un domaine porté par une autre passerelle se libère là-bas d'abord.
+ */
+function _archDomainPickerHTML(svc) {
+  const mine = new Set(_archDomainList(svc.domains).map(d => d.toLowerCase()));
+  const owner = new Map();
+  for (const h of _arch.hosts) {
+    for (const s of h.services || []) {
+      if (s.type !== 'edge' || s.id === svc.id) continue;
+      for (const d of _archDomainList(s.domains)) owner.set(d.toLowerCase(), { name: d, edge: s.name });
+    }
+  }
+  const all = new Map();
+  for (const d of [..._archDomainList(svc.domains), ...(_arch.knownDomains || []), ...[...owner.values()].map(o => o.name)]) {
+    if (!all.has(d.toLowerCase())) all.set(d.toLowerCase(), d);
+  }
+  const chips = [...all.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([k, d]) => {
+    const inc = mine.has(k);
+    const held = !inc && owner.get(k);
+    const title = held ? t('arch.dom.held', { edge: held.edge }) : t(inc ? 'arch.dom.exclude' : 'arch.dom.include');
+    return `<button type="button" class="arch-dom-chip" data-state="${inc ? 'in' : held ? 'held' : 'out'}" data-d="${esc(d)}" title="${esc(title)}" ${held ? 'disabled' : ''} onclick="_archToggleDomain('${svc.id}',this.dataset.d)">${inc ? '✓ ' : ''}${esc(d)}${held ? ` · ${esc(held.edge)}` : ''}</button>`;
+  }).join('');
+  return `${chips ? `<div class="arch-cap-desc" style="margin-bottom:4px;">${esc(t('arch.dom.available'))}</div><div class="arch-dom-chips">${chips}</div>` : ''}
+    <div class="arch-dom-add">
+      <input class="arch-input" id="arch-dom-add-${svc.id}" placeholder="${esc(t('arch.dom.add_ph'))}" onkeydown="if(event.key==='Enter'){event.preventDefault();_archAddDomain('${svc.id}')}">
+      <button type="button" class="btn btn-sm" onclick="_archAddDomain('${svc.id}')">${esc(t('arch.dom.add'))}</button>
+    </div>`;
+}
+
+function _archToggleDomain(id, domain) {
+  const s = _archFindSvc(id);
+  if (!s) return;
+  const key = domain.toLowerCase();
+  const list = _archDomainList(s.domains);
+  s.domains = (list.some(d => d.toLowerCase() === key) ? list.filter(d => d.toLowerCase() !== key) : [...list, domain]).join(', ');
+  _archRender();
+}
+
+function _archAddDomain(id) {
+  const s = _archFindSvc(id);
+  const input = document.getElementById('arch-dom-add-' + id);
+  if (!s || !input) return;
+  const list = _archDomainList(s.domains);
+  for (const d of _archDomainList(input.value.replace(/\s+/g, ','))) {
+    const host = d.toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+    if (host && !list.some(x => x.toLowerCase() === host)) list.push(host);
+  }
+  s.domains = list.join(', ');
+  _archRender();
 }
 
 function _archDelegationsHTML(svc) {
@@ -1460,6 +1518,10 @@ function _archSetOpt(id, key, val) {
 function _archSetField(id, key, val) {
   const s = _archFindSvc(id);
   if (s) s[key] = val;
+  if (s && key === 'domains') {
+    const box = document.getElementById('arch-dom-picker-' + id);
+    if (box) box.innerHTML = _archDomainPickerHTML(s);
+  }
   _archRefreshChanges();
 }
 
