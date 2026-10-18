@@ -763,23 +763,27 @@ async function renderSecurityIpsEngines({ mode } = {}) {
     const edgeQ = edgeCtx?.edgeRef ? `?edge=${encodeURIComponent(edgeCtx.edgeRef)}` : '';
     window._secEdgeQ = edgeQ;
 
-    const [f2bCfg, csCfg, threatCfg] = await Promise.all([
+    const [f2bCfg, csCfg, threatCfg, wafCfg] = await Promise.all([
       api('GET', '/security/fail2ban').catch(() => null),
       api('GET', '/security/crowdsec').catch(() => null),
       api('GET', `/security/threat-config${edgeQ}`).catch(() => null),
+      api('GET', `/security/waf-config${edgeQ}`).catch(() => null),
     ]);
 
     window._f2bCfg    = f2bCfg    || {};
     window._csCfg     = csCfg     || {};
     window._threatCfg = threatCfg || {};
+    window._wafCfg    = wafCfg    || { enabled: true };
 
     const f2bOn      = !!(window._f2bCfg.enabled);
     const csOn       = !!(window._csCfg.enabled);
     const sentinelOn = !!(window._threatCfg.enabled);
+    const wafOn      = !!(window._wafCfg.enabled);
 
     const svgWrench  = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><line x1="5.6" y1="5.6" x2="18.4" y2="18.4"/></svg>`;
     const svgShield  = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>`;
     const svgSentinel= `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="12" rx="10" ry="6"/><circle cx="12" cy="12" r="2.5"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/></svg>`;
+    const svgWaf     = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="10" x2="9" y2="20"/><line x1="15" y1="10" x2="15" y2="20"/></svg>`;
     const statusDot  = (on) => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${on?'var(--green)':'var(--text3)'};margin-right:6px"></span>`;
     const engineLabel = (on) => `<span style="font-size:11px;font-weight:400;color:${on?'var(--green)':'var(--text3)'}">${on ? t('security.engine_active') : t('security.engine_inactive')}</span>`;
     const toggleSwitch = (id, on, fn) => `<label class="toggle" style="margin-left:auto"><input type="checkbox" id="${id}" ${on?'checked':''} onchange="${fn}(this.checked)"><span class="toggle-slider"></span></label>`;
@@ -825,6 +829,17 @@ async function renderSecurityIpsEngines({ mode } = {}) {
               <p style="font-size:12px;color:var(--text2);margin:0 0 12px">${t('security.ips_engines.sentinel_desc')}</p>
               <p style="font-size:12px;color:var(--text3);margin:0 0 10px">${t('security.ips_engines.sentinel_hint')}</p>
               <button class="btn btn-ghost btn-sm" onclick="navigate('${isEdge ? 'edge-security-sentinel' : 'security-sentinel'}')">${t('security.ips_engines.sentinel_config')} →</button>
+            </div>
+          </div>
+
+          <div class="card blueprint" id="engine-card-waf" style="border-color:${wafOn?'var(--green)':'var(--border)'}">
+            <div class="card-header" style="gap:6px">
+              <span class="card-title">${svgWaf} WAF ${statusDot(wafOn)}${engineLabel(wafOn)}</span>
+              ${toggleSwitch('toggle-waf', wafOn, 'toggleEngineWAF')}
+            </div>
+            <div style="padding:0 16px 16px">
+              <p style="font-size:12px;color:var(--text2);margin:0 0 12px">${t('security.ips_engines.waf_desc')}</p>
+              <p style="font-size:12px;color:var(--text3);margin:0">${t('security.ips_engines.waf_hint')}</p>
             </div>
           </div>
 
@@ -1755,6 +1770,20 @@ window.toggleEngineSentinel = async function(enabled) {
     if (card) card.style.borderColor = enabled ? 'var(--green)' : 'var(--border)';
     toast(enabled ? t('security.engine_enabled') : t('security.engine_disabled'), 'success');
   } catch(err) { toast(err.message, 'error'); }
+};
+
+window.toggleEngineWAF = async function(enabled) {
+  try {
+    const cfg = { ...(window._wafCfg || {}), enabled };
+    await api('PUT', `/security/waf-config${window._secEdgeQ || ''}`, cfg);
+    window._wafCfg = cfg;
+    reloadCurrentSecurityPage();
+    toast(enabled ? t('security.engine_enabled') : t('security.engine_disabled'), 'success');
+  } catch(err) {
+    const box = document.getElementById('toggle-waf');
+    if (box) box.checked = !enabled;
+    toast(err.message, 'error');
+  }
 };
 
 window.selectIPSProvider = async function(provider) {

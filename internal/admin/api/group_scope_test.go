@@ -86,6 +86,34 @@ func TestSentinelConfigFollowsTheHAGroup(t *testing.T) {
 	}
 }
 
+func TestWAFSwitchDefaultsOnAndFollowsTheHAGroup(t *testing.T) {
+	db, store := groupFixture(t, "grp_waf")
+	var pushed []string
+	h := &api.SecurityHandler{
+		DB: db, Groups: store,
+		OnWAFConfigChange: func(scope string, _ any) { pushed = append(pushed, scope) },
+	}
+
+	if got := strings.TrimSpace(do(h, http.MethodGet, "/api/v1/security/waf-config?edge=seul", "").Body.String()); got != `{"enabled":true}` {
+		t.Fatalf("sans réglage, le WAF doit être actif : %q", got)
+	}
+	if rec := do(h, http.MethodPut, "/api/v1/security/waf-config?edge=frontal", `{"enabled":false}`); rec.Code != http.StatusNoContent {
+		t.Fatalf("PUT: %d %s", rec.Code, rec.Body.String())
+	}
+	if len(pushed) != 1 || pushed[0] != "group:ha-1" {
+		t.Fatalf("le push doit viser le groupe, reçu %v", pushed)
+	}
+	if got := strings.TrimSpace(do(h, http.MethodGet, "/api/v1/security/waf-config?edge=backup", "").Body.String()); got != `{"enabled":false}` {
+		t.Fatalf("l'autre membre doit voir la config du groupe : %q", got)
+	}
+	if got := strings.TrimSpace(do(h, http.MethodGet, "/api/v1/security/waf-config?edge=seul", "").Body.String()); got != `{"enabled":true}` {
+		t.Fatalf("hors groupe : %q", got)
+	}
+	if rec := do(h, http.MethodPut, "/api/v1/security/waf-config?edge=seul", `{"enable":false}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("clé inconnue acceptée : %d", rec.Code)
+	}
+}
+
 func TestReadFallsBackToLegacyPerEdgeThenGlobal(t *testing.T) {
 	db, store := groupFixture(t, "grp_fallback")
 	h := &api.SecurityHandler{DB: db, Groups: store}

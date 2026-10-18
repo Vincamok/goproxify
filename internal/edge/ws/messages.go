@@ -37,6 +37,7 @@ const (
 	TypePushThreatConfig    = "push_threat_config"
 	TypePushF2BConfig       = "push_f2b_config"
 	TypePushCrowdSecConfig  = "push_crowdsec_config"
+	TypePushWAFConfig       = "push_waf_config"
 	TypePushServerConfig    = "push_server_config"
 	TypePushErrorPages      = "push_error_pages"
 	TypePushPortal          = "push_portal"

@@ -95,7 +95,7 @@ func TestEngineTypes_Endpoint(t *testing.T) {
 	rec := httptest.NewRecorder()
 	EngineTypesHandler{}.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/security/engine-types", nil))
 	var got []modules.Manifest
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || len(got) != 3 {
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || len(got) != 4 {
 		t.Fatalf("manifestes = %d, %v", len(got), err)
 	}
 }

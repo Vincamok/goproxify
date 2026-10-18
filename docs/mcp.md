@@ -480,7 +480,7 @@ Plugins WebAssembly installés (manifeste, empreinte, taille). Lecture seule : i
 
 ### `list_security_engine_types`
 
-Moteurs de sécurité globaux (Sentinel, Fail2Ban, CrowdSec) avec les champs de leur configuration. Même source que `GET /api/v1/security/engine-types`. Scope `audit:read` (rôle admin).
+Moteurs de sécurité globaux (Sentinel, Fail2Ban, CrowdSec, WAF — interrupteur maître par passerelle) avec les champs de leur configuration. Même source que `GET /api/v1/security/engine-types`. Scope `audit:read` (rôle admin).
 
 **Paramètres :** aucun
 

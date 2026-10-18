@@ -859,7 +859,7 @@ Clés publiques Ed25519 de confiance pour la signature des plugins. Admin unique
 
 ### `GET /api/v1/security/engine-types`
 
-Manifestes des moteurs de sécurité globaux : `sentinel` (champs dérivés de la configuration, chemins pointés), `fail2ban`, `crowdsec` (`api_key` secret). Admin uniquement. Outil MCP `list_security_engine_types`, CLI `goproxify security engines`.
+Manifestes des moteurs de sécurité globaux : `sentinel` (champs dérivés de la configuration, chemins pointés), `fail2ban`, `crowdsec` (`api_key` secret), `waf` (interrupteur maître : `enabled`). Admin uniquement. Outil MCP `list_security_engine_types`, CLI `goproxify security engines`.
 
 ### `PUT /api/v1/security/threat-config`, `/fail2ban`, `/crowdsec` — validation
 
@@ -1237,6 +1237,16 @@ Corps :
 - `hours` : fenêtre rejouée, défaut `1`, max `24` ; `domain` : limite le rejeu à un domaine.
 
 Réponse `200` : `current` et `candidate` (`events`, `blocked`, `blocked_by_ban`, `legit_blocked`, `blocked_ips`, `by_reason`, `bans`, `top_ips`), `delta` (candidat − actuel), `events_replayed`, `truncated`, `skipped_unattributable_ip` (entrées écartées : IP pseudonymisée, ou tronquée par l'anonymisation RGPD), `not_simulated`, `note`. `400` si `config` est absent ou invalide. Non simulé : listes par défaut, `global_rps`, règles User-Agent, WAF.
+
+### `GET /api/v1/security/waf-config` · `PUT /api/v1/security/waf-config`
+
+Interrupteur du WAF, moteur de sécurité d'une passerelle : `{ "enabled": true|false }`. Même règle de portée que `threat-config` (`?edge=`, groupe HA, valeur globale), même validation (clé inconnue ou valeur du mauvais type : `400`).
+
+- **Sans réglage enregistré, le WAF est actif** (`{"enabled":true}`) : chaque route décide ensuite d'en faire usage (label `goproxify.waf=detect|block` ou snippet), comme avant.
+- **`enabled: false`** coupe le WAF de **toutes** les routes de la passerelle, à chaud, sans toucher à leur réglage (mode, seuils, règles) : réactivé, elles reprennent telles quelles. Le moteur comportemental du WAF ne bannit plus non plus ; les bans déjà posés restent.
+- Poussé aux passerelles visées (message WebSocket `push_waf_config`) et rejoué à leur connexion.
+- Autonomie : chaque passerelle garde une copie chiffrée du réglage (`/etc/goproxify/waf-config.gpx`, surchargeable par `GPX_WAF_CONFIG_PATH`) et la recharge à son démarrage sans l'Admin. Copie absente ou illisible : le WAF reste actif.
+- CLI : `goproxify security waf-engine get|set`.
 
 ### `GET /api/v1/security/ips-provider` · `PUT /api/v1/security/ips-provider`
 

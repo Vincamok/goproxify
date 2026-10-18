@@ -18,6 +18,7 @@ import (
 	"github.com/vincamok/goproxify/internal/edge/portal"
 	"github.com/vincamok/goproxify/internal/edge/router"
 	"github.com/vincamok/goproxify/internal/edge/threat"
+	"github.com/vincamok/goproxify/internal/edge/waf"
 	edgetokens "github.com/vincamok/goproxify/internal/edge/tokens"
 	edgetls "github.com/vincamok/goproxify/internal/edge/tls"
 	edgews "github.com/vincamok/goproxify/internal/edge/ws"
@@ -205,6 +206,14 @@ func (s *Server) handleWSAdminMessage(connID string, msg edgews.Message) error {
 		}
 		s.applyThreatConfig(cfg)
 		s.log.Info(threat.Name+": config mise à jour", "enabled", cfg.Enabled)
+
+	case edgews.TypePushWAFConfig:
+		var cfg waf.EngineConfig
+		if err := json.Unmarshal(msg.Payload, &cfg); err != nil {
+			return err
+		}
+		s.applyWAFConfig(cfg)
+		s.log.Info("waf: config mise à jour", "enabled", cfg.Enabled)
 
 	case edgews.TypePushServerConfig:
 		var body pushedServerConfig

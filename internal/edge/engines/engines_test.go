@@ -16,7 +16,7 @@ func TestManifestsOrderAndSentinelPaths(t *testing.T) {
 	for _, m := range Manifests() {
 		types = append(types, m.Type)
 	}
-	if strings.Join(types, ",") != "sentinel,fail2ban,crowdsec" {
+	if strings.Join(types, ",") != "sentinel,fail2ban,crowdsec,waf" {
 		t.Fatalf("types = %v", types)
 	}
 	sm, _ := Manifest(Sentinel)
@@ -42,13 +42,14 @@ func TestValidateAcceptsRealConfigs(t *testing.T) {
 			"whitelist":{"ips":["10.0.0.0/8"],"paths":["/health"]},"tarpit":{"enabled":true,"delay_ms":3000,"max_concurrent":100}}`,
 		Fail2Ban: `{"enabled":true,"window_sec":300,"max_errors":50,"ban_duration_sec":0,"trust_forwarded_for":true,"whitelist":["10.0.0.0/8","203.0.113.7"]}`,
 		CrowdSec: `{"enabled":true,"api_url":"http://localhost:8080","api_key":"k"}`,
+		WAF:      `{"enabled":false}`,
 	}
 	for typ, body := range ok {
 		if err := Validate(typ, json.RawMessage(body)); err != nil {
 			t.Errorf("%s : %v", typ, err)
 		}
 	}
-	for _, typ := range []string{Sentinel, Fail2Ban, CrowdSec} {
+	for _, typ := range []string{Sentinel, Fail2Ban, CrowdSec, WAF} {
 		if err := Validate(typ, nil); err != nil {
 			t.Errorf("%s vide : %v", typ, err)
 		}
@@ -80,6 +81,8 @@ func TestValidateRejects(t *testing.T) {
 		"crowdsec URL":             {CrowdSec, `{"api_url":"localhost:8080"}`},
 		"crowdsec sans clé":        {CrowdSec, `{"enabled":true,"api_url":"http://localhost:8080"}`},
 		"crowdsec clé inconnue":    {CrowdSec, `{"apikey":"k"}`},
+		"waf clé inconnue":         {WAF, `{"enable":true}`},
+		"waf type":                 {WAF, `{"enabled":"oui"}`},
 	}
 	for name, c := range bad {
 		if err := Validate(c.typ, json.RawMessage(c.body)); err == nil {

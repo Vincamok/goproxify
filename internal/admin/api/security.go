@@ -23,6 +23,7 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/security"
 	"github.com/vincamok/goproxify/internal/admin/vulnscan"
 	"github.com/vincamok/goproxify/internal/edge/router"
+	"github.com/vincamok/goproxify/internal/edge/waf"
 	"github.com/vincamok/goproxify/internal/sqltime"
 )
 
@@ -53,6 +54,8 @@ type SecurityHandler struct {
 	// OnThreatConfigChange envoie la config du moteur de détection à la portée visée (groupe HA ou passerelle)
 	// (scope vide = toutes les passerelles).
 	OnThreatConfigChange func(scope string, cfg any)
+	// OnWAFConfigChange envoie l'interrupteur du WAF à la portée visée (même règle que OnThreatConfigChange).
+	OnWAFConfigChange func(scope string, cfg any)
 	// OnServerConfigChange envoie les timeouts HTTP/QUIC à la portée visée (redémarrage requis).
 	OnServerConfigChange func(scope string, cfg any)
 }
@@ -158,6 +161,11 @@ func (h *SecurityHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.putThreatConfig(w, r)
 	case r.Method == http.MethodPost && sub == "threat-config" && id == "simulate":
 		h.simulateThreat(w, r)
+	// Interrupteur du WAF (moteur de sécurité, par passerelle ou groupe HA)
+	case r.Method == http.MethodGet && sub == "waf-config":
+		h.getWAFConfig(w, r)
+	case r.Method == http.MethodPut && sub == "waf-config":
+		h.putWAFConfig(w, r)
 	// Timeouts HTTP/QUIC (statiques — redémarrage passerelle requise)
 	case r.Method == http.MethodGet && sub == "server-config":
 		h.getServerConfig(w, r)
@@ -1032,6 +1040,42 @@ func (h *SecurityHandler) putThreatConfig(w http.ResponseWriter, r *http.Request
 	}
 	if h.OnThreatConfigChange != nil {
 		h.OnThreatConfigChange(scope, cfg)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ── WAF Config (interrupteur maître) ──────────────────────────────────────────
+
+// wafConfigKey retourne la clé settings pour une portée (groupe, passerelle ou "" = global).
+func wafConfigKey(scope string) string { return settingKey("waf_engine_config", scope) }
+
+func (h *SecurityHandler) getWAFConfig(w http.ResponseWriter, r *http.Request) {
+	scope, ref := h.scope(r)
+	raw, ok := readScopedSetting(r.Context(), h.DB, "waf_engine_config", scope, ref)
+	if !ok {
+		jsonOK(w, waf.DefaultEngineConfig())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(raw)) //nolint:errcheck
+}
+
+func (h *SecurityHandler) putWAFConfig(w http.ResponseWriter, r *http.Request) {
+	scope, _ := h.scope(r)
+	var cfg json.RawMessage
+	if !decodeEngineConfig(w, r, engines.WAF, &cfg) {
+		return
+	}
+	_, err := h.DB.ExecContext(r.Context(),
+		`INSERT INTO settings (key, value) VALUES (?, ?)
+		 ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+		wafConfigKey(scope), string(cfg))
+	if err != nil {
+		secJSONErr(w, err, http.StatusInternalServerError)
+		return
+	}
+	if h.OnWAFConfigChange != nil {
+		h.OnWAFConfigChange(scope, cfg)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

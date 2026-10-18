@@ -25,6 +25,8 @@ func runSecurity() {
 		runSecurityTrace()
 	case "waf":
 		runSecurityWAF()
+	case "waf-engine":
+		runSecurityWAFEngine()
 	case "cve":
 		runSecurityCVE()
 	case "engines":
@@ -37,9 +39,10 @@ Sous-commandes :
   bans     Gestion des IPs bannies
   trace    Parcours complet d'une IP ou d'un CIDR (requêtes, détections, bans)
   waf      Config WAF d'un proxy
+  waf-engine  Interrupteur du WAF d'une passerelle (coupe ou rétablit le WAF de tous ses proxies)
   (règles, planifications et playbooks : goproxify automation)
   cve      SLA de correction des CVE (délai attendu selon la gravité)
-  engines  Moteurs globaux (Sentinel, Fail2Ban, CrowdSec) et leurs champs de configuration
+  engines  Moteurs globaux (Sentinel, Fail2Ban, CrowdSec, WAF) et leurs champs de configuration
 
 goproxify security threat get  [-edge <id>] [-admin-url …] [-token …]
 goproxify security threat set  [-edge <id>] -file <config.json> [-admin-url …] [-token …]
@@ -59,6 +62,9 @@ goproxify security trace -target <ip|cidr> [-from <date>] [-to <date>] [-order a
 
 goproxify security waf get  -proxy <id> [-admin-url …] [-token …]
 goproxify security waf set  -proxy <id> -file <config.json> [-admin-url …] [-token …]
+
+goproxify security waf-engine get [-edge <id>] [-admin-url …] [-token …]
+goproxify security waf-engine set -enabled <true|false> [-edge <id>] [-admin-url …] [-token …]
 
 goproxify security cve sla get [-admin-url …] [-token …]
 goproxify security cve sla set -file <sla.json> [-admin-url …] [-token …]
@@ -721,6 +727,45 @@ func runSecurityCVESLA() {
 }
 
 // ── Moteurs de sécurité (Sentinel, Fail2Ban, CrowdSec) ────────────────────────
+
+// runSecurityWAFEngine lit ou règle l'interrupteur du WAF d'une passerelle (ou de son groupe HA).
+func runSecurityWAFEngine() {
+	sub := subcommand(os.Args, 3)
+	args := parseFlags(os.Args[4:])
+	client, err := newAdminClient(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+		os.Exit(1)
+	}
+	path := "/api/v1/security/waf-config"
+	if edgeID := flagValue(args, "-edge", ""); edgeID != "" {
+		path += "?edge=" + url.QueryEscape(edgeID)
+	}
+	switch sub {
+	case "get", "":
+		var cfg json.RawMessage
+		if _, err := client.DoJSON("GET", path, nil, &cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "waf-engine get : %v\n", err)
+			os.Exit(1)
+		}
+		out, _ := json.MarshalIndent(cfg, "", "  ")
+		fmt.Println(string(out))
+	case "set":
+		enabled, err := strconv.ParseBool(flagValue(args, "-enabled", ""))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "usage: goproxify security waf-engine set -enabled <true|false> [-edge <id>]")
+			os.Exit(1)
+		}
+		if _, err := client.DoJSON("PUT", path, map[string]bool{"enabled": enabled}, nil, 200, 204); err != nil {
+			fmt.Fprintf(os.Stderr, "waf-engine set : %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("WAF de la passerelle : enabled=%t.\n", enabled)
+	default:
+		fmt.Fprintf(os.Stderr, "sous-commande waf-engine inconnue : %q\n", sub)
+		os.Exit(1)
+	}
+}
 
 func runSecurityEngines() {
 	args := parseFlags(os.Args[3:])

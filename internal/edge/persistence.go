@@ -21,6 +21,7 @@ import (
 	"github.com/vincamok/goproxify/internal/edge/portal"
 	edgere "github.com/vincamok/goproxify/internal/edge/rulesengine"
 	"github.com/vincamok/goproxify/internal/edge/threat"
+	"github.com/vincamok/goproxify/internal/edge/waf"
 	"github.com/vincamok/goproxify/internal/edge/tunnel"
 	edgews "github.com/vincamok/goproxify/internal/edge/ws"
 )
@@ -121,6 +122,39 @@ func (s *Server) loadThreatConfigFromDisk() {
 	s.threatEngine.UpdateConfig(cfg)
 	s.refreshSentinelWhitelists()
 	s.log.Info(threat.Name+": config chargée depuis le disque", "enabled", cfg.Enabled)
+}
+
+// wafConfigPath est la copie locale chiffrée de l'interrupteur du WAF poussé par l'Admin.
+func wafConfigPath() string {
+	if p := os.Getenv("GPX_WAF_CONFIG_PATH"); p != "" {
+		return p
+	}
+	return "/etc/goproxify/waf-config.gpx"
+}
+
+// applyWAFConfig persiste l'interrupteur du WAF reçu de l'Admin puis l'applique à chaud.
+func (s *Server) applyWAFConfig(cfg waf.EngineConfig) {
+	if err := s.cache.SaveFile(wafConfigPath(), cfg); err != nil {
+		s.log.Warn("waf: persistance config échouée", "err", err)
+	}
+	s.wafEngine.SetEnabled(cfg.Enabled)
+}
+
+// loadWAFConfigFromDisk rend à la passerelle son dernier réglage du WAF sans l'Admin. Sans copie ou avec
+// une copie illisible, le WAF reste actif : une panne de lecture n'éteint pas une protection.
+func (s *Server) loadWAFConfigFromDisk() {
+	cfg := waf.DefaultEngineConfig()
+	ok, err := s.cache.LoadFile(wafConfigPath(), &cfg)
+	if err != nil {
+		s.log.Warn("waf: config locale illisible — WAF actif en attente de l'Admin", "err", err)
+		s.wafEngine.SetEnabled(true)
+		return
+	}
+	if !ok {
+		return
+	}
+	s.wafEngine.SetEnabled(cfg.Enabled)
+	s.log.Info("waf: config chargée depuis le disque", "enabled", cfg.Enabled)
 }
 
 // portalConfigPath est la copie locale chiffrée de la config du portail Access poussée par l'Admin

@@ -41,6 +41,10 @@ Moteur natif Go, sans dépendance ModSecurity ni CGO. Inspiré de l'OWASP CRS-4.
 | `detect` | Laisse passer, journalise les règles déclenchées dans l'access log et les métriques |
 | désactivé | Aucune inspection |
 
+### Interrupteur par passerelle
+
+Le WAF est aussi un moteur de sécurité de la passerelle (*Sécurité › Moteurs de sécurité*, `GET/PUT /api/v1/security/waf-config`, `goproxify security waf-engine`). Désactivé, aucune route de la passerelle (ou de son groupe HA) n'exécute le WAF et son moteur comportemental ne bannit plus ; le mode et les règles de chaque route sont conservés. Activé (défaut), chaque route décide : le réglage par route ci-dessus s'applique. La passerelle garde le réglage chiffré (`waf-config.gpx`) et le retrouve après un redémarrage sans l'Admin ; copie absente ou illisible, le WAF reste actif.
+
 ### Scoring anomalie
 
 Chaque règle contribue un score (1–5 selon la sévérité). Le seuil `anomaly_threshold` définit le score cumulatif à partir duquel la requête est bloquée. À `0` (défaut), le premier déclenchement bloque.

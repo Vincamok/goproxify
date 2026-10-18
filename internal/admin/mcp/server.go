@@ -434,7 +434,7 @@ var tools = []map[string]any{
 	},
 	{
 		"name":        "list_security_engine_types",
-		"description": "Moteurs de sécurité globaux (Sentinel, Fail2Ban, CrowdSec) avec leurs champs de configuration (chemins imbriqués comme ip_score.ban_threshold, secrets).",
+		"description": "Moteurs de sécurité globaux (Sentinel, Fail2Ban, CrowdSec, WAF — interrupteur maître du WAF par passerelle) avec leurs champs de configuration (chemins imbriqués comme ip_score.ban_threshold, secrets).",
 		"inputSchema": schema(),
 	},
 	{

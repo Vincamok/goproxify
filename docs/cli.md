@@ -802,7 +802,7 @@ goproxify ip-profile delete <id> -y
 Sentinel (threat engine global), gestion des bans, config WAF par proxy, et moteur de règles automatiques.
 
 ```
-# Moteurs globaux et leurs champs de configuration (Sentinel, Fail2Ban, CrowdSec)
+# Moteurs globaux et leurs champs de configuration (Sentinel, Fail2Ban, CrowdSec, WAF)
 goproxify security engines [-admin-url …] [-token …]
 
 # Config du moteur Sentinel
@@ -810,6 +810,10 @@ goproxify security threat get  [-edge <id>] [-admin-url …] [-token …]   # pa
 goproxify security threat set  [-edge <id>] -file <threat-config.json> [-admin-url …] [-token …]
 goproxify security threat simulate -file <threat-config.json> [-hours N] [-domain <d>] [-edge <id>] [-admin-url …] [-token …]   # dry-run : rejoue les logs, n'enregistre rien
 # -edge : pour une passerelle membre d'un groupe HA, la config lue/écrite est celle du groupe (poussée à tous les membres)
+
+# Interrupteur du WAF d'une passerelle (coupe ou rétablit le WAF de tous ses proxies, sans toucher à leurs réglages)
+goproxify security waf-engine get [-edge <id>] [-admin-url …] [-token …]
+goproxify security waf-engine set -enabled <true|false> [-edge <id>] [-admin-url …] [-token …]   # même règle de groupe HA que threat
 
 # Bans
 goproxify security bans list   [-edge <passerelle>] [-source <source>] [-active true|false] [-scope <passerelle|group:nom>] [-admin-url …] [-token …]   # -source : native, fail2ban, crowdsec, threat, plugin:<nom> (ex. plugin:coraza)

@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package engines décrit la configuration des moteurs de sécurité globaux de la passerelle —
-// Sentinel (détection par signaux), Fail2Ban (erreurs répétées) et CrowdSec (décisions LAPI) — par des
-// manifestes (ADR 0007) : valider une configuration avant de l'enregistrer, masquer ses secrets,
-// l'afficher. Ces moteurs ne sont pas des détecteurs par route : ils partagent un magasin de bans et
-// tournent une fois par passerelle ; ils n'entrent donc pas dans la chaîne de middlewares et ce
-// paquet ne les exécute pas.
+// Sentinel (détection par signaux), Fail2Ban (erreurs répétées), CrowdSec (décisions LAPI) et WAF
+// (interrupteur maître du détecteur par route) — par des manifestes (ADR 0007) : valider une
+// configuration avant de l'enregistrer, masquer ses secrets, l'afficher. Ces moteurs ne sont pas des
+// détecteurs par route : ils partagent un magasin de bans et tournent une fois par passerelle ; ils
+// n'entrent donc pas dans la chaîne de middlewares et ce paquet ne les exécute pas. Le WAF reste exécuté
+// par route ; sa configuration de moteur ne fait que l'allumer ou l'éteindre pour toute la passerelle.
 package engines
 
 import (
@@ -22,6 +23,7 @@ import (
 	edgecrowdsec "github.com/vincamok/goproxify/internal/edge/crowdsec"
 	edgef2b "github.com/vincamok/goproxify/internal/edge/fail2ban"
 	"github.com/vincamok/goproxify/internal/edge/threat"
+	"github.com/vincamok/goproxify/internal/edge/waf"
 	"github.com/vincamok/goproxify/internal/modules"
 )
 
@@ -30,6 +32,7 @@ const (
 	Sentinel = "sentinel"
 	Fail2Ban = "fail2ban"
 	CrowdSec = "crowdsec"
+	WAF      = "waf"
 )
 
 type engine struct {
@@ -69,6 +72,12 @@ func init() {
 			{Key: "api_key", Label: "Bouncer API key", Kind: modules.KindPassword, Secret: true},
 		}},
 		decode: decodeCrowdSec,
+	})
+	register(engine{
+		manifest: modules.Manifest{Type: WAF, Label: "WAF", Fields: []modules.Field{
+			{Key: "enabled", Label: "Enabled", Kind: modules.KindBool},
+		}},
+		decode: func(raw []byte) error { return strictDecode(raw, &waf.EngineConfig{}) },
 	})
 }
 

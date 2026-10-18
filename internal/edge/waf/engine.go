@@ -16,6 +16,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -82,12 +83,22 @@ type Engine struct {
 
 	banFn BanCallback // optionnel, câblé via SetBanCallback
 
+	// disabled coupe le moteur pour toute la passerelle (interrupteur maître) ; la valeur zéro laisse le
+	// WAF actif, les routes décident ensuite elles-mêmes.
+	disabled atomic.Bool
+
 	// behaviorStores : un store comportemental par host (isolation vhost).
 	// Alloué à la première utilisation via behaviorStoreFor().
 	behaviorMu     sync.Mutex
 	behaviorStores map[string]*behavior.Store // host → store
 	behaviorWindow time.Duration              // fenêtre commune (premier appel la fixe)
 }
+
+// SetEnabled active ou coupe le moteur pour toutes les routes de la passerelle, à chaud.
+func (e *Engine) SetEnabled(on bool) { e.disabled.Store(!on) }
+
+// Enabled indique si le moteur est actif (interrupteur maître, indépendant du réglage par route).
+func (e *Engine) Enabled() bool { return !e.disabled.Load() }
 
 // SetBanCallback enregistre le callback de ban comportemental (server.go → BanStore).
 func (e *Engine) SetBanCallback(fn BanCallback) {
@@ -488,6 +499,10 @@ func (e *Engine) Middleware(cfg *router.WAFConfig, next http.Handler) http.Handl
 	hasResponseRules := e.hasResponseRules() || rulesHaveResponseTarget(routeRules)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if e.disabled.Load() {
+			next.ServeHTTP(w, r)
+			return
+		}
 		host := r.Host
 		ip := realIP(r, trustedNets)
 

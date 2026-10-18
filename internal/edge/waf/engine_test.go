@@ -63,6 +63,32 @@ func TestMiddlewareBlockAndDetect(t *testing.T) {
 	}
 }
 
+// Coupé, le moteur laisse tout passer sans toucher au réglage des routes ; rallumé, il rebloque à chaud.
+func TestEngineSwitchDisablesEveryRoute(t *testing.T) {
+	e := NewEngine(nil, slog.Default())
+	if !e.Enabled() {
+		t.Fatal("un moteur neuf doit être actif")
+	}
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	h := e.Middleware(&router.WAFConfig{Enabled: true, Mode: "block"}, next)
+	attack := func() int {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/?q=<script>alert(1)</script>", nil))
+		return rr.Code
+	}
+	if got := attack(); got != http.StatusForbidden {
+		t.Fatalf("actif : %d", got)
+	}
+	e.SetEnabled(false)
+	if got := attack(); got != http.StatusOK {
+		t.Fatalf("coupé : %d", got)
+	}
+	e.SetEnabled(true)
+	if got := attack(); got != http.StatusForbidden {
+		t.Fatalf("rallumé : %d", got)
+	}
+}
+
 // TestAnomalyScoring vérifie que le scoring cumulatif bloque uniquement
 // quand le score total atteint le seuil.
 func TestAnomalyScoring(t *testing.T) {

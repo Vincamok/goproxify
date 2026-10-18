@@ -471,6 +471,11 @@ func (s *Server) Start(ctx context.Context) error {
 				go manager.PushThreatConfig(context.Background(), scope, cfg)
 			}
 		},
+		OnWAFConfigChange: func(scope string, cfg any) {
+			if manager != nil {
+				go manager.PushWAFConfig(context.Background(), scope, cfg)
+			}
+		},
 		OnServerConfigChange: func(scope string, cfg any) {
 			if manager != nil {
 				go manager.PushServerConfig(context.Background(), scope, cfg)

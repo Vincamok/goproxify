@@ -203,7 +203,7 @@ func New(cfg *config.EdgeConfig) (*Server, error) {
 	s.peers = proxy.NewPeerRegistry()
 	s.wafEngine = waf.NewEngine(nil, log.Logger())
 	s.wafEngine.SetBanCallback(waf.BanCallback(s.threatBanCallback()))
-	log.Logger().Info("waf: moteur prêt — activer par route (label goproxify.waf=detect|block ou snippet)")
+	log.Logger().Info("waf: moteur prêt — activer par route (label goproxify.waf=detect|block ou snippet), coupable pour la passerelle (moteurs de sécurité)")
 	s.portal = portal.NewService(log.Logger())
 	s.portalRepl = &portalReplicator{}
 	s.portal.SetStoreChangeHook(s.schedulePortalReplicaPush)
@@ -391,6 +391,7 @@ func (s *Server) Start(ctx context.Context) error {
 	if p := s.cfg.Engine.WAFCustomRulesPath; p != "" {
 		go s.wafEngine.WatchCustomRulesFile(ctx, p)
 	}
+	s.loadWAFConfigFromDisk()
 
 	// Sentinel, sur sa dernière config connue, avant l'API interne : une config poussée par l'Admin
 	// ne peut pas arriver avant le moteur.
