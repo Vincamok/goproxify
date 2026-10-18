@@ -221,8 +221,8 @@ function synEnginesHTML(f2b, cs, threat, rules, isAdmin, waf) {
   const engines = [
     { id: 'sentinel', label: 'Sentinel', on: !!threat?.enabled },
     { id: 'waf', label: 'WAF', on: waf?.enabled !== false },
-    { id: isAdmin ? 'f2b' : 'ips', label: 'Fail2Ban', on: !!f2b?.enabled },
-    { id: isAdmin ? 'cs' : 'ips', label: 'CrowdSec', on: !!cs?.enabled },
+    { id: 'f2b', label: 'Fail2Ban', on: !!f2b?.enabled },
+    { id: 'cs', label: 'CrowdSec', on: !!cs?.enabled },
   ];
   if (isAdmin) {
     const active = rules.filter(r => r.enabled).length;
@@ -379,7 +379,7 @@ pages['edge-security'] = () => renderSecuritySynthese({ mode: 'edge' });
 // Fail2Ban, CrowdSec et le scanner sont des réglages globaux (Admin) ; Sentinel et le moteur IPS
 // actif sont propres à la passerelle (`?edge=`).
 
-const _sm = { open: false, tab: 'sentinel', mode: 'admin', q: '', f2b: {}, cs: {}, threat: {}, waf: { enabled: true }, provider: 'native', rules: [], scan: {}, prev: {}, pendingNum: null, dirty: false };
+const _sm = { open: false, tab: 'sentinel', mode: 'admin', q: '', f2b: {}, cs: {}, threat: {}, waf: { enabled: true }, rules: [], scan: {}, prev: {}, pendingNum: null, dirty: false };
 
 // Caps dont la valeur est un nombre à saisir (pas un simple on/off) : le champ du réglage tombe à
 // une valeur « désactivée » (0, ou permanent) quand on bascule, donc le chiffre d'origine est perdu —
@@ -485,12 +485,13 @@ function smMasterHTML(name, desc, on, handler, disabledNote) {
 function smTabs() {
   const admin = _sm.mode === 'admin';
   const rulesOn = _sm.rules.some(r => r.enabled);
-  const list = [{ id: 'sentinel', label: 'Sentinel', on: !!_sm.threat?.enabled }, { id: 'waf', label: 'WAF', on: _sm.waf?.enabled !== false }];
-  if (admin) {
-    list.push({ id: 'f2b', label: 'Fail2Ban', on: !!_sm.f2b?.enabled }, { id: 'cs', label: 'CrowdSec', on: !!_sm.cs?.enabled }, { id: 'rules', label: t('security.rules.tab_rules'), on: rulesOn });
-  } else {
-    list.push({ id: 'ips', label: t('sm.tab.ips'), on: _sm.provider !== 'native' || !!_sm.f2b?.enabled || !!_sm.cs?.enabled });
-  }
+  const list = [
+    { id: 'sentinel', label: 'Sentinel', on: !!_sm.threat?.enabled },
+    { id: 'waf', label: 'WAF', on: _sm.waf?.enabled !== false },
+    { id: 'f2b', label: 'Fail2Ban', on: !!_sm.f2b?.enabled },
+    { id: 'cs', label: 'CrowdSec', on: !!_sm.cs?.enabled },
+  ];
+  if (admin) list.push({ id: 'rules', label: t('security.rules.tab_rules'), on: rulesOn });
   list.push({ id: 'scan', label: t('sm.tab.scan'), on: null });
   return list;
 }
@@ -560,12 +561,6 @@ function smPanelHTML() {
         <div class="sm-caps"><div class="sm-cap"><div class="sm-cap-d"><b>${esc(t('sm.cs_lapi'))}</b><span>${esc(t('sm.cs_lapi_d'))}</span></div><div class="sm-cap-r"><span class="sm-val">${esc(_sm.cs?.api_url || '—')}</span></div></div></div>
         <details class="sm-more"><summary>${esc(t('sm.advanced'))}</summary>${crowdSecPanel(_sm.cs)}</details>`;
     }
-    case 'ips': {
-      const opts = [['native', t('sm.prov_native'), t('sm.prov_native_d')], ['fail2ban', 'Fail2Ban', t('sm.prov_f2b_d')], ['crowdsec', 'CrowdSec', t('sm.prov_cs_d')]];
-      return `<div class="sm-master"><div><b>${esc(t('sm.tab.ips'))}</b><p>${esc(t('sm.ips_d'))}</p></div></div>
-        <div class="sm-caps">${opts.map(([k, l, d]) => `<button type="button" class="sm-radio${_sm.provider === k ? ' on' : ''}" onclick="smProvider('${k}')" aria-pressed="${_sm.provider === k}"><i></i><span><b>${esc(l)}</b><small>${esc(d)}</small></span></button>`).join('')}</div>
-        <p class="vs-hint">${esc(t('sm.global_note', { f2b: t(_sm.f2b?.enabled ? 'security.engine_active' : 'security.engine_inactive'), cs: t(_sm.cs?.enabled ? 'security.engine_active' : 'security.engine_inactive') }))}</p>`;
-    }
     case 'rules': {
       const rules = _sm.rules;
       return `<div class="sm-master"><div><b>${esc(t('security.rules.tab_rules'))}</b><p>${esc(t('sm.rules_d'))}</p></div></div>
@@ -622,14 +617,13 @@ window.secEnginesOpen = async function(tab) {
   let root = document.getElementById('sm-root');
   if (!root) { root = document.createElement('div'); root.id = 'sm-root'; document.body.appendChild(root); }
   root.innerHTML = `<div class="sm-scrim"><div class="sm-modal"><p style="padding:24px;color:var(--text2)">${esc(t('common.loading'))}</p></div></div>`;
-  const [threat, waf, wafActivity, wafProxies, f2b, cs, provider, rules, scan, sla] = await Promise.all([
+  const [threat, waf, wafActivity, wafProxies, f2b, cs, rules, scan, sla] = await Promise.all([
     api('GET', `/security/threat-config${edgeQ}`).catch(() => ({})),
     api('GET', `/security/waf-config${edgeQ}`).catch(() => ({ enabled: true })),
     api('GET', `/security/waf-activity${edgeQ ? edgeQ + '&' : '?'}hours=24`).catch(() => null),
     api('GET', `/proxies${edgeQ}`).catch(() => null),
     api('GET', '/security/fail2ban').catch(() => ({})),
     api('GET', '/security/crowdsec').catch(() => ({})),
-    api('GET', `/security/ips-provider${edgeQ}`).catch(() => ({ provider: 'native' })),
     mode === 'admin' ? api('GET', '/automation/flows?trigger=condition,event').catch(() => []) : Promise.resolve([]),
     api('GET', '/security/vulnscan/config').catch(() => ({})),
     api('GET', '/security/sla-config').catch(() => ({})),
@@ -639,7 +633,6 @@ window.secEnginesOpen = async function(tab) {
   _sm.wafInfo = { activity: wafActivity, proxies: wafProxies ? smWafProxyStats(wafProxies) : null };
   _sm.f2b = f2b || {};
   _sm.cs = cs || {};
-  _sm.provider = provider?.provider || 'native';
   _sm.rules = Array.isArray(rules) ? rules : (rules?.rules || []);
   _sm.scan = scan || {};
   _sm.sla = sla || {};
@@ -747,9 +740,6 @@ window.smF2BCapCancel = function() {
 window.smMaster_cs = function(on) {
   const cfg = { ..._sm.cs, enabled: on };
   return smSave(async () => { await api('PUT', '/security/crowdsec', cfg); _sm.cs = cfg; window._csCfg = cfg; }, t(on ? 'security.engine_enabled' : 'security.engine_disabled'));
-};
-window.smProvider = function(p) {
-  return smSave(async () => { await api('PUT', `/security/ips-provider${window._secEdgeQ || ''}`, { provider: p }); _sm.provider = p; });
 };
 window.smRule = function(id, enabled) {
   const rule = _sm.rules.find(r => String(r.id) === String(id));
