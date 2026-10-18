@@ -109,25 +109,32 @@ func topCounts(m map[string]int) []WAFCount {
 	return out
 }
 
-// getWAFActivity GET /api/v1/security/waf-activity?hours=24&edge=… : requêtes signalées par le WAF.
-func (h *SecurityHandler) getWAFActivity(w http.ResponseWriter, r *http.Request) {
-	hours := wafActivityDefaultHours
-	if v, err := strconv.Atoi(r.URL.Query().Get("hours")); err == nil && v > 0 {
-		hours = min(v, wafActivityMaxHours)
+// WAFActivityFor résume l'activité du WAF sur les `hours` dernières heures (défaut 24, max 168) pour une
+// passerelle (id du jeton ou nom du nœud) ou toutes si edge est vide. Partagé par l'API et l'outil MCP.
+func WAFActivityFor(ctx context.Context, db *sql.DB, hours int, edge string) (WAFActivity, error) {
+	if hours <= 0 {
+		hours = wafActivityDefaultHours
 	}
-	var node string
-	if e := r.URL.Query().Get("edge"); e != "" {
-		node = e
+	hours = min(hours, wafActivityMaxHours)
+	node := edge
+	if edge != "" {
 		var name string
-		if h.DB.QueryRowContext(r.Context(), `SELECT node_name FROM tokens WHERE id=? OR node_name=? LIMIT 1`, e, e).Scan(&name) == nil && name != "" {
+		if db.QueryRowContext(ctx, `SELECT node_name FROM tokens WHERE id=? OR node_name=? LIMIT 1`, edge, edge).Scan(&name) == nil && name != "" {
 			node = name
 		}
 	}
-	act, err := ComputeWAFActivity(r.Context(), h.DB, time.Now().Add(-time.Duration(hours)*time.Hour), node)
+	act, err := ComputeWAFActivity(ctx, db, time.Now().Add(-time.Duration(hours)*time.Hour), node)
+	act.Hours = hours
+	return act, err
+}
+
+// getWAFActivity GET /api/v1/security/waf-activity?hours=24&edge=… : requêtes signalées par le WAF.
+func (h *SecurityHandler) getWAFActivity(w http.ResponseWriter, r *http.Request) {
+	hours, _ := strconv.Atoi(r.URL.Query().Get("hours"))
+	act, err := WAFActivityFor(r.Context(), h.DB, hours, r.URL.Query().Get("edge"))
 	if err != nil {
 		secJSONErr(w, err, http.StatusInternalServerError)
 		return
 	}
-	act.Hours = hours
 	jsonOK(w, act)
 }

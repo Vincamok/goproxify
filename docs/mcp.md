@@ -37,7 +37,7 @@ Chaque outil exige un scope, le même que sa route REST équivalente. Les outils
 | `certs:read` | `list_certs`, `get_cert_status`, `list_cert_deploy_targets`, `list_cert_deploy_types`, `list_internal_cas` †, `list_internal_certs` †, `get_ech_status` †, `list_dns_providers` †, `list_dns_provider_types` † |
 | `certs:write` | `obtain_cert`, `import_cert`, `trigger_cert_deploy`, `create_internal_ca` †, `issue_internal_cert` †, `revoke_internal_cert` † |
 | `logs:read` | `list_logs`, `get_prism_anomalies`, `get_prism_geo`, `get_prism_tls_fingerprints`, `get_prism_slo`, `simulate_sentinel_config` †, `trace_ip` †, `preview_security_ban` †, `preview_asn_ban` † |
-| `audit:read` | `get_audit_log`, `list_ip_profiles`, `get_security_overview` †, `list_security_bans` †, `list_security_engine_types` †, `list_plugins` †, `lookup_asn` †, `list_ban_whitelist` †, `list_security_threats` †, `list_security_cves` †, `list_auth_providers` †, `list_auth_provider_types` †, `list_flows` †, `get_flow` †, `list_flow_versions` †, `list_flow_runs` †, `get_flow_run` †, `get_automation_catalog` †, `list_flow_templates` †, `list_silences` †, `export_automation` † |
+| `audit:read` | `get_audit_log`, `list_ip_profiles`, `get_security_overview` †, `list_security_bans` †, `list_security_engine_types` †, `get_waf_activity` †, `list_plugins` †, `lookup_asn` †, `list_ban_whitelist` †, `list_security_threats` †, `list_security_cves` †, `list_auth_providers` †, `list_auth_provider_types` †, `list_flows` †, `get_flow` †, `list_flow_versions` †, `list_flow_runs` †, `get_flow_run` †, `get_automation_catalog` †, `list_flow_templates` †, `list_silences` †, `export_automation` † |
 | `security:write` | `create_ip_profile`, `delete_ip_profile`, `create_security_ban` †, `delete_security_ban` †, `ban_ip` †, `unban_ip` †, `add_ban_whitelist` †, `remove_ban_whitelist` †, `import_security_bans` †, `ban_asn` †, `unban_asn` †, `create_auth_provider` †, `delete_auth_provider` †, `create_flow` †, `update_flow` †, `set_flow_enabled` †, `delete_flow` †, `run_flow` †, `simulate_flow` †, `restore_flow_version` †, `detach_flow` †, `update_flow_params` †, `decide_flow_run` †, `cancel_flow_run` †, `replay_flow_run` †, `install_flow_template` †, `create_silence` †, `delete_silence` †, `import_automation` † |
 | `portal:read` / `portal:write` | outils Access (`*_portal_*`, `push_portal`) † — voir [GoProxify Access](#goproxify-access-portail) |
 
@@ -483,6 +483,17 @@ Plugins WebAssembly installés (manifeste, empreinte, taille). Lecture seule : i
 Moteurs de sécurité globaux (Sentinel, Fail2Ban, CrowdSec, WAF — interrupteur maître par passerelle) avec les champs de leur configuration. Même source que `GET /api/v1/security/engine-types`. Scope `audit:read` (rôle admin).
 
 **Paramètres :** aucun
+
+### `get_waf_activity`
+
+Activité du WAF sur les dernières heures : requêtes signalées (`blocked` refusées en 403, `detected` passées en mode détection), 8 règles les plus déclenchées (`top_rules`, identifiants de règle ou nom d'un plugin de détection) et 8 domaines les plus visés (`top_domains`). Utile pour repérer des faux positifs avant de couper le WAF d'une passerelle (`PUT /api/v1/security/waf-config`, CLI `goproxify security waf-engine set`). Même source que `GET /api/v1/security/waf-activity`. Scope `audit:read` (rôle admin), lecture seule.
+
+| Paramètre | Type | Requis | Description |
+|-----------|------|--------|-------------|
+| `hours`   | number | | Fenêtre en heures (défaut 24, max 168) |
+| `edge`    | string | | ID du jeton ou nom de la passerelle (défaut : toutes) |
+
+`truncated: true` : plus de 50 000 requêtes signalées dans la fenêtre, seules les plus récentes sont comptées.
 
 ---
 

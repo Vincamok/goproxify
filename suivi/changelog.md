@@ -9,6 +9,8 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ### Ajouté
 
+- **Outil MCP `get_waf_activity` (Admin 0.160.0)** : l'activité du WAF (requêtes signalées refusées ou passées en détection, règles les plus déclenchées, domaines les plus visés, `hours` jusqu'à 168, `edge` facultatif) est lisible par une IA, pour repérer des faux positifs avant de couper le WAF d'une passerelle. Même source que `GET /api/v1/security/waf-activity` (désormais partagée : `api.WAFActivityFor`) ; scope `audit:read`, rôle admin, lecture seule. Le test qui aligne scopes d'outils et routes REST le couvre.
+
 - **Onglet WAF des moteurs de sécurité : proxies protégés et activité récente (Admin 0.159.0)** : l'onglet WAF de la fenêtre *Moteurs de sécurité* n'avait que l'interrupteur. Il montre maintenant, pour la passerelle sélectionnée (ou toutes en vue Admin) :
   - **Proxies qui utilisent le WAF** : `n / total` avec la répartition blocage / détection seule, lue dans la configuration des proxies actifs. Les proxies dont le WAF vient d'un snippet ne sont pas comptés (indiqué dans l'onglet).
   - **Requêtes signalées** sur les 24 dernières heures : refusées (403) et passées en détection, règles les plus déclenchées et domaines les plus visés. `GET /api/v1/security/waf-activity?hours=&edge=` (max 168 h) ; CLI `goproxify security waf-engine activity`.

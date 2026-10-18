@@ -222,6 +222,7 @@ func TestToolScopesMatchREST(t *testing.T) {
 		{"delete_alert_rule", http.MethodDelete, "/api/v1/alert-rules/r1"},
 		{"ack_alert_event", http.MethodPost, "/api/v1/alert-events/e1/ack"},
 		{"list_security_engine_types", http.MethodGet, "/api/v1/security/engine-types"},
+		{"get_waf_activity", http.MethodGet, "/api/v1/security/waf-activity"},
 		{"list_plugins", http.MethodGet, "/api/v1/plugins"},
 		{"list_auth_providers", http.MethodGet, "/api/v1/auth-providers"},
 		{"list_auth_provider_types", http.MethodGet, "/api/v1/auth-provider-types"},
@@ -252,7 +253,7 @@ func TestToolScopesMatchREST(t *testing.T) {
 func TestToolRequiresAdmin(t *testing.T) {
 	for _, tool := range []string{
 		"list_flows", "list_internal_cas", "get_flow_run", "decide_flow_run", "list_auth_providers",
-		"list_security_bans", "list_backups", "list_agents", "get_architecture", "simulate_sentinel_config",
+		"list_security_bans", "get_waf_activity", "list_backups", "list_agents", "get_architecture", "simulate_sentinel_config",
 		"get_portal_config", "push_portal_templates",
 	} {
 		if !rbac.ToolRequiresAdmin(tool) {

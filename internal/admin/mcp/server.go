@@ -842,6 +842,8 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 		result, toolErr = h.toolRemoveBanWhitelist(r, p.Arguments)
 	case "simulate_sentinel_config":
 		result, toolErr = h.toolSimulateSentinel(r, p.Arguments)
+	case "get_waf_activity":
+		result, toolErr = h.toolGetWAFActivity(r, p.Arguments)
 	case "get_topology_live":
 		result, toolErr = h.toolGetTopologyLive(r)
 	case "list_declared_nodes":
