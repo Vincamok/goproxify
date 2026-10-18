@@ -1159,14 +1159,14 @@ Liste les menaces CrowdSec (`security_threats`), triées par `last_seen_at` déc
 
 ### `GET /api/v1/security/ip-trace`
 
-**Étendue ASN.** La réponse contient `scope`, `scope_label` (par exemple `5.0.0.0 – 5.0.1.255 (AS64500 EXEMPLE)` ou `AS64500 EXEMPLE`) et `asn_context` : `{ "asn": { "asn", "name", "country", "ranges", "v4_addresses", "v6_ranges", "banned_ranges" }, "range": { "start", "end", "cidrs": […] } }`, `range` donnant la plage annoncée qui contient l'adresse et sa décomposition en CIDR. `asn_context` n'est renseigné que si la base ASN est **déjà installée** (un traçage simple ne la télécharge jamais), sinon `null` ; avec `scope=range` ou `scope=asn` elle est chargée, et téléchargée au besoin.
+**Étendue ASN.** La réponse contient `scope`, `scope_label` (par exemple `5.0.0.0 – 5.0.1.255 (AS64500 EXEMPLE)` ou `AS64500 EXEMPLE`) et `asn_context` : `{ "asn": { "asn", "name", "country", "ranges", "v4_addresses", "v6_ranges", "banned_ranges" } }`. `asn_context` n'est renseigné que si la base ASN est **déjà installée** (un traçage simple ne la télécharge jamais), sinon `null` ; avec `scope=asn` elle est chargée, et téléchargée au besoin.
 
 Parcours complet d'une IP ou d'un CIDR (rôle admin). Reconstitue, sur la période demandée, les requêtes d'accès (logs), les détections (`security_threats`), les bans et débans (`security_ban_history`), les bans en cours et les profils IP qui contiennent la cible.
 
 | Paramètre | Description |
 |-----------|-------------|
 | `target` (alias `ip`) | **Requis** (sauf avec `asn`). IP (`203.0.113.7`, `2001:db8::1`) ou CIDR (`198.51.100.0/24`). `400` si invalide |
-| `scope` | Étendue du parcours : `ip` (défaut, la cible seule), `range` (la plage que l'opérateur de l'adresse annonce, lue dans la base ASN) ou `asn` (toutes les plages de l'ASN de l'adresse). `404` si l'adresse est inconnue de la base (privée, réservée), `503` si la base ASN est indisponible, `400` si la valeur est inconnue |
+| `scope` | Étendue du parcours : `ip` (défaut, la cible seule) ou `asn` (toutes les plages de l'ASN de l'adresse). `404` si l'adresse est inconnue de la base (privée, réservée), `503` si la base ASN est indisponible, `400` si la valeur est inconnue |
 | `asn` | Numéro d'ASN (`AS16276`) à tracer en entier, à la place d'une adresse ; exige `scope=asn`. `404` si l'ASN n'annonce aucune plage |
 | `node` | Ne garde que les requêtes vues par cette passerelle (nom du nœud). Les bans et détections ne sont pas filtrés |
 | `from`, `to` | RFC3339 ou `AAAA-MM-JJ` (`to` en date seule inclut la journée). Défaut : 30 derniers jours jusqu'à maintenant. `400` si `from` ≥ `to` |

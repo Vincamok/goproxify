@@ -67,7 +67,7 @@ type TraceQuery struct {
 	Desc     bool
 	Limit    int
 	Offset   int
-	// Scope : ip (défaut), range (plage annoncée par l'opérateur) ou asn (tout l'ASN) ; ASN fixe l'ASN
+	// Scope : ip (défaut) ou asn (tout l'ASN) ; ASN fixe l'ASN
 	// (scope=asn) au lieu de le déduire de l'adresse. Voir ResolveTraceScope.
 	Scope string
 	ASN   string
@@ -184,10 +184,6 @@ func TraceIP(ctx context.Context, db *sql.DB, qy TraceQuery) (map[string]any, er
 		query += ` AND node_name = ?`
 		args = append(args, qy.Node)
 	}
-	sqlTarget := target
-	if qy.matcher.sqlPrefix != nil {
-		sqlTarget = *qy.matcher.sqlPrefix
-	}
 	// Sans stats, SQLite préfère idx_logs_ts (il évite le tri) et lit toute la période : on impose
 	// idx_logs_ip_ts dès que la colonne ip est bornée.
 	ipIndexed := strings.Replace(query, "FROM logs", "FROM logs INDEXED BY idx_logs_ip_ts", 1)
@@ -200,10 +196,10 @@ func TraceIP(ctx context.Context, db *sql.DB, qy TraceQuery) (map[string]any, er
 			args = append(args, b[0], b[1])
 		}
 		query = ipIndexed + ` AND (` + strings.Join(terms, ` OR `) + `)`
-	} else if sqlTarget.IsSingleIP() {
+	} else if target.IsSingleIP() {
 		query += ` AND ip = ?`
-		args = append(args, sqlTarget.Addr().String())
-	} else if lo, hi, ok := security.TraceIPRange(sqlTarget); ok {
+		args = append(args, target.Addr().String())
+	} else if lo, hi, ok := security.TraceIPRange(target); ok {
 		query = ipIndexed + ` AND ip >= ? AND ip < ?`
 		args = append(args, lo, hi)
 	}

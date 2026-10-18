@@ -15,7 +15,7 @@ import (
 func tracePath(args map[string]string) (string, error) {
 	target := flagValue(args, "-target", flagValue(args, "-ip", ""))
 	if target == "" && flagValue(args, "-asn", "") == "" {
-		return "", fmt.Errorf("usage: goproxify security trace -target <ip|cidr> [-scope ip|range|asn] [-asn <ASN>] [-from <date>] [-to <date>] [-order asc|desc] [-limit N] [-offset N] [-json]")
+		return "", fmt.Errorf("usage: goproxify security trace -target <ip|cidr> [-scope ip|asn] [-asn <ASN>] [-from <date>] [-to <date>] [-order asc|desc] [-limit N] [-offset N] [-json]")
 	}
 	q := url.Values{}
 	if target != "" {
@@ -68,9 +68,6 @@ func formatTrace(res map[string]any) string {
 		if info, ok := c["asn"].(map[string]any); ok {
 			n, _ := info["asn"].(float64)
 			fmt.Fprintf(&sb, "  ASN : AS%.0f %s (%s)\n", n, str(info, "name"), str(info, "country"))
-		}
-		if r, ok := c["range"].(map[string]any); ok {
-			fmt.Fprintf(&sb, "  plage annoncée : %s – %s\n", str(r, "start"), str(r, "end"))
 		}
 	}
 	fmt.Fprintf(&sb, "  première vue : %s   dernière vue : %s\n", orDash(str(sum, "first_seen")), orDash(str(sum, "last_seen")))

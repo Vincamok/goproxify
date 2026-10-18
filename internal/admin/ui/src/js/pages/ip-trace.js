@@ -180,12 +180,11 @@ function trPaint(body) {
   content.innerHTML = `<div class="tr-page"><p class="tr-meta" style="margin:0 0 10px">${esc(t('trace.subtitle'))}</p>${trFormHTML()}${body}</div>`;
 }
 
-// Opérateur de l'adresse (base ASN) : on bascule entre l'IP seule, la plage que l'opérateur annonce et tout
-// son ASN, sans connaître le CIDR. Absent quand la base ASN n'est pas installée ou ne connaît pas l'adresse.
+// Opérateur de l'adresse (base ASN) : on bascule entre l'IP seule et tout son ASN, sans connaître le CIDR. Absent quand la base ASN n'est pas installée ou ne connaît pas l'adresse.
 function trAsnBarHTML() {
   const c = _tr.data.asn_context;
   if (!c || !c.asn) return '';
-  const a = c.asn, r = c.range;
+  const a = c.asn;
   const chip = (scope, label, title) => `<button type="button" class="btn btn-sm ${_tr.scope === scope ? 'btn-primary' : 'btn-secondary'}" onclick="trSetScope('${scope}')" title="${esc(title || '')}">${esc(label)}</button>`;
   const addrs = a.v4_addresses >= 1e6 ? (a.v4_addresses / 1e6).toFixed(1) + ' M' : a.v4_addresses >= 1e3 ? Math.round(a.v4_addresses / 1e3) + ' k' : Math.round(a.v4_addresses);
   return `<div class="card blueprint" style="padding:10px 14px;margin-bottom:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12.5px">
@@ -194,11 +193,9 @@ function trAsnBarHTML() {
     <span style="color:var(--text3)">${a.ranges} plage${a.ranges > 1 ? 's' : ''} · ${addrs} adresses IPv4</span>
     <span style="margin-left:auto;display:inline-flex;gap:6px;flex-wrap:wrap">
       ${chip('ip', t('trace.scope.ip'))}
-      ${r ? chip('range', t('trace.scope.range'), `${r.start} – ${r.end}`) : ''}
       ${chip('asn', t('trace.scope.asn'), `AS${a.asn}`)}
       <button type="button" class="btn btn-ghost btn-sm" onclick="openBanAsn('${a.asn}')">${esc(t('trace.asn.ban'))}</button>
-    </span>
-    ${r ? `<span class="tr-mono" style="flex-basis:100%;color:var(--text3);font-size:11.5px">${esc(r.start)} – ${esc(r.end)}${r.cidrs?.length ? ' · ' + esc(r.cidrs.join(', ')) : ''}</span>` : ''}</div>`;
+    </span></div>`;
 }
 
 window.trSetScope = function(scope) {
@@ -321,14 +318,5 @@ function trRanges(ip) {
 function trBtn(target, cls = 'btn btn-ghost btn-icon btn-sm') {
   if (!trIsPublic(target)) return '';
   const label = t('trace.analyze');
-  return `<button type="button" class="${cls}" onclick="openIPTraceChoice('${esc(target)}')" title="${esc(label)}" aria-label="${esc(label)}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>`;
+  return `<button type="button" class="${cls}" onclick="openIPTrace('${esc(target)}')" title="${esc(label)}" aria-label="${esc(label)}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>`;
 }
-
-window.openIPTraceChoice = function(target) {
-  if (target.includes('/')) return openIPTrace(target);
-  const rows = trRanges(target).map(([label, tgt], i) =>
-    `<button type="button" class="btn ${i ? 'btn-secondary' : 'btn-primary'}" style="justify-content:space-between;width:100%" onclick="openIPTrace('${esc(tgt)}')">
-      <span class="tr-mono">${esc(label)}</span><span style="font-size:11px;opacity:.8">${esc(t(i === 0 ? 'trace.choice.ip' : 'trace.choice.range'))}</span></button>`).join('');
-  modal(`${esc(t('trace.analyze'))} · <span class="tr-mono">${esc(target)}</span>`,
-    `<p class="tr-meta" style="margin:0 0 12px">${esc(t('trace.choice.hint'))}</p><div style="display:grid;gap:8px">${rows}</div>`, '');
-};

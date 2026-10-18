@@ -1167,7 +1167,7 @@ Parcours complet d'une IP ou d'un CIDR sur une longue période : requêtes d'acc
 | Paramètre | Type   | Requis | Description |
 |-----------|--------|--------|-------------|
 | `target`  | string | ✓      | IP ou CIDR (`203.0.113.7`, `198.51.100.0/24`, `2001:db8::/32`) ; facultatif avec `scope=asn` et `asn` |
-| `scope`   | string | —      | `ip` (défaut), `range` (la plage annoncée par l'opérateur de l'adresse) ou `asn` (tout l'ASN de l'adresse) ; nécessite la base ASN |
+| `scope`   | string | —      | `ip` (défaut) ou `asn` (tout l'ASN de l'adresse) ; nécessite la base ASN |
 | `asn`     | string | —      | Numéro d'ASN (`AS16276`) à tracer en entier, avec `scope=asn` |
 | `from`    | string | —      | RFC3339 ou `AAAA-MM-JJ` (défaut : 30 jours avant `to`) |
 | `to`      | string | —      | RFC3339 ou `AAAA-MM-JJ` (défaut : maintenant) |
