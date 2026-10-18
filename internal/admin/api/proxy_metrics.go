@@ -21,6 +21,9 @@ const (
 	proxyMetricsInterval = 10 * time.Second
 	proxyMetricsCapacity = 360 // 1 h à 10 s
 	proxyMetricsIdleTTL  = time.Hour
+	// p95MinSamples : en dessous, le p95 d'un intervalle n'est que la requête la plus lente (ou une
+	// interpolation dans un seul bucket) : on n'affiche rien plutôt qu'un chiffre trompeur.
+	p95MinSamples = 5
 )
 
 var proxyMetricsClient = &http.Client{Timeout: 5 * time.Second}
@@ -244,7 +247,7 @@ func (s *ProxyMetricsSampler) ingestEdge(acc map[string]*hostWindow, edge string
 		}
 	}
 	s.mu.Lock()
-	ew := edgeWindow{RPS: ea.rps, P95ms: windowQuantile(ea.buckets, ea.count, ea.sumS, 0.95) * 1000}
+	ew := edgeWindow{RPS: ea.rps, P95ms: windowP95ms(ea.buckets, ea.count, ea.sumS)}
 	if ea.requests > 0 {
 		ew.ErrRate = ea.errors / ea.requests
 	}
@@ -272,7 +275,7 @@ func (s *ProxyMetricsSampler) commit(acc map[string]*hostWindow, now time.Time) 
 		if w.requests > 0 {
 			sm.ErrRate = w.errors / w.requests
 		}
-		sm.P95ms = windowQuantile(w.buckets, w.count, w.sumS, 0.95) * 1000
+		sm.P95ms = windowP95ms(w.buckets, w.count, w.sumS)
 		ser := append(s.series[host], sm)
 		if len(ser) > proxyMetricsCapacity {
 			ser = ser[len(ser)-proxyMetricsCapacity:]
@@ -289,6 +292,14 @@ func (s *ProxyMetricsSampler) commit(acc map[string]*hostWindow, now time.Time) 
 	if len(acc) > 0 {
 		s.sampledAt = now
 	}
+}
+
+// windowP95ms : p95 en ms d'un intervalle, 0 (« inconnu ») sous p95MinSamples requêtes mesurées.
+func windowP95ms(buckets map[float64]float64, count, sum float64) float64 {
+	if count < p95MinSamples {
+		return 0
+	}
+	return windowQuantile(buckets, count, sum, 0.95) * 1000
 }
 
 // windowQuantile : quantile (secondes) d'un histogramme à buckets cumulatifs.

@@ -92,6 +92,14 @@ function _asSpark(key) {
   return `<span class="as-spk">${h.map(c => `<i${c === 'g' ? '' : ` data-s="${c}"`}></i>`).join('')}</span>`;
 }
 
+/** Cause du risque (/nodes/live) qui colore la barre de statut ; vide si le risque est faible ou si le nœud est hors ligne (le statut le dit). */
+function _asRiskWhy(live) {
+  if (!live || !live.risk_level || live.risk_level === 'low') return '';
+  const p = { score: live.risk, pct: _asNum(live.risk_factor === 'errors' ? live.error_pct : live.blocked_pct), cpu: _asNum(live.cpu_pct || 0, 0), mem: _asNum(live.mem_pct || 0, 0) };
+  const k = { blocked: 'as.risk.blocked', errors: 'as.risk.errors', resources: 'as.risk.resources' }[live.risk_factor];
+  return k ? t(k, p) : '';
+}
+
 function _asPct(key) {
   const h = (window._asHist[key] || []).filter(c => c !== 'x');
   if (!h.length) return null;
@@ -548,6 +556,8 @@ function _asPanelHTML(model) {
     row(t('as.panel.reach'), (s.reachable || (node && node.endpoint)) ? `<span class="as-mono">${esc(s.reachable || node.endpoint)}</span>` : '');
     if (live && !live.low_traffic) row(t('as.panel.err'), `${_asNum(live.error_pct)} %`, live.error_pct >= 5 ? 'warn' : '');
   }
+  const why = _asRiskWhy(live);
+  if (why) row(t('as.panel.risk'), esc(why), 'warn');
   if (s.type !== 'admin') row(t('as.panel.version'), node && node.version ? esc(node.version) : '—');
   if (s.type !== 'admin' && h) {
     if (!node) row(t('as.config'), esc(t('as.drift.not_connected')));

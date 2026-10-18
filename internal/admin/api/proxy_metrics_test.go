@@ -298,3 +298,21 @@ func TestEvalsPerMinute(t *testing.T) {
 		t.Error("après remise à zéro, nil attendu")
 	}
 }
+
+func TestSamplerP95NeedsEnoughSamples(t *testing.T) {
+	s := NewProxyMetricsSampler(nil, nil)
+	t0 := time.Unix(1000, 0)
+	sampleOnce(s, "e1", []hostCounters{{Host: "a.lan"}}, t0)
+	// 3 requêtes dont une lente : un « p95 » ne serait que cette requête
+	sampleOnce(s, "e1", []hostCounters{{Host: "a.lan", Requests: 3, DurationSumS: 2.2, DurationCount: 3, LatencyBuckets: buckets(2, 2, 2)}}, t0.Add(10*time.Second))
+	if got := s.series["a.lan"][0].P95ms; got != 0 {
+		t.Errorf("p95 sur 3 requêtes = %v ms, attendu 0 (inconnu)", got)
+	}
+	if got := s.edgeLast["e1"].P95ms; got != 0 {
+		t.Errorf("p95 de la passerelle sur 3 requêtes = %v ms, attendu 0", got)
+	}
+	sampleOnce(s, "e1", []hostCounters{{Host: "a.lan", Requests: 13, DurationSumS: 2.7, DurationCount: 13, LatencyBuckets: buckets(12, 12, 12)}}, t0.Add(20*time.Second))
+	if got := s.series["a.lan"][1].P95ms; got <= 0 {
+		t.Errorf("p95 sur 10 requêtes = %v ms, attendu > 0", got)
+	}
+}

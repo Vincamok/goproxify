@@ -390,7 +390,8 @@ au redémarrage de l'Admin. Scope PAT : `metrics:read`.
 ```
 
 `error_rate` est une **fraction** (0..1) de réponses 5xx sur le dernier intervalle ; `p95_ms` est le
-p95 de la latence sur ce même intervalle ; `series` est le débit (req/s) des derniers relevés, du
+p95 de la latence sur ce même intervalle (hors WebSocket, et `0` — « inconnu » — sous 5 requêtes
+mesurées dans l'intervalle) ; `series` est le débit (req/s) des derniers relevés, du
 plus ancien au plus récent. `proxies` est vide (et `sampled_at` nul) tant qu'aucune passerelle n'a
 été relevée deux fois.
 

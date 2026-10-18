@@ -223,7 +223,11 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 func recordRequestMetrics(host string, r *http.Request, rw *statusCapture, dur time.Duration) {
 	metrics.Edge.ActiveRequests.WithLabelValues(host).Dec()
 	metrics.Edge.RequestsTotal.WithLabelValues(host, r.Method, fmt.Sprintf("%d", rw.status)).Inc()
-	metrics.Edge.RequestDuration.WithLabelValues(host).Observe(dur.Seconds())
+	// Un WebSocket dure autant que la connexion : l'inclure ferait de chaque session ouverte la
+	// « requête la plus lente » du p95.
+	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		metrics.Edge.RequestDuration.WithLabelValues(host).Observe(dur.Seconds())
+	}
 	if rw.bytes > 0 {
 		metrics.Edge.BytesOut.Add(float64(rw.bytes))
 		metrics.Edge.BytesOutByHost.WithLabelValues(host).Add(float64(rw.bytes))
