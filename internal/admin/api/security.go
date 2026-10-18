@@ -166,6 +166,8 @@ func (h *SecurityHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.getWAFConfig(w, r)
 	case r.Method == http.MethodPut && sub == "waf-config":
 		h.putWAFConfig(w, r)
+	case r.Method == http.MethodGet && sub == "waf-activity":
+		h.getWAFActivity(w, r)
 	// Timeouts HTTP/QUIC (statiques — redémarrage passerelle requise)
 	case r.Method == http.MethodGet && sub == "server-config":
 		h.getServerConfig(w, r)

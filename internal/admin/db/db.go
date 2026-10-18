@@ -734,6 +734,10 @@ func migrate(db *sql.DB) error {
 	db.Exec(`ALTER TABLE logs ADD COLUMN tls_ja4 TEXT NOT NULL DEFAULT ''`) //nolint:errcheck
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_logs_tls_ja4 ON logs (tls_ja4) WHERE tls_ja4 != ''`) //nolint:errcheck
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_logs_tls_ja3 ON logs (tls_ja3) WHERE tls_ja3 != ''`) //nolint:errcheck
+	// Requêtes signalées par le WAF (activité affichée dans « Moteurs de sécurité ») : index partiel,
+	// quasi vide face aux millions de lignes propres. Toute requête qui l'utilise doit répéter le
+	// littéral `waf_matches != ''` pour que SQLite le choisisse.
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_logs_waf_ts ON logs (ts) WHERE waf_matches != ''`) //nolint:errcheck
 
 	// Bibliothèque de pages d'erreur (templates HTML + assets) — scope Admin V1.
 	for _, s := range []string{

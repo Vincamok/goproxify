@@ -1248,6 +1248,20 @@ Interrupteur du WAF, moteur de sécurité d'une passerelle : `{ "enabled": true|
 - Autonomie : chaque passerelle garde une copie chiffrée du réglage (`/etc/goproxify/waf-config.gpx`, surchargeable par `GPX_WAF_CONFIG_PATH`) et la recharge à son démarrage sans l'Admin. Copie absente ou illisible : le WAF reste actif.
 - CLI : `goproxify security waf-engine get|set`.
 
+### `GET /api/v1/security/waf-activity`
+
+Requêtes que le WAF a signalées (colonne `waf_matches` des journaux d'accès) : onglet WAF de la fenêtre « Moteurs de sécurité ». Paramètres : `hours` (défaut `24`, max `168`), `edge` (id du jeton ou nom du nœud ; sans lui, toutes les passerelles).
+
+```json
+{ "hours": 24, "requests": 4, "blocked": 3, "detected": 1,
+  "top_rules": [{ "name": "942100", "count": 3 }], "top_domains": [{ "name": "a.test", "count": 2 }] }
+```
+
+- `blocked` : requêtes refusées (403) ; `detected` : les autres, passées (route en mode détection). `top_rules` et `top_domains` : 8 au plus. Les entrées de `top_rules` sont les identifiants de règle du WAF, ou le nom d'un plugin de détection (ex. `coraza`).
+- `truncated: true` quand plus de 50 000 requêtes signalées tombent dans la fenêtre : seules les plus récentes sont comptées.
+- Lu dans l'index partiel `idx_logs_waf_ts` (requêtes signalées seulement), sans parcourir la table des journaux.
+- CLI : `goproxify security waf-engine activity [-hours N] [-edge <id>]`.
+
 ### `GET /api/v1/security/ips-provider` · `PUT /api/v1/security/ips-provider`
 
 Fournisseur IPS actif (`native|fail2ban|crowdsec`). Même règle de portée que `threat-config`.

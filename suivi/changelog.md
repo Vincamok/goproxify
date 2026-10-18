@@ -9,6 +9,13 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ### Ajouté
 
+- **Onglet WAF des moteurs de sécurité : proxies protégés et activité récente (Admin 0.159.0)** : l'onglet WAF de la fenêtre *Moteurs de sécurité* n'avait que l'interrupteur. Il montre maintenant, pour la passerelle sélectionnée (ou toutes en vue Admin) :
+  - **Proxies qui utilisent le WAF** : `n / total` avec la répartition blocage / détection seule, lue dans la configuration des proxies actifs. Les proxies dont le WAF vient d'un snippet ne sont pas comptés (indiqué dans l'onglet).
+  - **Requêtes signalées** sur les 24 dernières heures : refusées (403) et passées en détection, règles les plus déclenchées et domaines les plus visés. `GET /api/v1/security/waf-activity?hours=&edge=` (max 168 h) ; CLI `goproxify security waf-engine activity`.
+  - Un lien vers *Score par proxy*. Interrupteur coupé, ces chiffres sont grisés sans être masqués : l'historique reste lisible.
+  - **Lecture sans parcourir `logs`** : nouvel index partiel `idx_logs_waf_ts (ts) WHERE waf_matches != ''` (créé au démarrage, quasi vide face aux lignes propres), requête forcée dessus et plafonnée à 50 000 lignes (`truncated`). Un test vérifie que le plan l'utilise.
+  - **Limites assumées** : pas d'outil MCP (la lecture reste via l'API et la CLI) ; les identifiants de règle sont affichés tels quels, sans libellé de catégorie ; `top_rules` compte aussi les refus de plugins de détection (ex. `coraza`), qui alimentent la même colonne ; l'interface n'a pas été essayée dans une session Admin complète.
+
 - **Le WAF rejoint les moteurs de sécurité : un interrupteur par passerelle (Admin 0.158.0, Edge 0.71.0)** : le WAF ne s'activait que route par route (label `goproxify.waf=` ou snippet) ; le couper sur une passerelle pendant une vague de faux positifs obligeait à toucher chaque route. La fenêtre *Sécurité › Moteurs de sécurité* gagne une carte **WAF** à côté de Fail2Ban, CrowdSec et Sentinel, avec son interrupteur pour la passerelle sélectionnée.
   - **Interrupteur maître** : `GET/PUT /api/v1/security/waf-config` (`{"enabled": bool}`, même portée que `threat-config` : passerelle, groupe HA ou global). Coupé, aucune route de la passerelle n'exécute le WAF et son moteur comportemental ne bannit plus ; le mode, les seuils et les règles des routes sont conservés et reprennent à la réactivation. Sans réglage enregistré, le WAF est actif : une route qui le demande l'a toujours, comme avant.
   - **Le WAF reste un détecteur par route** (ADR 0007) : le moteur ne fait que l'allumer ou l'éteindre, à chaud, via `push_waf_config` (rejoué à la connexion d'une passerelle, suivi par le groupe HA).

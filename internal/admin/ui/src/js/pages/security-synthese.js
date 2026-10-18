@@ -495,6 +495,40 @@ function smTabs() {
   return list;
 }
 
+// Proxies qui font appel au WAF (route activée, mode détection ou blocage) et requêtes qu'il a signalées.
+// Les proxies dont le WAF vient d'un snippet ne sont pas comptés : la configuration d'un proxy ne le porte pas.
+function smWafProxyStats(rows) {
+  const list = (Array.isArray(rows) ? rows : []).filter(p => p.enabled !== false);
+  let on = 0, detect = 0;
+  for (const p of list) {
+    const w = p.config?.waf;
+    if (!w?.enabled) continue;
+    on++;
+    if (w.mode === 'detect') detect++;
+  }
+  return { total: list.length, on, detect, block: on - detect };
+}
+
+function smWafInfoHTML(engineOn) {
+  const info = _sm.wafInfo || {};
+  const rows = [];
+  if (info.proxies) {
+    const p = info.proxies;
+    rows.push(`<div class="sm-cap"><div class="sm-cap-d"><b>${esc(t('sm.waf_protected'))}</b><span>${esc(t('sm.waf_modes', { block: p.block, detect: p.detect }))}</span></div><div class="sm-cap-r"><span class="sm-val">${p.on} / ${p.total}</span></div></div>`);
+  }
+  const a = info.activity;
+  if (a) {
+    rows.push(`<div class="sm-cap"><div class="sm-cap-d"><b>${esc(t('sm.waf_flagged', { h: a.hours }))}</b><span>${esc(a.requests ? t('sm.waf_flagged_d', { blocked: a.blocked, detected: a.detected }) : t('sm.waf_none'))}</span></div><div class="sm-cap-r"><span class="sm-val">${a.requests}${a.truncated ? '+' : ''}</span></div></div>`);
+    const top = (title, list) => list?.length
+      ? `<div class="sm-cap"><div class="sm-cap-d"><b>${esc(title)}</b><span>${list.map(c => `${esc(c.name)} ×${c.count}`).join(' · ')}</span></div></div>`
+      : '';
+    rows.push(top(t('sm.waf_top_rules'), a.top_rules), top(t('sm.waf_top_domains'), a.top_domains));
+    if (a.truncated) rows.push(`<p class="vs-hint">${esc(t('sm.waf_truncated'))}</p>`);
+  }
+  if (!rows.length) return '';
+  return `<div class="sm-caps${engineOn ? '' : ' off'}">${rows.join('')}</div>${info.proxies ? `<p class="vs-hint">${esc(t('sm.waf_snippet_note'))}</p>` : ''}`;
+}
+
 function smPanelHTML() {
   const admin = _sm.mode === 'admin';
   switch (_sm.tab) {
@@ -510,7 +544,9 @@ function smPanelHTML() {
     case 'waf': {
       const on = _sm.waf?.enabled !== false;
       return `${smMasterHTML('WAF', t('sm.waf_d'), on, 'smMaster_waf')}
-        <div class="vs-hint">${esc(t(admin ? 'sm.waf_hint_admin' : 'security.ips_engines.waf_hint'))}</div>`;
+        <div class="vs-hint">${esc(t(admin ? 'sm.waf_hint_admin' : 'security.ips_engines.waf_hint'))}</div>
+        ${smWafInfoHTML(on)}
+        <div><button type="button" class="btn btn-ghost btn-sm" onclick="smClose();navigate('${securityPageId('posture', _sm.mode)}')">${esc(t('sm.waf_open_posture'))} →</button></div>`;
     }
     case 'f2b': {
       const on = !!_sm.f2b?.enabled;
@@ -586,9 +622,11 @@ window.secEnginesOpen = async function(tab) {
   let root = document.getElementById('sm-root');
   if (!root) { root = document.createElement('div'); root.id = 'sm-root'; document.body.appendChild(root); }
   root.innerHTML = `<div class="sm-scrim"><div class="sm-modal"><p style="padding:24px;color:var(--text2)">${esc(t('common.loading'))}</p></div></div>`;
-  const [threat, waf, f2b, cs, provider, rules, scan, sla] = await Promise.all([
+  const [threat, waf, wafActivity, wafProxies, f2b, cs, provider, rules, scan, sla] = await Promise.all([
     api('GET', `/security/threat-config${edgeQ}`).catch(() => ({})),
     api('GET', `/security/waf-config${edgeQ}`).catch(() => ({ enabled: true })),
+    api('GET', `/security/waf-activity${edgeQ ? edgeQ + '&' : '?'}hours=24`).catch(() => null),
+    api('GET', `/proxies${edgeQ}`).catch(() => null),
     api('GET', '/security/fail2ban').catch(() => ({})),
     api('GET', '/security/crowdsec').catch(() => ({})),
     api('GET', `/security/ips-provider${edgeQ}`).catch(() => ({ provider: 'native' })),
@@ -598,6 +636,7 @@ window.secEnginesOpen = async function(tab) {
   ]);
   _sm.threat = threat || {};
   _sm.waf = waf || { enabled: true };
+  _sm.wafInfo = { activity: wafActivity, proxies: wafProxies ? smWafProxyStats(wafProxies) : null };
   _sm.f2b = f2b || {};
   _sm.cs = cs || {};
   _sm.provider = provider?.provider || 'native';

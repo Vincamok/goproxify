@@ -65,6 +65,7 @@ goproxify security waf set  -proxy <id> -file <config.json> [-admin-url …] [-t
 
 goproxify security waf-engine get [-edge <id>] [-admin-url …] [-token …]
 goproxify security waf-engine set -enabled <true|false> [-edge <id>] [-admin-url …] [-token …]
+goproxify security waf-engine activity [-hours N] [-edge <id>] [-admin-url …] [-token …]
 
 goproxify security cve sla get [-admin-url …] [-token …]
 goproxify security cve sla set -file <sla.json> [-admin-url …] [-token …]
@@ -749,6 +750,18 @@ func runSecurityWAFEngine() {
 			os.Exit(1)
 		}
 		out, _ := json.MarshalIndent(cfg, "", "  ")
+		fmt.Println(string(out))
+	case "activity":
+		q := url.Values{"hours": {flagValue(args, "-hours", "24")}}
+		if edgeID := flagValue(args, "-edge", ""); edgeID != "" {
+			q.Set("edge", edgeID)
+		}
+		var act json.RawMessage
+		if _, err := client.DoJSON("GET", "/api/v1/security/waf-activity?"+q.Encode(), nil, &act); err != nil {
+			fmt.Fprintf(os.Stderr, "waf-engine activity : %v\n", err)
+			os.Exit(1)
+		}
+		out, _ := json.MarshalIndent(act, "", "  ")
 		fmt.Println(string(out))
 	case "set":
 		enabled, err := strconv.ParseBool(flagValue(args, "-enabled", ""))

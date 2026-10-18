@@ -814,6 +814,7 @@ goproxify security threat simulate -file <threat-config.json> [-hours N] [-domai
 # Interrupteur du WAF d'une passerelle (coupe ou rétablit le WAF de tous ses proxies, sans toucher à leurs réglages)
 goproxify security waf-engine get [-edge <id>] [-admin-url …] [-token …]
 goproxify security waf-engine set -enabled <true|false> [-edge <id>] [-admin-url …] [-token …]   # même règle de groupe HA que threat
+goproxify security waf-engine activity [-hours N] [-edge <id>] [-admin-url …] [-token …]   # requêtes signalées par le WAF : refusées/passées, règles et domaines les plus touchés (défaut 24 h, max 168)
 
 # Bans
 goproxify security bans list   [-edge <passerelle>] [-source <source>] [-active true|false] [-scope <passerelle|group:nom>] [-admin-url …] [-token …]   # -source : native, fail2ban, crowdsec, threat, plugin:<nom> (ex. plugin:coraza)
