@@ -413,6 +413,7 @@ func (s *Server) Start(ctx context.Context) error {
 			go manager.PushUnban(context.Background(), []string{ip})
 		}
 	}
+	logsH.OnUnban = pushUnban
 	pushUnbanMany := func(ips []string) {
 		if manager != nil {
 			go manager.PushUnban(context.Background(), ips)
@@ -631,7 +632,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mon.Start(ctx)
 
 	// Rétention des logs RGPD (lit logs.retention_access_days / logs.retention_system_days dans settings).
-	s.logStore.StartRetentionLoop(ctx, func() (accessDays, systemDays int) {
+	s.logStore.StartRetentionLoop(ctx, func() (accessDays, systemDays, banDays int) {
 		parseInt := func(key string, def int) int {
 			v := admindb.GetSetting(s.db, key, "")
 			if v == "" {
@@ -642,7 +643,8 @@ func (s *Server) Start(ctx context.Context) error {
 			return n
 		}
 		return parseInt("logs.retention_access_days", logs.DefaultRetentionAccessDays),
-			parseInt("logs.retention_system_days", logs.DefaultRetentionSystemDays)
+			parseInt("logs.retention_system_days", logs.DefaultRetentionSystemDays),
+			parseInt("logs.retention_ban_days", logs.DefaultRetentionBanDays)
 	})
 	go func() {
 		n, err := s.logStore.BackfillIPIndex(ctx)

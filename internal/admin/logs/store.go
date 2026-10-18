@@ -117,6 +117,7 @@ type Store struct {
 	// Durées de rétention actives (modifiables sans redémarrage).
 	retentionMu         sync.RWMutex
 	retentionAccessDays int
+	retentionBanDays    int
 	retentionSystemDays int
 
 	// Pseudonymisation RGPD (AES-GCM). La clé reste chargée mode désactivé : les entrées
@@ -144,7 +145,24 @@ func New(db *sql.DB) *Store {
 		subscribers:         make(map[int64]chan Entry),
 		retentionAccessDays: DefaultRetentionAccessDays,
 		retentionSystemDays: DefaultRetentionSystemDays,
+		retentionBanDays:    DefaultRetentionBanDays,
 	}
+}
+
+// SetBanRetention met à jour la durée de conservation de l'historique des bans (0 = inchangée).
+func (s *Store) SetBanRetention(days int) {
+	s.retentionMu.Lock()
+	defer s.retentionMu.Unlock()
+	if days > 0 {
+		s.retentionBanDays = days
+	}
+}
+
+// BanRetentionDays retourne la durée de conservation active de l'historique des bans.
+func (s *Store) BanRetentionDays() int {
+	s.retentionMu.RLock()
+	defer s.retentionMu.RUnlock()
+	return s.retentionBanDays
 }
 
 // SetRetention met à jour les durées de rétention sans redémarrage.
@@ -692,13 +710,14 @@ func scanEntries(rows interface {
 
 // StartRetentionLoop lance un nettoyage quotidien basé sur retained_until (RGPD).
 // onUpdate est appelé à chaque cycle pour récupérer les durées de rétention courantes
-// (accessDays, systemDays) depuis les settings — 0 = conserver la valeur actuelle.
-func (s *Store) StartRetentionLoop(ctx context.Context, onUpdate func() (accessDays, systemDays int)) {
+// (accessDays, systemDays, banDays) depuis les settings — 0 = conserver la valeur actuelle.
+func (s *Store) StartRetentionLoop(ctx context.Context, onUpdate func() (accessDays, systemDays, banDays int)) {
 	go func() {
 		purge := func() {
 			if onUpdate != nil {
-				a, sys := onUpdate()
+				a, sys, ban := onUpdate()
 				s.SetRetention(a, sys)
+				s.SetBanRetention(ban)
 			}
 			s.purgeRetained()
 		}
@@ -721,6 +740,59 @@ func (s *Store) StartRetentionLoop(ctx context.Context, onUpdate func() (accessD
 func (s *Store) purgeRetained() {
 	s.db.Exec(`DELETE FROM logs WHERE retained_until IS NOT NULL AND retained_until < ?`, //nolint:errcheck
 		time.Now().UTC().Format(time.RFC3339))
+	s.purgeIPTraces()
+}
+
+// purgeIPTraces applique la rétention aux tables qui gardent une IP hors de `logs` : l'historique
+// et les bans expirés suivent la durée des bans, le cache GeoIP (IP, ville, coordonnées) celle des
+// logs d'accès. Les bans encore actifs ne sont jamais purgés. security_bans.expires_at est en
+// RFC3339 : sa borne doit l'être aussi ; les autres colonnes suivent CURRENT_TIMESTAMP.
+func (s *Store) purgeIPTraces() {
+	s.retentionMu.RLock()
+	banDays, accessDays := s.retentionBanDays, s.retentionAccessDays
+	s.retentionMu.RUnlock()
+	s.db.Exec(`DELETE FROM security_ban_history WHERE created_at < datetime('now', ?)`, //nolint:errcheck
+		fmt.Sprintf("-%d days", banDays))
+	s.db.Exec(`DELETE FROM security_bans WHERE expires_at IS NOT NULL AND expires_at < ?`, //nolint:errcheck
+		time.Now().UTC().AddDate(0, 0, -banDays).Format(time.RFC3339))
+	s.db.Exec(`DELETE FROM geoip_cache WHERE cached_at < datetime('now', ?)`, //nolint:errcheck
+		fmt.Sprintf("-%d days", accessDays))
+}
+
+// IPErasure détaille ce qu'un effacement par IP a supprimé.
+type IPErasure struct {
+	Logs       int64 `json:"deleted"`
+	BanHistory int64 `json:"ban_history_deleted"`
+	Bans       int64 `json:"bans_deleted"`
+	GeoCache   int64 `json:"geoip_cache_deleted"`
+}
+
+// EraseIP supprime d'une IP tout ce que l'Admin en garde : logs (pseudonymisés compris), bans,
+// historique des bans et cache GeoIP. Ces trois dernières tables stockent l'IP en clair.
+func (s *Store) EraseIP(ip string) (IPErasure, error) {
+	var out IPErasure
+	var err error
+	if out.Logs, err = s.DeleteByIP(ip); err != nil {
+		return out, err
+	}
+	canon := gdpr.CanonicalIP(ip)
+	for _, t := range []struct {
+		table string
+		n     *int64
+	}{
+		{"security_ban_history", &out.BanHistory},
+		{"security_bans", &out.Bans},
+		{"geoip_cache", &out.GeoCache},
+	} {
+		res, err := s.db.Exec(`DELETE FROM `+t.table+` WHERE ip IN (?, ?)`, ip, canon)
+		if err != nil {
+			return out, err
+		}
+		if *t.n, err = res.RowsAffected(); err != nil {
+			return out, err
+		}
+	}
+	return out, nil
 }
 
 // DeleteByIP supprime tous les logs d'une IP (droit à l'effacement RGPD), entrées

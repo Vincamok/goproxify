@@ -13,7 +13,8 @@
 | User-Agent header | Edge (access log) | Log file on Edge + Admin SQLite | 365 days |
 | Referrer header | Edge (access log) | Log file on Edge + Admin SQLite | 365 days |
 | WAF rule matches (categories only, no payload) | Passerelle (access log) | Admin SQLite | 365 days |
-| Banned IP + ban reason + expiry | Passerelle / Admin | Admin SQLite | 730 days |
+| Banned IP + ban reason + expiry, ban history | Passerelle / Admin | Admin SQLite (`security_bans`, `security_ban_history`, IP in clear) | History and expired bans: 730 days (`retention_ban_days`); an active ban is kept until it expires |
+| GeoIP cache of observed IPs (country, city, coordinates) | Admin | Admin SQLite (`geoip_cache`, IP in clear) | Same as access logs (`retention_access_days`) |
 | Admin user email + bcrypt password hash | Admin | Admin SQLite | Until deleted |
 | Admin user session JWT | Admin | In-memory + cookie (browser session) | Until logout or expiry |
 | Audit log (who did what, when) | Admin | Admin SQLite | 90 days |
@@ -61,17 +62,18 @@ Configure in the Admin UI → **Logs** page → settings (gear icon) or via API:
 PUT /api/v1/logs/settings
 {
   "retention_access_days": 90,
-  "retention_system_days": 30
+  "retention_system_days": 30,
+  "retention_ban_days": 365
 }
 ```
 
 | Setting | Default | GDPR recommendation |
 |---|---|---|
-| `retention_access_days` | 365 | ≤ 90 days (or 13 months max, CNIL) |
+| `retention_access_days` | 365 | ≤ 90 days (or 13 months max, CNIL) — also applies to the GeoIP cache |
 | `retention_system_days` | 90 | 90 days |
-| Ban history | 730 days | Legitimate interest — adjust to policy |
+| `retention_ban_days` | 730 | Legitimate interest — adjust to policy. Applies to the ban history and to expired bans (API only, no field in the UI yet) |
 
-Older entries are purged automatically every night.
+Older entries are purged automatically every night: access and system logs, the ban history, bans expired for longer than `retention_ban_days`, and GeoIP cache entries older than `retention_access_days`. A ban that is still active (or permanent) is never purged.
 
 ### IP pseudonymisation (recommandé pour RGPD strict)
 
@@ -112,6 +114,16 @@ DELETE /api/v1/logs/by-ip/{ip}
 ```
 
 Removes all log entries of the given IP, **including pseudonymised entries**: each one carries a keyed fingerprint of the real IP (`ip_hmac`, HMAC-SHA256), so the Admin finds them without decrypting the logs. IPv6 is matched whatever its notation. Entries pseudonymised before Admin `0.70.5` get their fingerprint in the background at the next start.
+
+The erasure also covers what the Admin keeps about that IP **outside the logs**, all stored in clear: the bans (`security_bans`), the ban history (`security_ban_history`) and the GeoIP cache entry (`geoip_cache`: country, city, coordinates). The response counts each one:
+
+```json
+{ "deleted": 12, "bans_deleted": 1, "ban_history_deleted": 3, "geoip_cache_deleted": 1, "ip": "203.0.113.42" }
+```
+
+Deleting a ban also lifts it on the gateways, like an unban, including bans a gateway set itself. The IP is matched whatever its notation (IPv6).
+
+**Not covered by the erasure** (to handle separately if the request requires it): the audit log (it holds the addresses of administrators), the access log files kept on the gateways when anonymisation is off, and the state local to each gateway (Ephor, local Fail2Ban). Erasing the history of an IP also means a gateway that missed its unban can no longer be replayed it.
 
 `{ip}` must be a valid IP address (`400` otherwise). An audit entry (`rgpd_erasure_ip`) and a system log are created with the reason and the number of deleted entries; neither contains the erased IP in clear, only its fingerprint (`hmac:…`), or its truncated form if the pseudonymisation key is unavailable.
 

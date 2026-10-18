@@ -149,13 +149,20 @@ func runLogs() {
 			body = map[string]string{"reason": reason}
 		}
 		var result struct {
-			Deleted int64 `json:"deleted"`
+			Deleted    int64 `json:"deleted"`
+			Bans       int64 `json:"bans_deleted"`
+			BanHistory int64 `json:"ban_history_deleted"`
+			GeoCache   int64 `json:"geoip_cache_deleted"`
 		}
 		if _, err := client.DoJSON("DELETE", path, body, &result); err != nil {
 			fmt.Fprintf(os.Stderr, "delete : %v\n", err)
 			os.Exit(1)
 		}
 		fmt.Printf("%d entrée(s) supprimée(s)\n", result.Deleted)
+		if result.Bans+result.BanHistory+result.GeoCache > 0 {
+			fmt.Printf("%d ban(s), %d événement(s) de ban, %d entrée(s) GeoIP supprimé(s)\n",
+				result.Bans, result.BanHistory, result.GeoCache)
+		}
 
 	case "help":
 		fmt.Print(`Usage: goproxify logs <sous-commande> [options]

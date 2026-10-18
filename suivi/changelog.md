@@ -15,6 +15,13 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
   - **Limite assumée** : le nom n'a pas fait l'objet d'une recherche d'antériorité en base de marques (INPI, EUIPO, OMPI) ; seule une recherche web rapide n'a trouvé aucun produit de sécurité du même nom.
   - Les entrées plus anciennes de ce journal gardent l'ancien nom, qui était le nom du moteur à l'époque.
 
+### Corrigé
+
+- **RGPD : l'effacement par IP couvre les bans, leur historique et le cache GeoIP, et leur rétention est appliquée (Admin 0.162.1)** : `DELETE /api/v1/logs/by-ip/{ip}` ne supprimait que les lignes de `logs`, alors que `security_bans`, `security_ban_history` et `geoip_cache` gardent l'IP en clair (le cache y ajoute ville et coordonnées). La documentation annonçait aussi 730 jours pour l'historique des bans, mais aucune purge n'existait.
+  - **Effacement** : la réponse devient `{deleted, bans_deleted, ban_history_deleted, geoip_cache_deleted, ip}` ; l'IP est trouvée quelle que soit sa notation (IPv6). Les bans supprimés sont aussi levés sur les passerelles (comme un déban), y compris ceux qu'elles ont posés elles-mêmes. L'audit `rgpd_erasure_ip` détaille les compteurs, toujours sans l'IP en clair.
+  - **Rétention** : la purge quotidienne supprime l'historique des bans et les bans **expirés** depuis plus de `retention_ban_days` (730 par défaut, `GET/PUT /api/v1/logs/settings`, réglage `logs.retention_ban_days`), et les entrées du cache GeoIP plus anciennes que `retention_access_days`. Un ban encore actif, ou permanent, n'est jamais purgé.
+  - **Limites assumées** : l'effacement ne rejoint pas le journal d'audit (adresses des administrateurs), les fichiers de log des passerelles ni l'état propre à chaque passerelle (Ephor, Fail2Ban local) ; effacer l'historique d'une IP empêche de rejouer son déban à une passerelle qui l'aurait manqué ; le réglage de rétention des bans n'a pas de champ dans l'interface (API seule).
+
 ### Ajouté
 
 - **Outil MCP `get_waf_activity` (Admin 0.160.0)** : l'activité du WAF (requêtes signalées refusées ou passées en détection, règles les plus déclenchées, domaines les plus visés, `hours` jusqu'à 168, `edge` facultatif) est lisible par une IA, pour repérer des faux positifs avant de couper le WAF d'une passerelle. Même source que `GET /api/v1/security/waf-activity` (désormais partagée : `api.WAFActivityFor`) ; scope `audit:read`, rôle admin, lecture seule. Le test qui aligne scopes d'outils et routes REST le couvre.

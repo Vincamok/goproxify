@@ -34,6 +34,9 @@ type LogsHandler struct {
 	Store  *logs.Store
 	DB     *sql.DB
 	Pusher LogsSettingsPusher
+	// OnUnban (optionnel) lève les bans d'une IP sur les passerelles : l'effacement RGPD d'une IP
+	// supprime ses bans de la base Admin.
+	OnUnban func(ip string)
 }
 
 func (h *LogsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -265,11 +268,13 @@ func (h *LogsHandler) getSettings(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{
 		"retention_access_days": parseInt("logs.retention_access_days", accessDays),
 		"retention_system_days": parseInt("logs.retention_system_days", systemDays),
+		"retention_ban_days":    parseInt("logs.retention_ban_days", h.Store.BanRetentionDays()),
 		"ip_anonymize":          ipAnonymize,
 		"ip_pseudonymize":       ipPseudonymize,
 		"defaults": map[string]any{
 			"access_days": logs.DefaultRetentionAccessDays,
 			"system_days": logs.DefaultRetentionSystemDays,
+			"ban_days":    logs.DefaultRetentionBanDays,
 		},
 	})
 }
@@ -278,14 +283,15 @@ func (h *LogsHandler) putSettings(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		RetentionAccessDays int   `json:"retention_access_days"`
 		RetentionSystemDays int   `json:"retention_system_days"`
-		IPAnonymize         *bool `json:"ip_anonymize,omitempty"`
+		RetentionBanDays    int   `json:"retention_ban_days"`
+		IPAnonymize        *bool `json:"ip_anonymize,omitempty"`
 		IPPseudonymize      *bool `json:"ip_pseudonymize,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, r, http.StatusBadRequest, "api.err.json")
 		return
 	}
-	if body.RetentionAccessDays < 0 || body.RetentionSystemDays < 0 {
+	if body.RetentionAccessDays < 0 || body.RetentionSystemDays < 0 || body.RetentionBanDays < 0 {
 		writeErr(w, r, http.StatusBadRequest, "api.err.retention")
 		return
 	}
@@ -308,7 +314,11 @@ func (h *LogsHandler) putSettings(w http.ResponseWriter, r *http.Request) {
 	if body.RetentionSystemDays > 0 {
 		admindb.SetSetting(h.DB, "logs.retention_system_days", strconv.Itoa(body.RetentionSystemDays)) //nolint:errcheck
 	}
+	if body.RetentionBanDays > 0 {
+		admindb.SetSetting(h.DB, "logs.retention_ban_days", strconv.Itoa(body.RetentionBanDays)) //nolint:errcheck
+	}
 	h.Store.SetRetention(body.RetentionAccessDays, body.RetentionSystemDays)
+	h.Store.SetBanRetention(body.RetentionBanDays)
 	actor := adminauth.UserIDFromContext(r.Context())
 	if anon != prevAnon {
 		admindb.SetSetting(h.DB, "logs.ip_anonymize", strconv.FormatBool(anon)) //nolint:errcheck
@@ -392,23 +402,35 @@ func (h *LogsHandler) deleteByIP(w http.ResponseWriter, r *http.Request, ip stri
 	reason := parseDeletionReason(r)
 	actor := adminauth.UserIDFromContext(r.Context())
 
-	n, err := h.Store.DeleteByIP(ip)
+	res, err := h.Store.EraseIP(ip)
 	if err != nil {
 		logsJSONErr(w, err, http.StatusInternalServerError)
 		return
 	}
+	// Les passerelles gardent leur copie des bans, y compris ceux qu'elles ont posés elles-mêmes.
+	if h.OnUnban != nil {
+		h.OnUnban(ip)
+	}
 
 	// Trace de l'effacement sans réinscrire l'IP effacée en clair (audit et logs système).
 	ref := h.Store.IPReference(ip)
-	detail := fmt.Sprintf("ip=%s deleted=%d reason=%q", ref, n, reason)
+	detail := fmt.Sprintf("ip=%s deleted=%d bans=%d ban_history=%d geoip_cache=%d reason=%q",
+		ref, res.Logs, res.Bans, res.BanHistory, res.GeoCache, reason)
 	_ = admindb.WriteAudit(h.DB, actor, "rgpd_erasure_ip", "logs", detail)
 	h.Store.Write(logs.Entry{
 		Level:     "info",
 		Component: "admin",
-		Message:   fmt.Sprintf("RGPD effacement IP %s : %d entrées supprimées par %s — %s", ref, n, actor, reason),
+		Message: fmt.Sprintf("RGPD effacement IP %s : %d entrées de logs, %d bans, %d événements de ban, %d entrées GeoIP supprimés par %s — %s",
+			ref, res.Logs, res.Bans, res.BanHistory, res.GeoCache, actor, reason),
 	})
 
-	jsonOK(w, map[string]any{"deleted": n, "ip": ip})
+	jsonOK(w, map[string]any{
+		"deleted":             res.Logs,
+		"bans_deleted":        res.Bans,
+		"ban_history_deleted": res.BanHistory,
+		"geoip_cache_deleted": res.GeoCache,
+		"ip":                  ip,
+	})
 }
 
 // deleteByUser supprime tous les logs d'un utilisateur (droit à l'effacement RGPD).

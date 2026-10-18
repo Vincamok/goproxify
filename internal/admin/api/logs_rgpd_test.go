@@ -167,3 +167,74 @@ func TestDeleteByIPDoesNotRecordTheErasedIP(t *testing.T) {
 		t.Fatalf("audit rgpd_erasure_ip : %d entrées, attendu 1", n)
 	}
 }
+
+func TestDeleteByIPErasesBansHistoryAndGeoCacheAndLiftsGatewayBans(t *testing.T) {
+	f := newRGPDFixture(t)
+	var lifted []string
+	f.h = adminauth.RequireJWT("secret")(&LogsHandler{Log: slog.Default(), Store: f.store, DB: f.db,
+		OnUnban: func(ip string) { lifted = append(lifted, ip) }})
+	for _, q := range []string{
+		`INSERT INTO security_bans (id, ip) VALUES ('b1', '203.0.113.42')`,
+		`INSERT INTO security_bans (id, ip) VALUES ('b2', '198.51.100.9')`,
+		`INSERT INTO security_ban_history (ip, action) VALUES ('203.0.113.42', 'banned')`,
+		`INSERT INTO security_ban_history (ip, action) VALUES ('203.0.113.42', 'unbanned')`,
+		`INSERT INTO geoip_cache (ip, country_code, city) VALUES ('203.0.113.42', 'FR', 'Paris')`,
+		`INSERT INTO geoip_cache (ip, country_code) VALUES ('198.51.100.9', 'DE')`,
+	} {
+		if _, err := f.db.Exec(q); err != nil {
+			t.Fatalf("%s : %v", q, err)
+		}
+	}
+	rec := f.do(http.MethodDelete, "/api/v1/logs/by-ip/203.0.113.42", "a", map[string]string{"reason": "Art. 17"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("by-ip : status %d %s", rec.Code, rec.Body)
+	}
+	var out struct {
+		Bans       int64 `json:"bans_deleted"`
+		BanHistory int64 `json:"ban_history_deleted"`
+		GeoCache   int64 `json:"geoip_cache_deleted"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &out) //nolint:errcheck
+	if out.Bans != 1 || out.BanHistory != 2 || out.GeoCache != 1 {
+		t.Fatalf("réponse %+v, attendu 1 ban, 2 événements, 1 entrée GeoIP", out)
+	}
+	if len(lifted) != 1 || lifted[0] != "203.0.113.42" {
+		t.Fatalf("OnUnban appelé avec %v", lifted)
+	}
+	var left int
+	f.db.QueryRow(`SELECT (SELECT COUNT(*) FROM security_bans WHERE ip = '203.0.113.42')
+		+ (SELECT COUNT(*) FROM security_ban_history WHERE ip = '203.0.113.42')
+		+ (SELECT COUNT(*) FROM geoip_cache WHERE ip = '203.0.113.42')`).Scan(&left) //nolint:errcheck
+	if left != 0 {
+		t.Fatalf("%d ligne(s) de l'IP effacée subsistent", left)
+	}
+	var others int
+	f.db.QueryRow(`SELECT (SELECT COUNT(*) FROM security_bans) + (SELECT COUNT(*) FROM geoip_cache)`).Scan(&others) //nolint:errcheck
+	if others != 2 {
+		t.Fatalf("les données des autres IP ont été touchées : %d lignes, attendu 2", others)
+	}
+	var leaks int
+	f.db.QueryRow(`SELECT (SELECT COUNT(*) FROM logs WHERE message LIKE '%203.0.113.42%')
+		+ (SELECT COUNT(*) FROM audit_log WHERE detail LIKE '%203.0.113.42%')`).Scan(&leaks) //nolint:errcheck
+	if leaks != 0 {
+		t.Fatalf("l'IP effacée réapparaît en clair dans %d ligne(s) de logs ou d'audit", leaks)
+	}
+}
+
+func TestLogsSettingsBanRetention(t *testing.T) {
+	f := newRGPDFixture(t)
+	if rec := f.do(http.MethodPut, "/api/v1/logs/settings", "a", map[string]any{"retention_ban_days": 180}); rec.Code != http.StatusNoContent {
+		t.Fatalf("PUT : %d %s", rec.Code, rec.Body)
+	}
+	if rec := f.do(http.MethodPut, "/api/v1/logs/settings", "a", map[string]any{"retention_ban_days": -1}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("PUT négatif : %d, attendu 400", rec.Code)
+	}
+	rec := f.do(http.MethodGet, "/api/v1/logs/settings", "a", nil)
+	var out struct {
+		Ban int `json:"retention_ban_days"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &out) //nolint:errcheck
+	if out.Ban != 180 || f.store.BanRetentionDays() != 180 {
+		t.Fatalf("retention_ban_days = %d (store %d), attendu 180", out.Ban, f.store.BanRetentionDays())
+	}
+}
