@@ -1262,10 +1262,6 @@ Requêtes que le WAF a signalées (colonne `waf_matches` des journaux d'accès) 
 - Lu dans l'index partiel `idx_logs_waf_ts` (requêtes signalées seulement), sans parcourir la table des journaux.
 - CLI : `goproxify security waf-engine activity [-hours N] [-edge <id>]`.
 
-### `GET /api/v1/security/ips-provider` · `PUT /api/v1/security/ips-provider`
-
-Fournisseur IPS actif (`native|fail2ban|crowdsec`). Même règle de portée que `threat-config`.
-
 ### `GET /api/v1/security/server-config` · `PUT /api/v1/security/server-config`
 
 Timeouts HTTP/QUIC (`read_header_seconds`, `read_seconds`, `write_seconds`, `idle_seconds`, redémarrage de la passerelle requis). Même règle de portée que `threat-config` ; une passerelle qui rejoint le groupe reçoit ceux du groupe à sa connexion.

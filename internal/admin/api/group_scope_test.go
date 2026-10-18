@@ -134,7 +134,7 @@ func TestMigrateGroupSettingsAdoptsFirstMemberAndKeepsMemberValues(t *testing.T)
 	ctx := context.Background()
 	_, _ = db.Exec(`INSERT INTO settings(key, value) VALUES('threat_engine_config:dn_f','{"enabled":true,"mode":"block"}')`)
 	_, _ = db.Exec(`INSERT INTO settings(key, value) VALUES('threat_engine_config:dn_b','{"enabled":false}')`)
-	_, _ = db.Exec(`INSERT INTO settings(key, value) VALUES('ips_provider:backup','crowdsec')`)
+	_, _ = db.Exec(`INSERT INTO settings(key, value) VALUES('server_config:backup','{"idle_seconds":30}')`)
 
 	api.MigrateGroupSettings(ctx, db, store, slog.New(slog.NewTextHandler(discard{}, nil)))
 
@@ -146,8 +146,8 @@ func TestMigrateGroupSettingsAdoptsFirstMemberAndKeepsMemberValues(t *testing.T)
 	if got := read("threat_engine_config:group:ha-1"); got != `{"enabled":true,"mode":"block"}` {
 		t.Fatalf("le groupe reprend le premier membre du fichier, reçu %q", got)
 	}
-	if got := read("ips_provider:group:ha-1"); got != "crowdsec" {
-		t.Fatalf("fournisseur IPS repris de backup, reçu %q", got)
+	if got := read("server_config:group:ha-1"); got != `{"idle_seconds":30}` {
+		t.Fatalf("timeouts repris de backup, reçu %q", got)
 	}
 	if read("threat_engine_config:dn_b") != `{"enabled":false}` {
 		t.Fatal("les valeurs propres aux passerelles ne doivent pas être effacées")

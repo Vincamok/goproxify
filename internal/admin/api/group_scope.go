@@ -68,7 +68,7 @@ func ThreatConfigKeyFor(g GroupResolver, ref string) string {
 }
 
 // groupedSettings : réglages de sécurité qui suivent le groupe HA.
-var groupedSettings = []string{"threat_engine_config", "waf_engine_config", "ips_provider", "server_config"}
+var groupedSettings = []string{"threat_engine_config", "waf_engine_config", "server_config"}
 
 // MigrateGroupSettings crée la valeur de groupe des réglages qui n'en ont pas encore, à partir
 // de celle des membres (le premier membre du fichier qui en a une). Les valeurs propres aux

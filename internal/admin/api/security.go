@@ -149,11 +149,6 @@ func (h *SecurityHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.getCrowdSecConfig(w, r)
 	case r.Method == http.MethodPut && sub == "crowdsec":
 		h.putCrowdSecConfig(w, r)
-	// IPS provider switch (mutual exclusivity)
-	case r.Method == http.MethodGet && sub == "ips-provider":
-		h.getIPSProvider(w, r)
-	case r.Method == http.MethodPut && sub == "ips-provider":
-		h.putIPSProvider(w, r)
 	// Moteur de détection automatique (threat engine)
 	case r.Method == http.MethodGet && sub == "threat-config":
 		h.getThreatConfig(w, r)
@@ -954,11 +949,6 @@ func (h *SecurityHandler) putCrowdSecConfig(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ── IPS Provider ─────────────────────────────────────────────────────────────
-
-// ipsProviderKey retourne la clé settings pour une portée (groupe, passerelle ou "" = global).
-func ipsProviderKey(scope string) string { return settingKey("ips_provider", scope) }
-
 // threatConfigKey retourne la clé settings pour une portée (groupe, passerelle ou "" = global).
 func threatConfigKey(scope string) string { return settingKey("threat_engine_config", scope) }
 
@@ -970,47 +960,6 @@ func serverConfigKey(scope string) string { return settingKey("server_config", s
 func (h *SecurityHandler) scope(r *http.Request) (scope, ref string) {
 	ref = r.URL.Query().Get("edge")
 	return scopeFor(h.Groups, ref), ref
-}
-
-// getIPSProvider retourne le fournisseur IPS actif pour la passerelle demandée (ou son groupe).
-func (h *SecurityHandler) getIPSProvider(w http.ResponseWriter, r *http.Request) {
-	scope, ref := h.scope(r)
-	provider, _ := readScopedSetting(r.Context(), h.DB, "ips_provider", scope, ref)
-	if provider == "" || provider == "none" {
-		provider = "native"
-	}
-	jsonOK(w, map[string]string{"provider": provider})
-}
-
-// putIPSProvider enregistre le fournisseur choisi pour la passerelle demandée (ou son groupe).
-func (h *SecurityHandler) putIPSProvider(w http.ResponseWriter, r *http.Request) {
-	scope, _ := h.scope(r)
-	var req struct {
-		Provider string `json:"provider"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, r, http.StatusBadRequest, "api.err.json")
-		return
-	}
-	switch req.Provider {
-	case "native", "none", "fail2ban", "crowdsec":
-	default:
-		writeErr(w, r, http.StatusBadRequest, "api.err.json")
-		return
-	}
-	provider := req.Provider
-	if provider == "none" {
-		provider = "native"
-	}
-	_, err := h.DB.ExecContext(r.Context(),
-		`INSERT INTO settings (key, value) VALUES (?, ?)
-		 ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
-		ipsProviderKey(scope), provider)
-	if err != nil {
-		secJSONErr(w, err, http.StatusInternalServerError)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // ── Threat Config ─────────────────────────────────────────────────────────────
