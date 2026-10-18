@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package engines décrit la configuration des moteurs de sécurité globaux de la passerelle —
-// Sentinel (détection par signaux), Fail2Ban (erreurs répétées), CrowdSec (décisions LAPI) et WAF
+// Ephor (détection par signaux), Fail2Ban (erreurs répétées), CrowdSec (décisions LAPI) et WAF
 // (interrupteur maître du détecteur par route) — par des manifestes (ADR 0007) : valider une
 // configuration avant de l'enregistrer, masquer ses secrets, l'afficher. Ces moteurs ne sont pas des
 // détecteurs par route : ils partagent un magasin de bans et tournent une fois par passerelle ; ils
@@ -29,7 +29,7 @@ import (
 
 // Types de moteur.
 const (
-	Sentinel = "sentinel"
+	Ephor    = "ephor"
 	Fail2Ban = "fail2ban"
 	CrowdSec = "crowdsec"
 	WAF      = "waf"
@@ -51,8 +51,8 @@ func register(e engine) {
 
 func init() {
 	register(engine{
-		manifest: modules.Manifest{Type: Sentinel, Label: "Sentinel", Fields: reflectFields(reflect.TypeOf(threat.Config{}), "")},
-		decode:   decodeSentinel,
+		manifest: modules.Manifest{Type: Ephor, Label: "Ephor", Fields: reflectFields(reflect.TypeOf(threat.Config{}), "")},
+		decode:   decodeEphor,
 	})
 	register(engine{
 		manifest: modules.Manifest{Type: Fail2Ban, Label: "Fail2Ban", Fields: []modules.Field{
@@ -212,7 +212,7 @@ func decodeCrowdSec(raw []byte) error {
 	return nil
 }
 
-func decodeSentinel(raw []byte) error {
+func decodeEphor(raw []byte) error {
 	var c threat.Config
 	if err := strictDecode(raw, &c); err != nil {
 		return err

@@ -20,12 +20,12 @@ import (
 )
 
 // Name est l'identifiant affiché dans les logs pour ce moteur.
-const Name = "Sentinel"
+const Name = "Ephor"
 
-// contextKey est la clé de contexte pour transmettre la raison Sentinel à l'access log.
+// contextKey est la clé de contexte pour transmettre la raison Ephor à l'access log.
 type contextKey struct{}
 
-// SignalFromContext retourne la raison Sentinel attachée à la requête (vide si aucune).
+// SignalFromContext retourne la raison Ephor attachée à la requête (vide si aucune).
 func SignalFromContext(ctx context.Context) string {
 	if v, ok := ctx.Value(contextKey{}).(string); ok {
 		return v
@@ -104,7 +104,7 @@ type Engine struct {
 	banFn BanCallback
 	sim   bool // rejeu hors production : ni métriques Prometheus ni effets de bord
 
-	priorBans func(ip string, since time.Time) int // bans Sentinel précédents d'une IP (bans graduels)
+	priorBans func(ip string, since time.Time) int // bans Ephor précédents d'une IP (bans graduels)
 
 	tarpitSlots chan struct{} // slots du tarpit ; recréé quand MaxConcurrent change
 	log   *slog.Logger
@@ -278,7 +278,7 @@ func (e *Engine) Check(r *http.Request, ip string) (blocked bool, reason string)
 	}
 	e.inc(threatChecksTotal, action)
 
-	e.log.Warn("sentinel: signal détecté",
+	e.log.Warn("ephor: signal détecté",
 		"ip", ip,
 		"signals", len(signals),
 		"score", total,
@@ -308,7 +308,7 @@ func (e *Engine) Check(r *http.Request, ip string) (blocked bool, reason string)
 	return false, "threat: " + topReason
 }
 
-// SetPriorBansFunc fournit le nombre de bans Sentinel déjà posés sur une IP depuis `since` (hors
+// SetPriorBansFunc fournit le nombre de bans Ephor déjà posés sur une IP depuis `since` (hors
 // ceux antérieurs à son dernier déban). Sans elle, les bans ne sont pas graduels.
 func (e *Engine) SetPriorBansFunc(fn func(ip string, since time.Time) int) {
 	e.mu.Lock()
@@ -332,7 +332,7 @@ func (e *Engine) banExpiry(ip string, cfg Config) time.Time {
 	prior := fn(ip, now.Add(-cfg.Escalation.Window.Duration))
 	if prior > 0 {
 		longer := escalatedDuration(d, prior, cfg.Escalation)
-		e.log.Warn("sentinel: ban graduel", "ip", ip, "bans_precedents", prior, "duree", longer, "duree_de_base", d)
+		e.log.Warn("ephor: ban graduel", "ip", ip, "bans_precedents", prior, "duree", longer, "duree_de_base", d)
 		d = longer
 	}
 	return now.Add(d)
@@ -364,7 +364,7 @@ func (e *Engine) scoreBan(ip, topReason string, points int, cfg Config) {
 	acc := e.counters.addScore(ip, float64(points), cfg.IPScore.HalfLife.Duration)
 	immediate := topReason == "ip" || topReason == "custom_ip"
 	if !immediate && acc < cfg.IPScore.BanThreshold {
-		e.log.Info("sentinel: score cumulé", "ip", ip, "score", acc, "ban_threshold", cfg.IPScore.BanThreshold)
+		e.log.Info("ephor: score cumulé", "ip", ip, "score", acc, "ban_threshold", cfg.IPScore.BanThreshold)
 		return
 	}
 	e.counters.resetScore(ip)
@@ -374,7 +374,7 @@ func (e *Engine) scoreBan(ip, topReason string, points int, cfg Config) {
 	if immediate {
 		reason, label = "threat: "+topReason, topReason
 	} else {
-		e.log.Warn("sentinel: ban sur score cumulé", "ip", ip, "score", acc, "ban_threshold", cfg.IPScore.BanThreshold)
+		e.log.Warn("ephor: ban sur score cumulé", "ip", ip, "score", acc, "ban_threshold", cfg.IPScore.BanThreshold)
 	}
 	e.inc(threatBansTotal, label)
 	e.banFn(ip, reason, expires)
@@ -405,7 +405,7 @@ func (e *Engine) maybeRateBan(ip, topReason string, cfg Config) {
 	}
 	e.counters.resetRateTrigger(ip)
 	expires := e.banExpiry(ip, cfg)
-	e.log.Warn("sentinel: ban automatique rate", "ip", ip, "threshold", threshold, "window", window)
+	e.log.Warn("ephor: ban automatique rate", "ip", ip, "threshold", threshold, "window", window)
 	e.inc(threatSignalsTotal, "rate_ban")
 	e.inc(threatBansTotal, "rate")
 	e.banFn(ip, "threat: rate excessif", expires)
@@ -441,7 +441,7 @@ func (e *Engine) RecordResponse(ip, path string, status int) {
 
 	if e.counters.errorExceeded(ip, cfg.ErrorThreshold, cfg.ErrorWindow.Duration) {
 		isDetect := strings.EqualFold(cfg.Mode, "detect")
-		e.log.Warn("sentinel: ban automatique 4xx", "ip", ip, "status", status, "detect", isDetect)
+		e.log.Warn("ephor: ban automatique 4xx", "ip", ip, "status", status, "detect", isDetect)
 		e.inc(threatSignalsTotal, "error4xx")
 		if !isDetect && e.banFn != nil {
 			expires := e.banExpiry(ip, cfg)
@@ -467,7 +467,7 @@ func (e *Engine) recordErrorScore(ip, path string, status int, cfg Config, wl *w
 	}
 	e.counters.resetScore(ip)
 	isDetect := strings.EqualFold(cfg.Mode, "detect")
-	e.log.Warn("sentinel: ban sur erreurs 4xx pondérées", "ip", ip, "status", status, "score", acc, "detect", isDetect)
+	e.log.Warn("ephor: ban sur erreurs 4xx pondérées", "ip", ip, "status", status, "score", acc, "detect", isDetect)
 	e.inc(threatSignalsTotal, "error4xx")
 	if !isDetect && e.banFn != nil {
 		e.inc(threatBansTotal, "error4xx")
@@ -475,7 +475,7 @@ func (e *Engine) recordErrorScore(ip, path string, status int, cfg Config, wl *w
 	}
 }
 
-// WhitelistedIP indique si l'IP est exemptée du Sentinel (liste blanche globale ou des routes).
+// WhitelistedIP indique si l'IP est exemptée d'Ephor (liste blanche globale ou des routes).
 func (e *Engine) WhitelistedIP(ip string) bool {
 	e.mu.RLock()
 	wl := e.wl
@@ -488,13 +488,13 @@ func (e *Engine) ResetIP(ip string) {
 	e.counters.reset(ip)
 }
 
-// WithSignal enrichit le contexte de la requête avec la raison du signal Sentinel et la signale à l'access log.
+// WithSignal enrichit le contexte de la requête avec la raison du signal Ephor et la signale à l'access log.
 func WithSignal(r *http.Request, reason string) *http.Request {
 	edgelog.NoteThreat(r.Context(), reason)
 	return r.WithContext(context.WithValue(r.Context(), contextKey{}, reason))
 }
 
-// MergeRouteWhitelists fusionne les IPs/CIDRs issus des labels sentinel_whitelist
+// MergeRouteWhitelists fusionne les IPs/CIDRs issus des labels ephor_whitelist
 // de toutes les routes dans la whitelist globale du moteur, sans écraser les entrées
 // configurées manuellement dans Config.Whitelist.
 func (e *Engine) MergeRouteWhitelists(entries []string) {

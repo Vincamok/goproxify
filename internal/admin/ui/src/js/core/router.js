@@ -27,13 +27,13 @@ const EDGE_PAGES = new Set([
   'edge-trafic','edge-proxies','edge-streams','edge-waf','edge-ipfilter',
   'edge-certs','edge-auth','edge-logs-access','edge-logs-system',
   'edge-observability','edge-obs-synthese','edge-obs-alerts','edge-prism','edge-proxy-inspector','edge-metrics','edge-cluster','edge-tokens','edge-settings','edge-general','ip-profiles',
-  'edge-security','edge-security-vulns','edge-security-posture','edge-security-bans','edge-security-sentinel',
+  'edge-security','edge-security-vulns','edge-security-posture','edge-security-bans','edge-security-ephor',
   'edge-tunnel',
   'portal','portal-settings','portal-sessions','portal-approvals','portal-policy','portal-recordings','portal-audit','edge-portal-catalog','edge-portal-users','snippets',
 ]);
 const SECURITY_PAGES = new Set([
-  'security','security-bans','security-trace','security-vulns','security-sentinel','security-posture','security-rules','automation','automation-flow','automation-history','automation-silences','automation-schedules','automation-playbooks','rules-store',
-  'edge-security','edge-security-vulns','edge-security-posture','edge-security-bans','edge-security-sentinel',
+  'security','security-bans','security-trace','security-vulns','security-ephor','security-posture','security-rules','automation','automation-flow','automation-history','automation-silences','automation-schedules','automation-playbooks','rules-store',
+  'edge-security','edge-security-vulns','edge-security-posture','edge-security-bans','edge-security-ephor',
 ]);
 
 // ── Sidebar mobile ────────────────────────────────────────────────────────
@@ -235,7 +235,7 @@ const SPACE_EQUIV = {
   'security': 'edge-security',
   'security-bans': 'edge-security-bans',
   'security-vulns': 'edge-security-vulns',
-  'security-sentinel': 'edge-security-sentinel',
+  'security-ephor': 'edge-security-ephor',
   'security-posture': 'edge-security-posture',
 };
 const SPACE_EQUIV_REV = Object.fromEntries(Object.entries(SPACE_EQUIV).map(([a, e]) => [e, a]));

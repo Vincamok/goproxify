@@ -25,7 +25,7 @@ func freePort(t *testing.T) int {
 
 func newPortalGateway(t *testing.T, dir string) *Server {
 	t.Helper()
-	s := newSentinelGateway(t, dir)
+	s := newEphorGateway(t, dir)
 	s.portal = portal.NewService(s.log.Logger())
 	t.Cleanup(s.portal.Stop)
 	return s

@@ -19,7 +19,7 @@ Conséquence observée : la configuration du portail Access n'existe qu'en base 
 Chaque composant fonctionne seul avec ce qu'il a déjà reçu. Une coupure n'enlève que ce qui dépend directement du composant absent.
 
 1. **Admin** : point de modification et de supervision, jamais point de passage du service. Tout ce qu'il envoie, la passerelle en garde une copie locale chiffrée.
-2. **Passerelle** : fait tourner tout ce qui lui est confié (trafic, certificats, Sentinel, portail Access…) sans l'Admin, **y compris après un redémarrage pendant la coupure**. Rien de nécessaire au fonctionnement ne doit exister uniquement en base Admin ou en mémoire de la passerelle.
+2. **Passerelle** : fait tourner tout ce qui lui est confié (trafic, certificats, Ephor, portail Access…) sans l'Admin, **y compris après un redémarrage pendant la coupure**. Rien de nécessaire au fonctionnement ne doit exister uniquement en base Admin ou en mémoire de la passerelle.
 3. **Groupe HA** : les membres se connaissent et se synchronisent entre eux sans l'Admin (liste des pairs, clé de groupe, magasins répliqués), y compris après un redémarrage.
 4. **Agent** : dépend uniquement de sa passerelle, jamais de l'Admin. Sa configuration, son jeton et son HMAC sont locaux. Ses fonctions locales (santé, redémarrage, scaling, mises à jour d'image) tournent sans passerelle ni Admin. S'il tombe, seules ses propres fonctions s'arrêtent : ses conteneurs continuent de recevoir le trafic.
 5. **Reprise** : au retour d'un composant, la resynchronisation est complète et idempotente (full_sync Admin → passerelle, réannonce de tous les conteneurs Agent → passerelle), sans action manuelle.
@@ -32,7 +32,7 @@ Chaque composant fonctionne seul avec ce qu'il a déjà reçu. Une coupure n'enl
 
 | Coupure | Ce qui continue | Ce qui s'arrête (et seulement cela) |
 |---|---|---|
-| **Admin injoignable** | Trafic, certificats, Sentinel et bans, portail Access, découverte des conteneurs (l'Agent parle à la passerelle), réplication HA | Modifications de configuration, supervision et historique dans l'UI, approbation de nouveaux Agents, commandes vers les Agents (rescan, configuration, shell depuis l'Admin) |
+| **Admin injoignable** | Trafic, certificats, Ephor et bans, portail Access, découverte des conteneurs (l'Agent parle à la passerelle), réplication HA | Modifications de configuration, supervision et historique dans l'UI, approbation de nouveaux Agents, commandes vers les Agents (rescan, configuration, shell depuis l'Admin) |
 | **Passerelle d'un Agent injoignable** | Conteneurs de l'hôte, fonctions locales de l'Agent (santé, scaling, mises à jour) ; les autres membres du groupe HA servent le trafic | Publication des changements de conteneurs, métriques du LB adaptatif, événements, logs, shell. Au retour : réannonce complète par l'Agent |
 | **Agent arrêté** | La passerelle continue de router vers les conteneurs connus (routes conservées dans sa table et son cache) ; l'Agent est affiché hors ligne après 90 s | Découverte (conteneur ajouté ou arrêté non vu), scaling, redémarrage et mises à jour automatiques, métriques du LB adaptatif, logs, accès portail et shell aux conteneurs de cet hôte |
 | **Un membre d'un groupe HA tombe** | Les autres membres servent le trafic et le portail (magasin répliqué) | La capacité de ce membre uniquement |

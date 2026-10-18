@@ -465,7 +465,7 @@ func (s *Server) handleHAWAFBehaviorSync(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// threatBanCallback retourne la fonction appelée par Sentinel (et le WAF) quand ils bannissent une IP.
+// threatBanCallback retourne la fonction appelée par Ephor (et le WAF) quand ils bannissent une IP.
 // Comme pour Fail2Ban, le ban est persisté localement : il s'applique et survit à un redémarrage sans
 // l'Admin, qui est seulement notifié.
 func (s *Server) threatBanCallback() threat.BanCallback {
@@ -622,7 +622,7 @@ func (s *Server) reloadBanStore() {
 	s.banStore.Replace(dbBans)
 }
 
-// autoBanWhitelisted : les listes blanches Fail2Ban et Sentinel priment aussi sur les bans que ces
+// autoBanWhitelisted : les listes blanches Fail2Ban et Ephor priment aussi sur les bans que ces
 // moteurs ont déjà posés — ajouter une IP à la liste blanche la débloque sans attendre l'expiration.
 func (s *Server) autoBanWhitelisted(b *router.RuntimeBan) bool {
 	switch b.Source {
@@ -637,7 +637,7 @@ func (s *Server) autoBanWhitelisted(b *router.RuntimeBan) bool {
 	return false
 }
 
-// applyUnbans lève, quelle que soit leur source (Fail2Ban ou Sentinel local, règle, pair HA, Admin),
+// applyUnbans lève, quelle que soit leur source (Fail2Ban ou Ephor local, règle, pair HA, Admin),
 // les bans des IPs débannies depuis l'Admin. Un déban à l'instant remet aussi à zéro les compteurs
 // des moteurs pour que l'IP ne soit pas rebannie sur ses erreurs passées.
 func (s *Server) applyUnbans(list []edgews.UnbanEntry) {
@@ -680,8 +680,8 @@ func (s *Server) addBanEvent(ip, source string) {
 	}
 }
 
-// priorThreatBans retourne le nombre de bans Sentinel déjà posés sur l'IP depuis `since`, pour que
-// Sentinel allonge les bans des récidivistes.
+// priorThreatBans retourne le nombre de bans Ephor déjà posés sur l'IP depuis `since`, pour que
+// Ephor allonge les bans des récidivistes.
 func (s *Server) priorThreatBans(ip string, since time.Time) int {
 	if s.bansDB == nil {
 		return 0

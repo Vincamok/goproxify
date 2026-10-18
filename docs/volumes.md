@@ -32,7 +32,7 @@ Chaque service persiste ses données dans `/etc/goproxify` via un volume Docker 
 | `geoip/GeoLite2-City.mmdb` | Base GeoIP ville de l'Admin (carte Prism), téléchargée automatiquement (clé `geoip.auto_download` de `admin.json`, activée par défaut) ; sans elle, repli sur ip-api.com |
 | `bans/` | Bannissements IP persistés |
 | `threat-lists/` | Listes de menaces téléchargées (IPs malveillantes, etc.) |
-| `threat-config.gpx` | Copie chiffrée de la configuration Sentinel reçue de l'Admin, rechargée au démarrage sans l'Admin |
+| `threat-config.gpx` | Copie chiffrée de la configuration Ephor reçue de l'Admin, rechargée au démarrage sans l'Admin |
 | `waf-config.gpx` | Copie chiffrée de l'interrupteur du WAF reçu de l'Admin, rechargée au démarrage sans l'Admin (surchargeable par `GPX_WAF_CONFIG_PATH`) ; absente ou illisible : WAF actif |
 | `edge-settings.gpx` | Copie chiffrée des réglages runtime reçus de l'Admin (anonymisation / pseudonymisation des IP, journalisation, tracing, URL publique), rechargée au démarrage sans l'Admin (surchargeable par `GPX_EDGE_SETTINGS_PATH`) |
 | `logs/access.log` | Journal d'accès HTTP du reverse proxy |

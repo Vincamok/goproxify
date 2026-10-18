@@ -541,7 +541,7 @@ func (h *SecurityHandler) ipTimeline(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Décisions CrowdSec / Sentinel (threats)
+	// Décisions CrowdSec / Ephor (threats)
 	rows2, err := h.DB.QueryContext(r.Context(),
 		`SELECT scenario, origin, strftime('%Y-%m-%dT%H:%M:%SZ', created_at)
 		 FROM security_threats WHERE ip=? ORDER BY created_at DESC LIMIT 200`, ip)
@@ -978,7 +978,7 @@ func (h *SecurityHandler) getThreatConfig(w http.ResponseWriter, r *http.Request
 func (h *SecurityHandler) putThreatConfig(w http.ResponseWriter, r *http.Request) {
 	scope, _ := h.scope(r)
 	var cfg json.RawMessage
-	if !decodeEngineConfig(w, r, engines.Sentinel, &cfg) {
+	if !decodeEngineConfig(w, r, engines.Ephor, &cfg) {
 		return
 	}
 	_, err := h.DB.ExecContext(r.Context(),
@@ -1301,5 +1301,5 @@ func (h *SecurityHandler) intelTopIPs(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, out)
 }
 
-// ThreatConfigKey expose la clé settings de la config Sentinel d'une passerelle (outil MCP de simulation).
+// ThreatConfigKey expose la clé settings de la config Ephor d'une passerelle (outil MCP de simulation).
 func ThreatConfigKey(edgeID string) string { return threatConfigKey(edgeID) }

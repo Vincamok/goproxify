@@ -370,7 +370,7 @@ func gatewayPeersPath() string {
 }
 
 // loadGatewayPeersFromDisk rend à la passerelle ses pairs HA sans l'Admin : synchronisation des
-// bans, du portail, des listes Sentinel et des pools de conteneurs.
+// bans, du portail, des listes Ephor et des pools de conteneurs.
 func (s *Server) loadGatewayPeersFromDisk() {
 	var peers []proxy.PeerInfo
 	ok, err := s.cache.LoadFile(gatewayPeersPath(), &peers)

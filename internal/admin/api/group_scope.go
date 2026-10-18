@@ -61,7 +61,7 @@ func readScopedSetting(ctx context.Context, db *sql.DB, base, scope, ref string)
 	return "", false
 }
 
-// ThreatConfigKeyFor retourne la clé de la config Sentinel qui s'applique à une passerelle
+// ThreatConfigKeyFor retourne la clé de la config Ephor qui s'applique à une passerelle
 // (outil MCP de simulation) : celle de son groupe, sinon la sienne.
 func ThreatConfigKeyFor(g GroupResolver, ref string) string {
 	return threatConfigKey(scopeFor(g, ref))

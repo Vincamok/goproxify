@@ -14,7 +14,7 @@ const (
 	defaultTarpitSlots = 200
 )
 
-// TarpitConfig ralentit la réponse aux IP détectées par Sentinel au lieu de refuser
+// TarpitConfig ralentit la réponse aux IP détectées par Ephor au lieu de refuser
 // aussitôt : le bot immobilise ses propres connexions.
 type TarpitConfig struct {
 	Enabled bool `json:"enabled"`

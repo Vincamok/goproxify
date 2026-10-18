@@ -393,7 +393,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	s.loadWAFConfigFromDisk()
 
-	// Sentinel, sur sa dernière config connue, avant l'API interne : une config poussée par l'Admin
+	// Ephor, sur sa dernière config connue, avant l'API interne : une config poussée par l'Admin
 	// ne peut pas arriver avant le moteur.
 	s.threatEngine = threat.New(s.log.Logger(), s.threatBanCallback())
 	s.threatEngine.SetPriorBansFunc(s.priorThreatBans)
@@ -639,20 +639,20 @@ func (s *Server) loadFromAdminOrCache(ctx context.Context) error {
 	return nil
 }
 
-// refreshSentinelWhitelists relit toutes les routes de la table et met à jour la whitelist du moteur.
-func (s *Server) refreshSentinelWhitelists() {
+// refreshEphorWhitelists relit toutes les routes de la table et met à jour la whitelist du moteur.
+func (s *Server) refreshEphorWhitelists() {
 	if s.threatEngine == nil {
 		return
 	}
-	s.threatEngine.MergeRouteWhitelists(collectSentinelWhitelists(s.table.All()))
+	s.threatEngine.MergeRouteWhitelists(collectEphorWhitelists(s.table.All()))
 	s.reloadBanStore()
 }
 
-// collectSentinelWhitelists agrège les entrées sentinel_whitelist de toutes les routes.
-func collectSentinelWhitelists(routes []*router.Route) []string {
+// collectEphorWhitelists agrège les entrées ephor_whitelist de toutes les routes.
+func collectEphorWhitelists(routes []*router.Route) []string {
 	var out []string
 	for _, r := range routes {
-		out = append(out, r.SentinelWhitelist...)
+		out = append(out, r.EphorWhitelist...)
 	}
 	return out
 }
@@ -663,7 +663,7 @@ func (s *Server) applySnapshot(snap *edgecache.Snapshot) {
 		s.table.Replace(snap.Routes) //nolint:errcheck
 		s.syncHealthChecks()
 		if s.threatEngine != nil {
-			s.threatEngine.MergeRouteWhitelists(collectSentinelWhitelists(snap.Routes))
+			s.threatEngine.MergeRouteWhitelists(collectEphorWhitelists(snap.Routes))
 		}
 	}
 	for _, c := range snap.Certs {

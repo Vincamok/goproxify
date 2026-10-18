@@ -10,7 +10,7 @@ function securityPageId(variant, mode) {
     bans:     isEdge ? 'edge-security-bans' : 'security-bans',
     vulns:    isEdge ? 'edge-security-vulns' : 'security-vulns',
     posture:  isEdge ? 'edge-security-posture' : 'security-posture',
-    sentinel: isEdge ? 'edge-security-sentinel' : 'security-sentinel',
+    ephor: isEdge ? 'edge-security-ephor' : 'security-ephor',
   };
   return map[variant] || map.overview;
 }
@@ -261,7 +261,7 @@ function secBansBySourceHTML(bans) {
   const counts = { native: 0, fail2ban: 0, crowdsec: 0, threat: 0, manual: 0 };
   for (const b of bans) counts[b.source] = (counts[b.source] || 0) + 1;
   const total = bans.length || 1;
-  const labels = { native: 'Natif', fail2ban: 'Fail2Ban', crowdsec: 'CrowdSec', threat: 'Sentinel', manual: 'Manuel' };
+  const labels = { native: 'Natif', fail2ban: 'Fail2Ban', crowdsec: 'CrowdSec', threat: 'Ephor', manual: 'Manuel' };
   const colors = { native: 'var(--text3)', fail2ban: 'var(--blue)', crowdsec: 'var(--purple)', threat: 'var(--red)', manual: 'var(--yellow)' };
   return Object.entries(counts)
     .filter(([, c]) => c > 0)
@@ -738,8 +738,8 @@ pages['security-posture'] = () => renderSecurityPosture({ mode: 'admin' });
 
 pages['edge-security-vulns'] = () => renderSecurityVulns({ mode: 'edge' });
 pages['edge-security-posture'] = () => renderSecurityPosture({ mode: 'edge' });
-pages['security-sentinel'] = () => renderSentinelDashboard({ mode: 'admin' });
-pages['edge-security-sentinel'] = () => renderSentinelDashboard({ mode: 'edge' });
+pages['security-ephor'] = () => renderEphorDashboard({ mode: 'admin' });
+pages['edge-security-ephor'] = () => renderEphorDashboard({ mode: 'edge' });
 
 function secProxyCountLabel(n, total) {
   const suffix = n === 1 ? t('security.proxy_count', { n }) : t('security.proxy_count_n', { n });
@@ -1802,7 +1802,7 @@ window.showBanHistory = async function(ip) {
     wafHtml = `
       <div style="margin-top:16px;padding:12px 16px;background:var(--bg2);border-radius:6px;border:1px solid var(--border)">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-          <span style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.06em">Profil WAF Sentinel</span>
+          <span style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.06em">Profil WAF Ephor</span>
           <span style="background:${scoreColor};color:#fff;font-size:12px;font-weight:700;padding:1px 8px;border-radius:4px">Score ${wafProfile.score}</span>
         </div>
         <div>${signals || '<span style="font-size:12px;color:var(--text3)">Aucun signal actif</span>'}</div>

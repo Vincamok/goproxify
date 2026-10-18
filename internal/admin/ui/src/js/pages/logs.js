@@ -1093,16 +1093,16 @@ function openLogDrawer(en, i) {
   const icoCopy = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
   const icoBan = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>`;
   const icoPrism = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>`;
-  // Badges de sécurité : qui a traité cette requête (WAF / Sentinel), vert quand rien ne
+  // Badges de sécurité : qui a traité cette requête (WAF / Ephor), vert quand rien ne
   // s'est déclenché plutôt que de simplement masquer la ligne — l'absence de signal est
   // une information en soi ("j'ai vérifié, rien à signaler"). Regroupés avec la réputation
   // IP (chargée juste en dessous) dans une seule section Sécurité, avec l'action Bannir.
   const wafBadge = (en.waf_matches || []).length
     ? `<span class="tag tag-red" style="font-size:11px" title="${esc(t('lg.waf_matches'))}">${esc(t('lg.waf_matches'))}: ${en.waf_matches.map(esc).join(', ')}</span>`
     : `<span class="tag tag-green" style="font-size:11px">${esc(t('lg.waf_clean'))}</span>`;
-  const sentinelBadge = en.threat_signal
+  const ephorBadge = en.threat_signal
     ? `<span class="tag tag-red" style="font-size:11px" title="${esc(t('lg.threat_signal'))}">${esc(t('lg.threat_signal'))}: ${esc(en.threat_signal)}</span>`
-    : `<span class="tag tag-green" style="font-size:11px">${esc(t('lg.sentinel_clean'))}</span>`;
+    : `<span class="tag tag-green" style="font-size:11px">${esc(t('lg.ephor_clean'))}</span>`;
 
   // IP pseudonymisée ou tronquée par l'anonymisation (RGPD) : ni bannissable ni analysable ;
   // un détenteur de gdpr:reveal (super-admin, DPO, droit délégué) peut révéler une IP pseudonymisée.
@@ -1127,7 +1127,7 @@ function openLogDrawer(en, i) {
         <span class="prism-panel-title" style="margin:0">${esc(t('lg.security_badges'))}</span>
         ${actionable ? iconBtn('ban', icoBan, t('lg.ban_ip'), 'style="color:var(--red)"') : ''}
       </div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap">${wafBadge}${sentinelBadge}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">${wafBadge}${ephorBadge}</div>
       <div id="log-drawer-scan" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">${truncated ? `<span style="color:var(--text3);font-size:12px">${esc(t('logs.ip_truncated_hint'))}</span>` : ''}</div>
     </div>
     <div class="prism-dstats" style="grid-template-columns:1fr">

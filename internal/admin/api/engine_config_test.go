@@ -39,9 +39,9 @@ func engCall(h *SecurityHandler, method, path, body string) *httptest.ResponseRe
 func TestEngineConfigs_PutValidates(t *testing.T) {
 	h := newEngineSecurityHandler(t)
 	for name, c := range map[string]struct{ path, body string }{
-		"sentinel clé inconnue":  {"/api/v1/security/threat-config", `{"enabled":true,"modee":"block"}`},
-		"sentinel mode":          {"/api/v1/security/threat-config", `{"mode":"off"}`},
-		"sentinel durée":         {"/api/v1/security/threat-config", `{"ban_duration":"demain"}`},
+		"ephor clé inconnue":     {"/api/v1/security/threat-config", `{"enabled":true,"modee":"block"}`},
+		"ephor mode":             {"/api/v1/security/threat-config", `{"mode":"off"}`},
+		"ephor durée":            {"/api/v1/security/threat-config", `{"ban_duration":"demain"}`},
 		"fail2ban négatif":       {"/api/v1/security/fail2ban", `{"enabled":true,"max_errors":-1}`},
 		"fail2ban liste blanche": {"/api/v1/security/fail2ban", `{"whitelist":["nope"]}`},
 		"crowdsec URL":           {"/api/v1/security/crowdsec", `{"api_url":"localhost"}`},
@@ -102,18 +102,18 @@ func TestEngineTypes_Endpoint(t *testing.T) {
 
 // La simulation refuse une configuration candidate que l'enregistrement refuserait : sinon elle
 // simulerait une configuration qui ne peut pas être appliquée.
-func TestSimulateSentinel_RejectsInvalidCandidate(t *testing.T) {
+func TestSimulateEphor_RejectsInvalidCandidate(t *testing.T) {
 	h := newEngineSecurityHandler(t)
 	for name, cfg := range map[string]map[string]any{
 		"clé inconnue": {"modee": "block"},
 		"mode":         {"mode": "off"},
 		"durée":        {"ban_duration": "demain"},
 	} {
-		if _, err := SimulateSentinel(t.Context(), h.DB, "threat_engine_config", cfg, 1, ""); err == nil {
+		if _, err := SimulateEphor(t.Context(), h.DB, "threat_engine_config", cfg, 1, ""); err == nil {
 			t.Errorf("%s : acceptée", name)
 		}
 	}
-	if _, err := SimulateSentinel(t.Context(), h.DB, "threat_engine_config", map[string]any{"enabled": true, "error_threshold": 5}, 1, ""); err != nil {
+	if _, err := SimulateEphor(t.Context(), h.DB, "threat_engine_config", map[string]any{"enabled": true, "error_threshold": 5}, 1, ""); err != nil {
 		t.Errorf("candidate valide refusée : %v", err)
 	}
 }

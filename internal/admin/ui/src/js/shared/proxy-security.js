@@ -623,11 +623,11 @@ window._psecMount = async function(id, initialTab, embedEl) {
             </div>
           </div>
           <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
-            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:12px;">Sentinel — whitelist</div>
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:12px;">Ephor — whitelist</div>
             <div class="field" style="margin:0;">
-              <label class="field-label" style="font-size:11px">IPs / CIDRs exemptés du Sentinel (séparés par virgule)</label>
-              <input id="psec-sentinel-whitelist" type="text" class="input" value="${esc((cfg.sentinel_whitelist||[]).join(', '))}" placeholder="10.0.0.0/8, 192.168.1.5">
-              <div style="font-size:10px;color:var(--text3);margin-top:2px;">Ces IPs/CIDRs seront ajoutés à la whitelist globale du Sentinel pour toutes les requêtes vers ce proxy. Utile pour les health-checkers ou les systèmes de monitoring.</div>
+              <label class="field-label" style="font-size:11px">IPs / CIDRs exemptés d'Ephor (séparés par virgule)</label>
+              <input id="psec-ephor-whitelist" type="text" class="input" value="${esc((cfg.ephor_whitelist||[]).join(', '))}" placeholder="10.0.0.0/8, 192.168.1.5">
+              <div style="font-size:10px;color:var(--text3);margin-top:2px;">Ces IPs/CIDRs seront ajoutés à la whitelist globale d'Ephor pour toutes les requêtes vers ce proxy. Utile pour les health-checkers ou les systèmes de monitoring.</div>
             </div>
           </div>
           <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
@@ -1312,7 +1312,7 @@ window._psecBuildConfig = function(baseCfg) {
   const wafTrustedProxies = (document.getElementById('psec-waf-trusted-proxies')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
   const wafAutoDetect = document.getElementById('psec-platform-auto')?.checked;
   const wafPlatforms = wafAutoDetect ? ['auto'] : [...document.querySelectorAll('input[name="psec-platform"]:checked')].map(cb => cb.value);
-  const sentinelWhitelist = (document.getElementById('psec-sentinel-whitelist')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
+  const ephorWhitelist = (document.getElementById('psec-ephor-whitelist')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
   const hsts = document.getElementById('psec-hsts')?.checked;
   const hideServer = document.getElementById('psec-hide-server')?.checked;
   const xfo = document.getElementById('psec-xfo')?.value || '';
@@ -1379,7 +1379,7 @@ window._psecBuildConfig = function(baseCfg) {
       countries: geoCountries,
       db_path: geoDb || cfg.geo_ip?.db_path || (typeof GPX_GEO_DEFAULT_DB !== 'undefined' ? GPX_GEO_DEFAULT_DB : '/etc/goproxify/geoip/GeoLite2-Country.mmdb'),
     } : undefined,
-    sentinel_whitelist: sentinelWhitelist.length ? sentinelWhitelist : undefined,
+    ephor_whitelist: ephorWhitelist.length ? ephorWhitelist : undefined,
     snippet_ids: (() => {
       const ids = typeof psecGetSnippetIds === 'function' ? psecGetSnippetIds() : (cfg.snippet_ids || []);
       return ids.length ? ids : undefined;

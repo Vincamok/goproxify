@@ -159,7 +159,7 @@ type ThreatBanPayload struct {
 	Reason    string `json:"reason"`
 	ExpiresAt string `json:"expires_at,omitempty"` // RFC3339
 	NodeName  string `json:"node_name,omitempty"`
-	// Source : "plugin:<nom>" pour le ban d'un plugin de détection ; vide pour Sentinel.
+	// Source : "plugin:<nom>" pour le ban d'un plugin de détection ; vide pour Ephor.
 	Source string `json:"source,omitempty"`
 }
 
@@ -191,7 +191,7 @@ type LogEntryPayload struct {
 	Referrer  string `json:"referrer,omitempty"`
 	// RequestID/WAFMatches/ThreatSignal : contexte de sécurité de la requête d'origine
 	// (voir logger.ShipEntry côté passerelle) — vides pour la majorité des requêtes
-	// propres, renseignés quand le WAF ou Sentinel se sont déclenchés.
+	// propres, renseignés quand le WAF ou Ephor se sont déclenchés.
 	RequestID    string   `json:"request_id,omitempty"`
 	WAFMatches   []string `json:"waf_matches,omitempty"`
 	ThreatSignal string   `json:"threat_signal,omitempty"`

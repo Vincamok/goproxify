@@ -13,21 +13,21 @@ var (
 		Namespace: "gpx",
 		Subsystem: "threat",
 		Name:      "checks_total",
-		Help:      "Nombre de requêtes inspectées par Sentinel.",
+		Help:      "Nombre de requêtes inspectées par Ephor.",
 	}, []string{"action"}) // action: allow | detect | block
 
 	threatSignalsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "gpx",
 		Subsystem: "threat",
 		Name:      "signals_total",
-		Help:      "Signaux de menace détectés par Sentinel.",
+		Help:      "Signaux de menace détectés par Ephor.",
 	}, []string{"reason"}) // reason: ip | ua | path | rate | error4xx | custom_ip | custom_ua | custom_path
 
 	threatBansTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "gpx",
 		Subsystem: "threat",
 		Name:      "bans_total",
-		Help:      "Nombre de bans automatiques émis par Sentinel.",
+		Help:      "Nombre de bans automatiques émis par Ephor.",
 	}, []string{"reason"})
 
 	threatGlobalRateLimitTotal = promauto.NewCounter(prometheus.CounterOpts{
@@ -41,14 +41,14 @@ var (
 		Namespace: "gpx",
 		Subsystem: "threat",
 		Name:      "tarpit_total",
-		Help:      "Requêtes traitées par le tarpit Sentinel (result: held = retenue, full = refusée faute de slot).",
+		Help:      "Requêtes traitées par le tarpit Ephor (result: held = retenue, full = refusée faute de slot).",
 	}, []string{"result"})
 
 	threatTarpitActive = promauto.NewGauge(prometheus.GaugeOpts{
 		Namespace: "gpx",
 		Subsystem: "threat",
 		Name:      "tarpit_active",
-		Help:      "Requêtes actuellement retenues par le tarpit Sentinel.",
+		Help:      "Requêtes actuellement retenues par le tarpit Ephor.",
 	})
 
 	threatEvictionsTotal = promauto.NewCounter(prometheus.CounterOpts{

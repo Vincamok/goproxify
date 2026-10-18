@@ -18,8 +18,8 @@ import (
 )
 
 // Le journal d'accès enveloppe les étapes de sécurité : sans support partagé, les catégories du WAF et le
-// signal Sentinel posés sur la copie de la requête n'arrivaient jamais dans l'entrée (waf_matches toujours vide).
-func TestAccessLog_RecordsWAFBlockAndSentinelSignal(t *testing.T) {
+// signal Ephor posés sur la copie de la requête n'arrivaient jamais dans l'entrée (waf_matches toujours vide).
+func TestAccessLog_RecordsWAFBlockAndEphorSignal(t *testing.T) {
 	al := edgelog.NewAccessLogger("")
 	got := make(chan edgelog.ShipEntry, 4)
 	al.SetForwarder(func(batch []edgelog.ShipEntry) {
@@ -57,6 +57,6 @@ func TestAccessLog_RecordsWAFBlockAndSentinelSignal(t *testing.T) {
 		t.Errorf("blocage WAF absent du journal : waf_matches=%v", blocked.WAFMatches)
 	}
 	if signalled.ThreatSignal != "threat: ua" {
-		t.Errorf("signal Sentinel absent du journal : %q", signalled.ThreatSignal)
+		t.Errorf("signal Ephor absent du journal : %q", signalled.ThreatSignal)
 	}
 }

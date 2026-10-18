@@ -506,7 +506,7 @@ func (e *Engine) Middleware(cfg *router.WAFConfig, next http.Handler) http.Handl
 		host := r.Host
 		ip := realIP(r, trustedNets)
 
-		// Bypass WAF complet pour les IPs/CIDRs en whitelist (Fail2Ban/Sentinel restent actifs).
+		// Bypass WAF complet pour les IPs/CIDRs en whitelist (Fail2Ban/Ephor restent actifs).
 		if len(wafWhitelistNets) > 0 && ipMatchesNets(ip, wafWhitelistNets) {
 			next.ServeHTTP(w, r)
 			return

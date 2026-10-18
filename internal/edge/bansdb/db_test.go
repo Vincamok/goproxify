@@ -164,7 +164,7 @@ func TestBanCountForIP(t *testing.T) {
 	since := time.Now().Add(-7 * 24 * time.Hour)
 	n, err := d.BanCountForIP(ip, "threat", since)
 	if err != nil || n != 2 {
-		t.Fatalf("bans Sentinel de l'IP dans la fenêtre : %d %v, attendu 2", n, err)
+		t.Fatalf("bans Ephor de l'IP dans la fenêtre : %d %v, attendu 2", n, err)
 	}
 
 	// Un déban manuel remet la récidive à zéro : seuls les bans postérieurs comptent.

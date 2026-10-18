@@ -22,7 +22,7 @@ const (
 	TriggerAdminAuthFailures      TriggerType = "admin_auth_failures"
 	TriggerScaleEvent             TriggerType = "scale_event"
 	TriggerHealthEscalation       TriggerType = "health_escalation"
-	TriggerSentinelBan            TriggerType = "sentinel_ban"              // IP bannie par Sentinel/WAF
+	TriggerEphorBan               TriggerType = "ephor_ban"                 // IP bannie par Ephor/WAF
 	TriggerBackendDown            TriggerType = "backend_down"              // backend déclaré indisponible par health-check
 	TriggerCertDeployFailed       TriggerType = "cert_deploy_failed"        // échec de déploiement d'un certificat
 	TriggerIPProfileRefreshFailed TriggerType = "ip_profile_refresh_failed" // feed d'un profil IP en échec de façon répétée
@@ -36,7 +36,7 @@ var AllTriggers = []TriggerType{
 	TriggerFail2BanBan, TriggerCrowdSecCritical, TriggerConfigChanged,
 	TriggerBackupFailed, TriggerHighErrorRate, TriggerHighLatency,
 	TriggerAdminAuthFailures, TriggerScaleEvent, TriggerHealthEscalation,
-	TriggerSentinelBan, TriggerBackendDown, TriggerCertDeployFailed, TriggerIPProfileRefreshFailed,
+	TriggerEphorBan, TriggerBackendDown, TriggerCertDeployFailed, TriggerIPProfileRefreshFailed,
 	TriggerSLOBurn, TriggerAutomationNotify,
 }
 
@@ -52,7 +52,7 @@ var TriggerOutputs = map[TriggerType][]string{
 	TriggerAdminAuthFailures:      {"email", "ip"},
 	TriggerScaleEvent:             {"event_type", "detail", "container"},
 	TriggerHealthEscalation:       {"event_type", "detail", "container"},
-	TriggerSentinelBan:            {"ip", "reason"},
+	TriggerEphorBan:               {"ip", "reason"},
 	TriggerBackendDown:            {"url"},
 	TriggerCertDeployFailed:       {"target_id", "type", "message"},
 	TriggerIPProfileRefreshFailed: {"profile_id", "profile", "consecutive_failures", "error", "last_updated_at"},
@@ -74,7 +74,7 @@ var TriggerLabels = map[TriggerType]string{
 	TriggerAdminAuthFailures:      "Tentatives de connexion admin échouées",
 	TriggerScaleEvent:             "Événement d'auto-scaling (montée/descente)",
 	TriggerHealthEscalation:       "Escalade de santé conteneur (restart→recreate→rollback)",
-	TriggerSentinelBan:            "IP bannie par Sentinel / WAF",
+	TriggerEphorBan:               "IP bannie par Ephor / WAF",
 	TriggerBackendDown:            "Backend déclaré indisponible par health-check",
 	TriggerCertDeployFailed:       "Échec de déploiement d'un certificat",
 	TriggerIPProfileRefreshFailed: "Mise à jour d'un profil IP en échec répété",

@@ -12,10 +12,10 @@ Les moteurs s'appliquent dans cet ordre sur chaque connexion entrante :
 Connexion TCP/TLS
       │
       ▼
- [1] Sentinel         — avant tout routage : rate limit global, signaux comportementaux, listes IP
+ [1] Ephor         — avant tout routage : rate limit global, signaux comportementaux, listes IP
       │
       ▼
- [2] Bans IP          — IP bannie en base (Sentinel, Fail2Ban, CrowdSec, manuel) → 403 immédiat
+ [2] Bans IP          — IP bannie en base (Ephor, Fail2Ban, CrowdSec, manuel) → 403 immédiat
       │
       ▼
  [3] Routage / proxy  — résolution de la route, correspondance du proxy
@@ -132,9 +132,9 @@ gpx_waf_behavior_signals_total{host, signal}
 
 ---
 
-## Sentinel (moteur de détection comportementale)
+## Ephor (moteur de détection comportementale)
 
-Le Sentinel s'applique **avant le routage**, indépendamment des proxies. Il analyse chaque requête au niveau de la passerelle.
+L'Ephor s'applique **avant le routage**, indépendamment des proxies. Il analyse chaque requête au niveau de la passerelle.
 
 ### Signaux détectés
 
@@ -151,17 +151,17 @@ Le Sentinel s'applique **avant le routage**, indépendamment des proxies. Il ana
 | `waf` | Score WAF cumulé par IP au-delà du seuil comportemental : ban direct, hors score |
 | *limite globale* | `global_rps` dépassé : `503` pour tous, sans ban |
 
-Dès qu'un signal (hors `rate`) dépasse le seuil, l'IP est bannie immédiatement. Le signal `rate` utilise `rate_ban_threshold` (nombre de dépassements avant ban). La page Sentinel de l'Edge liste ces détections avec leur état et le nombre de bans actifs par motif.
+Dès qu'un signal (hors `rate`) dépasse le seuil, l'IP est bannie immédiatement. Le signal `rate` utilise `rate_ban_threshold` (nombre de dépassements avant ban). La page Ephor de l'Edge liste ces détections avec leur état et le nombre de bans actifs par motif.
 
 Les compteurs (rate, erreurs 4xx) sont **bornés en mémoire** (~262 k IPs suivies, éviction au-delà, métrique `gpx_threat_counter_evictions_total`) et les **IPv6 sont comptées par /64** ; le ban, lui, vise l'IP exacte. Par défaut le score n'est pas conservé entre deux requêtes : `score_threshold` ne cumule que les signaux d'une même requête.
 
 #### Bans graduels (`escalation`, optionnel)
 
-Avec `escalation.enabled`, une IP déjà bannie par Sentinel dans la fenêtre l'est plus longtemps : durée = `ban_duration` × `factor`^n, n étant le nombre de ses bans Sentinel précédents (avec les valeurs par défaut : 24 h, 48 h, 96 h… jusqu'à 30 jours). Cela vaut pour tous les bans Sentinel (signal, score cumulé, rate, erreurs 4xx). La récidive est lue dans l'historique des bans de la passerelle, conservé 30 jours et qui survit à un redémarrage ; les bans reçus d'un pair HA ne comptent pas. Un **déban manuel remet le compteur à zéro** (un faux positif corrigé n'alourdit pas le ban suivant). Le rejeu `security threat simulate` applique les durées graduelles.
+Avec `escalation.enabled`, une IP déjà bannie par Ephor dans la fenêtre l'est plus longtemps : durée = `ban_duration` × `factor`^n, n étant le nombre de ses bans Ephor précédents (avec les valeurs par défaut : 24 h, 48 h, 96 h… jusqu'à 30 jours). Cela vaut pour tous les bans Ephor (signal, score cumulé, rate, erreurs 4xx). La récidive est lue dans l'historique des bans de la passerelle, conservé 30 jours et qui survit à un redémarrage ; les bans reçus d'un pair HA ne comptent pas. Un **déban manuel remet le compteur à zéro** (un faux positif corrigé n'alourdit pas le ban suivant). Le rejeu `security threat simulate` applique les durées graduelles.
 
 #### Score cumulé par IP avec décroissance (`ip_score`, optionnel)
 
-Avec `ip_score.enabled`, les points de chaque requête qui déclenche Sentinel s'additionnent **d'une requête à l'autre** pour une même IP, et le score **est divisé par deux à chaque `half_life`** (décroissance exponentielle). L'IP n'est bannie que lorsque son score dépasse `ban_threshold` : quelques signaux isolés (un 404 sur un chemin sensible, un User-Agent suspect) s'estompent, une série rapprochée mène au ban. Les requêtes qui déclenchent restent bloquées avant le ban, le score est remis à zéro au ban et au débannissement.
+Avec `ip_score.enabled`, les points de chaque requête qui déclenche Ephor s'additionnent **d'une requête à l'autre** pour une même IP, et le score **est divisé par deux à chaque `half_life`** (décroissance exponentielle). L'IP n'est bannie que lorsque son score dépasse `ban_threshold` : quelques signaux isolés (un 404 sur un chemin sensible, un User-Agent suspect) s'estompent, une série rapprochée mène au ban. Les requêtes qui déclenchent restent bloquées avant le ban, le score est remis à zéro au ban et au débannissement.
 
 - Les IP présentes dans les listes de menaces (`ip`, `custom_ip`) restent **bannies immédiatement**.
 - Le signal `rate` passe par le score : `rate_ban_threshold` est alors ignoré.
@@ -178,7 +178,7 @@ Avec `ip_score.enabled` et `ip_score.errors.enabled`, chaque réponse 4xx verse 
 - Les 404 sur un hôte inconnu de la passerelle ne sont pas comptés (ils ne passent pas par une route).
 - Le ban posé porte le motif `threat: erreurs 4xx répétées` ; en mode `detect`, il est seulement journalisé.
 
-### Paramètres configurables (UI Admin > Sécurité > Sentinel)
+### Paramètres configurables (UI Admin > Sécurité > Ephor)
 
 | Paramètre | Défaut | Description |
 |---|---|---|
@@ -188,7 +188,7 @@ Avec `ip_score.enabled` et `ip_score.errors.enabled`, chaque réponse 4xx verse 
 | `rate_window` | `1s` | Tolérance de pic : burst max = `rate_limit × rate_window` requêtes |
 | `rate_ban_threshold` | 1 | Déclenchements avant ban (1 = immédiat) |
 | `rate_ban_window` | = `rate_window` | Fenêtre de comptage pour le ban rate |
-| `escalation.enabled` | `false` | Bans graduels : la durée croît avec les bans Sentinel précédents de l'IP |
+| `escalation.enabled` | `false` | Bans graduels : la durée croît avec les bans Ephor précédents de l'IP |
 | `escalation.factor` | 2 | Multiplicateur par récidive : durée = `ban_duration` × facteur^n |
 | `escalation.window` | `168h` | Période pendant laquelle les bans précédents comptent (max `720h`, rétention de l'historique) |
 | `escalation.max_duration` | `720h` | Plafond de la durée d'un ban (ne raccourcit jamais `ban_duration`) |
@@ -204,20 +204,20 @@ Avec `ip_score.enabled` et `ip_score.errors.enabled`, chaque réponse 4xx verse 
 | `global_rps` | 0 | Limite globale toutes IPs confondues (anti-DDoS), 0 = désactivé |
 | `global_burst` | 0 | Burst associé (0 = 2×RPS) |
 | `ban_duration` | `24h` | Durée du ban automatique |
-| `tarpit.enabled` | `false` | Retient la réponse aux IP bloquées ou bannies par Sentinel au lieu de refuser aussitôt |
+| `tarpit.enabled` | `false` | Retient la réponse aux IP bloquées ou bannies par Ephor au lieu de refuser aussitôt |
 | `tarpit.delay_ms` | 5000 | Durée de rétention (max 30000, sous les timeouts d'écriture usuels) |
 | `tarpit.max_concurrent` | 200 | Requêtes retenues simultanément ; au-delà, refus immédiat (`403`) |
 
 ### Fonctionnement sans l'Admin
 
-Sentinel tourne sur la passerelle sans dépendre de l'Admin, y compris après un redémarrage pendant une coupure :
+Ephor tourne sur la passerelle sans dépendre de l'Admin, y compris après un redémarrage pendant une coupure :
 
-- **Configuration** : la passerelle garde une copie chiffrée (clé du cache local) de la dernière configuration reçue, `/etc/goproxify/threat-config.gpx` (surchargeable par `GPX_THREAT_CONFIG_PATH`), et la recharge au démarrage avec les listes blanches `sentinel.whitelist` des routes. Chaque envoi de l'Admin remplace la copie.
-- **Bans** : un ban Sentinel est écrit dans la base de bans locale de la passerelle (`bansdb`) : il bloque aussitôt les requêtes suivantes de l'IP pendant `ban_duration`, survit à un redémarrage et est transmis aux pairs HA. L'Admin en est notifié pour l'historique et la diffusion aux autres passerelles.
+- **Configuration** : la passerelle garde une copie chiffrée (clé du cache local) de la dernière configuration reçue, `/etc/goproxify/threat-config.gpx` (surchargeable par `GPX_THREAT_CONFIG_PATH`), et la recharge au démarrage avec les listes blanches `ephor.whitelist` des routes. Chaque envoi de l'Admin remplace la copie.
+- **Bans** : un ban Ephor est écrit dans la base de bans locale de la passerelle (`bansdb`) : il bloque aussitôt les requêtes suivantes de l'IP pendant `ban_duration`, survit à un redémarrage et est transmis aux pairs HA. L'Admin en est notifié pour l'historique et la diffusion aux autres passerelles.
 
 ### Tarpit
 
-Avec `tarpit.enabled`, une requête bloquée par Sentinel (signal en mode `block`) ou venant d'une IP bannie par Sentinel (ban dont la source est `threat`, y compris les bans posés par le WAF) n'est pas refusée aussitôt : la connexion est retenue `delay_ms` avant la réponse `403`. Un bot qui attend chaque réponse immobilise ses propres connexions et perd du débit.
+Avec `tarpit.enabled`, une requête bloquée par Ephor (signal en mode `block`) ou venant d'une IP bannie par Ephor (ban dont la source est `threat`, y compris les bans posés par le WAF) n'est pas refusée aussitôt : la connexion est retenue `delay_ms` avant la réponse `403`. Un bot qui attend chaque réponse immobilise ses propres connexions et perd du débit.
 
 - **Borné** : au plus `max_concurrent` requêtes retenues en même temps. Au-delà, ou tarpit désactivé, le refus est immédiat comme avant : le tarpit ne peut pas épuiser les connexions de la passerelle.
 - Un client qui se déconnecte libère son slot aussitôt.
@@ -231,14 +231,14 @@ gpx_threat_tarpit_total{result}   # held | full
 
 ### Simuler une config avant de l'appliquer (MCP)
 
-L'outil MCP `simulate_sentinel_config` rejoue les access logs récents (1 à 24 h) contre une config candidate et la compare à la config en production : requêtes bloquées en plus, bans, IP les plus touchées, et `legit_blocked` (requêtes qui auraient été bloquées alors qu'elles avaient abouti, signe probable de faux positifs). Rien n'est modifié. Les listes par défaut, `global_rps` et les règles User-Agent ne sont pas simulées ; voir [docs/mcp.md](mcp.md#simulate_sentinel_config).
+L'outil MCP `simulate_ephor_config` rejoue les access logs récents (1 à 24 h) contre une config candidate et la compare à la config en production : requêtes bloquées en plus, bans, IP les plus touchées, et `legit_blocked` (requêtes qui auraient été bloquées alors qu'elles avaient abouti, signe probable de faux positifs). Rien n'est modifié. Les listes par défaut, `global_rps` et les règles User-Agent ne sont pas simulées ; voir [docs/mcp.md](mcp.md#simulate_ephor_config).
 
 ### Whitelist par route (labels Docker)
 
 ```yaml
-goproxify.sentinel.whitelist: "192.168.1.5,10.0.0.0/8"
-goproxify.sentinel.whitelist.self: "true"     # IP actuelle du conteneur
-goproxify.sentinel.whitelist.network: "true"  # sous-réseau Docker du conteneur
+goproxify.ephor.whitelist: "192.168.1.5,10.0.0.0/8"
+goproxify.ephor.whitelist.self: "true"     # IP actuelle du conteneur
+goproxify.ephor.whitelist.network: "true"  # sous-réseau Docker du conteneur
 ```
 
 
@@ -293,7 +293,7 @@ Les bans sont centralisés dans l'Admin et propagés aux passerelles via WebSock
 |--------|-------------|
 | `native` | Ban manuel depuis l'UI Admin |
 | `waf` | Ban automatique par le moteur comportemental WAF |
-| `threat` | Ban automatique par le Sentinel |
+| `threat` | Ban automatique par l'Ephor |
 | `fail2ban` | Ban reçu de Fail2Ban natif Go |
 | `crowdsec` | Décision LAPI CrowdSec (stream push) |
 
@@ -307,7 +307,7 @@ Garde-fous :
 - **Pas d'auto-verrouillage** : une plage qui contient l'adresse de l'appelant est refusée (`409`). Une adresse seule n'est pas concernée.
 - **Aperçu avant de créer** (`GET /security/bans/preview`, bouton « Aperçu de l'impact » du formulaire de ban, `security bans preview`, outil MCP `preview_security_ban`) : trafic récent de la cible, dont les requêtes **réussies** qu'un ban couperait (signe d'un faux positif), bans actifs qui la recoupent (déjà couverte, ou qui deviendraient redondants), profils IP qui la recoupent, et avertissements. Rien n'est créé.
 
-Limites : débannir une adresse située dans une plage bannie ne lève pas le ban de la plage — supprimer la plage, ou ajouter l'adresse à la [liste blanche](#liste-blanche-des-bans) ; la répartition des bans par pays ne compte pas les plages (elle repose sur la géolocalisation d'adresses précises) ; Fail2Ban, CrowdSec et Sentinel continuent de poser des bans d'adresse (Fail2Ban par /64 en IPv6).
+Limites : débannir une adresse située dans une plage bannie ne lève pas le ban de la plage — supprimer la plage, ou ajouter l'adresse à la [liste blanche](#liste-blanche-des-bans) ; la répartition des bans par pays ne compte pas les plages (elle repose sur la géolocalisation d'adresses précises) ; Fail2Ban, CrowdSec et Ephor continuent de poser des bans d'adresse (Fail2Ban par /64 en IPv6).
 
 ### Bans par ASN
 
@@ -334,36 +334,36 @@ Chaque entrée est validée comme un ban unitaire ([plages CIDR](#bans-par-plage
 
 Par défaut un ban s'applique sur **toutes** les passerelles. Le champ « S'applique à » du formulaire Bannir et de l'import (`target_scope` côté API, `-scope` en CLI, `scope` pour les outils MCP `create_security_ban` et `import_security_bans`) le limite à **une passerelle** (par son nom) ou aux **membres d'un groupe HA** (`group:<nom>`). L'Admin n'envoie à chaque passerelle que les bans globaux, ceux qui la visent et ceux de son groupe ; une portée inconnue est refusée. Les passerelles pairs se partagent aussi leurs bans entre elles quand l'Admin est injoignable : la portée est conservée avec le ban, et une passerelle n'adopte d'un pair que les bans globaux, ceux qui la visent ou ceux de son groupe HA. La liste des bans affiche la portée (pastille « → … ») et se filtre par `?scope=`.
 
-Limites : la portée se choisit à la création (pour la changer, supprimer le ban et le recréer) ; les bans posés par une passerelle (Fail2Ban, Sentinel, règles) restent partagés avec toutes les autres comme avant ; un déban lève l'adresse sur toutes les passerelles, puis chacune reçoit de nouveau ses propres bans restants.
+Limites : la portée se choisit à la création (pour la changer, supprimer le ban et le recréer) ; les bans posés par une passerelle (Fail2Ban, Ephor, règles) restent partagés avec toutes les autres comme avant ; un déban lève l'adresse sur toutes les passerelles, puis chacune reçoit de nouveau ses propres bans restants.
 
 ### Liste blanche des bans
 
 Page Bans › **Liste blanche** (API `GET|POST|DELETE /security/bans/whitelist`, CLI `security bans whitelist`, outils MCP `list_ban_whitelist` / `add_ban_whitelist` / `remove_ban_whitelist`). Une adresse ou une plage CIDR en liste blanche :
 
-- n'est atteinte par **aucun ban**, quelle qu'en soit la source (manuel, Fail2Ban, CrowdSec, Sentinel, règles automatiques, bans reçus d'un pair) ;
-- **n'est pas évaluée par Sentinel** : ses requêtes ne sont ni bloquées ni comptées (c'est ce qui la distingue d'un profil IP allow ordinaire, qui ne prime que sur les bans et les profils deny).
+- n'est atteinte par **aucun ban**, quelle qu'en soit la source (manuel, Fail2Ban, CrowdSec, Ephor, règles automatiques, bans reçus d'un pair) ;
+- **n'est pas évaluée par Ephor** : ses requêtes ne sont ni bloquées ni comptées (c'est ce qui la distingue d'un profil IP allow ordinaire, qui ne prime que sur les bans et les profils deny).
 
 Les entrées (avec un commentaire) sont validées et normalisées comme la cible d'un ban (`/16` IPv4 et `/32` IPv6 au plus larges). Ajouter une entrée **ne supprime aucun ban** : les bans existants cessent seulement de s'appliquer à ces adresses (la liste des bans les marque « Exempté » quand la liste blanche couvre toute leur cible) et s'appliquent de nouveau si l'entrée est retirée. Une entrée déjà couverte par une plus large ne change rien ; une entrée plus large retire les plus précises. Un ban dont la cible est entièrement en liste blanche est refusé (`409`) ; une plage qui ne fait que recouper une entrée reste permise et l'entrée en reste exemptée.
 
-La liste est recopiée dans un profil IP en mode `allow` d'identifiant `bans-whitelist`, **géré par la page Bans** (Profils IP ne peut ni le modifier ni le supprimer). Comme tout profil IP, les passerelles le reçoivent, le conservent sur leur disque et l'appliquent **sans l'Admin**, y compris après un redémarrage. Les adresses privées ou locales sont de toute façon jamais bloquées par un ban, mais restent évaluées par Sentinel sauf si elles figurent dans la liste blanche.
+La liste est recopiée dans un profil IP en mode `allow` d'identifiant `bans-whitelist`, **géré par la page Bans** (Profils IP ne peut ni le modifier ni le supprimer). Comme tout profil IP, les passerelles le reçoivent, le conservent sur leur disque et l'appliquent **sans l'Admin**, y compris après un redémarrage. Les adresses privées ou locales sont de toute façon jamais bloquées par un ban, mais restent évaluées par Ephor sauf si elles figurent dans la liste blanche.
 
-Les listes blanches propres à chaque moteur (Fail2Ban, Sentinel) subsistent ; la liste blanche des bans est le moyen de tout exempter en un seul endroit.
+Les listes blanches propres à chaque moteur (Fail2Ban, Ephor) subsistent ; la liste blanche des bans est le moyen de tout exempter en un seul endroit.
 
 ### Déban
 
-Débannir une IP depuis l'Admin (UI, CLI `security bans delete`, outils MCP `delete_security_ban` / `unban_ip`) lève **tous** ses bans sur chaque passerelle, y compris ceux que la passerelle a posés elle-même (Fail2Ban, Sentinel, règles automatiques, ban reçu d'un pair HA), et remet à zéro les compteurs Fail2Ban et Sentinel de l'IP. Le déban est conservé sur le disque de la passerelle (survit à un redémarrage) et rejoué à une passerelle qui était déconnectée au moment du déban, à sa reconnexion (débans des 30 derniers jours). Un pair HA qui n'a pas encore reçu le déban ne peut pas réinjecter l'ancien ban ; un ban posé **après** le déban reste appliqué normalement.
+Débannir une IP depuis l'Admin (UI, CLI `security bans delete`, outils MCP `delete_security_ban` / `unban_ip`) lève **tous** ses bans sur chaque passerelle, y compris ceux que la passerelle a posés elle-même (Fail2Ban, Ephor, règles automatiques, ban reçu d'un pair HA), et remet à zéro les compteurs Fail2Ban et Ephor de l'IP. Le déban est conservé sur le disque de la passerelle (survit à un redémarrage) et rejoué à une passerelle qui était déconnectée au moment du déban, à sa reconnexion (débans des 30 derniers jours). Un pair HA qui n'a pas encore reçu le déban ne peut pas réinjecter l'ancien ban ; un ban posé **après** le déban reste appliqué normalement.
 
 Les 403 servis à une IP bannie ne comptent pas pour Fail2Ban (Admin et passerelle) : sans cela, l'IP serait rebannie sur ses propres refus dès la levée du ban.
 
 ### Listes blanches et bans existants
 
-Une IP en liste blanche Fail2Ban n'est plus bloquée par les bans Fail2Ban déjà posés ; de même pour la liste blanche Sentinel (globale ou `sentinel.whitelist` d'une route) et les bans Sentinel. Pas besoin d'attendre l'expiration ni de débannir. Les bans manuels et CrowdSec restent appliqués ; pour exempter une IP de tout ban (et de Sentinel), utiliser la [liste blanche des bans](#liste-blanche-des-bans), ou un profil IP en mode `allow` pour les seuls bans.
+Une IP en liste blanche Fail2Ban n'est plus bloquée par les bans Fail2Ban déjà posés ; de même pour la liste blanche Ephor (globale ou `ephor.whitelist` d'une route) et les bans Ephor. Pas besoin d'attendre l'expiration ni de débannir. Les bans manuels et CrowdSec restent appliqués ; pour exempter une IP de tout ban (et d'Ephor), utiliser la [liste blanche des bans](#liste-blanche-des-bans), ou un profil IP en mode `allow` pour les seuls bans.
 
 ### Fail2Ban natif Go
 
 Détection d'échecs d'authentification sans dépendance externe. Configurable : seuil de tentatives, fenêtre de temps, durée de ban. Notification d'alerte déclenchable sur N bans/heure.
 
-IPv4 et IPv6 sont prises en charge, avec ou sans port (`IP:port`, `[IPv6]:port`) ; ce qui n'est pas une IP (dont `[pseudonymisé]`) est ignoré. Une **IPv6 est comptée et bannie par /64** : un abonné reçoit en général un /64 entier et peut y changer d'adresse à volonté, si bien qu'un comptage adresse par adresse le laisserait toujours sous le seuil. Le ban porte donc le préfixe (`2a01:e0a:1:2::/64`), et c'est ce préfixe qu'il faut débannir (un déban de l'adresse seule ne lève pas le ban /64). Contrairement au Sentinel, qui compte aussi par /64 mais bannit l'adresse exacte, Fail2Ban bannit le /64 entier. Exception : si la liste blanche Fail2Ban recoupe le /64, les adresses voisines de l'IP exemptée sont comptées et bannies une par une, et un ban /64 déjà posé qui la contient n'est plus appliqué.
+IPv4 et IPv6 sont prises en charge, avec ou sans port (`IP:port`, `[IPv6]:port`) ; ce qui n'est pas une IP (dont `[pseudonymisé]`) est ignoré. Une **IPv6 est comptée et bannie par /64** : un abonné reçoit en général un /64 entier et peut y changer d'adresse à volonté, si bien qu'un comptage adresse par adresse le laisserait toujours sous le seuil. Le ban porte donc le préfixe (`2a01:e0a:1:2::/64`), et c'est ce préfixe qu'il faut débannir (un déban de l'adresse seule ne lève pas le ban /64). Contrairement au Ephor, qui compte aussi par /64 mais bannit l'adresse exacte, Fail2Ban bannit le /64 entier. Exception : si la liste blanche Fail2Ban recoupe le /64, les adresses voisines de l'IP exemptée sont comptées et bannies une par une, et un ban /64 déjà posé qui la contient n'est plus appliqué.
 
 Fail2Ban tourne à deux endroits : sur chaque passerelle, qui compte les erreurs de son propre trafic sur l'IP réelle du client, et sur l'Admin, qui relit les logs reçus de toutes les passerelles et détecte en plus une IP dont les erreurs se répartissent sur plusieurs passerelles. Quand les IP des logs sont protégées ([anonymisation ou pseudonymisation](rgpd.md#2-minimisation-options)), l'Admin ne reçoit qu'une IP tronquée (`203.0.113.0`, préfixe /48 `2a01:e0a:1::`) qui ne désigne aucun client : la compter cumulerait les erreurs de tout un /24 ou /48 et ferait bannir `x.x.x.0` (sans effet) ou le premier /64 du /48 (des clients étrangers à l'abus). Le Fail2Ban de l'Admin écarte donc les lignes que la passerelle signale tronquées, y compris quand l'anonymisation vient de son `edge.json`, et ne bannit plus du tout depuis les logs tant que l'Admin pousse l'un des deux modes (les passerelles antérieures à Edge `0.17.12` ne signalent pas leurs IP tronquées). Le Fail2Ban des passerelles n'est pas concerné : il reçoit l'IP réelle avant troncature et continue de bannir. Seule la détection d'une IP répartie sur plusieurs passerelles est perdue.
 
@@ -373,7 +373,7 @@ Bouncer LAPI en mode stream : les décisions CrowdSec sont poussées en temps r�
 
 ### Traçage d'une IP ou d'un CIDR
 
-**Sécurité › Traçage IP** (ou « Parcours complet » dans l'historique d'une IP de la page Bans) répond à « que fait cette IP depuis des semaines ? » : on saisit une IP ou un CIDR et une période (24 h à tout l'historique conservé), et l'Admin assemble en une chronologie les requêtes d'accès, les détections WAF/Sentinel/CrowdSec, les bans et débans, ainsi que l'état actuel (bans en cours, profils IP qui contiennent la cible).
+**Sécurité › Traçage IP** (ou « Parcours complet » dans l'historique d'une IP de la page Bans) répond à « que fait cette IP depuis des semaines ? » : on saisit une IP ou un CIDR et une période (24 h à tout l'historique conservé), et l'Admin assemble en une chronologie les requêtes d'accès, les détections WAF/Ephor/CrowdSec, les bans et débans, ainsi que l'état actuel (bans en cours, profils IP qui contiennent la cible).
 
 - **Épisodes** : les requêtes de la cible séparées de moins de 10 minutes forment une seule étape (volume, bloquées, domaines, chemins, statuts, catégories WAF), pour qu'une période d'un an reste lisible.
 - **CIDR** : toutes les IP du préfixe sont réunies ; l'en-tête donne leurs requêtes cumulées et les IP les plus actives. Un ban posé sur un CIDR apparaît dans le parcours d'une IP qu'il contient.
@@ -381,7 +381,7 @@ Bouncer LAPI en mode stream : les décisions CrowdSec sont poussées en temps r�
 
 - **Opérateur et ASN** : quand la base ASN est installée (voir [Bans par ASN](#bans-par-asn)), l'en-tête du parcours d'une IP indique son opérateur (ASN, nom, pays), avec deux boutons : **Cette IP** et **Tout l'ASN** (sans avoir à connaître le CIDR), plus « Bannir l'ASN » (aperçu d'impact puis ban). Un traçage simple ne télécharge jamais la base : l'en-tête n'apparaît que si elle est déjà installée. Les adresses privées ou réservées, que le jeu de données ne connaît pas, se tracent comme avant, en choisissant l'IP ou un CIDR à la main. Un opérateur qui annonce de très larges préfixes regroupe beaucoup d'acteurs : l'ASN entier n'est pas forcément celui d'un attaquant, d'où le choix de l'étendue. Tracer tout un ASN parcourt les logs sans borne sur l'adresse (limites habituelles du traçage).
 
-**Raccourci** : une loupe « Analyser l'IP » à côté des IP publiques (page Bans, menaces, Sentinel, Prism, tiroir des logs) ouvre directement le parcours de l'IP ; l'élargissement à l'ASN se fait depuis l'en-tête (voir ci-dessus), ou à une plage par les boutons « Élargir à » (`/24`, `/16` ; `/64`, `/48` en IPv6). Les adresses privées, pseudonymisées ou tronquées n'ont pas de bouton.
+**Raccourci** : une loupe « Analyser l'IP » à côté des IP publiques (page Bans, menaces, Ephor, Prism, tiroir des logs) ouvre directement le parcours de l'IP ; l'élargissement à l'ASN se fait depuis l'en-tête (voir ci-dessus), ou à une plage par les boutons « Élargir à » (`/24`, `/16` ; `/64`, `/48` en IPv6). Les adresses privées, pseudonymisées ou tronquées n'ont pas de bouton.
 
 API : `GET /api/v1/security/ip-trace` ; CLI : `goproxify security trace` ; MCP : `trace_ip`.
 
@@ -561,7 +561,7 @@ Par route, `logging.access_log` vaut `true` quand la clé est absente (un bloc `
 
 ---
 
-## Dashboard Sentinel — répartition géographique des bans
+## Dashboard Ephor — répartition géographique des bans
 
 L'endpoint `GET /api/v1/security/bans/countries` retourne le nombre de bans actifs par pays, en croisant la table `security_bans` avec le cache GeoIP. Utilisé par la vue **Prism → Heatmap bans** et le widget **Accès rapide** de la table des bans.
 
@@ -584,7 +584,7 @@ Deux déclencheurs sont disponibles dans les règles d'alerte (Admin → **Alert
 
 | Déclencheur | Événement |
 |-------------|-----------|
-| `sentinel_ban` | Nouvelle IP bannie par le Sentinel (automatique ou signal comportemental) |
+| `ephor_ban` | Nouvelle IP bannie par l'Ephor (automatique ou signal comportemental) |
 | `backend_down` | Un backend passe de `healthy` à `unhealthy` (callback `OnDown` du health-check) |
 
 Le payload du webhook `backend_down` contient :
@@ -652,7 +652,7 @@ gpx_waf_matches_total
 gpx_waf_requests_inspected_total
 gpx_waf_behavior_signals_total
 
-# Sentinel
+# Ephor
 gpx_threat_*
 
 # Bans

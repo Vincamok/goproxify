@@ -556,7 +556,7 @@ func (m *Manager) handleThreatBan(raw json.RawMessage) {
 		p.IP, "", p.Reason, source, banID, p.NodeName)
 	if source == "threat" && m.alertEngine != nil {
 		m.alertEngine.Emit(alerting.Event{
-			Trigger:  alerting.TriggerSentinelBan,
+			Trigger:  alerting.TriggerEphorBan,
 			Severity: alerting.SevWarning,
 			NodeName: p.NodeName,
 			Detail:   map[string]any{"ip": p.IP, "reason": p.Reason},
@@ -1046,7 +1046,7 @@ func (m *Manager) PushBans(ctx context.Context) {
 }
 
 // PushUnban lève les bans des IPs sur toutes les passerelles, y compris ceux qu'une passerelle a posés
-// elle-même (Fail2Ban, Sentinel, règles) et que la liste des bans ne retirerait pas. La liste suit sur
+// elle-même (Fail2Ban, Ephor, règles) et que la liste des bans ne retirerait pas. La liste suit sur
 // la même connexion : les autres bans encore actifs de ces IPs sont reposés aussitôt.
 func (m *Manager) PushUnban(ctx context.Context, ips []string) {
 	entries := make([]edgeWS.UnbanEntry, 0, len(ips))
@@ -1525,7 +1525,7 @@ func (m *Manager) pushAllToEntry(ctx context.Context, e *edgeEntry, s Settings) 
 		}
 	}()
 
-	// Config Sentinel (threat engine) — poussée après le full_sync
+	// Config Ephor (threat engine) — poussée après le full_sync
 	go func() {
 		if cfg := m.loadThreatConfig(ctx, e); cfg != nil {
 			if err := e.client.PushJSON(edgeWS.TypePushThreatConfig, cfg); err != nil {
@@ -1829,7 +1829,7 @@ func (m *Manager) loadActiveBans(ctx context.Context, e *edgeEntry) ([]router.Ru
 	return list, nil
 }
 
-// loadThreatConfig charge la config du Sentinel qui s'applique à la passerelle (groupe HA, puis
+// loadThreatConfig charge la config d'Ephor qui s'applique à la passerelle (groupe HA, puis
 // valeur propre, puis globale).
 func (m *Manager) loadThreatConfig(ctx context.Context, e *edgeEntry) json.RawMessage {
 	if val := m.scopedSetting(ctx, "threat_engine_config", e); val != "" {
@@ -2070,7 +2070,7 @@ func (m *Manager) PushTunnelConfig(ctx context.Context, nodeID string) {
 	}
 }
 
-// PushThreatConfig envoie la config du Sentinel à la portée visée : une passerelle (nom ou id),
+// PushThreatConfig envoie la config d'Ephor à la portée visée : une passerelle (nom ou id),
 // les membres d'un groupe HA ("group:<nom>"), ou toutes si la portée est vide.
 func (m *Manager) PushThreatConfig(ctx context.Context, scope string, cfg any) {
 	body, err := json.Marshal(cfg)

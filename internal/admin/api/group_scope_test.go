@@ -49,8 +49,8 @@ func do(h http.Handler, method, url, body string) *httptest.ResponseRecorder {
 	return rec
 }
 
-func TestSentinelConfigFollowsTheHAGroup(t *testing.T) {
-	db, store := groupFixture(t, "grp_sentinel")
+func TestEphorConfigFollowsTheHAGroup(t *testing.T) {
+	db, store := groupFixture(t, "grp_ephor")
 	var pushed []string
 	h := &api.SecurityHandler{
 		DB: db, Groups: store,

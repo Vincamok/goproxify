@@ -14,14 +14,14 @@ import (
 )
 
 var prismSourceLabels = map[string]string{
-	"threat":   "Sentinel",
+	"threat":   "Ephor",
 	"fail2ban": "Fail2Ban",
 	"crowdsec": "CrowdSec",
 	"native":   "Manuel",
 	"agent":    "Agent",
 }
 
-var sentinelTechniqueLabels = map[string]string{
+var ephorTechniqueLabels = map[string]string{
 	"ip":          "Liste d'IP malveillantes",
 	"custom_ip":   "Liste d'IP personnalisée",
 	"ua":          "User-Agent suspect",
@@ -52,7 +52,7 @@ func banTechnique(source, reason string) (key, label string) {
 	switch source {
 	case "threat":
 		key = strings.TrimSpace(strings.TrimPrefix(reason, "threat:"))
-		if l, ok := sentinelTechniqueLabels[key]; ok {
+		if l, ok := ephorTechniqueLabels[key]; ok {
 			return key, l
 		}
 	case "fail2ban":
@@ -84,7 +84,7 @@ func (h *PrismHandler) bansBreakdown(w http.ResponseWriter, r *http.Request) {
 	type row struct {
 		Source      string `json:"source"`
 		SourceLabel string `json:"source_label"`
-		Sentinel    bool   `json:"sentinel"`
+		Ephor       bool   `json:"ephor"`
 		Technique   string `json:"technique"`
 		Label       string `json:"label"`
 		Count       int    `json:"count"`
@@ -102,7 +102,7 @@ func (h *PrismHandler) bansBreakdown(w http.ResponseWriter, r *http.Request) {
 			cur.Count += n
 			continue
 		}
-		agg[k] = &row{Source: src, SourceLabel: sourceLabel(src), Sentinel: src == "threat", Technique: key, Label: label, Count: n}
+		agg[k] = &row{Source: src, SourceLabel: sourceLabel(src), Ephor: src == "threat", Technique: key, Label: label, Count: n}
 	}
 	out := make([]row, 0, len(agg))
 	for _, v := range agg {
@@ -125,7 +125,7 @@ func (h *PrismHandler) ipScan(w http.ResponseWriter, r *http.Request) {
 	type ban struct {
 		Source      string `json:"source"`
 		SourceLabel string `json:"source_label"`
-		Sentinel    bool   `json:"sentinel"`
+		Ephor       bool   `json:"ephor"`
 		Technique   string `json:"technique"`
 		Reason      string `json:"reason"`
 		Since       string `json:"since"`
@@ -168,7 +168,7 @@ func (h *PrismHandler) ipScan(w http.ResponseWriter, r *http.Request) {
 			if rows.Scan(&b.Source, &b.Reason, &b.Since, &b.ExpiresAt) != nil {
 				continue
 			}
-			b.Sentinel = b.Source == "threat"
+			b.Ephor = b.Source == "threat"
 			b.SourceLabel = sourceLabel(b.Source)
 			_, b.Technique = banTechnique(b.Source, b.Reason)
 			out.Bans = append(out.Bans, b)

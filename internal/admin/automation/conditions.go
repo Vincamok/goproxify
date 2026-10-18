@@ -111,7 +111,7 @@ func init() {
 		Fields: []modules.Field{
 			num("ban_count", "Nombre de bans", 20),
 			dur("ban_window", "Fenêtre", "1h"),
-			{Key: "ban_source", Label: "Source (vide = toutes)", Kind: modules.KindText, Placeholder: "fail2ban, crowdsec, sentinel…"},
+			{Key: "ban_source", Label: "Source (vide = toutes)", Kind: modules.KindText, Placeholder: "fail2ban, crowdsec, ephor…"},
 		}}, evalBanSpike, nil)
 
 	RegisterCondition(modules.Manifest{Type: "engine_silent", Label: "Moteur IPS silencieux",

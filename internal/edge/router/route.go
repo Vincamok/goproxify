@@ -170,9 +170,9 @@ type Route struct {
 	// (équivalent nginx proxy_cookie_path <backend_path> <replace>).
 	CookiePaths []CookieRewrite `json:"cookie_paths,omitempty"`
 
-	// SentinelWhitelist : IPs/CIDRs exemptés du moteur de détection automatique pour cette route.
-	// Ces entrées sont fusionnées dans la whitelist globale du moteur Sentinel.
-	SentinelWhitelist []string `json:"sentinel_whitelist,omitempty"`
+	// EphorWhitelist : IPs/CIDRs exemptés du moteur de détection automatique pour cette route.
+	// Ces entrées sont fusionnées dans la whitelist globale du moteur Ephor.
+	EphorWhitelist []string `json:"ephor_whitelist,omitempty"`
 
 	// Observabilité par route
 	Logging    *RouteLoggingConfig `json:"logging,omitempty"`
@@ -487,7 +487,7 @@ type WAFConfig struct {
 	CustomRulesPath string `json:"custom_rules_path,omitempty"`
 
 	// WAFWhitelistIPs : IPs/CIDRs exemptes du WAF pour cette route.
-	// La protection Fail2Ban/Sentinel reste active.
+	// La protection Fail2Ban/Ephor reste active.
 	WAFWhitelistIPs []string `json:"waf_whitelist_ips,omitempty"`
 }
 

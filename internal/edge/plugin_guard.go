@@ -131,7 +131,7 @@ func (s *Server) pluginDenied(r *http.Request, a activePlugin) {
 	s.banForPlugin(target, name, after, window, duration)
 }
 
-// banForPlugin pose le ban d'un plugin de détection. Comme pour Sentinel et Fail2Ban, il est persisté
+// banForPlugin pose le ban d'un plugin de détection. Comme pour Ephor et Fail2Ban, il est persisté
 // localement et propagé aux pairs : il s'applique et survit à un redémarrage sans l'Admin, qui est seulement notifié.
 func (s *Server) banForPlugin(ip, plugin string, after int, window, duration time.Duration) {
 	source := edgews.PluginBanSourcePrefix + plugin

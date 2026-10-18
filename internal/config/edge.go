@@ -49,7 +49,7 @@ type EdgeConfig struct {
 		// TracingSampleRatio : part des nouvelles traces échantillonnées (0 ou >=1 = toutes ; une trace déjà décidée en amont est respectée).
 		TracingSampleRatio float64 `mapstructure:"tracing_sample_ratio"`
 		// IPAnonymize : tronque le dernier octet IPv4 (x.x.x.0) et les 80 derniers bits IPv6.
-		// Recommandé pour la conformité RGPD. Ne désactive pas la protection Fail2Ban/Sentinel.
+		// Recommandé pour la conformité RGPD. Ne désactive pas la protection Fail2Ban/Ephor.
 		IPAnonymize bool `mapstructure:"ip_anonymize"`
 		// MetricsDisabled coupe les métriques Prometheus par requête (benchmark ; /metrics reste servi, compteurs figés).
 		MetricsDisabled bool `mapstructure:"metrics_disabled"`

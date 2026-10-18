@@ -22,7 +22,7 @@ var toolsetNames = []string{
 // toolsetOf rattache un outil à son groupe ; "" si l'outil n'a pas de scope.
 func toolsetOf(tool string) string {
 	switch tool {
-	case "simulate_sentinel_config", "trace_ip", "preview_security_ban", "preview_asn_ban":
+	case "simulate_ephor_config", "trace_ip", "preview_security_ban", "preview_asn_ban":
 		return "security"
 	case "get_audit_log":
 		return "admin"

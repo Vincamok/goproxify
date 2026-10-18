@@ -43,24 +43,24 @@ func whitelistServer(t *testing.T, profiles []*router.IPProfile) *Server {
 	return s
 }
 
-// Sentinel bloque la plage ; la liste blanche des bans l'en exempte, un autre profil allow non.
-func TestWhitelistExemptsFromSentinel(t *testing.T) {
+// Ephor bloque la plage ; la liste blanche des bans l'en exempte, un autre profil allow non.
+func TestWhitelistExemptsFromEphor(t *testing.T) {
 	plain := whitelistServer(t, nil)
 	if got := dispatchStatus(plain, "203.0.113.50"); got == http.StatusNotFound {
-		t.Fatal("prérequis : Sentinel doit bloquer cette IP avant d'arriver au routage")
+		t.Fatal("prérequis : Ephor doit bloquer cette IP avant d'arriver au routage")
 	}
 
 	wl := whitelistServer(t, []*router.IPProfile{{ID: router.WhitelistProfileID, Name: "Liste blanche (bans)", Mode: "allow", CIDRs: []string{"203.0.113.50"}}})
 	if got := dispatchStatus(wl, "203.0.113.50"); got != http.StatusNotFound {
-		t.Fatalf("IP en liste blanche : statut %d, attendu 404 (aucune route, mais Sentinel ne bloque pas)", got)
+		t.Fatalf("IP en liste blanche : statut %d, attendu 404 (aucune route, mais Ephor ne bloque pas)", got)
 	}
 	if got := dispatchStatus(wl, "203.0.113.51"); got == http.StatusNotFound {
-		t.Fatal("une autre IP de la plage doit rester bloquée par Sentinel")
+		t.Fatal("une autre IP de la plage doit rester bloquée par Ephor")
 	}
 
 	other := whitelistServer(t, []*router.IPProfile{{ID: "partenaires", Name: "Partenaires", Mode: "allow", CIDRs: []string{"203.0.113.50"}}})
 	if got := dispatchStatus(other, "203.0.113.50"); got == http.StatusNotFound {
-		t.Fatal("un profil allow ordinaire ne doit pas exempter de Sentinel (comportement historique)")
+		t.Fatal("un profil allow ordinaire ne doit pas exempter d'Ephor (comportement historique)")
 	}
 }
 

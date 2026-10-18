@@ -35,14 +35,14 @@ func runSecurity() {
 		fmt.Print(`Usage: goproxify security <sous-commande> [options]
 
 Sous-commandes :
-  threat   Config du moteur Sentinel (threat engine global)
+  threat   Config du moteur Ephor (threat engine global)
   bans     Gestion des IPs bannies
   trace    Parcours complet d'une IP ou d'un CIDR (requêtes, détections, bans)
   waf      Config WAF d'un proxy
   waf-engine  Interrupteur du WAF d'une passerelle (coupe ou rétablit le WAF de tous ses proxies)
   (règles, planifications et playbooks : goproxify automation)
   cve      SLA de correction des CVE (délai attendu selon la gravité)
-  engines  Moteurs globaux (Sentinel, Fail2Ban, CrowdSec, WAF) et leurs champs de configuration
+  engines  Moteurs globaux (Ephor, Fail2Ban, CrowdSec, WAF) et leurs champs de configuration
 
 goproxify security threat get  [-edge <id>] [-admin-url …] [-token …]
 goproxify security threat set  [-edge <id>] -file <config.json> [-admin-url …] [-token …]
@@ -77,7 +77,7 @@ goproxify security cve sla set -file <sla.json> [-admin-url …] [-token …]
 	}
 }
 
-// ── Threat (Sentinel) ─────────────────────────────────────────────────────────
+// ── Threat (Ephor) ─────────────────────────────────────────────────────────
 
 func runSecurityThreat() {
 	sub := subcommand(os.Args, 3)
@@ -133,7 +133,7 @@ func runSecurityThreat() {
 			fmt.Fprintf(os.Stderr, "threat set : %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Println("Config Sentinel mise à jour.")
+		fmt.Println("Config Ephor mise à jour.")
 
 	case "simulate":
 		args := parseFlags(os.Args[4:])
@@ -594,7 +594,7 @@ func runSecurityWAF() {
 		}
 		cfg := proxyConfig(proxy)
 		wafFields := map[string]any{}
-		for _, k := range []string{"waf", "sentinel_whitelist"} {
+		for _, k := range []string{"waf", "ephor_whitelist"} {
 			if v, ok := cfg[k]; ok {
 				wafFields[k] = v
 			}
@@ -640,7 +640,7 @@ func runSecurityWAF() {
 			fmt.Fprintf(os.Stderr, "proxy set : %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Config WAF/Sentinel du proxy %s mise à jour.\n", proxyID)
+		fmt.Printf("Config WAF/Ephor du proxy %s mise à jour.\n", proxyID)
 
 	default:
 		fmt.Fprintf(os.Stderr, "sous-commande waf inconnue : %q\n", sub)
@@ -727,7 +727,7 @@ func runSecurityCVESLA() {
 	}
 }
 
-// ── Moteurs de sécurité (Sentinel, Fail2Ban, CrowdSec) ────────────────────────
+// ── Moteurs de sécurité (Ephor, Fail2Ban, CrowdSec) ────────────────────────
 
 // runSecurityWAFEngine lit ou règle l'interrupteur du WAF d'une passerelle (ou de son groupe HA).
 func runSecurityWAFEngine() {

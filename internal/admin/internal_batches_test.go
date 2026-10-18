@@ -38,7 +38,7 @@ func TestInternalBans_OnlyValidUnprotectedTargetsAreStored(t *testing.T) {
 	}
 
 	body := `[
-		{"ip":"203.0.113.9","reason":"scan","source":"sentinel"},
+		{"ip":"203.0.113.9","reason":"scan","source":"ephor"},
 		{"ip":"198.51.100.7","reason":"protégée par la liste blanche"},
 		{"ip":"pas-une-ip"},
 		{"ip":"10.0.0.0/8","reason":"trop large"},

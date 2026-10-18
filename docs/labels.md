@@ -116,17 +116,17 @@ Le WAF applique les règles OWASP passerelle Rule Set (CRS) sur les requêtes HT
 
 ---
 
-## Sécurité — Sentinel (whitelist par route)
+## Sécurité — Ephor (whitelist par route)
 
-Le Sentinel est le moteur global de détection de menaces de la passerelle. Il s'applique **avant le routage**, donc indépendamment des proxies. Ces labels permettent d'exempter certaines sources pour un conteneur donné — les entrées sont fusionnées dans la whitelist globale du Sentinel.
+L'Ephor est le moteur global de détection de menaces de la passerelle. Il s'applique **avant le routage**, donc indépendamment des proxies. Ces labels permettent d'exempter certaines sources pour un conteneur donné — les entrées sont fusionnées dans la whitelist globale d'Ephor.
 
 > **Note DHCP** : les IPs Docker sont dynamiques. Préférer `.self` ou `.network` plutôt que des IPs statiques dans `.whitelist`.
 
 | Label | Valeurs | Description |
 |---|---|---|
-| `goproxify.sentinel.whitelist` | `"192.168.1.5,10.0.0.0/8"` | IPs/CIDRs statiques exemptés du Sentinel (CSV). |
-| `goproxify.sentinel.whitelist.self` | `"true"` | Exempte automatiquement l'IP actuelle du conteneur. Compatible DHCP — l'IP est lue au démarrage du conteneur. |
-| `goproxify.sentinel.whitelist.network` | `"true"` | Exempte automatiquement le sous-réseau Docker du conteneur (CIDR récupéré via l'API Docker). Utile pour les health-checkers internes. |
+| `goproxify.ephor.whitelist` | `"192.168.1.5,10.0.0.0/8"` | IPs/CIDRs statiques exemptés d'Ephor (CSV). |
+| `goproxify.ephor.whitelist.self` | `"true"` | Exempte automatiquement l'IP actuelle du conteneur. Compatible DHCP — l'IP est lue au démarrage du conteneur. |
+| `goproxify.ephor.whitelist.network` | `"true"` | Exempte automatiquement le sous-réseau Docker du conteneur (CIDR récupéré via l'API Docker). Utile pour les health-checkers internes. |
 
 ---
 
@@ -224,9 +224,9 @@ services:
       goproxify.bot: "true"
       goproxify.bot.mode: "challenge"
 
-      # Sentinel — exempter le réseau interne (health-checkers, monitoring)
-      goproxify.sentinel.whitelist.network: "true"
-      goproxify.sentinel.whitelist.self: "true"
+      # Ephor — exempter le réseau interne (health-checkers, monitoring)
+      goproxify.ephor.whitelist.network: "true"
+      goproxify.ephor.whitelist.self: "true"
 
       # Rate limiting
       goproxify.rate_limit: "200/s:100"

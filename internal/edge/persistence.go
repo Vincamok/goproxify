@@ -86,7 +86,7 @@ func (s *Server) loadBansFromDisk() {
 	s.log.Info("edge: bans chargés depuis la DB", "count", s.banStore.Len())
 }
 
-// threatConfigPath est la copie locale chiffrée de la configuration Sentinel poussée par l'Admin.
+// threatConfigPath est la copie locale chiffrée de la configuration Ephor poussée par l'Admin.
 func threatConfigPath() string {
 	if p := os.Getenv("GPX_THREAT_CONFIG_PATH"); p != "" {
 		return p
@@ -94,7 +94,7 @@ func threatConfigPath() string {
 	return "/etc/goproxify/threat-config.gpx"
 }
 
-// applyThreatConfig persiste la configuration Sentinel reçue de l'Admin puis l'applique. La copie est
+// applyThreatConfig persiste la configuration Ephor reçue de l'Admin puis l'applique. La copie est
 // écrite même si le moteur n'existe pas encore : il la relira à son démarrage.
 func (s *Server) applyThreatConfig(cfg threat.Config) {
 	if err := s.cache.SaveFile(threatConfigPath(), cfg); err != nil {
@@ -104,11 +104,11 @@ func (s *Server) applyThreatConfig(cfg threat.Config) {
 		return
 	}
 	s.threatEngine.UpdateConfig(cfg)
-	// UpdateConfig remplace la liste blanche : y remettre les entrées sentinel_whitelist des routes.
-	s.refreshSentinelWhitelists()
+	// UpdateConfig remplace la liste blanche : y remettre les entrées ephor_whitelist des routes.
+	s.refreshEphorWhitelists()
 }
 
-// loadThreatConfigFromDisk rend Sentinel opérationnel sans l'Admin après un redémarrage.
+// loadThreatConfigFromDisk rend Ephor opérationnel sans l'Admin après un redémarrage.
 func (s *Server) loadThreatConfigFromDisk() {
 	var cfg threat.Config
 	ok, err := s.cache.LoadFile(threatConfigPath(), &cfg)
@@ -120,7 +120,7 @@ func (s *Server) loadThreatConfigFromDisk() {
 		return
 	}
 	s.threatEngine.UpdateConfig(cfg)
-	s.refreshSentinelWhitelists()
+	s.refreshEphorWhitelists()
 	s.log.Info(threat.Name+": config chargée depuis le disque", "enabled", cfg.Enabled)
 }
 

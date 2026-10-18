@@ -956,7 +956,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	// Port local de secours : accès direct sans passer par la passerelle.
-	// Utile si Sentinel ou une règle de sécurité bloque l'accès proxifié.
+	// Utile si Ephor ou une règle de sécurité bloque l'accès proxifié.
 	if s.cfg.Server.LocalPort > 0 {
 		localAddr := fmt.Sprintf("0.0.0.0:%d", s.cfg.Server.LocalPort)
 		localSrv := httpx.Harden(&http.Server{

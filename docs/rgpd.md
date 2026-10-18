@@ -49,7 +49,7 @@ Or push from the Admin UI → **Logs** page → settings (gear icon, admins only
 Effect:
 - IPv4: last octet zeroed → `192.168.1.123` becomes `192.168.1.0`
 - IPv6: last 80 bits zeroed → prefix `/48` is kept
-- The Edge's Fail2Ban and Sentinel still receive the real IP before anonymisation and keep banning
+- The Edge's Fail2Ban and Ephor still receive the real IP before anonymisation and keep banning
 - The Admin's Fail2Ban, which reads the stored logs, ignores truncated IPs: `x.x.x.0` or a `/48` prefix covers many clients, and banning it would hit none of them (IPv4) or innocent ones (IPv6). The Edge flags every truncated line (`ip_truncated`), including when anonymisation comes from its own `edge.json`. What is lost: the Admin no longer catches an IP whose errors are spread over several Edges — see [security.md](security.md#fail2ban-natif-go)
 - The Admin UI does not offer to ban or analyse a truncated IP: the **Logs** page detail labels it *Truncated IP (anonymisation)* and hides **Ban** and the IP reputation scan; Prism's top IPs tags it *Truncated* and hides re-scan and **Ban**; Prism's "dominant IP" anomaly (which offers **Ban**) only considers attributable IPs. The flag is exposed as `ip_truncated` in `GET /api/v1/logs`, the live stream `/logs/live`, `GET /prism/ips`, `GET /prism/ip-scan` and the MCP tool `list_logs`. Lines stored before Admin `0.71.1`, or sent by an Edge older than `0.17.12`, carry no flag and are shown as regular IPs
 
@@ -90,7 +90,7 @@ Ou dans `edge.json` (non supporté — ce réglage est Admin-side).
 |---|---|---|
 | IP dans fichier passerelle | tronquée (x.x.x.0) | tronquée (x.x.x.0) |
 | IP dans SQLite Admin | tronquée | chiffrée AES-GCM |
-| Fail2Ban/Sentinel de la passerelle | IP réelle ✓ | IP réelle ✓ |
+| Fail2Ban/Ephor de la passerelle | IP réelle ✓ | IP réelle ✓ |
 | Fail2Ban de l'Admin (logs) | IP tronquée ignorée | IP pseudonymisée ignorée |
 | Bannir / analyser l'IP depuis l'interface (Logs, Prism) | masqué (« IP tronquée ») | masqué (« Pseudonymisée ») |
 | Révélation possible ? | ❌ irréversible | ✓ avec scope `gdpr:reveal` |

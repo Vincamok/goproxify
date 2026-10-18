@@ -11,22 +11,22 @@ import (
 	"github.com/vincamok/goproxify/internal/modules"
 )
 
-func TestManifestsOrderAndSentinelPaths(t *testing.T) {
+func TestManifestsOrderAndEphorPaths(t *testing.T) {
 	var types []string
 	for _, m := range Manifests() {
 		types = append(types, m.Type)
 	}
-	if strings.Join(types, ",") != "sentinel,fail2ban,crowdsec,waf" {
+	if strings.Join(types, ",") != "ephor,fail2ban,crowdsec,waf" {
 		t.Fatalf("types = %v", types)
 	}
-	sm, _ := Manifest(Sentinel)
+	sm, _ := Manifest(Ephor)
 	have := map[string]bool{}
 	for _, f := range sm.Fields {
 		have[f.Key] = true
 	}
 	for _, k := range []string{"enabled", "mode", "ip_score.ban_threshold", "ip_score.errors.weights", "escalation.factor", "lists.ip_sources", "custom_lists.tls_fingerprints", "whitelist.paths", "tarpit.delay_ms", "ban_duration"} {
 		if !have[k] {
-			t.Errorf("champ %q absent du manifeste Sentinel", k)
+			t.Errorf("champ %q absent du manifeste Ephor", k)
 		}
 	}
 }
@@ -34,7 +34,7 @@ func TestManifestsOrderAndSentinelPaths(t *testing.T) {
 // Une configuration que l'interface et les passerelles utilisent déjà doit rester valide.
 func TestValidateAcceptsRealConfigs(t *testing.T) {
 	ok := map[string]string{
-		Sentinel: `{"enabled":true,"mode":"block","score_threshold":5,"global_rps":500,"rate_limit":20,"rate_window":"1s","error_threshold":30,"error_window":"10s","ban_duration":"24h",
+		Ephor: `{"enabled":true,"mode":"block","score_threshold":5,"global_rps":500,"rate_limit":20,"rate_window":"1s","error_threshold":30,"error_window":"10s","ban_duration":"24h",
 			"ip_score":{"enabled":true,"ban_threshold":10,"half_life":"10m","errors":{"enabled":true,"weights":{"404":0.5,"405":2},"routes":[{"prefix":"/wp-admin","factor":3}]}},
 			"escalation":{"enabled":true,"factor":2,"window":"168h","max_duration":"720h"},
 			"lists":{"ua_enabled":true,"ip_sources":["https://example.com/list.txt"]},
@@ -49,7 +49,7 @@ func TestValidateAcceptsRealConfigs(t *testing.T) {
 			t.Errorf("%s : %v", typ, err)
 		}
 	}
-	for _, typ := range []string{Sentinel, Fail2Ban, CrowdSec, WAF} {
+	for _, typ := range []string{Ephor, Fail2Ban, CrowdSec, WAF} {
 		if err := Validate(typ, nil); err != nil {
 			t.Errorf("%s vide : %v", typ, err)
 		}
@@ -61,28 +61,28 @@ func TestValidateAcceptsRealConfigs(t *testing.T) {
 
 func TestValidateRejects(t *testing.T) {
 	bad := map[string]struct{ typ, body string }{
-		"sentinel clé inconnue":    {Sentinel, `{"enabled":true,"modee":"block"}`},
-		"sentinel clé imbriquée":   {Sentinel, `{"ip_score":{"ban_treshold":3}}`},
-		"sentinel mode":            {Sentinel, `{"mode":"off"}`},
-		"sentinel durée illisible": {Sentinel, `{"ban_duration":"un jour"}`},
-		"sentinel durée négative":  {Sentinel, `{"rate_window":"-5s"}`},
-		"sentinel seuil négatif":   {Sentinel, `{"error_threshold":-1}`},
-		"sentinel IP":              {Sentinel, `{"whitelist":{"ips":["10.0.0.0/99"]}}`},
-		"sentinel code HTTP":       {Sentinel, `{"ip_score":{"errors":{"weights":{"abc":1}}}}`},
-		"sentinel poids négatif":   {Sentinel, `{"ip_score":{"errors":{"weights":{"404":-1}}}}`},
-		"sentinel préfixe route":   {Sentinel, `{"ip_score":{"errors":{"routes":[{"prefix":"admin","factor":1}]}}}`},
-		"sentinel source":          {Sentinel, `{"lists":{"ip_sources":["ftp://x"]}}`},
-		"sentinel chemin":          {Sentinel, `{"whitelist":{"paths":["health"]}}`},
-		"sentinel tarpit":          {Sentinel, `{"tarpit":{"enabled":true,"delay_ms":90000}}`},
-		"sentinel type":            {Sentinel, `{"global_rps":"vite"}`},
-		"fail2ban clé":             {Fail2Ban, `{"window":300}`},
-		"fail2ban négatif":         {Fail2Ban, `{"max_errors":-3}`},
-		"fail2ban liste blanche":   {Fail2Ban, `{"whitelist":["nope"]}`},
-		"crowdsec URL":             {CrowdSec, `{"api_url":"localhost:8080"}`},
-		"crowdsec sans clé":        {CrowdSec, `{"enabled":true,"api_url":"http://localhost:8080"}`},
-		"crowdsec clé inconnue":    {CrowdSec, `{"apikey":"k"}`},
-		"waf clé inconnue":         {WAF, `{"enable":true}`},
-		"waf type":                 {WAF, `{"enabled":"oui"}`},
+		"ephor clé inconnue":     {Ephor, `{"enabled":true,"modee":"block"}`},
+		"ephor clé imbriquée":    {Ephor, `{"ip_score":{"ban_treshold":3}}`},
+		"ephor mode":             {Ephor, `{"mode":"off"}`},
+		"ephor durée illisible":  {Ephor, `{"ban_duration":"un jour"}`},
+		"ephor durée négative":   {Ephor, `{"rate_window":"-5s"}`},
+		"ephor seuil négatif":    {Ephor, `{"error_threshold":-1}`},
+		"ephor IP":               {Ephor, `{"whitelist":{"ips":["10.0.0.0/99"]}}`},
+		"ephor code HTTP":        {Ephor, `{"ip_score":{"errors":{"weights":{"abc":1}}}}`},
+		"ephor poids négatif":    {Ephor, `{"ip_score":{"errors":{"weights":{"404":-1}}}}`},
+		"ephor préfixe route":    {Ephor, `{"ip_score":{"errors":{"routes":[{"prefix":"admin","factor":1}]}}}`},
+		"ephor source":           {Ephor, `{"lists":{"ip_sources":["ftp://x"]}}`},
+		"ephor chemin":           {Ephor, `{"whitelist":{"paths":["health"]}}`},
+		"ephor tarpit":           {Ephor, `{"tarpit":{"enabled":true,"delay_ms":90000}}`},
+		"ephor type":             {Ephor, `{"global_rps":"vite"}`},
+		"fail2ban clé":           {Fail2Ban, `{"window":300}`},
+		"fail2ban négatif":       {Fail2Ban, `{"max_errors":-3}`},
+		"fail2ban liste blanche": {Fail2Ban, `{"whitelist":["nope"]}`},
+		"crowdsec URL":           {CrowdSec, `{"api_url":"localhost:8080"}`},
+		"crowdsec sans clé":      {CrowdSec, `{"enabled":true,"api_url":"http://localhost:8080"}`},
+		"crowdsec clé inconnue":  {CrowdSec, `{"apikey":"k"}`},
+		"waf clé inconnue":       {WAF, `{"enable":true}`},
+		"waf type":               {WAF, `{"enabled":"oui"}`},
 	}
 	for name, c := range bad {
 		if err := Validate(c.typ, json.RawMessage(c.body)); err == nil {

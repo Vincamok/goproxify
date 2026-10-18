@@ -7,6 +7,14 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ## [Unreleased]
 
+### Modifié
+
+- **Sentinel devient Ephor (Admin 0.162.0, Edge 0.72.0, Agent 0.11.0, Landing 0.5.2)** : le nom « Sentinel » est celui d'un produit Microsoft (et d'un autre éditeur de sécurité) ; le moteur de détection des passerelles s'appelle désormais **Ephor** (magistrat spartiate chargé de surveiller). Renommage sans migration (projet non déployé) : aucun alias de l'ancien nom.
+  - **Contrats renommés** : label Docker `goproxify.ephor.whitelist` (et `.self`, `.network`) ; champ de route `ephor_whitelist` (CLI `security waf`, labels, Terraform, lab de tests) ; outil MCP `simulate_ephor_config` (scopes inchangés) ; type de moteur `ephor` dans `GET /security/engine-types` ; événement d'alerte `ephor_ban` ; page `ephor` de l'interface et route `edge-security-ephor` ; préfixe `ephor:` des journaux ; libellés de l'interface (4 langues), de la landing et de la documentation.
+  - **Clés techniques inchangées** : la source de ban et le préfixe de motif restent `threat` (`threat: rate`, filtre `source=threat`), de même que `GET/PUT /security/threat-config`, `goproxify security threat`, le paquet `internal/edge/threat`, les métriques `gpx_threat_*` et le fichier `threat-config.gpx`. Le nom du produit n'est qu'un libellé : le renommer ne touchera plus ces clés.
+  - **Limite assumée** : le nom n'a pas fait l'objet d'une recherche d'antériorité en base de marques (INPI, EUIPO, OMPI) ; seule une recherche web rapide n'a trouvé aucun produit de sécurité du même nom.
+  - Les entrées plus anciennes de ce journal gardent l'ancien nom, qui était le nom du moteur à l'époque.
+
 ### Ajouté
 
 - **Outil MCP `get_waf_activity` (Admin 0.160.0)** : l'activité du WAF (requêtes signalées refusées ou passées en détection, règles les plus déclenchées, domaines les plus visés, `hours` jusqu'à 168, `edge` facultatif) est lisible par une IA, pour repérer des faux positifs avant de couper le WAF d'une passerelle. Même source que `GET /api/v1/security/waf-activity` (désormais partagée : `api.WAFActivityFor`) ; scope `audit:read`, rôle admin, lecture seule. Le test qui aligne scopes d'outils et routes REST le couvre.

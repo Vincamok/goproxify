@@ -14,7 +14,7 @@ Premier passage de la suite `tests/lab/scripts/security.sh` (12 sections, 9 rout
 
 Passage sur la **stack locale jetable** (`tests/lab/docker-compose.local.yml` : Admin, passerelle compilée depuis les sources de `main`, `lab-sim`, runner), réseau Docker dédié, aucun port publié. **Pas de passage sur la production** : ce rapport ne dit rien d'elle.
 
-Poste de test et réseaux locaux : le runner est sur un réseau privé, donc **proxy de confiance par défaut** (le `X-Forwarded-For` qu'il envoie est repris : un `X-Forwarded-For` en plage de documentation y est refusé en 403 par les profils IP). Les contrôles d'usurpation d'IP (rotation de `X-Forwarded-For` contre le rate-limit) sont donc **ignorés** ici ; ils ne peuvent se tester que depuis une source non privée. Le seed place l'IP du runner dans la liste blanche Sentinel des routes `lab-sec-*` pour que les 403 volontaires ne le fassent pas bannir.
+Poste de test et réseaux locaux : le runner est sur un réseau privé, donc **proxy de confiance par défaut** (le `X-Forwarded-For` qu'il envoie est repris : un `X-Forwarded-For` en plage de documentation y est refusé en 403 par les profils IP). Les contrôles d'usurpation d'IP (rotation de `X-Forwarded-For` contre le rate-limit) sont donc **ignorés** ici ; ils ne peuvent se tester que depuis une source non privée. Le seed place l'IP du runner dans la liste blanche Ephor des routes `lab-sec-*` pour que les 403 volontaires ne le fassent pas bannir.
 
 ## 3. Résultats par domaine
 
@@ -51,7 +51,7 @@ Poste de test et réseaux locaux : le runner est sur un réseau privé, donc **p
 
 ## 6. Non couvert
 
-Fail2Ban, Sentinel et CrowdSec (ils banniraient le poste de test), mTLS, SSO autre que Basic, GeoIP, HTTP/3, saturation (rapid reset, connexions), `testssl` complet, suites TLS faibles, usurpation d'IP depuis une source non privée.
+Fail2Ban, Ephor et CrowdSec (ils banniraient le poste de test), mTLS, SSO autre que Basic, GeoIP, HTTP/3, saturation (rapid reset, connexions), `testssl` complet, suites TLS faibles, usurpation d'IP depuis une source non privée.
 
 ## 7. Reproduire
 

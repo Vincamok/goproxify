@@ -40,7 +40,7 @@ func isPrivateIP(ip net.IP) bool {
 
 // WhitelistProfileID est l'identifiant du profil allow que l'Admin tient pour la liste blanche des
 // bans. Contrairement aux autres profils allow (qui seulement priment sur les bans et les profils
-// deny), ses adresses sont aussi exemptées de la détection Sentinel.
+// deny), ses adresses sont aussi exemptées de la détection Ephor.
 const WhitelistProfileID = "bans-whitelist"
 
 // IPProfile est un profil de filtrage IP reçu depuis Admin.
@@ -123,7 +123,7 @@ func (s *IPProfileStore) IsAllowed(ipStr string) bool {
 
 // IsWhitelisted indique si l'IP figure dans la liste blanche des bans (WhitelistProfileID). Les
 // adresses privées ne comptent pas ici : elles sont déjà exemptées de bans, mais restent évaluées
-// par Sentinel.
+// par Ephor.
 func (s *IPProfileStore) IsWhitelisted(ipStr string) bool {
 	ip := net.ParseIP(ipStr)
 	if ip == nil {

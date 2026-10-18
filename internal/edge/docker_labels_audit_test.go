@@ -100,8 +100,8 @@ func TestDockerLabelsAudit(t *testing.T) {
 		{"bot", map[string]string{"goproxify.bot": "true", "goproxify.bot.mode": "block"}, func(rt *router.Route) string {
 			return notNil(rt.Bot != nil && rt.Bot.Enabled && rt.Bot.Mode == "block", rt.Bot)
 		}},
-		{"sentinel.whitelist", map[string]string{"goproxify.sentinel.whitelist": "192.168.1.5,10.0.0.0/8"}, func(rt *router.Route) string {
-			return notNil(len(rt.SentinelWhitelist) == 2, rt.SentinelWhitelist)
+		{"ephor.whitelist", map[string]string{"goproxify.ephor.whitelist": "192.168.1.5,10.0.0.0/8"}, func(rt *router.Route) string {
+			return notNil(len(rt.EphorWhitelist) == 2, rt.EphorWhitelist)
 		}},
 		{"logs", map[string]string{"goproxify.logs": "true", "goproxify.logs.format": "json", "goproxify.logs.level": "warn"}, func(rt *router.Route) string {
 			return notNil(rt.Logging != nil && rt.Logging.AccessLog && rt.Logging.Format == "json" && rt.Logging.Level == "warn", rt.Logging)

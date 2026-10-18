@@ -53,7 +53,7 @@ func NoteWAF(ctx context.Context, categories ...string) {
 	}
 }
 
-// NoteThreat signale au journal d'accès le signal Sentinel d'une requête.
+// NoteThreat signale au journal d'accès le signal Ephor d'une requête.
 func NoteThreat(ctx context.Context, signal string) {
 	if n := notesOf(ctx); n != nil {
 		n.mu.Lock()
@@ -317,7 +317,7 @@ func (a *AccessLogger) IPProtection() (anonymize, pseudonymize bool) {
 // SetIPAnonymize active ou désactive l'anonymisation des IPs dans les logs.
 // IPv4 : dernier octet remplacé par 0 (x.x.x.0).
 // IPv6 : 80 derniers bits masqués (préfixe /48 conservé).
-// Les taps Fail2Ban/Sentinel reçoivent toujours l'IP réelle avant anonymisation.
+// Les taps Fail2Ban/Ephor reçoivent toujours l'IP réelle avant anonymisation.
 func (a *AccessLogger) SetIPAnonymize(enabled bool) {
 	a.anonymizeMu.Lock()
 	a.anonymize = enabled

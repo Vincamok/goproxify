@@ -36,7 +36,7 @@ Chaque outil exige un scope, le même que sa route REST équivalente. Les outils
 | `domains:write` | `create_domain`, `renew_domain`, `rotate_cert` |
 | `certs:read` | `list_certs`, `get_cert_status`, `list_cert_deploy_targets`, `list_cert_deploy_types`, `list_internal_cas` †, `list_internal_certs` †, `get_ech_status` †, `list_dns_providers` †, `list_dns_provider_types` † |
 | `certs:write` | `obtain_cert`, `import_cert`, `trigger_cert_deploy`, `create_internal_ca` †, `issue_internal_cert` †, `revoke_internal_cert` † |
-| `logs:read` | `list_logs`, `get_prism_anomalies`, `get_prism_geo`, `get_prism_tls_fingerprints`, `get_prism_slo`, `simulate_sentinel_config` †, `trace_ip` †, `preview_security_ban` †, `preview_asn_ban` † |
+| `logs:read` | `list_logs`, `get_prism_anomalies`, `get_prism_geo`, `get_prism_tls_fingerprints`, `get_prism_slo`, `simulate_ephor_config` †, `trace_ip` †, `preview_security_ban` †, `preview_asn_ban` † |
 | `audit:read` | `get_audit_log`, `list_ip_profiles`, `get_security_overview` †, `list_security_bans` †, `list_security_engine_types` †, `get_waf_activity` †, `list_plugins` †, `lookup_asn` †, `list_ban_whitelist` †, `list_security_threats` †, `list_security_cves` †, `list_auth_providers` †, `list_auth_provider_types` †, `list_flows` †, `get_flow` †, `list_flow_versions` †, `list_flow_runs` †, `get_flow_run` †, `get_automation_catalog` †, `list_flow_templates` †, `list_silences` †, `export_automation` † |
 | `security:write` | `create_ip_profile`, `delete_ip_profile`, `create_security_ban` †, `delete_security_ban` †, `ban_ip` †, `unban_ip` †, `add_ban_whitelist` †, `remove_ban_whitelist` †, `import_security_bans` †, `ban_asn` †, `unban_asn` †, `create_auth_provider` †, `delete_auth_provider` †, `create_flow` †, `update_flow` †, `set_flow_enabled` †, `delete_flow` †, `run_flow` †, `simulate_flow` †, `restore_flow_version` †, `detach_flow` †, `update_flow_params` †, `decide_flow_run` †, `cancel_flow_run` †, `replay_flow_run` †, `install_flow_template` †, `create_silence` †, `delete_silence` †, `import_automation` † |
 | `portal:read` / `portal:write` | outils Access (`*_portal_*`, `push_portal`) † — voir [GoProxify Access](#goproxify-access-portail) |
@@ -65,7 +65,7 @@ https://<admin-host>:9443/mcp?toolsets=proxies,observability
 | `observability` | métriques, logs, Prism (anomalies, géo, empreintes TLS, SLO) | ~1 200 |
 | `domains` | domaines, renouvellement | ~300 |
 | `certs` | certificats, déploiements, CA interne, ECH, fournisseurs DNS | ~1 300 |
-| `security` | bans, ASN, liste blanche, profils IP, fournisseurs d'auth, menaces, CVE, plugins, simulation Sentinel, `trace_ip` | ~4 500 |
+| `security` | bans, ASN, liste blanche, profils IP, fournisseurs d'auth, menaces, CVE, plugins, simulation Ephor, `trace_ip` | ~4 500 |
 | `automation` | flux, exécutions, modèles, silences, import/export | ~2 600 |
 | `snippets` | snippets, types de détecteurs | ~300 |
 | `portal` | GoProxify Access | ~3 900 |
@@ -480,7 +480,7 @@ Plugins WebAssembly installés (manifeste, empreinte, taille). Lecture seule : i
 
 ### `list_security_engine_types`
 
-Moteurs de sécurité globaux (Sentinel, Fail2Ban, CrowdSec, WAF — interrupteur maître par passerelle) avec les champs de leur configuration. Même source que `GET /api/v1/security/engine-types`. Scope `audit:read` (rôle admin).
+Moteurs de sécurité globaux (Ephor, Fail2Ban, CrowdSec, WAF — interrupteur maître par passerelle) avec les champs de leur configuration. Même source que `GET /api/v1/security/engine-types`. Scope `audit:read` (rôle admin).
 
 **Paramètres :** aucun
 
@@ -656,7 +656,7 @@ Compteurs sécurité : bans actifs, menaces CrowdSec, CVE ouvertes, certificats 
 
 ### `list_security_bans`
 
-Liste les bans IP (Fail2Ban, CrowdSec, Sentinel, plugins de détection comme Coraza, natif).
+Liste les bans IP (Fail2Ban, CrowdSec, Ephor, plugins de détection comme Coraza, natif).
 
 | Paramètre      | Type    | Requis | Description                                      |
 |----------------|---------|--------|--------------------------------------------------|
@@ -776,7 +776,7 @@ Lève les bans créés pour un ASN (toutes ses plages) sur les passerelles, en u
 
 ### `list_ban_whitelist`
 
-Liste la **liste blanche des bans** : adresses et plages qu'aucun ban n'atteint (manuel, Fail2Ban, CrowdSec, Sentinel, règles) et que Sentinel n'évalue pas. Aucun paramètre. Réponse : `[{ "value", "comment", "added_by", "added_at" }]`.
+Liste la **liste blanche des bans** : adresses et plages qu'aucun ban n'atteint (manuel, Fail2Ban, CrowdSec, Ephor, règles) et que Ephor n'évalue pas. Aucun paramètre. Réponse : `[{ "value", "comment", "added_by", "added_at" }]`.
 
 **Scope :** `audit:read` †
 
@@ -810,7 +810,7 @@ Retire une entrée de la liste blanche (valeur exacte telle qu'enregistrée) et 
 
 ### `delete_security_ban`
 
-Supprime le ban et lève tous les bans de son IP sur chaque passerelle, y compris ceux posés localement (Fail2Ban, Sentinel, règles) — voir [Déban](security.md#déban).
+Supprime le ban et lève tous les bans de son IP sur chaque passerelle, y compris ceux posés localement (Fail2Ban, Ephor, règles) — voir [Déban](security.md#déban).
 
 | Paramètre | Type   | Requis | Description   |
 |-----------|--------|--------|---------------|
@@ -837,7 +837,7 @@ Banne une IP directement depuis le MCP (insère dans `security_bans`, pousse aux
 
 ### `unban_ip`
 
-Lève le ban d'une IP (supprime de `security_bans`) et tous ses bans sur chaque passerelle, y compris ceux posés localement (Fail2Ban, Sentinel, règles) même si l'Admin ne les connaît pas — voir [Déban](security.md#déban). La correspondance est exacte : un ban Fail2Ban IPv6 porte sur un /64, il se lève en passant le préfixe tel que le renvoie `list_security_bans` (`2a01:e0a:1:2::/64`), pas une adresse qu'il contient.
+Lève le ban d'une IP (supprime de `security_bans`) et tous ses bans sur chaque passerelle, y compris ceux posés localement (Fail2Ban, Ephor, règles) même si l'Admin ne les connaît pas — voir [Déban](security.md#déban). La correspondance est exacte : un ban Fail2Ban IPv6 porte sur un /64, il se lève en passant le préfixe tel que le renvoie `list_security_bans` (`2a01:e0a:1:2::/64`), pas une adresse qu'il contient.
 
 | Paramètre | Type   | Requis | Description         |
 |-----------|--------|--------|---------------------|
@@ -1140,7 +1140,7 @@ Trafic par pays (requêtes, erreurs, taux d'erreur, IPs bannies) ou par ville (p
 
 ### `get_prism_tls_fingerprints`
 
-Empreintes TLS (JA4, avec le JA3 associé) les plus actives sur la période : requêtes, erreurs, requêtes signalées par le WAF ou Sentinel, IP distinctes. Un JA4 très signalé et partagé par beaucoup d'IP est la signature d'un scanner ou d'un botnet, à ajouter à `custom_lists.tls_fingerprints` de Sentinel. Uniquement le trafic TLS terminé par une passerelle (ni HTTP clair ni HTTP/3). Scope : `logs:read`.
+Empreintes TLS (JA4, avec le JA3 associé) les plus actives sur la période : requêtes, erreurs, requêtes signalées par le WAF ou Ephor, IP distinctes. Un JA4 très signalé et partagé par beaucoup d'IP est la signature d'un scanner ou d'un botnet, à ajouter à `custom_lists.tls_fingerprints` d'Ephor. Uniquement le trafic TLS terminé par une passerelle (ni HTTP clair ni HTTP/3). Scope : `logs:read`.
 
 | Paramètre | Type   | Requis | Description                                                        |
 |-----------|--------|--------|--------------------------------------------------------------------|
@@ -1151,29 +1151,29 @@ Empreintes TLS (JA4, avec le JA3 associé) les plus actives sur la période : re
 
 ---
 
-### `simulate_sentinel_config`
+### `simulate_ephor_config`
 
-Dry-run Sentinel : rejoue les access logs récents contre une config candidate et la compare à la config actuelle, **sans rien modifier**. Permet de répondre à « si j'applique cette règle, combien de requêtes légitimes auraient été bloquées dans la dernière heure ? » avant de faire `PUT /security/threat-config`. Scope : `logs:read` + rôle admin (la route REST équivalente est réservée aux admins).
+Dry-run Ephor : rejoue les access logs récents contre une config candidate et la compare à la config actuelle, **sans rien modifier**. Permet de répondre à « si j'applique cette règle, combien de requêtes légitimes auraient été bloquées dans la dernière heure ? » avant de faire `PUT /security/threat-config`. Scope : `logs:read` + rôle admin (la route REST équivalente est réservée aux admins).
 
 | Paramètre | Type    | Requis | Description |
 |-----------|---------|--------|-------------|
-| `config`  | object  | ✓      | Champs Sentinel à surcharger sur la config actuelle (mêmes noms que `threat-config`, config du groupe HA si la passerelle en fait partie : `rate_limit`, `rate_window`, `rate_ban_threshold`, `error_threshold`, `error_window`, `custom_lists`, `whitelist`, `score_threshold`, `ip_score` (`enabled`, `ban_threshold`, `half_life`, `errors` : `enabled`, `weights`, `default_weight`, `routes`), `escalation` (`enabled`, `factor`, `window`, `max_duration`), `ban_duration`) |
+| `config`  | object  | ✓      | Champs Ephor à surcharger sur la config actuelle (mêmes noms que `threat-config`, config du groupe HA si la passerelle en fait partie : `rate_limit`, `rate_window`, `rate_ban_threshold`, `error_threshold`, `error_window`, `custom_lists`, `whitelist`, `score_threshold`, `ip_score` (`enabled`, `ban_threshold`, `half_life`, `errors` : `enabled`, `weights`, `default_weight`, `routes`), `escalation` (`enabled`, `factor`, `window`, `max_duration`), `ban_duration`) |
 | `hours`   | number  | —      | Fenêtre rejouée (défaut `1`, max `24`) |
 | `domain`  | string  | —      | Limiter le rejeu à un domaine |
 | `edge`    | string  | —      | Passerelle dont la config actuelle sert de base (défaut : config globale) |
 
 Réponse : `current` et `candidate` (`events`, `blocked`, `blocked_by_ban`, `legit_blocked`, `blocked_ips`, `by_reason`, `bans`, `top_ips`), `delta` (candidat − actuel), `events_replayed`, `truncated` (plafond 200 000 événements, les plus récents sont conservés), `skipped_unattributable_ip`.
 
-- Le rejeu utilise le moteur Sentinel réel sur l'horloge des logs, en mode `block` ; une IP bannie pendant le rejeu reste bloquée pour la durée du ban.
+- Le rejeu utilise le moteur Ephor réel sur l'horloge des logs, en mode `block` ; une IP bannie pendant le rejeu reste bloquée pour la durée du ban.
 - `legit_blocked` compte les requêtes bloquées qui avaient reçu un statut `< 400` : indicateur de faux positifs, pas une certitude.
 - **Non simulé** : listes par défaut (UA/path/IP téléchargées), `global_rps`, règles User-Agent (l'UA n'est pas conservé dans les logs Admin) et WAF (ni en-têtes ni corps conservés). Les IP pseudonymisées ou tronquées par l'anonymisation (RGPD) sont ignorées et comptées dans `skipped_unattributable_ip`.
-- Équivalent REST (bouton « Simuler » de la page Sentinel) : `POST /api/v1/security/threat-config/simulate`, voir `docs/api_specs.md`. Équivalent CLI : `goproxify security threat simulate`.
+- Équivalent REST (bouton « Simuler » de la page Ephor) : `POST /api/v1/security/threat-config/simulate`, voir `docs/api_specs.md`. Équivalent CLI : `goproxify security threat simulate`.
 
 ---
 
 ### `trace_ip`
 
-Parcours complet d'une IP ou d'un CIDR sur une longue période : requêtes d'accès regroupées en épisodes (domaines, chemins, statuts, catégories WAF, signaux Sentinel), détections CrowdSec/Sentinel, bans et débans, bans en cours et profils IP qui contiennent la cible. Répond à « que fait cette IP depuis des semaines ? ».
+Parcours complet d'une IP ou d'un CIDR sur une longue période : requêtes d'accès regroupées en épisodes (domaines, chemins, statuts, catégories WAF, signaux Ephor), détections CrowdSec/Ephor, bans et débans, bans en cours et profils IP qui contiennent la cible. Répond à « que fait cette IP depuis des semaines ? ».
 
 | Paramètre | Type   | Requis | Description |
 |-----------|--------|--------|-------------|

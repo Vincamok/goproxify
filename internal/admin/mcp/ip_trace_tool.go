@@ -14,7 +14,7 @@ func ipTraceTools() []map[string]any {
 	return []map[string]any{{
 		"name": "trace_ip",
 		"description": "Parcours complet d'une IP ou d'un CIDR sur une longue période : requêtes d'accès regroupées en épisodes " +
-			"(domaines, chemins, statuts, catégories WAF, signaux Sentinel), détections CrowdSec/Sentinel, bans et débans, bans en cours " +
+			"(domaines, chemins, statuts, catégories WAF, signaux Ephor), détections CrowdSec/Ephor, bans et débans, bans en cours " +
 			"et profils IP qui contiennent la cible. Retourne une synthèse (totaux, première/dernière vue, activité par jour) et les " +
 			"étapes dans l'ordre chronologique. Les requêtes remontent aussi loin que la rétention des logs d'accès ; les IP " +
 			"pseudonymisées ou tronquées (RGPD) ne sont pas retrouvées. Si la base ASN est installée, la réponse contient asn_context " +

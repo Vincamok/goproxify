@@ -74,4 +74,4 @@ Filtrer par tag dans la vue Users : champ de recherche libre.
 - Le 2FA est obligatoire pour tous les comptes Access (non contournable depuis l'UI)
 - Les tokens de session sont signés HS256, rotation automatique à chaque reconnexion
 - L'accès SSH est limité aux hôtes déclarés dans le catalogue de la passerelle (`Access → Catalogue`)
-- Les IP bannies par Sentinel bloquent également l'accès au portail
+- Les IP bannies par Ephor bloquent également l'accès au portail

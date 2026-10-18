@@ -136,7 +136,7 @@ func (h *SecurityHandler) ipTrace(w http.ResponseWriter, r *http.Request) {
 }
 
 // TraceIP reconstitue, sur toute la période demandée, ce qu'une IP ou un CIDR a fait : requêtes
-// (regroupées en épisodes), détections WAF/Sentinel, bans et débans, présence dans un profil IP.
+// (regroupées en épisodes), détections WAF/Ephor, bans et débans, présence dans un profil IP.
 // Les requêtes ne remontent pas plus loin que la rétention des logs d'accès ; les bans et menaces
 // ont leur propre rétention.
 func TraceIP(ctx context.Context, db *sql.DB, qy TraceQuery) (map[string]any, error) {
@@ -312,7 +312,7 @@ func TraceIP(ctx context.Context, db *sql.DB, qy TraceQuery) (map[string]any, er
 		}
 	}
 
-	// ── Détections (CrowdSec, Sentinel…) ──────────────────────────────────────
+	// ── Détections (CrowdSec, Ephor…) ──────────────────────────────────────
 	if tr, err := db.QueryContext(ctx,
 		`SELECT ip, scenario, origin, type, occurrences, created_at, last_seen_at FROM security_threats
 		 WHERE last_seen_at >= ? AND created_at <= ? ORDER BY created_at ASC`,

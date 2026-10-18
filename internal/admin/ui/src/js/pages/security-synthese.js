@@ -1,6 +1,6 @@
 // ── PAGE PARTAGÉE: Sécurité › Synthèse (Admin + passerelle) + fenêtre « Moteurs de sécurité » ──
 // ctx = { mode: 'admin'|'edge' }. Admin : agrégat de toutes les passerelles. Passerelle : données
-// filtrées sur ses proxies / domaines (resolveSecurityEdgeCtx), réglages Sentinel propres à la passerelle.
+// filtrées sur ses proxies / domaines (resolveSecurityEdgeCtx), réglages Ephor propres à la passerelle.
 
 const _syn = { mode: 'admin', tl: 'all', tlN: 8, events: [], atkLive: true, atkStyle: 'zones', atkMode: 'errors', atkHideInternal: true, atkTimer: null };
 
@@ -219,7 +219,7 @@ window.synMoreTl = function() { _syn.tlN += 12; const el = document.getElementBy
 
 function synEnginesHTML(f2b, cs, threat, rules, isAdmin, waf) {
   const engines = [
-    { id: 'sentinel', label: 'Sentinel', on: !!threat?.enabled },
+    { id: 'ephor', label: 'Ephor', on: !!threat?.enabled },
     { id: 'waf', label: 'WAF', on: waf?.enabled !== false },
     { id: 'f2b', label: 'Fail2Ban', on: !!f2b?.enabled },
     { id: 'cs', label: 'CrowdSec', on: !!cs?.enabled },
@@ -231,7 +231,7 @@ function synEnginesHTML(f2b, cs, threat, rules, isAdmin, waf) {
   const openN = engines.filter(e => e.on).length;
   return `<div class="card blueprint sy-card">
     <div class="sy-card-h"><h3>${esc(t('sm.title'))} <span class="sy-muted">· ${esc(t('sy.engines_count', { n: openN, m: engines.length }))}</span></h3>
-      <button type="button" class="btn btn-ghost btn-sm" onclick="secEnginesOpen('sentinel')">${esc(t('sy.engines_manage'))}</button></div>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="secEnginesOpen('ephor')">${esc(t('sy.engines_manage'))}</button></div>
     <div class="sy-engines">${engines.map(e => `<button type="button" class="sy-eng${e.on ? ' on' : ''}" onclick="secEnginesOpen('${e.id}')"><i></i>${esc(e.label)}<small>${esc(e.sub || t(e.on ? 'security.engine_active' : 'security.engine_inactive'))}</small></button>`).join('')}</div>
   </div>`;
 }
@@ -296,7 +296,7 @@ async function renderSecuritySynthese(ctx) {
         <div><h2 class="vs-title">${esc(t('sec.tab.overview'))}</h2><div class="vs-sub">${sub}</div></div>
         <div class="sy-head-acts">
           <button type="button" class="btn btn-ghost btn-icon" onclick="reloadCurrentSecurityPage()" title="${esc(t('sy.refresh'))}" aria-label="${esc(t('sy.refresh'))}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="23 4 23 10 17 10"/><path d="M20.5 15a9 9 0 11-2.1-9.4L23 10"/></svg></button>
-          <button type="button" class="btn btn-ghost btn-icon" onclick="secEnginesOpen('sentinel')" title="${esc(t('sm.title'))}" aria-label="${esc(t('sm.title'))}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></button>
+          <button type="button" class="btn btn-ghost btn-icon" onclick="secEnginesOpen('ephor')" title="${esc(t('sm.title'))}" aria-label="${esc(t('sm.title'))}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></button>
         </div>
       </div>
 
@@ -376,17 +376,17 @@ pages['edge-security'] = () => renderSecuritySynthese({ mode: 'edge' });
 // ── Fenêtre « Moteurs de sécurité » ─────────────────────────────────────────────────
 // Chaque interrupteur s'applique immédiatement (comme les anciens interrupteurs de moteur) :
 // lecture-modification-écriture de la configuration du moteur, puis toast.
-// Fail2Ban, CrowdSec et le scanner sont des réglages globaux (Admin) ; Sentinel et le moteur IPS
+// Fail2Ban, CrowdSec et le scanner sont des réglages globaux (Admin) ; Ephor et le moteur IPS
 // actif sont propres à la passerelle (`?edge=`).
 
-const _sm = { open: false, tab: 'sentinel', mode: 'admin', q: '', f2b: {}, cs: {}, threat: {}, waf: { enabled: true }, rules: [], scan: {}, prev: {}, pendingNum: null, dirty: false };
+const _sm = { open: false, tab: 'ephor', mode: 'admin', q: '', f2b: {}, cs: {}, threat: {}, waf: { enabled: true }, rules: [], scan: {}, prev: {}, pendingNum: null, dirty: false };
 
 // Caps dont la valeur est un nombre à saisir (pas un simple on/off) : le champ du réglage tombe à
 // une valeur « désactivée » (0, ou permanent) quand on bascule, donc le chiffre d'origine est perdu —
-// réactiver la limite ne doit jamais deviner un chiffre à sa place (voir smSentinelCap / smF2BCap).
+// réactiver la limite ne doit jamais deviner un chiffre à sa place (voir smEphorCap / smF2BCap).
 // `promptOn` : état du switch (true/false) qui déclenche la demande de valeur.
 const SM_NUM_CAPS = {
-  smSentinelCap: {
+  smEphorCap: {
     rate:    { field: 'rate_limit',      unitKey: 'sm.unit_reqs',   min: 0.5, step: 0.5, promptOn: true },
     errors:  { field: 'error_threshold', unitKey: 'sm.unit_errs',   min: 1,   step: 1,   promptOn: true },
     global:  { field: 'global_rps',      unitKey: 'sm.unit_reqs',   min: 1,   step: 1,   promptOn: true },
@@ -398,7 +398,7 @@ const SM_NUM_CAPS = {
   },
 };
 
-function smSentinelCaps() {
+function smEphorCaps() {
   const c = _sm.threat || {};
   const lists = c.lists || {};
   return [
@@ -414,8 +414,8 @@ function smSentinelCaps() {
 }
 
 // value : uniquement pour un cap numérique (SM_NUM_CAPS) qu'on active avec une valeur saisie
-// explicitement (voir smSentinelCapValue) — jamais devinée.
-function smApplySentinelCap(cfg, key, on, value) {
+// explicitement (voir smEphorCapValue) — jamais devinée.
+function smApplyEphorCap(cfg, key, on, value) {
   const next = { ...cfg, lists: { ...(cfg.lists || {}) }, tarpit: { ...(cfg.tarpit || {}) } };
   const num = field => {
     if (on) next[field] = value;
@@ -449,8 +449,8 @@ function smSwitch(on, handler, label, disabled) {
 // pendingKey : identifiant unique du cap en attente de saisie, tous moteurs confondus
 // (ex. "smF2BCap:permanent"), pour ne jamais confondre deux caps de moteurs différents.
 function smNumCapPendingKey(handler, key) { return handler + ':' + key; }
-function smNumCapValueHandler(handler) { return handler === 'smF2BCap' ? 'smF2BCapValue' : 'smSentinelCapValue'; }
-function smNumCapCancelHandler(handler) { return handler === 'smF2BCap' ? 'smF2BCapCancel' : 'smSentinelCapCancel'; }
+function smNumCapValueHandler(handler) { return handler === 'smF2BCap' ? 'smF2BCapValue' : 'smEphorCapValue'; }
+function smNumCapCancelHandler(handler) { return handler === 'smF2BCap' ? 'smF2BCapCancel' : 'smEphorCapCancel'; }
 
 function smCapsHTML(caps, handler, enabled) {
   const numCaps = SM_NUM_CAPS[handler];
@@ -486,7 +486,7 @@ function smTabs() {
   const admin = _sm.mode === 'admin';
   const rulesOn = _sm.rules.some(r => r.enabled);
   const list = [
-    { id: 'sentinel', label: 'Sentinel', on: !!_sm.threat?.enabled },
+    { id: 'ephor', label: 'Ephor', on: !!_sm.threat?.enabled },
     { id: 'waf', label: 'WAF', on: _sm.waf?.enabled !== false },
     { id: 'f2b', label: 'Fail2Ban', on: !!_sm.f2b?.enabled },
     { id: 'cs', label: 'CrowdSec', on: !!_sm.cs?.enabled },
@@ -533,14 +533,14 @@ function smWafInfoHTML(engineOn) {
 function smPanelHTML() {
   const admin = _sm.mode === 'admin';
   switch (_sm.tab) {
-    case 'sentinel': {
+    case 'ephor': {
       const on = !!_sm.threat?.enabled;
-      const caps = smSentinelCaps();
+      const caps = smEphorCaps();
       const n = caps.filter(c => c.on).length;
-      return `${smMasterHTML('Sentinel', t('sm.sentinel_d'), on, 'smMaster_sentinel')}
-        ${smCapsHTML(caps, 'smSentinelCap', on)}
+      return `${smMasterHTML('Ephor', t('sm.ephor_d'), on, 'smMaster_ephor')}
+        ${smCapsHTML(caps, 'smEphorCap', on)}
         <div class="vs-hint">${esc(on ? t('sm.caps_count', { n, m: caps.length }) : t('sm.off_hint'))} ${esc(t('sm.tune_hint'))}</div>
-        <div><button type="button" class="btn btn-ghost btn-sm" onclick="smClose();navigate('${securityPageId('sentinel', _sm.mode)}')">${esc(t('sm.open_sentinel'))} →</button></div>`;
+        <div><button type="button" class="btn btn-ghost btn-sm" onclick="smClose();navigate('${securityPageId('ephor', _sm.mode)}')">${esc(t('sm.open_ephor'))} →</button></div>`;
     }
     case 'waf': {
       const on = _sm.waf?.enabled !== false;
@@ -613,7 +613,7 @@ function _condLabel(r) {
 window.secEnginesOpen = async function(tab) {
   const mode = _syn.mode;
   const edgeQ = window._secEdgeQ || '';
-  Object.assign(_sm, { open: true, tab: tab || 'sentinel', mode, dirty: false, prev: {}, edgeLabel: state.selectedEdge?.display_name || state.selectedEdge?.node_name || '' });
+  Object.assign(_sm, { open: true, tab: tab || 'ephor', mode, dirty: false, prev: {}, edgeLabel: state.selectedEdge?.display_name || state.selectedEdge?.node_name || '' });
   let root = document.getElementById('sm-root');
   if (!root) { root = document.createElement('div'); root.id = 'sm-root'; document.body.appendChild(root); }
   root.innerHTML = `<div class="sm-scrim"><div class="sm-modal"><p style="padding:24px;color:var(--text2)">${esc(t('common.loading'))}</p></div></div>`;
@@ -663,36 +663,36 @@ async function smSave(fn, ok) {
   smRender();
 }
 
-window.smMaster_sentinel = function(on) {
+window.smMaster_ephor = function(on) {
   const cfg = { ..._sm.threat, enabled: on };
   return smSave(async () => { await api('PUT', `/security/threat-config${window._secEdgeQ || ''}`, cfg); _sm.threat = cfg; }, t(on ? 'security.engine_enabled' : 'security.engine_disabled'));
 };
-window.smSentinelCap = function(key, on) {
-  const numCap = SM_NUM_CAPS.smSentinelCap[key];
+window.smEphorCap = function(key, on) {
+  const numCap = SM_NUM_CAPS.smEphorCap[key];
   if (numCap && on === numCap.promptOn) {
     const remembered = _sm.prev[numCap.field];
     if (!(remembered > 0)) {
       // Jamais réglée (ou valeur perdue en désactivant hors de cette ouverture de fenêtre) :
       // on ne devine rien, on demande la valeur avant tout appel API.
-      _sm.pendingNum = smNumCapPendingKey('smSentinelCap', key);
+      _sm.pendingNum = smNumCapPendingKey('smEphorCap', key);
       smRender();
       document.getElementById('sm-num-' + _sm.pendingNum)?.focus();
       return;
     }
   }
-  const cfg = smApplySentinelCap(_sm.threat, key, on, on ? _sm.prev[numCap?.field] : undefined);
+  const cfg = smApplyEphorCap(_sm.threat, key, on, on ? _sm.prev[numCap?.field] : undefined);
   return smSave(async () => { await api('PUT', `/security/threat-config${window._secEdgeQ || ''}`, cfg); _sm.threat = cfg; });
 };
-window.smSentinelCapValue = function(key) {
-  const pendingKey = smNumCapPendingKey('smSentinelCap', key);
+window.smEphorCapValue = function(key) {
+  const pendingKey = smNumCapPendingKey('smEphorCap', key);
   const input = document.getElementById('sm-num-' + pendingKey);
   const value = parseFloat(input?.value);
   if (!(value > 0)) { input?.focus(); return; }
   _sm.pendingNum = null;
-  const cfg = smApplySentinelCap(_sm.threat, key, true, value);
+  const cfg = smApplyEphorCap(_sm.threat, key, true, value);
   return smSave(async () => { await api('PUT', `/security/threat-config${window._secEdgeQ || ''}`, cfg); _sm.threat = cfg; });
 };
-window.smSentinelCapCancel = function() {
+window.smEphorCapCancel = function() {
   _sm.pendingNum = null;
   smRender();
 };

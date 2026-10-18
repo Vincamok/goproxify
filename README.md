@@ -246,7 +246,7 @@ Full reference → **[docs/cli.md](docs/cli.md)**
 - **Terraform provider** — [`integrations/terraform-provider-goproxify`](integrations/terraform-provider-goproxify): proxies, bans (optionally scoped to a gateway or HA group), ban whitelist and IP profiles as code, with import and drift detection (not yet published on the Terraform Registry)
 - **Infrastructure view & architecture editor** — live flow schema (Internet → Edges → Agents) with a node detail panel and a "to handle" bar; in-place editing (drag-and-drop palette, host cards, changes flagged with their impact, review before save), multi-Edge/HA, QR tickets / `curl|bash` to integrate a host
 - **Bans page** — the same page in the Admin (all Edges) and in each Edge menu: KPIs, 48 h timeline, origin by country, filters, bulk actions and a mobile card layout; every ban records the Edge that reported it
-- **HA groups** — Sentinel, the WAF switch, HTTP timeouts and the access portal are configured once per HA group; the portal store (accounts, 2FA, vaults, optional shared web sessions) and Sentinel reference lists are replicated between Edges, and bans keep flowing between peers when the Admin is down
+- **HA groups** — Ephor, the WAF switch, HTTP timeouts and the access portal are configured once per HA group; the portal store (accounts, 2FA, vaults, optional shared web sessions) and Ephor reference lists are replicated between Edges, and bans keep flowing between peers when the Admin is down
 - **Guided first start** — initial configuration wizard
 - ACME DNS-01 wildcard management (OVH, Cloudflare, Gandi, Route 53, Hetzner and 28 more providers through [libdns](https://github.com/libdns): DigitalOcean, Scaleway, Namecheap, GoDaddy, Azure DNS, Google Cloud DNS, Porkbun, deSEC…), plus HTTP-01 and TLS-ALPN-01 validation served by the Edge (no DNS provider needed)
 - OCSP stapling fetched autonomously by each Edge
@@ -326,7 +326,7 @@ See `.env.example` for the full list.
 | Discovery | Docker Engine API via Unix socket (read-only), Portainer, Kubernetes, Consul, Nomad, etcd v3, Amazon ECS |
 | Plugins | WebAssembly via `wazero` (no CGO) |
 | Metrics | Prometheus on the Edge internal API (`:8000/metrics`, bearer token; public `/metrics` only with `GPX_METRICS_PUBLIC=1`), OpenTelemetry (OTLP) |
-| Security | OWASP CRS-4 WAF (13 rule sets, request + response inspection), behavioral Sentinel, native Fail2Ban, CrowdSec, **automation flows** (rules, schedules, playbooks with approval), step-by-step **IP / CIDR trace** over long periods, rate limiting, Geo-IP, ECDSA P-256 JWT, HMAC-SHA256 WS, CVE scanner with KEV/EPSS enrichment and configurable remediation SLA |
+| Security | OWASP CRS-4 WAF (13 rule sets, request + response inspection), behavioral Ephor, native Fail2Ban, CrowdSec, **automation flows** (rules, schedules, playbooks with approval), step-by-step **IP / CIDR trace** over long periods, rate limiting, Geo-IP, ECDSA P-256 JWT, HMAC-SHA256 WS, CVE scanner with KEV/EPSS enrichment and configurable remediation SLA |
 | Deployment | Single binary · Docker Compose · systemd |
 
 ---
@@ -348,7 +348,7 @@ See `.env.example` for the full list.
 | [Public roadmap](suivi/roadmap-public.md) | High-level milestones |
 | [Contributing](CONTRIBUTING.md) | PR, tests, DCO |
 | [Code of Conduct](CODE_OF_CONDUCT.md) | Contributor Covenant |
-| [Security](docs/security.md) | WAF, Sentinel, bans, timeouts, vulnscan — full security engine reference |
+| [Security](docs/security.md) | WAF, Ephor, bans, timeouts, vulnscan — full security engine reference |
 | [Vulnerability reporting](SECURITY.md) | Responsible disclosure |
 | [License](LICENSE) | Apache License 2.0 |
 | [NOTICE](NOTICE) | Copyright and third-party notices |

@@ -23,7 +23,7 @@ func init() {
 		},
 		map[string]any{
 			"name":        "get_prism_tls_fingerprints",
-			"description": "Empreintes TLS (JA4, avec le JA3 associé) les plus actives sur la période : requêtes, erreurs, requêtes signalées par le WAF ou Sentinel et IP distinctes. Un JA4 très signalé partagé par beaucoup d'IP est la signature d'un scanner ou d'un botnet, à ajouter à custom_lists.tls_fingerprints de Sentinel. Uniquement le trafic TLS terminé par une passerelle (ni HTTP clair ni HTTP/3).",
+			"description": "Empreintes TLS (JA4, avec le JA3 associé) les plus actives sur la période : requêtes, erreurs, requêtes signalées par le WAF ou Ephor et IP distinctes. Un JA4 très signalé partagé par beaucoup d'IP est la signature d'un scanner ou d'un botnet, à ajouter à custom_lists.tls_fingerprints d'Ephor. Uniquement le trafic TLS terminé par une passerelle (ni HTTP clair ni HTTP/3).",
 			"inputSchema": schema(
 				opt("hours", "number", "Fenêtre analysée en heures (défaut 24, max 720)"),
 				opt("edge", "string", "Passerelle (nom du nœud ou id du token) ; omis = toutes"),

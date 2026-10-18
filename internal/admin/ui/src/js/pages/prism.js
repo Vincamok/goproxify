@@ -769,7 +769,7 @@ async function renderPrismPage() {
     dr.classList.add('open');
   }
 
-  // Ré-analyse une IP à la demande (bans actifs, historique, décisions Sentinel/CrowdSec, activité)
+  // Ré-analyse une IP à la demande (bans actifs, historique, décisions Ephor/CrowdSec, activité)
   async function rescanIP(ip, btn) {
     const dr = document.getElementById('prism-drawer');
     if (!ip || !dr) return;
@@ -797,7 +797,7 @@ async function renderPrismPage() {
         </div>
         <div class="prism-panel-title" style="margin:16px 0 6px">${esc(t('pz.active_bans'))}</div>
         ${(d.bans || []).length ? d.bans.map(b => `<div class="prism-bansrc">
-            <div class="prism-bansrc-head"><span class="prism-src-badge${b.sentinel ? ' sentinel' : ''}">${esc(b.source_label)}</span>${b.sentinel ? `<span class="prism-src-origin">${esc(t('pz.source_sentinel'))}</span>` : ''}</div>
+            <div class="prism-bansrc-head"><span class="prism-src-badge${b.ephor ? ' ephor' : ''}">${esc(b.source_label)}</span>${b.ephor ? `<span class="prism-src-origin">${esc(t('pz.source_ephor'))}</span>` : ''}</div>
             <div class="prism-bantech"><span>${esc(b.technique)}</span><span style="color:var(--text3)">${esc(when(b.since))}</span></div>
           </div>`).join('') : `<p class="prism-muted">${t('pz.no_active_ban')}</p>`}
         <div class="prism-panel-title" style="margin:16px 0 6px">${esc(t('pz.threat_decisions'))}</div>
@@ -967,7 +967,7 @@ async function renderPrismPage() {
     dr.classList.add('open');
   }
 
-  // Empreintes TLS (JA4) : une même signature sur de nombreuses IP, surtout si le WAF ou Sentinel la
+  // Empreintes TLS (JA4) : une même signature sur de nombreuses IP, surtout si le WAF ou Ephor la
   // signalent, trahit un outil ou un botnet — le clic ouvre les logs filtrés dessus.
   function tlsHtml(rows) {
     const head = `<div class="prism-panel-title">${esc(t('pz.tab_tls'))}</div><p class="prism-muted" style="margin:0 0 8px">${esc(t('pz.tls_hint'))}</p>`;

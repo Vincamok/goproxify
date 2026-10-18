@@ -11,7 +11,7 @@ import (
 	"github.com/vincamok/goproxify/internal/edge/engines"
 )
 
-// decodeEngineConfig lit le corps d'une requête de configuration d'un moteur de sécurité (Sentinel,
+// decodeEngineConfig lit le corps d'une requête de configuration d'un moteur de sécurité (Ephor,
 // Fail2Ban, CrowdSec), le valide avec son manifeste (clés connues, valeurs cohérentes) et le décode dans
 // into. prev, la configuration enregistrée, fournit les secrets qu'un envoi omet ou renvoie masqués.
 // En cas d'échec la réponse (400) est écrite et le résultat est false.
@@ -39,7 +39,7 @@ func decodeEngineConfig(w http.ResponseWriter, r *http.Request, typ string, into
 	return true
 }
 
-// EngineTypesHandler GET /api/v1/security/engine-types : manifestes de Sentinel, Fail2Ban et CrowdSec.
+// EngineTypesHandler GET /api/v1/security/engine-types : manifestes d'Ephor, Fail2Ban et CrowdSec.
 type EngineTypesHandler struct{}
 
 func (EngineTypesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {

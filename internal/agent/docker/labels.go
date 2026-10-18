@@ -38,9 +38,9 @@ const (
 	LabelWAFBehaviorWindow      = "goproxify.waf.behavior.window"      // ex: "60" (secondes)
 	LabelWAFBehaviorThreshold   = "goproxify.waf.behavior.threshold"   // ex: "8"
 	LabelWAFTrustedProxies      = "goproxify.waf.trusted_proxies"      // CSV de CIDRs ex: "10.0.0.0/8"
-	LabelSentinelWhitelist        = "goproxify.sentinel.whitelist"          // CSV IPs/CIDRs exemptés du moteur Sentinel
-	LabelSentinelWhitelistNetwork = "goproxify.sentinel.whitelist.network"  // "true" : exempte automatiquement le réseau Docker du container
-	LabelSentinelWhitelistSelf    = "goproxify.sentinel.whitelist.self"     // "true" : exempte l'IP du container lui-même
+	LabelEphorWhitelist        = "goproxify.ephor.whitelist"          // CSV IPs/CIDRs exemptés du moteur Ephor
+	LabelEphorWhitelistNetwork = "goproxify.ephor.whitelist.network"  // "true" : exempte automatiquement le réseau Docker du container
+	LabelEphorWhitelistSelf    = "goproxify.ephor.whitelist.self"     // "true" : exempte l'IP du container lui-même
 	LabelBot                    = "goproxify.bot"                      // "true"
 	LabelBotMode                = "goproxify.bot.mode"                 // block|monitor|log|challenge
 	LabelLogs            = "goproxify.logs"          // "true" active le log forwarding
@@ -139,9 +139,9 @@ type ProxySpec struct {
 	WAFBehaviorWindow   int // secondes
 	WAFBehaviorThreshold int
 	WAFTrustedProxies   string // CSV CIDRs
-	SentinelWhitelist        string // CSV IPs/CIDRs exemptés du moteur Sentinel
-	SentinelWhitelistNetwork bool   // true = résoudre le CIDR du réseau Docker et l'ajouter
-	SentinelWhitelistSelf    bool   // true = ajouter l'IP du container lui-même
+	EphorWhitelist        string // CSV IPs/CIDRs exemptés du moteur Ephor
+	EphorWhitelistNetwork bool   // true = résoudre le CIDR du réseau Docker et l'ajouter
+	EphorWhitelistSelf    bool   // true = ajouter l'IP du container lui-même
 	Bot                 string // "true"
 	BotMode             string // block|monitor|log|challenge
 
@@ -298,9 +298,9 @@ func ParseLabelsMulti(containerID, containerName, image, networkID string, label
 		WAFBehaviorWindow:    intLabel(labels, LabelWAFBehaviorWindow, 0),
 		WAFBehaviorThreshold: intLabel(labels, LabelWAFBehaviorThreshold, 0),
 		WAFTrustedProxies:    labels[LabelWAFTrustedProxies],
-		SentinelWhitelist:        labels[LabelSentinelWhitelist],
-		SentinelWhitelistNetwork: boolLabel(labels, LabelSentinelWhitelistNetwork),
-		SentinelWhitelistSelf:    boolLabel(labels, LabelSentinelWhitelistSelf),
+		EphorWhitelist:        labels[LabelEphorWhitelist],
+		EphorWhitelistNetwork: boolLabel(labels, LabelEphorWhitelistNetwork),
+		EphorWhitelistSelf:    boolLabel(labels, LabelEphorWhitelistSelf),
 		Bot:                  labels[LabelBot],
 		BotMode:              stringLabel(labels, LabelBotMode, ""),
 

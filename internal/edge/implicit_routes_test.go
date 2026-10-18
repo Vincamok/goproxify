@@ -17,7 +17,7 @@ import (
 
 func newImplicitGateway(t *testing.T) *Server {
 	t.Helper()
-	s := newSentinelGateway(t, t.TempDir())
+	s := newEphorGateway(t, t.TempDir())
 	s.certStore = edgetls.NewCertStore()
 	s.snippetStore = router.NewSnippetStore()
 	s.providerStore = router.NewAuthProviderStore()

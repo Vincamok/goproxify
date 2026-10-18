@@ -434,12 +434,12 @@ var tools = []map[string]any{
 	},
 	{
 		"name":        "list_security_engine_types",
-		"description": "Moteurs de sécurité globaux (Sentinel, Fail2Ban, CrowdSec, WAF — interrupteur maître du WAF par passerelle) avec leurs champs de configuration (chemins imbriqués comme ip_score.ban_threshold, secrets).",
+		"description": "Moteurs de sécurité globaux (Ephor, Fail2Ban, CrowdSec, WAF — interrupteur maître du WAF par passerelle) avec leurs champs de configuration (chemins imbriqués comme ip_score.ban_threshold, secrets).",
 		"inputSchema": schema(),
 	},
 	{
 		"name":        "list_security_bans",
-		"description": "Liste les bans IP (Fail2Ban, CrowdSec, Sentinel, plugins de détection comme Coraza, natif).",
+		"description": "Liste les bans IP (Fail2Ban, CrowdSec, Ephor, plugins de détection comme Coraza, natif).",
 		"inputSchema": schema(
 			opt("ip", "string", "Filtrer par IP (sous-chaîne)"),
 			opt("source", "string", "Filtrer par source: native, fail2ban, crowdsec, threat, plugin:<nom> (ex. plugin:coraza)"),
@@ -840,8 +840,8 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 		result, toolErr = h.toolAddBanWhitelist(r, p.Arguments)
 	case "remove_ban_whitelist":
 		result, toolErr = h.toolRemoveBanWhitelist(r, p.Arguments)
-	case "simulate_sentinel_config":
-		result, toolErr = h.toolSimulateSentinel(r, p.Arguments)
+	case "simulate_ephor_config":
+		result, toolErr = h.toolSimulateEphor(r, p.Arguments)
 	case "get_waf_activity":
 		result, toolErr = h.toolGetWAFActivity(r, p.Arguments)
 	case "get_topology_live":

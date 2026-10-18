@@ -79,7 +79,7 @@ var handledKeys = map[string]bool{
 	"headers_manipulation": true, "transform": true,
 	"jwt": true, "mtls": true, "cache": true, "logging": true,
 	"rate_limit": true, "ip_filter": true, "geo_ip": true, "cors": true, "waf": true, "bot": true,
-	"snippet_ids": true, "auth_provider_id": true, "plugins": true, "sentinel_whitelist": true,
+	"snippet_ids": true, "auth_provider_id": true, "plugins": true, "ephor_whitelist": true,
 }
 
 type builder struct {
@@ -341,8 +341,8 @@ func (b *builder) security(r *router.Route) {
 	}
 	b.waf(r)
 	b.bot(r)
-	if ids := r.SentinelWhitelist; len(ids) > 0 {
-		b.add("sentinel.whitelist", strings.Join(ids, ","))
+	if ids := r.EphorWhitelist; len(ids) > 0 {
+		b.add("ephor.whitelist", strings.Join(ids, ","))
 	}
 }
 

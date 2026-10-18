@@ -106,14 +106,14 @@ func TestMetricsEndpointNotTraced(t *testing.T) {
 func TestServerErrorMarksSpanAndEvents(t *testing.T) {
 	rec := setup(t)
 	Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		Event(r.Context(), "sentinel.signal")
+		Event(r.Context(), "ephor.signal")
 		w.WriteHeader(http.StatusBadGateway)
 	})).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
 	s := rec.Ended()[0]
 	if s.Status().Code.String() != "Error" {
 		t.Fatalf("status span: %v", s.Status())
 	}
-	if len(s.Events()) != 1 || s.Events()[0].Name != "sentinel.signal" {
+	if len(s.Events()) != 1 || s.Events()[0].Name != "ephor.signal" {
 		t.Fatalf("événement manquant: %v", s.Events())
 	}
 }

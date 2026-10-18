@@ -2113,7 +2113,7 @@ window.saveProxy = async function(id, opts = {}) {
     try { config = _psecBuildConfig(config); } catch (err) { toast(err.message, 'error'); return false; }
   } else {
     const prev = window._openProxyCfg || {};
-    for (const k of ['rate_limit', 'ip_filter', 'geo_ip', 'snippet_ids', 'sentinel_whitelist']) {
+    for (const k of ['rate_limit', 'ip_filter', 'geo_ip', 'snippet_ids', 'ephor_whitelist']) {
       if (prev[k] !== undefined) config[k] = prev[k];
     }
     const typed = ['hsts', 'hsts_max_age', 'hide_server', 'x_frame_options'].filter(k => prev.headers?.[k] !== undefined);

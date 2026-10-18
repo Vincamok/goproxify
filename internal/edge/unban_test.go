@@ -58,10 +58,10 @@ func TestUnbanReplayKeepsBansPostedAfterIt(t *testing.T) {
 
 func TestWhitelistOverridesExistingAutomaticBans(t *testing.T) {
 	n := newBanNode(t, "frontal")
-	const f2bIP, sentinelIP, manualIP = "203.0.113.30", "203.0.113.31", "203.0.113.32"
+	const f2bIP, ephorIP, manualIP = "203.0.113.30", "203.0.113.31", "203.0.113.32"
 	for _, b := range []struct{ id, ip, src string }{
 		{"f2b", f2bIP, "fail2ban"},
-		{"threat-" + sentinelIP, sentinelIP, "threat"},
+		{"threat-" + ephorIP, ephorIP, "threat"},
 		{"manuel", manualIP, "admin"},
 	} {
 		if err := n.srv.bansDB.UpsertBan(b.id, b.ip, "", "", b.src, nil); err != nil {
@@ -69,7 +69,7 @@ func TestWhitelistOverridesExistingAutomaticBans(t *testing.T) {
 		}
 	}
 	n.srv.reloadBanStore()
-	if !n.blocked(f2bIP) || !n.blocked(sentinelIP) || !n.blocked(manualIP) {
+	if !n.blocked(f2bIP) || !n.blocked(ephorIP) || !n.blocked(manualIP) {
 		t.Fatal("prérequis : les trois IPs sont bannies")
 	}
 
@@ -82,8 +82,8 @@ func TestWhitelistOverridesExistingAutomaticBans(t *testing.T) {
 	if n.blocked(f2bIP) {
 		t.Fatal("la liste blanche Fail2Ban doit lever un ban Fail2Ban déjà posé")
 	}
-	if n.blocked(sentinelIP) {
-		t.Fatal("la liste blanche Sentinel doit lever un ban Sentinel déjà posé")
+	if n.blocked(ephorIP) {
+		t.Fatal("la liste blanche Ephor doit lever un ban Ephor déjà posé")
 	}
 	if !n.blocked(manualIP) {
 		t.Fatal("un ban manuel reste appliqué même si l'IP est en liste blanche Fail2Ban")

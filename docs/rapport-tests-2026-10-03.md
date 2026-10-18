@@ -20,7 +20,7 @@ Le labo devait tourner contre une passerelle de production existante. **Ce passa
 | Applications simulées | `lab-sim` (Go 1.22) : boutique à 3 instances, canary, shadow, legacy, 2 instances de sonde, port fermé, écho WebSocket/TCP |
 | Réseau | Docker dédié, aucun port publié |
 
-Pour la production : `features.sh seed` puis `features.sh run` avec le jeton `proxies:read/write/delete` (procédure et précautions : [tests-lab.md](tests-lab.md) §3-4), et `LAB_RUNNER_CIDR` pour exempter le poste de test de Sentinel. Ce passage ne prouve rien sur la production elle-même, en particulier ni son routage TLS ni ses certificats.
+Pour la production : `features.sh seed` puis `features.sh run` avec le jeton `proxies:read/write/delete` (procédure et précautions : [tests-lab.md](tests-lab.md) §3-4), et `LAB_RUNNER_CIDR` pour exempter le poste de test d'Ephor. Ce passage ne prouve rien sur la production elle-même, en particulier ni son routage TLS ni ses certificats.
 
 ## 3. Résultats par section
 

@@ -282,7 +282,7 @@ func toPrefix(s string) (netip.Prefix, bool) {
 }
 
 // banKey est la clé de comptage et la cible du ban : l'adresse pour une IPv4, son /64 pour une IPv6
-// (même agrégation que les compteurs Sentinel). Un /64 revient en général à un seul abonné, qui y
+// (même agrégation que les compteurs Ephor). Un /64 revient en général à un seul abonné, qui y
 // change d'adresse à volonté : compté adresse par adresse, il resterait toujours sous le seuil.
 // Si la liste blanche recoupe le /64, on s'en tient à l'adresse pour ne pas bloquer l'IP exemptée.
 func banKey(a netip.Addr, whitelist []string) string {

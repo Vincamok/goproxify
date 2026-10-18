@@ -447,7 +447,7 @@
         <h3 data-t="fig.gate">One door, rules per address</h3>
         <ul>
           <li><b>TLS</b> · <span data-t="fig.acme">ACME certificates</span></li>
-          <li><b>WAF</b> · Sentinel · <span data-t="fig.rate">rate limit</span></li>
+          <li><b>WAF</b> · Ephor · <span data-t="fig.rate">rate limit</span></li>
           <li><b data-t="fig.lb">Load balancing</b> · <span data-t="fig.health">health</span></li>
         </ul>
       </div>
@@ -589,7 +589,7 @@
       <div class="fail-row" role="row">
         <div class="who">Admin<small data-t="a.r1.small">even if the gateway restarts during the outage</small></div>
         <div class="stop" data-t="a.r1.stop">Changes and supervision: interface, API.</div>
-        <div class="keep" data-t="a.r1.keep">Traffic, certificates, Sentinel, the access portal. The gateway restarts from its encrypted local copy.</div>
+        <div class="keep" data-t="a.r1.keep">Traffic, certificates, Ephor, the access portal. The gateway restarts from its encrypted local copy.</div>
       </div>
       <div class="fail-row" role="row">
         <div class="who" data-t="a.r2.who">A gateway<small>high-availability group</small></div>
@@ -613,7 +613,7 @@
   <div class="sec-body rv">
     <div class="caps">
       <div class="cap"><h3 data-t="k1t">Routing and certificates</h3><p data-t="k1">One address, one site. Automatic ACME certificates, 28 DNS providers, domain delegation between gateways, load balancing and health checks.</p></div>
-      <div class="cap"><h3 data-t="k2t">Security</h3><p data-t="k2">WAF (13 OWASP CRS-4 rule sets), Sentinel (behavioural bans, anti-DDoS), CrowdSec, GeoIP filtering, rate limiting, SSO, sandboxed WASM plugins (Coraza).</p></div>
+      <div class="cap"><h3 data-t="k2t">Security</h3><p data-t="k2">WAF (13 OWASP CRS-4 rule sets), Ephor (behavioural bans, anti-DDoS), CrowdSec, GeoIP filtering, rate limiting, SSO, sandboxed WASM plugins (Coraza).</p></div>
       <div class="cap"><h3 data-t="k3t">High availability</h3><p data-t="k3">A second gateway takes over, failing applications are bypassed, group members sync without the Admin.</p></div>
       <div class="cap"><h3 data-t="k4t">Discovery</h3><p data-t="k4">Docker containers, Kubernetes services, Consul, Nomad, etcd or Amazon ECS instances: routes follow what starts and stops.</p></div>
       <div class="cap"><h3 data-t="k5t">Observability</h3><p data-t="k5">Live traffic, readable access logs, Prism analytics (countries, anomalies, top clients) and 10 alert channels.</p></div>
@@ -1171,13 +1171,13 @@ volumes:
         <a class="doc" href="#" data-p="docs/delegation.md"><b data-i18n="doc.deleg.title">Sharing traffic between gateways</b><span data-i18n="doc.deleg.body">How several gateways work together to keep your sites available.</span></a>
         <a class="doc" href="#" data-p="docs/fonctionnalites.md"><b data-i18n="doc.features.title">Feature catalog</b><span data-i18n="doc.features.body">Full inventory of Edge, Admin and Agent capabilities.</span></a>
         <a class="doc" href="#" data-p="docs/faq.md"><b data-i18n="doc.faq.title">Frequently asked questions</b><span data-i18n="doc.faq.body">First start, password reset, Docker labels, delegation edge cases.</span></a>
-        <a class="doc" href="#" data-p="docs/security.md"><b data-i18n="doc.security.title">Security engines</b><span data-i18n="doc.security.body">WAF (13 CRS-4 rule sets, response inspection), Sentinel, bans, GeoIP, timeouts and CVE scanner.</span></a>
+        <a class="doc" href="#" data-p="docs/security.md"><b data-i18n="doc.security.title">Security engines</b><span data-i18n="doc.security.body">WAF (13 CRS-4 rule sets, response inspection), Ephor, bans, GeoIP, timeouts and CVE scanner.</span></a>
         <a class="doc" href="#" data-p="docs/rgpd.md"><b data-i18n="doc.rgpd.title">GDPR guide</b><span data-i18n="doc.rgpd.body">Data collected and retention, IP anonymisation and pseudonymisation, erasure, delegating IP reveal, operator checklist.</span></a>
       </div>
       <div>
         <h3 data-i18n="doc.group.reference">Reference</h3>
         <a class="doc" href="#" data-p="docs/cli.md"><b data-i18n="doc.cli.title">CLI reference</b><span data-i18n="doc.cli.body">All commands: proxy, cert, domain, alert, security, access, tokens, backup…</span></a>
-        <a class="doc" href="#" data-p="docs/labels.md"><b data-i18n="doc.labels.title">Docker labels</b><span data-i18n="doc.labels.body">Complete goproxify.* label reference — routing, WAF, Sentinel, canary, shadow.</span></a>
+        <a class="doc" href="#" data-p="docs/labels.md"><b data-i18n="doc.labels.title">Docker labels</b><span data-i18n="doc.labels.body">Complete goproxify.* label reference — routing, WAF, Ephor, canary, shadow.</span></a>
         <a class="doc" href="#" data-p="docs/config_schema.json"><b data-i18n="doc.config.title">Config schema</b><span data-i18n="doc.config.body">JSON Schema for proxy YAML files — for editor autocomplete and validation.</span></a>
         <a class="doc" href="#" data-p="docs/metrics.md"><b data-i18n="doc.metrics.title">Metrics reference</b><span data-i18n="doc.metrics.body">All gpx_* metrics: labels, buckets, PromQL examples and recommended alerts.</span></a>
         <a class="doc" href="#" data-p="suivi/changelog.md"><b data-i18n="doc.changelog.title">Changelog</b><span data-i18n="doc.changelog.body">All notable changes by version — new features, improvements, fixes.</span></a>
@@ -1304,13 +1304,13 @@ volumes:
       'doc.features.sub': 'Fonctionnalités', 'doc.features.title': 'Catalogue des fonctionnalités', 'doc.features.body': "Inventaire complet des capacités de la passerelle, de l\'Admin et de l\'Agent.",
       'doc.faq.title': 'Foire aux questions', 'doc.faq.body': 'Premier démarrage, reset mot de passe, labels Docker, cas limites de délégation.',
       'doc.cli.title': 'Référence CLI', 'doc.cli.body': 'Toutes les commandes : proxy, cert, domain, alert, security, access, tokens, backup…',
-      'doc.labels.title': 'Labels Docker', 'doc.labels.body': 'Référence complète des labels goproxify.* — routage, WAF, Sentinel, canary, shadow.',
+      'doc.labels.title': 'Labels Docker', 'doc.labels.body': 'Référence complète des labels goproxify.* — routage, WAF, Ephor, canary, shadow.',
       'doc.config.title': 'Schéma de configuration', 'doc.config.body': "JSON Schema pour les fichiers YAML proxy — autocomplétion et validation dans l\'éditeur.",
       'doc.changelog.title': 'Changelog', 'doc.changelog.body': 'Toutes les modifications notables par version — nouvelles fonctionnalités, améliorations, correctifs.',
       'doc.roadmap.title': 'Roadmap publique', 'doc.roadmap.body': 'Jalons à venir et fonctionnalités planifiées.',
       'doc.contrib.title': 'Contribuer', 'doc.contrib.body': 'Workflow PR, tests, DCO, conventions de code.',
       'doc.volumes.title': 'Volumes Docker', 'doc.volumes.body': 'Ce que chaque volume persiste : base Admin, configs proxies passerelle, tokens Agent, base GeoIP.',
-      'doc.security.title': 'Moteurs de sécurité', 'doc.security.body': 'WAF (13 jeux de règles CRS-4, inspection réponse), Sentinel, bans, GeoIP, timeouts et scanner CVE.',
+      'doc.security.title': 'Moteurs de sécurité', 'doc.security.body': 'WAF (13 jeux de règles CRS-4, inspection réponse), Ephor, bans, GeoIP, timeouts et scanner CVE.',
       'doc.rgpd.sub': 'RGPD', 'doc.rgpd.title': 'Guide RGPD', 'doc.rgpd.body': "Données collectées et rétention, anonymisation et pseudonymisation des IP, effacement, délégation de la révélation, checklist de l'opérateur.",
       'doc.github': 'Voir sur GitHub →',
       'copy': 'Copier',
@@ -1383,13 +1383,13 @@ volumes:
       'doc.features.sub': 'Funcionalidades', 'doc.features.title': 'Catálogo de funcionalidades', 'doc.features.body': 'Inventario completo de capacidades del Edge, Admin y Agent.',
       'doc.faq.title': 'Preguntas frecuentes', 'doc.faq.body': 'Primer inicio, reset de contraseña, labels Docker, casos límite de delegación.',
       'doc.cli.title': 'Referencia CLI', 'doc.cli.body': 'Todos los comandos: proxy, cert, domain, alert, security, access, tokens, backup…',
-      'doc.labels.title': 'Labels Docker', 'doc.labels.body': 'Referencia completa de labels goproxify.* — enrutamiento, WAF, Sentinel, canary, shadow.',
+      'doc.labels.title': 'Labels Docker', 'doc.labels.body': 'Referencia completa de labels goproxify.* — enrutamiento, WAF, Ephor, canary, shadow.',
       'doc.config.title': 'Esquema de configuración', 'doc.config.body': 'JSON Schema para archivos YAML proxy — autocompletado y validación en el editor.',
       'doc.changelog.title': 'Changelog', 'doc.changelog.body': 'Todos los cambios notables por versión — nuevas funcionalidades, mejoras, correcciones.',
       'doc.roadmap.title': 'Hoja de ruta pública', 'doc.roadmap.body': 'Próximos hitos y funcionalidades planificadas.',
       'doc.contrib.title': 'Contribuir', 'doc.contrib.body': 'Flujo de PR, tests, DCO, convenciones de código.',
       'doc.volumes.title': 'Volúmenes Docker', 'doc.volumes.body': 'Qué persiste cada volumen: base Admin, configs proxies Edge, tokens Agent, base GeoIP.',
-      'doc.security.title': 'Motores de seguridad', 'doc.security.body': 'WAF (13 conjuntos CRS-4, inspección de respuesta), Sentinel, bans, GeoIP, timeouts y escáner CVE.',
+      'doc.security.title': 'Motores de seguridad', 'doc.security.body': 'WAF (13 conjuntos CRS-4, inspección de respuesta), Ephor, bans, GeoIP, timeouts y escáner CVE.',
       'doc.rgpd.sub': 'RGPD', 'doc.rgpd.title': 'Guía RGPD', 'doc.rgpd.body': 'Datos recogidos y retención, anonimización y seudonimización de IP, supresión, delegación de la revelación, checklist del operador.',
       'doc.github': 'Ver en GitHub →',
       'copy': 'Copiar',
@@ -1462,13 +1462,13 @@ volumes:
       'doc.features.sub': 'Funktionen', 'doc.features.title': 'Funktionskatalog', 'doc.features.body': 'Vollständiges Verzeichnis der Edge-, Admin- und Agent-Fähigkeiten.',
       'doc.faq.title': 'Häufige Fragen', 'doc.faq.body': 'Erster Start, Passwort-Reset, Docker-Labels, Delegierungs-Sonderfälle.',
       'doc.cli.title': 'CLI-Referenz', 'doc.cli.body': 'Alle Befehle: proxy, cert, domain, alert, security, access, tokens, backup…',
-      'doc.labels.title': 'Docker-Labels', 'doc.labels.body': 'Vollständige goproxify.*-Label-Referenz — Routing, WAF, Sentinel, Canary, Shadow.',
+      'doc.labels.title': 'Docker-Labels', 'doc.labels.body': 'Vollständige goproxify.*-Label-Referenz — Routing, WAF, Ephor, Canary, Shadow.',
       'doc.config.title': 'Konfigurationsschema', 'doc.config.body': 'JSON-Schema für Proxy-YAML-Dateien — Editor-Autovervollständigung und Validierung.',
       'doc.changelog.title': 'Changelog', 'doc.changelog.body': 'Alle wichtigen Änderungen nach Version — neue Funktionen, Verbesserungen, Korrekturen.',
       'doc.roadmap.title': 'Öffentliche Roadmap', 'doc.roadmap.body': 'Bevorstehende Meilensteine und geplante Funktionen.',
       'doc.contrib.title': 'Beitragen', 'doc.contrib.body': 'PR-Workflow, Tests, DCO-Signoff, Codierungskonventionen.',
       'doc.volumes.title': 'Docker-Volumes', 'doc.volumes.body': 'Was jedes Volume persistiert: Admin-Datenbank, Edge-Proxy-Configs, Agent-Tokens, GeoIP-Datenbank.',
-      'doc.security.title': 'Sicherheits-Engines', 'doc.security.body': 'WAF (13 CRS-4-Regelwerke, Antwort-Inspektion), Sentinel, Sperren, GeoIP, Timeouts und CVE-Scanner.',
+      'doc.security.title': 'Sicherheits-Engines', 'doc.security.body': 'WAF (13 CRS-4-Regelwerke, Antwort-Inspektion), Ephor, Sperren, GeoIP, Timeouts und CVE-Scanner.',
       'doc.rgpd.sub': 'DSGVO', 'doc.rgpd.title': 'DSGVO-Leitfaden', 'doc.rgpd.body': 'Erhobene Daten und Aufbewahrung, IP-Anonymisierung und -Pseudonymisierung, Löschung, Delegation der Aufdeckung, Checkliste für Betreiber.',
       'doc.github': 'Auf GitHub ansehen →',
       'copy': 'Kopieren',
@@ -1665,7 +1665,7 @@ volumes:
     'a.h3': ['Continue', 'Sigue funcionando', 'Läuft weiter'],
     'a.r1.small': ['même si la passerelle redémarre pendant la coupure', 'incluso si la pasarela se reinicia durante la caída', 'auch wenn das Gateway während des Ausfalls neu startet'],
     'a.r1.stop': ['Les modifications et la supervision : interface, API.', 'Los cambios y la supervisión: interfaz, API.', 'Änderungen und Überwachung: Oberfläche, API.'],
-    'a.r1.keep': ['Le trafic, les certificats, Sentinel, le portail d’accès. La passerelle repart de sa copie locale chiffrée.', 'El tráfico, los certificados, Sentinel, el portal de acceso. La pasarela arranca desde su copia local cifrada.', 'Verkehr, Zertifikate, Sentinel, das Zugangsportal. Das Gateway startet aus seiner verschlüsselten lokalen Kopie.'],
+    'a.r1.keep': ['Le trafic, les certificats, Ephor, le portail d’accès. La passerelle repart de sa copie locale chiffrée.', 'El tráfico, los certificados, Ephor, el portal de acceso. La pasarela arranca desde su copia local cifrada.', 'Verkehr, Zertifikate, Ephor, das Zugangsportal. Das Gateway startet aus seiner verschlüsselten lokalen Kopie.'],
     'a.r2.who': ['Une passerelle<small>groupe haute disponibilité</small>', 'Una pasarela<small>grupo de alta disponibilidad</small>', 'Ein Gateway<small>Hochverfügbarkeitsgruppe</small>'],
     'a.r2.stop': ['Le trafic que cette passerelle portait.', 'El tráfico que llevaba esa pasarela.', 'Der Verkehr, den dieses Gateway getragen hat.'],
     'a.r2.keep': ['Les autres membres du groupe, qui se synchronisent entre eux. L’Admin et sa configuration.', 'Los demás miembros del grupo, que se sincronizan entre sí. El Admin y su configuración.', 'Die übrigen Gruppenmitglieder, die sich untereinander synchronisieren. Der Admin und seine Konfiguration.'],
@@ -1677,7 +1677,7 @@ volumes:
     'k1t': ['Routage et certificats', 'Enrutamiento y certificados', 'Routing und Zertifikate'],
     'k1': ['Une adresse, un site. Certificats ACME automatiques, 28 fournisseurs DNS, délégation de domaine entre passerelles, équilibrage de charge et vérification de santé.', 'Una dirección, un sitio. Certificados ACME automáticos, 28 proveedores DNS, delegación de dominio entre pasarelas, balanceo de carga y comprobaciones de salud.', 'Eine Adresse, eine Website. Automatische ACME-Zertifikate, 28 DNS-Anbieter, Domain-Delegation zwischen Gateways, Lastverteilung und Health-Checks.'],
     'k2t': ['Sécurité', 'Seguridad', 'Sicherheit'],
-    'k2': ['WAF (13 jeux de règles OWASP CRS-4), Sentinel (bannissement comportemental, anti-DDoS), CrowdSec, filtrage GeoIP, limitation de débit, SSO, plugins WASM isolés (Coraza).', 'WAF (13 conjuntos de reglas OWASP CRS-4), Sentinel (bloqueos por comportamiento, anti-DDoS), CrowdSec, filtrado GeoIP, límite de tasa, SSO, plugins WASM aislados (Coraza).', 'WAF (13 OWASP-CRS-4-Regelsätze), Sentinel (Verhaltenssperren, Anti-DDoS), CrowdSec, GeoIP-Filter, Ratenbegrenzung, SSO, isolierte WASM-Plugins (Coraza).'],
+    'k2': ['WAF (13 jeux de règles OWASP CRS-4), Ephor (bannissement comportemental, anti-DDoS), CrowdSec, filtrage GeoIP, limitation de débit, SSO, plugins WASM isolés (Coraza).', 'WAF (13 conjuntos de reglas OWASP CRS-4), Ephor (bloqueos por comportamiento, anti-DDoS), CrowdSec, filtrado GeoIP, límite de tasa, SSO, plugins WASM aislados (Coraza).', 'WAF (13 OWASP-CRS-4-Regelsätze), Ephor (Verhaltenssperren, Anti-DDoS), CrowdSec, GeoIP-Filter, Ratenbegrenzung, SSO, isolierte WASM-Plugins (Coraza).'],
     'k3t': ['Haute disponibilité', 'Alta disponibilidad', 'Hochverfügbarkeit'],
     'k3': ['Une seconde passerelle prend le relais, les applications défaillantes sont contournées, les membres du groupe se synchronisent sans l’Admin.', 'Una segunda pasarela toma el relevo, las aplicaciones defectuosas se esquivan y los miembros del grupo se sincronizan sin el Admin.', 'Ein zweites Gateway übernimmt, defekte Anwendungen werden umgangen und die Gruppenmitglieder synchronisieren sich ohne den Admin.'],
     'k4t': ['Découverte', 'Descubrimiento', 'Erkennung'],

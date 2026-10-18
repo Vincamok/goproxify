@@ -47,7 +47,7 @@ type Config struct {
 	// IPScore : score cumulé par IP avec décroissance. Désactivé par défaut (ban au premier signal).
 	IPScore IPScoreConfig `json:"ip_score,omitempty"`
 
-	// Escalation : bans graduels, la durée croît avec le nombre de bans Sentinel précédents de l'IP.
+	// Escalation : bans graduels, la durée croît avec le nombre de bans Ephor précédents de l'IP.
 	Escalation EscalationConfig `json:"escalation,omitempty"`
 
 	// Durée du ban automatique (0 = permanent).
@@ -62,7 +62,7 @@ type Config struct {
 	// Whitelist : IPs/CIDRs, User-Agents et path prefixes exemptés.
 	Whitelist Whitelist `json:"whitelist,omitempty"`
 
-	// Tarpit : ralentit la réponse aux IP bloquées ou bannies par Sentinel (désactivé par défaut).
+	// Tarpit : ralentit la réponse aux IP bloquées ou bannies par Ephor (désactivé par défaut).
 	Tarpit TarpitConfig `json:"tarpit,omitempty"`
 }
 
@@ -105,8 +105,8 @@ type RouteWeight struct {
 	Factor float64 `json:"factor"`
 }
 
-// EscalationConfig rend les bans graduels : une IP déjà bannie par Sentinel récemment l'est plus
-// longtemps. Durée = ban_duration × Factor^n, n étant le nombre de bans Sentinel de cette IP dans
+// EscalationConfig rend les bans graduels : une IP déjà bannie par Ephor récemment l'est plus
+// longtemps. Durée = ban_duration × Factor^n, n étant le nombre de bans Ephor de cette IP dans
 // la fenêtre, plafonnée à MaxDuration. Un déban manuel remet le compteur à zéro. L'historique des
 // bans est conservé 30 jours sur la passerelle : la fenêtre est limitée à cette durée.
 type EscalationConfig struct {

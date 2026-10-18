@@ -81,7 +81,7 @@ func TestBanTechnique(t *testing.T) {
 
 func TestSourceLabel(t *testing.T) {
 	for src, want := range map[string]string{
-		"threat": "Sentinel", "fail2ban": "Fail2Ban", "crowdsec": "CrowdSec", "native": "Manuel", "agent": "Agent",
+		"threat": "Ephor", "fail2ban": "Fail2Ban", "crowdsec": "CrowdSec", "native": "Manuel", "agent": "Agent",
 		"plugin:coraza": "Coraza", "plugin:my-waf": "My-waf", "plugin:": "plugin:", "autre": "autre",
 	} {
 		if got := sourceLabel(src); got != want {

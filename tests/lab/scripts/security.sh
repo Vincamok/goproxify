@@ -9,7 +9,7 @@
 #
 # Poste de test et réseaux locaux : un pair en réseau privé est un proxy de confiance par défaut (X-Forwarded-For / X-Real-IP
 # acceptés) et les plages privées ne sont pas bannies. La section « trust » le détecte ; les contrôles d'usurpation sont alors
-# signalés « ignorés » au lieu d'échouer. Le seed place l'IP du poste (ou LAB_RUNNER_CIDR) dans la liste blanche Sentinel
+# signalés « ignorés » au lieu d'échouer. Le seed place l'IP du poste (ou LAB_RUNNER_CIDR) dans la liste blanche Ephor
 # des routes lab-sec-* : sans cela les centaines de 403 volontaires feraient bannir le poste en cours de test.
 # Variables : LAB_BRUTE=1 active le test de frein anti brute-force sur le login Admin (verrouille le compte de test : stack jetable).
 set -u
@@ -51,7 +51,7 @@ seed() {
   [ -f "$PASSFILE" ] || openssl rand -hex 8 > "$PASSFILE"
   local pass cidr tmp icode have name body c
   pass=$(cat "$PASSFILE"); cidr=${LAB_RUNNER_CIDR:-$(runner_ip)/32}
-  echo "Liste blanche Sentinel des routes lab-sec-* : $cidr"
+  echo "Liste blanche Ephor des routes lab-sec-* : $cidr"
   tmp=$(mktemp -d)
   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 30 -subj '/CN=*.lab.test' \
     -addext 'subjectAltName=DNS:*.lab.test,DNS:lab.test' -keyout "$tmp/key.pem" -out "$tmp/cert.pem" 2>/dev/null
@@ -64,7 +64,7 @@ seed() {
   jq -c '.[]' "$ROUTES" | while read -r r; do
     name=$(echo "$r" | jq -r .host)
     if echo "$have" | grep -qx "$name"; then printf '%-34s déjà présent : ignoré\n' "$name"; continue; fi
-    body=$(echo "$r" | jq -c --arg c "$cidr" '{config: (.config + {host: .host, type: "http", sentinel_whitelist: [$c]})}' | sed "s/__BASIC_PASS__/$pass/g")
+    body=$(echo "$r" | jq -c --arg c "$cidr" '{config: (.config + {host: .host, type: "http", ephor_whitelist: [$c]})}' | sed "s/__BASIC_PASS__/$pass/g")
     c=$(curl -s -o /tmp/sseed.out -w '%{http_code}' -X POST "$LAB_ADMIN_URL/api/v1/proxies" \
       -H "Authorization: Bearer $token" -H 'Content-Type: application/json' -d "$body")
     printf '%-34s (%s)\n' "$name" "$c"
@@ -80,7 +80,7 @@ preflight() {
   echo "  FAIL lab-sec-plain.lab.test indisponible (security.sh seed fait ?)"; exit 1
 }
 guard() { # détecte un bannissement du poste de test en cours de run
-  [ "$(code "$(u plain)/whoami")" = 200 ] || echo "  WARN  lab-sec-plain ne répond plus 200 : poste de test banni (Sentinel / Fail2Ban) ? Les résultats suivants sont faussés."
+  [ "$(code "$(u plain)/whoami")" = 200 ] || echo "  WARN  lab-sec-plain ne répond plus 200 : poste de test banni (Ephor / Fail2Ban) ? Les résultats suivants sont faussés."
 }
 
 # ------------------------------------------------------------------ sections

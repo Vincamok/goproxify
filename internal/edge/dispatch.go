@@ -170,7 +170,7 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 	if s.threatEngine != nil && !whitelisted {
 		if blocked, reason := s.threatEngine.Check(r, remoteIP); reason != "" {
 			r = threat.WithSignal(r, reason)
-			tracing.Event(r.Context(), "sentinel.signal", attribute.String("reason", reason), attribute.Bool("blocked", blocked))
+			tracing.Event(r.Context(), "ephor.signal", attribute.String("reason", reason), attribute.Bool("blocked", blocked))
 			if blocked {
 				s.log.Warn("ip bloquée par moteur de détection", "ip", remoteIP, "reason", reason)
 				s.rejectThreat(w, r)
@@ -391,7 +391,7 @@ func newRequestID() string {
 }
 
 
-// rejectThreat répond 403 à une IP bloquée ou bannie par Sentinel, après l'avoir retenue
+// rejectThreat répond 403 à une IP bloquée ou bannie par Ephor, après l'avoir retenue
 // si le tarpit est actif (et non saturé).
 func (s *Server) rejectThreat(w http.ResponseWriter, r *http.Request) {
 	if s.threatEngine != nil {

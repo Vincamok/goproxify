@@ -14,7 +14,7 @@ import (
 	"github.com/vincamok/goproxify/internal/edge/router"
 )
 
-// Liste blanche des bans : adresses et plages qu'aucun ban n'atteint et que Sentinel n'évalue pas.
+// Liste blanche des bans : adresses et plages qu'aucun ban n'atteint et que Ephor n'évalue pas.
 //
 // Les entrées (avec leur commentaire) sont gardées dans le réglage whitelistSetting. Elles sont
 // recopiées dans un profil IP en mode allow, d'identifiant router.WhitelistProfileID, que les

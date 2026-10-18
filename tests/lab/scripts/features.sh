@@ -63,7 +63,7 @@ seed() {
     name=$(echo "$r" | jq -r .host)
     if echo "$have" | grep -qx "$name"; then printf '%-32s déjà présent : ignoré\n' "$name"; continue; fi
     body=$(echo "$r" | jq -c '{config: (.config + {host: .host, type: "http", tls_enabled: false}) }' | sed "s/__BASIC_PASS__/$pass/g")
-    if [ -n "${LAB_RUNNER_CIDR:-}" ]; then body=$(echo "$body" | jq -c --arg c "$LAB_RUNNER_CIDR" '.config.sentinel_whitelist = [$c]'); fi
+    if [ -n "${LAB_RUNNER_CIDR:-}" ]; then body=$(echo "$body" | jq -c --arg c "$LAB_RUNNER_CIDR" '.config.ephor_whitelist = [$c]'); fi
     c=$(curl -s -o /tmp/fseed.out -w '%{http_code}' -X POST "$LAB_ADMIN_URL/api/v1/proxies" \
       -H "Authorization: Bearer $token" -H 'Content-Type: application/json' -d "$body")
     printf '%-32s (%s)\n' "$name" "$c"

@@ -12,7 +12,7 @@ import (
 	"github.com/vincamok/goproxify/internal/edge/threat"
 )
 
-// syncThreatListsFromPeer récupère les listes de référence Sentinel (UA, chemins, IPs) d'une
+// syncThreatListsFromPeer récupère les listes de référence Ephor (UA, chemins, IPs) d'une
 // passerelle pair : la plus récente l'emporte (ApplyHAPayload), les passerelles d'un groupe HA
 // convergent vers les mêmes listes.
 func (s *Server) syncThreatListsFromPeer(ctx context.Context, client *http.Client, p proxy.PeerInfo) {

@@ -253,7 +253,7 @@ func TestToolScopesMatchREST(t *testing.T) {
 func TestToolRequiresAdmin(t *testing.T) {
 	for _, tool := range []string{
 		"list_flows", "list_internal_cas", "get_flow_run", "decide_flow_run", "list_auth_providers",
-		"list_security_bans", "get_waf_activity", "list_backups", "list_agents", "get_architecture", "simulate_sentinel_config",
+		"list_security_bans", "get_waf_activity", "list_backups", "list_agents", "get_architecture", "simulate_ephor_config",
 		"get_portal_config", "push_portal_templates",
 	} {
 		if !rbac.ToolRequiresAdmin(tool) {

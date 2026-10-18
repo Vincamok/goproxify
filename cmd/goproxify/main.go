@@ -171,7 +171,7 @@ Commandes d'administration (API Admin — -admin-url / -token) :
   ip-profile     Profils IP GeoIP/réputation (list/get/create/update/delete)
   containers     Conteneurs découverts par les Agents (list/convert en proxy)
   me             Profil courant + tokens API personnels (PAT)
-  security       Sentinel (threat engine), bans, WAF par proxy
+  security       Ephor (threat engine), bans, WAF par proxy
   automation     Flux d'automatisation : règles, planifications, playbooks, approbations
   status    État du cluster
   access    GoProxify Access (config, catalogue, users, templates, audit)

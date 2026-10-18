@@ -494,7 +494,7 @@ goproxify alert test -all
 
 ### `goproxify snippet`
 
-Snippets de sécurité réutilisables (WAF, Sentinel, rate-limit…).
+Snippets de sécurité réutilisables (WAF, Ephor, rate-limit…).
 
 ```
 goproxify snippet list   [-admin-url …] [-token …]
@@ -799,13 +799,13 @@ goproxify ip-profile delete <id> -y
 
 ### `goproxify security`
 
-Sentinel (threat engine global), gestion des bans, config WAF par proxy, et moteur de règles automatiques.
+Ephor (threat engine global), gestion des bans, config WAF par proxy, et moteur de règles automatiques.
 
 ```
-# Moteurs globaux et leurs champs de configuration (Sentinel, Fail2Ban, CrowdSec, WAF)
+# Moteurs globaux et leurs champs de configuration (Ephor, Fail2Ban, CrowdSec, WAF)
 goproxify security engines [-admin-url …] [-token …]
 
-# Config du moteur Sentinel
+# Config du moteur Ephor
 goproxify security threat get  [-edge <id>] [-admin-url …] [-token …]   # passerelle d'un groupe HA : config du groupe
 goproxify security threat set  [-edge <id>] -file <threat-config.json> [-admin-url …] [-token …]
 goproxify security threat simulate -file <threat-config.json> [-hours N] [-domain <d>] [-edge <id>] [-admin-url …] [-token …]   # dry-run : rejoue les logs, n'enregistre rien
@@ -839,7 +839,7 @@ goproxify security cve sla set -file <sla.json> [-admin-url …] [-token …]
 
 **`security engines`** — liste les moteurs globaux et les champs de leur configuration (chemins pointés comme `ip_score.ban_threshold`, secrets repérés). `security threat set` valide le fichier avec ce manifeste : clé inconnue, mode hors `block|detect`, durée illisible ou négative, IP ou CIDR invalide, code d'erreur HTTP hors 400-599, source de liste qui n'est pas http(s) ⇒ erreur `400`, rien n'est enregistré.
 
-**`security threat`** — lit ou écrit la configuration du moteur Sentinel (fail2ban, seuils, whitelist globale…). Le paramètre `-edge` cible une passerelle spécifique dans un cluster multi-passerelle.
+**`security threat`** — lit ou écrit la configuration du moteur Ephor (fail2ban, seuils, whitelist globale…). Le paramètre `-edge` cible une passerelle spécifique dans un cluster multi-passerelle.
 
 **`security threat simulate`** — rejoue les access logs récents (`-hours`, défaut 1, max 24 ; `-domain` pour un seul domaine) contre la config candidate du fichier, surchargée sur la config actuelle, et affiche le résultat en JSON : requêtes bloquées, faux positifs probables (`legit_blocked`), IP et bans, actuel vs candidat. Ne modifie rien. Voir `POST /api/v1/security/threat-config/simulate`.
 
@@ -851,7 +851,7 @@ goproxify security cve sla set -file <sla.json> [-admin-url …] [-token …]
 
 `security bans asn` bannit un **ASN** (tout un opérateur) : `lookup -q OVH` (ou `-q AS16276`, ou `-q 51.77.0.1` pour l'ASN d'une adresse) cherche ; `preview -asn AS16276` mesure l'impact sans rien créer (plages, trafic des dernières heures, avertissements) ; `ban -asn AS16276 [-reason …] [-ttl 7d] [-scope …] [-dry-run]` crée un ban par plage annoncée, en un seul envoi aux passerelles ; `unban -asn AS16276` les lève tous ; `info` et `refresh` montrent ou mettent à jour la base ASN de l'Admin. Un ASN qui contient votre adresse est refusé.
 
-`security bans whitelist` gère la **liste blanche des bans** : `list` affiche les entrées (avec le nombre de bans actifs qu'elles neutralisent), `add -ip <ip|cidr> [-comment …]` ajoute une adresse ou une plage (normalisée comme un ban, `/16` IPv4 et `/32` IPv6 au plus larges), `delete -ip <valeur>` la retire. Une adresse en liste blanche n'est atteinte par aucun ban et n'est pas évaluée par Sentinel ; les bans existants ne sont pas supprimés.
+`security bans whitelist` gère la **liste blanche des bans** : `list` affiche les entrées (avec le nombre de bans actifs qu'elles neutralisent), `add -ip <ip|cidr> [-comment …]` ajoute une adresse ou une plage (normalisée comme un ban, `/16` IPv4 et `/32` IPv6 au plus larges), `delete -ip <valeur>` la retire. Une adresse en liste blanche n'est atteinte par aucun ban et n'est pas évaluée par Ephor ; les bans existants ne sont pas supprimés.
 
 **`security trace`** (`-scope asn` : tout l'ASN de l'adresse, ou `-asn AS16276` sans adresse ; sans saisir de CIDR, grâce à la base ASN) — reconstitue tout ce qu'une IP ou un CIDR a fait : synthèse (requêtes, bloquées, IP distinctes, épisodes, bans/débans, détections, bans en cours, profils IP) puis les étapes (épisodes d'activité, bans, débans, détections) avec leur date. `-from` / `-to` acceptent une date `AAAA-MM-JJ` ou RFC3339 (défaut : 30 derniers jours) ; `-order desc` met le plus récent en premier ; `-limit` / `-offset` paginent (500 étapes par défaut) ; `-json` renvoie la réponse brute de `GET /api/v1/security/ip-trace`. Exemple : `goproxify security trace -target 198.51.100.0/24 -from 2026-01-01`. Les requêtes remontent aussi loin que la rétention des logs d'accès.
 
@@ -861,7 +861,7 @@ goproxify security cve sla set -file <sla.json> [-admin-url …] [-token …]
 { "critical_days": 7, "high_days": 14, "medium_days": 30, "low_days": 90 }
 ```
 
-**`security waf`** — lit (`get`) ou met à jour (`set`) les champs `waf` et `sentinel_whitelist` d'un proxy sans toucher au reste de sa configuration. Le fichier JSON peut contenir uniquement les clés à modifier :
+**`security waf`** — lit (`get`) ou met à jour (`set`) les champs `waf` et `ephor_whitelist` d'un proxy sans toucher au reste de sa configuration. Le fichier JSON peut contenir uniquement les clés à modifier :
 
 ```json
 {
@@ -871,7 +871,7 @@ goproxify security cve sla set -file <sla.json> [-admin-url …] [-token …]
     "anomaly_threshold": 10,
     "behavior_enabled": true
   },
-  "sentinel_whitelist": ["10.0.0.0/8", "192.168.1.5"]
+  "ephor_whitelist": ["10.0.0.0/8", "192.168.1.5"]
 }
 ```
 

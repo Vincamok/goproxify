@@ -53,7 +53,7 @@ type Entry struct {
 	Referrer      string     `json:"referrer,omitempty"`
 	UserID        string     `json:"user_id,omitempty"`
 	RequestID     string     `json:"request_id,omitempty"`
-	// WAFMatches (catégories WAF déclenchées) et ThreatSignal (signal Sentinel) sont le
+	// WAFMatches (catégories WAF déclenchées) et ThreatSignal (signal Ephor) sont le
 	// contexte de sécurité calculé par la passerelle pour la requête d'origine — vides
 	// pour l'immense majorité des requêtes propres (200 OK), renseignés seulement quand
 	// une protection s'est déclenchée.
@@ -70,7 +70,7 @@ type Entry struct {
 	// Elle n'est JAMAIS renvoyée dans les réponses API — uniquement chiffrée en DB.
 	RealIP string `json:"-"`
 	// IPTruncated : IP tronquée par la passerelle (anonymisation ou pseudonymisation). Fail2Ban, la
-	// simulation Sentinel et les actions de l'interface (ban, analyse d'IP) écartent ces lignes :
+	// simulation Ephor et les actions de l'interface (ban, analyse d'IP) écartent ces lignes :
 	// x.x.x.0 ou un /48 ne désignent aucun client.
 	IPTruncated bool `json:"ip_truncated,omitempty"`
 }
@@ -127,7 +127,7 @@ type Store struct {
 }
 
 // PseudonymizedIP remplace l'IP d'une entrée pseudonymisée dans la colonne ip. Volontairement
-// pas une IP : Fail2Ban et la simulation Sentinel, qui lisent cette colonne, l'ignorent.
+// pas une IP : Fail2Ban et la simulation Ephor, qui lisent cette colonne, l'ignorent.
 const PseudonymizedIP = "[pseudonymisé]"
 
 // Erreurs de RevealIP.

@@ -171,7 +171,7 @@ func (s *Store) decode(data []byte, key [32]byte) (*Snapshot, error) {
 }
 
 // SaveFile chiffre v (JSON) avec la clé du cache et l'écrit de façon atomique dans path.
-// Sert aux copies locales hors snapshot de ce que pousse l'Admin (ex. configuration Sentinel).
+// Sert aux copies locales hors snapshot de ce que pousse l'Admin (ex. configuration Ephor).
 func (s *Store) SaveFile(path string, v any) error {
 	data, err := json.Marshal(v)
 	if err != nil {
