@@ -474,12 +474,14 @@ func buildWhere(p SearchParams) (string, []any) {
 			args = append(args, p.Status)
 		}
 	}
+	// Le `!= ''` redondant prouve à SQLite que le filtre implique le WHERE de l'index partiel :
+	// avec un paramètre lié il ne peut pas le déduire seul et parcourait tout idx_logs_access_id.
 	if p.TLSJA3 != "" {
-		clauses = append(clauses, "tls_ja3=?")
+		clauses = append(clauses, "tls_ja3=? AND tls_ja3 != ''")
 		args = append(args, p.TLSJA3)
 	}
 	if p.TLSJA4 != "" {
-		clauses = append(clauses, "tls_ja4=?")
+		clauses = append(clauses, "tls_ja4=? AND tls_ja4 != ''")
 		args = append(args, p.TLSJA4)
 	}
 	if p.Path != "" {

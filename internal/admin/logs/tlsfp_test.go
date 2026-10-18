@@ -5,10 +5,46 @@ package logs
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
 )
+
+func TestTLSFingerprintFilterUsesPartialIndex(t *testing.T) {
+	db, err := admindb.Open(filepath.Join(t.TempDir(), "admin.db"))
+	if err != nil {
+		t.Fatalf("ouverture DB : %v", err)
+	}
+	defer db.Close()
+
+	for _, c := range []struct {
+		p     SearchParams
+		index string
+	}{
+		{SearchParams{TLSJA4: "x", Path: "/a", Kind: "access", ExcludeInternal: true}, "idx_logs_tls_ja4"},
+		{SearchParams{TLSJA3: "x", Path: "/a", Kind: "access", ExcludeInternal: true}, "idx_logs_tls_ja3"},
+	} {
+		where, args := buildWhere(c.p)
+		rows, err := db.Query("EXPLAIN QUERY PLAN SELECT id FROM logs"+where+" ORDER BY id DESC LIMIT ?", append(args, 50)...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var plan string
+		for rows.Next() {
+			var id, parent, notused int
+			var detail string
+			if err := rows.Scan(&id, &parent, &notused, &detail); err != nil {
+				t.Fatal(err)
+			}
+			plan += detail + "\n"
+		}
+		rows.Close()
+		if !strings.Contains(plan, c.index) {
+			t.Errorf("plan sans %s (scan de tout idx_logs_access_id sur une grosse base) :\n%s", c.index, plan)
+		}
+	}
+}
 
 func TestTLSFingerprintStoredAndFiltered(t *testing.T) {
 	db, err := admindb.Open(filepath.Join(t.TempDir(), "admin.db"))

@@ -1640,11 +1640,11 @@ func (h *Handler) toolListLogsFiltered(r *http.Request, domain, level, requestID
 		args = append(args, level)
 	}
 	if ja3 != "" {
-		q += ` AND tls_ja3 = ?`
+		q += ` AND tls_ja3 = ? AND tls_ja3 != ''`
 		args = append(args, ja3)
 	}
 	if ja4 != "" {
-		q += ` AND tls_ja4 = ?`
+		q += ` AND tls_ja4 = ? AND tls_ja4 != ''`
 		args = append(args, ja4)
 	}
 	q += ` ORDER BY ts DESC LIMIT 100`
