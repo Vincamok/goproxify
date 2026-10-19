@@ -168,6 +168,7 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 	})
 	manager.SetLogBatchHandler(func(entries []edgeWS.LogEntryPayload) {
+		batch := make([]logs.Entry, 0, len(entries))
 		for _, item := range entries {
 			ts, _ := time.Parse(time.RFC3339Nano, item.Ts)
 			if ts.IsZero() {
@@ -176,7 +177,7 @@ func (s *Server) Start(ctx context.Context) error {
 			if ts.IsZero() {
 				ts = time.Now()
 			}
-			s.logStore.Write(logs.Entry{
+			batch = append(batch, logs.Entry{
 				Ts:        ts,
 				Level:     item.Level,
 				Component: nvlStr(item.Component, "edge"),
@@ -200,6 +201,8 @@ func (s *Server) Start(ctx context.Context) error {
 				TLSJA4:       item.TLSJA4,
 			})
 		}
+		// Une transaction par lot et non par entrée : voir logs.Store.WriteBatch.
+		s.logStore.WriteBatch(batch)
 	})
 
 	backupSched := backup.New(s.db, s.log)

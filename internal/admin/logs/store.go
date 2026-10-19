@@ -228,8 +228,12 @@ func (s *Store) retainedUntil(isAccess bool) time.Time {
 	return time.Now().UTC().AddDate(0, 0, days)
 }
 
-// Write insère une entrée et la diffuse aux abonnés SSE.
-func (s *Store) Write(e Entry) {
+const insertLogSQL = `INSERT INTO logs (ts, level, component, node_name, node_id, domain, method, path, status, ip, latency_ms, bytes, message, referrer, user_id, request_id, waf_matches, threat_signal, tls_ja3, tls_ja4, retained_until, ip_enc, ip_hmac, ip_truncated)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+// insertArgs complète l'entrée (date, rétention, pseudonymisation de l'IP) et retourne les paramètres de
+// l'INSERT. L'entrée est modifiée : elle est ensuite diffusée telle qu'écrite.
+func (s *Store) insertArgs(e *Entry) []any {
 	if e.Ts.IsZero() {
 		e.Ts = time.Now()
 	}
@@ -252,20 +256,75 @@ func (s *Store) Write(e Entry) {
 		}
 	}
 
-	res, err := s.db.Exec(
-		`INSERT INTO logs (ts, level, component, node_name, node_id, domain, method, path, status, ip, latency_ms, bytes, message, referrer, user_id, request_id, waf_matches, threat_signal, tls_ja3, tls_ja4, retained_until, ip_enc, ip_hmac, ip_truncated)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	return []any{
 		e.Ts.UTC().Format(time.RFC3339Nano),
 		nvl(e.Level, "info"), nvl(e.Component, "admin"), e.NodeName, e.NodeID,
 		e.Domain, e.Method, e.Path, e.Status, e.IP, e.LatencyMs, e.Bytes, e.Message, e.Referrer,
 		e.UserID, e.RequestID, encodeWAFMatches(e.WAFMatches), e.ThreatSignal, e.TLSJA3, e.TLSJA4, retained.Format(time.RFC3339), ipEnc, ipHmac, e.IPTruncated,
-	)
+	}
+}
+
+// Write insère une entrée et la diffuse aux abonnés SSE.
+func (s *Store) Write(e Entry) {
+	res, err := s.db.Exec(insertLogSQL, s.insertArgs(&e)...)
 	if err == nil {
 		if id, err2 := res.LastInsertId(); err2 == nil {
 			e.ID = id
 		}
 	}
 	s.broadcast(e)
+}
+
+// writeBatchSize borne le nombre d'entrées d'une transaction : le verrou d'écriture n'est tenu que le temps
+// d'un lot, les autres écritures (battements, agrégation) passent entre deux.
+const writeBatchSize = 500
+
+// WriteBatch insère les entrées par transactions de writeBatchSize au plus, puis les diffuse. Une
+// transaction par entrée coûtait un commit et une dizaine de mises à jour d'index par ligne (29 Ko écrits
+// par ligne mesurés) : en lot, une page modifiée plusieurs fois n'est écrite qu'une fois par commit.
+func (s *Store) WriteBatch(entries []Entry) {
+	for len(entries) > 0 {
+		n := min(len(entries), writeBatchSize)
+		s.writeChunk(entries[:n])
+		entries = entries[n:]
+	}
+}
+
+func (s *Store) writeChunk(entries []Entry) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		s.writeEach(entries)
+		return
+	}
+	stmt, err := tx.Prepare(insertLogSQL)
+	if err != nil {
+		tx.Rollback() //nolint:errcheck
+		s.writeEach(entries)
+		return
+	}
+	for i := range entries {
+		res, err := stmt.Exec(s.insertArgs(&entries[i])...)
+		if err == nil {
+			if id, err2 := res.LastInsertId(); err2 == nil {
+				entries[i].ID = id
+			}
+		}
+	}
+	stmt.Close()
+	if err := tx.Commit(); err != nil {
+		// Rien n'est écrit : on réessaie entrée par entrée plutôt que de perdre le lot.
+		s.writeEach(entries)
+		return
+	}
+	for _, e := range entries {
+		s.broadcast(e)
+	}
+}
+
+func (s *Store) writeEach(entries []Entry) {
+	for _, e := range entries {
+		s.Write(e)
+	}
 }
 
 // encodeWAFMatches/decodeWAFMatches sérialisent WAFMatches en JSON pour la colonne TEXT
