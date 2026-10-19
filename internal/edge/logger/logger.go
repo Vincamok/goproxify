@@ -214,7 +214,20 @@ func (h *shipHandler) Enabled(_ context.Context, level slog.Level) bool {
 	return level >= h.level
 }
 
-func (h *shipHandler) Handle(_ context.Context, r slog.Record) error {
+// localOnlyKey marque un contexte dont les lignes de journal restent sur la passerelle.
+type localOnlyKey struct{}
+
+// LocalOnly retourne un contexte qui garde les lignes de journal écrites avec lui dans les fichiers et la
+// sortie de la passerelle, sans les expédier à l'Admin. Pour les lignes qui doublonnent un enregistrement
+// déjà expédié autrement (le journal d'accès texte, alors que le journal d'accès structuré part déjà).
+func LocalOnly(ctx context.Context) context.Context {
+	return context.WithValue(ctx, localOnlyKey{}, true)
+}
+
+func (h *shipHandler) Handle(ctx context.Context, r slog.Record) error {
+	if ctx != nil && ctx.Value(localOnlyKey{}) != nil {
+		return nil
+	}
 	lvl := "info"
 	switch {
 	case r.Level >= slog.LevelError:

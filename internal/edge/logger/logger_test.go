@@ -4,6 +4,8 @@
 package logger
 
 import (
+	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -59,5 +61,42 @@ func TestDynamicLoggerForwarder(t *testing.T) {
 	}
 	if e.Message == "" || e.Message[:5] != "hello" {
 		t.Errorf("message=%q", e.Message)
+	}
+}
+
+// Le journal d'accès texte des routes doublonne le journal d'accès structuré déjà expédié : écrit avec
+// LocalOnly, il reste sur la passerelle (fichier, sortie) et ne part pas vers l'Admin.
+func TestLocalOnlyLinesAreNotShipped(t *testing.T) {
+	dl := New("info", "json", "")
+	var (
+		mu  sync.Mutex
+		got []ShipEntry
+	)
+	dl.SetNodeName("edge-test")
+	dl.SetForwarder(func(batch []ShipEntry) {
+		mu.Lock()
+		got = append(got, batch...)
+		mu.Unlock()
+	})
+
+	dl.Logger().InfoContext(LocalOnly(context.Background()), "ligne locale")
+	dl.Logger().InfoContext(context.Background(), "ligne expédiée")
+
+	deadline := time.Now().Add(6 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(got)
+		mu.Unlock()
+		if n > 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	time.Sleep(300 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 1 || !strings.Contains(got[0].Message, "ligne expédiée") {
+		t.Fatalf("lignes expédiées : %+v, attendu uniquement « ligne expédiée »", got)
 	}
 }

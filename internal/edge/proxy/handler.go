@@ -287,19 +287,21 @@ func (h *Handler) logAccess(r *http.Request, status, size int, dur time.Duration
 	if cfg != nil && cfg.Format != "" {
 		format = cfg.Format
 	}
+	// Ces lignes doublonnent le journal d'accès structuré, déjà expédié à l'Admin : elles restent locales.
+	ctx := edgelog.LocalOnly(r.Context())
 	switch format {
 	case "off":
 		return
 	case "minimal":
-		h.log.Info("access", "method", r.Method, "path", r.URL.Path, "status", status, "ms", dur.Milliseconds())
+		h.log.InfoContext(ctx, "access", "method", r.Method, "path", r.URL.Path, "status", status, "ms", dur.Milliseconds())
 	case "json":
-		h.log.Info("access",
+		h.log.InfoContext(ctx, "access",
 			"host", r.Host, "method", r.Method, "path", r.URL.Path,
 			"status", status, "bytes", size, "ms", dur.Milliseconds(),
 			"ip", clientIP(r), "ua", r.UserAgent(), "referer", r.Referer(),
 		)
 	default: // combined
-		h.log.Info(fmt.Sprintf(`%s - [%s] "%s %s" %d %d "%s" "%s"`,
+		h.log.InfoContext(ctx, fmt.Sprintf(`%s - [%s] "%s %s" %d %d "%s" "%s"`,
 			clientIP(r), time.Now().Format("02/Jan/2006:15:04:05 -0700"),
 			r.Method, r.URL.RequestURI(), status, size,
 			r.Referer(), r.UserAgent(),

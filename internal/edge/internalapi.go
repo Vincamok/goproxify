@@ -471,6 +471,11 @@ func (s *Server) handleHAWAFBehaviorSync(w http.ResponseWriter, r *http.Request)
 // l'Admin, qui est seulement notifié.
 func (s *Server) threatBanCallback() threat.BanCallback {
 	return func(ip, reason string, expires time.Time) {
+		// Un scanner qui ouvre des centaines de connexions avant que le premier ban soit actif rappelait ce
+		// callback à chaque requête : base locale, pairs, rechargement des bans et Admin, autant de fois.
+		if ok, _ := s.blockLog.Allow("threatban|" + ip); !ok {
+			return
+		}
 		b := &router.RuntimeBan{
 			ID:        "threat-" + ip,
 			IP:        ip,

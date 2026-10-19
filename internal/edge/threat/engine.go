@@ -16,6 +16,7 @@ import (
 	"time"
 
 	edgelog "github.com/vincamok/goproxify/internal/edge/logger"
+	"github.com/vincamok/goproxify/internal/edge/logthrottle"
 	"github.com/vincamok/goproxify/internal/edge/tlsfp"
 )
 
@@ -107,7 +108,8 @@ type Engine struct {
 	priorBans func(ip string, since time.Time) int // bans Ephor précédents d'une IP (bans graduels)
 
 	tarpitSlots chan struct{} // slots du tarpit ; recréé quand MaxConcurrent change
-	log   *slog.Logger
+	log         *slog.Logger
+	sigLog      *logthrottle.Limiter // une ligne « signal détecté » par IP et par motif et par minute
 
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -119,6 +121,7 @@ func New(log *slog.Logger, banFn BanCallback) *Engine {
 		lists:    newLists(log),
 		counters: newCounterStore(),
 		log:      log,
+		sigLog:   logthrottle.New(time.Minute),
 		banFn:    banFn,
 		done:     make(chan struct{}),
 	}
@@ -278,15 +281,23 @@ func (e *Engine) Check(r *http.Request, ip string) (blocked bool, reason string)
 	}
 	e.inc(threatChecksTotal, action)
 
-	e.log.Warn("ephor: signal détecté",
-		"ip", ip,
-		"signals", len(signals),
-		"score", total,
-		"threshold", cfg.ScoreThreshold,
-		"triggered", triggered,
-		"mode", cfg.Mode,
-		"reason", topReason,
-	)
+	// Un scanner qui envoie des centaines de requêtes en parallèle déclenchait une ligne par requête : une
+	// seule par IP et par motif et par minute, avec le nombre de signaux regroupés.
+	if ok, n := e.sigLog.Allow("signal|" + ip + "|" + topReason); ok {
+		args := []any{
+			"ip", ip,
+			"signals", len(signals),
+			"score", total,
+			"threshold", cfg.ScoreThreshold,
+			"triggered", triggered,
+			"mode", cfg.Mode,
+			"reason", topReason,
+		}
+		if n > 0 {
+			args = append(args, "repeats", n)
+		}
+		e.log.Warn("ephor: signal détecté", args...)
+	}
 
 	if triggered && !isDetect {
 		if cfg.IPScore.Enabled {

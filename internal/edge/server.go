@@ -30,6 +30,7 @@ import (
 	edgef2b "github.com/vincamok/goproxify/internal/edge/fail2ban"
 	"github.com/vincamok/goproxify/internal/edge/geoip"
 	edgelog "github.com/vincamok/goproxify/internal/edge/logger"
+	"github.com/vincamok/goproxify/internal/edge/logthrottle"
 	"github.com/vincamok/goproxify/internal/edge/metrics"
 	"github.com/vincamok/goproxify/internal/edge/middleware"
 	"github.com/vincamok/goproxify/internal/edge/portal"
@@ -68,7 +69,7 @@ type Server struct {
 	providerStore   *router.AuthProviderStore
 	profileStore    *router.IPProfileStore
 	banStore        *router.BanStore
-	blockLog        *repeatLimiter // regroupe les refus répétés d'une même IP dans le journal
+	blockLog        *logthrottle.Limiter // regroupe les refus répétés d'une même IP dans le journal
 	bansDB          *bansdb.DB
 	threatEngine    *threat.Engine
 	f2bEngine       *edgef2b.Engine
@@ -175,7 +176,7 @@ func New(cfg *config.EdgeConfig) (*Server, error) {
 		providerStore:   router.NewAuthProviderStore(),
 		profileStore:    router.NewIPProfileStore(),
 		banStore:        router.NewBanStore(),
-		blockLog:        newRepeatLimiter(blockLogWindow),
+		blockLog:        logthrottle.New(blockLogWindow),
 		bansDB:          bdb,
 		cache:           edgecache.New(cachePath, secret),
 		tcpPorts:        make(map[string]interface{ Stop() }),
