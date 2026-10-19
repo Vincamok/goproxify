@@ -237,10 +237,13 @@ func verifyData(stored []byte) error {
 // VerifySnapshot relit un snapshot stocké et le contrôle ; l'horodatage de vérification n'est
 // posé qu'en cas de succès.
 func (s *Scheduler) VerifySnapshot(id string) error {
-	var data []byte
-	var sum string
-	if err := s.db.QueryRow(`SELECT data, sha256 FROM backup_snapshots WHERE id=?`, id).Scan(&data, &sum); err != nil {
+	var inDB, sum string
+	if err := s.db.QueryRow(`SELECT data, sha256 FROM backup_snapshots WHERE id=?`, id).Scan(&inDB, &sum); err != nil {
 		return errors.New("snapshot introuvable")
+	}
+	data, err := s.snapshotBytes(id, inDB)
+	if err != nil {
+		return err
 	}
 	got := sha256Hex(data)
 	if sum != "" && got != sum {

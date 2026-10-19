@@ -8,7 +8,7 @@ Ce document décrit le menu **Sauvegardes** de l'Administration : le fonctionnem
 |---|---|
 | Format | JSON (`.gpx-admin-backup`), champ `version: "1"` |
 | Déclenchement | Manuel (bouton, CLI) ou planifié (jusqu'à **5 planifications** : quotidienne, hebdomadaire, mensuelle, annuelle, ou cron libre) |
-| Stockage | Table `backup_snapshots` de la base Admin **et** copie `<storage.base_path>/backups/<id>.snap` sur disque (fallback si la base est illisible) |
+| Stockage | Fichier `<storage.base_path>/backups/<horodatage>_<nom>_<id>.snap` (copie de référence) ; la table `backup_snapshots` de la base Admin n'en garde que les métadonnées (nom, taille, somme de contrôle, vérification). Sans `storage.base_path`, ou si l'écriture du fichier échoue, le contenu reste dans la colonne `data` de la base. La rétention d'une planification supprime aussi les fichiers |
 | Rétention | Par planification (`retention` = nombre max de snapshots, 0 = illimité). Les snapshots manuels ne sont jamais purgés automatiquement |
 | Chiffrement | AES-256-GCM avec la clé de chiffrement des sauvegardes : variable `GPX_BACKUP_KEY`, ou clé générée / saisie dans *Sauvegardes › Clé de chiffrement* (§4 quinquies). Snapshot entier chiffré (préfixe `GPXBK1:`), relisible avec la clé active ou une clé retirée. Sans clé, le snapshot est en clair, **sans secrets et sans section `secrets`** (§4) |
 | Import d'un fichier | Menu Sauvegardes → *Restaurer* : analyse (`/api/v1/import/backup/preview`), sélection des entités, application (`/api/v1/import/backup/apply`) |
@@ -117,7 +117,7 @@ Si `GPX_BACKUP_KEY` est définie, le snapshot contient en plus une section `secr
 | Agents | Chaque Agent approuvé copie ses fichiers d'état (`agent.token`, `agent.hmac`, `agent-node-id`, `agent-edges.json`) chez sa passerelle (message `agent_state`, à chaque connexion et après rotation du HMAC) ; ils font partie de l'état de la passerelle sauvegardé. Un Agent qui revient **sans** token ni HMAC (volume perdu) reçoit ses fichiers de sa passerelle (`restore_state`) ; le HMAC courant de la passerelle fait foi. Redémarrer l'Agent pour l'identité. Sans `GPX_IDENTITY_NODE_NAME`, un Agent au volume perdu reçoit un nouvel identifiant : il est alors un nouvel Agent à approuver |
 | Historique | Option *Inclure l'historique* d'une planification, ou *Créer avec l'historique* : journaux, audit, bans passés, menaces, CVE, alertes émises, événements de nœuds, exécutions, historiques de déploiement et de proxy, audit et demandes du portail. Section `history` chiffrée à part (`GPXHIS1:`), **clé obligatoire** (jamais en clair : adresses IP, actions d'administrateurs). `logs` : 100 000 lignes les plus récentes ; autres tables : 500 000. Restauration : case *Historique* (décochée par défaut, superadmin), **ajout sans écrasement** (identifiant déjà présent = ignoré). Les adresses IP des logs sont chiffrées par les clés RGPD : restaurer aussi les secrets, sinon elles restent illisibles |
 
-**Taille** : un snapshot avec historique et états de passerelles peut peser plusieurs centaines de Mo (stocké dans `admin.db` et dans `backups/`). Réserver l'historique à une planification dédiée (hebdomadaire, par exemple) avec une rétention courte.
+**Taille** : un snapshot avec historique et états de passerelles peut peser plusieurs centaines de Mo (stocké dans `backups/`, plus dans la base depuis Admin 0.164.3). Réserver l'historique à une planification dédiée (hebdomadaire, par exemple) avec une rétention courte.
 
 ## 4 quinquies. Clé de chiffrement gérée depuis l'interface
 
@@ -168,3 +168,5 @@ sqlite3 admin.db "PRAGMA auto_vacuum=INCREMENTAL; VACUUM;"
 ```
 
 Si `admin.db-wal` est déjà énorme, l'Admin le recopie et le tronque au premier démarrage de cette version (plusieurs minutes pour quelques dizaines de Go) ; ne pas supprimer ce fichier à la main, il contient des écritures non encore reportées dans `admin.db`.
+
+Avant Admin 0.164.3, chaque snapshot était gardé deux fois : dans la colonne `data` de `backup_snapshots` et dans `backups/` (1,7 Go de base pour 12 snapshots de 40 à 160 Mo sur un serveur réel). Au premier démarrage de cette version, l'Admin vide la copie en base de chaque snapshot dont le fichier existe et est **identique** (octet pour octet) ; un fichier absent est d'abord écrit depuis la base, un fichier différent laisse la copie en base intacte (avertissement dans les journaux). Les pages libérées ne rendent pas d'espace au disque tant que la base n'est pas compactée : refaire le `VACUUM` ci-dessus après cette migration.

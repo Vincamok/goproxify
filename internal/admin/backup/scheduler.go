@@ -158,6 +158,7 @@ func (s *Scheduler) SecretDirs() map[string]string {
 
 // Start lance la boucle de planification en arrière-plan.
 func (s *Scheduler) Start(ctx context.Context) {
+	go s.MigrateSnapshotsToFiles()
 	go s.loop(ctx)
 	go s.staleLoop(ctx)
 }
@@ -600,16 +601,24 @@ func (s *Scheduler) takeSnapshot(name string, scheduleID string, retention int, 
 
 	s.run.setPhase(PhaseStore)
 	id := uuid.New().String()
+	// Le fichier de snapDir est la copie de référence : la base n'en garde que les métadonnées. Sans
+	// répertoire de snapshots, ou si l'écriture échoue, le contenu reste en base comme avant.
+	inDB := string(data)
+	if s.writeSnapFile(id, name, data, time.Now()) {
+		inDB = ""
+	}
 	_, err = s.db.Exec(
 		`INSERT INTO backup_snapshots (id, name, schedule_id, size, data, sha256) VALUES (?, ?, ?, ?, ?, ?)`,
-		id, name, scheduleID, len(data), string(data), sha256Hex(data))
+		id, name, scheduleID, len(data), inDB, sha256Hex(data))
 	if err != nil {
+		s.deleteSnapFile(id)
 		return fmt.Errorf("insert: %w", err)
 	}
 	// Un snapshot qui ne se relit pas ne doit pas passer pour une sauvegarde valide.
 	s.run.setPhase(PhaseVerify)
 	if err := s.VerifySnapshot(id); err != nil {
 		s.db.Exec(`DELETE FROM backup_snapshots WHERE id=?`, id) //nolint:errcheck
+		s.deleteSnapFile(id)
 		return fmt.Errorf("vérification: %w", err)
 	}
 
@@ -617,23 +626,22 @@ func (s *Scheduler) takeSnapshot(name string, scheduleID string, retention int, 
 		s.pruneSchedule(scheduleID, retention)
 	}
 
-	s.writeSnapFile(id, name, data)
 	go s.deliver(id, name, data)
 	s.log.Info("backup: snapshot créé", "id", id, "name", name, "bytes", len(data), "schedule_id", scheduleID)
 	return nil
 }
 
-// writeSnapFile persiste le snapshot chiffré dans snapDir/<id>.snap.
-func (s *Scheduler) writeSnapFile(id, name string, data []byte) {
+// writeSnapFile persiste le snapshot chiffré dans snapDir et indique si le fichier est bien écrit.
+func (s *Scheduler) writeSnapFile(id, name string, data []byte, at time.Time) bool {
 	if s.snapDir == "" {
-		return
+		return false
 	}
 	if err := os.MkdirAll(s.snapDir, 0o700); err != nil {
 		s.log.Warn("backup: création snapDir", "err", err)
-		return
+		return false
 	}
 	// Fichier : <timestamp>_<name-sanitized>_<id>.snap
-	ts := time.Now().UTC().Format("20060102T150405Z")
+	ts := at.UTC().Format("20060102T150405Z")
 	safe := strings.Map(func(r rune) rune {
 		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_' {
 			return r
@@ -643,19 +651,33 @@ func (s *Scheduler) writeSnapFile(id, name string, data []byte) {
 	fname := ts + "_" + safe + "_" + id + ".snap"
 	if err := os.WriteFile(filepath.Join(s.snapDir, fname), data, 0o600); err != nil {
 		s.log.Warn("backup: écriture snapshot disque", "id", id, "err", err)
+		return false
 	}
+	return true
 }
 
 func (s *Scheduler) pruneSchedule(scheduleID string, keep int) {
-	// Sous-requête imbriquée : SQLite exige cela pour DELETE + LIMIT sur la même table.
-	_, err := s.db.Exec(
-		`DELETE FROM backup_snapshots WHERE schedule_id = ? AND id NOT IN (
-			SELECT id FROM (
-				SELECT id FROM backup_snapshots WHERE schedule_id = ? ORDER BY created_at DESC LIMIT ?
-			)
-		)`, scheduleID, scheduleID, keep)
+	rows, err := s.db.Query(
+		`SELECT id FROM backup_snapshots WHERE schedule_id = ? ORDER BY created_at DESC LIMIT -1 OFFSET ?`, scheduleID, keep)
 	if err != nil {
 		s.log.Warn("backup: prune échoué", "schedule_id", scheduleID, "err", err)
+		return
+	}
+	var drop []string
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			drop = append(drop, id)
+		}
+	}
+	rows.Close()
+	for _, id := range drop {
+		if _, err := s.db.Exec(`DELETE FROM backup_snapshots WHERE id = ?`, id); err != nil {
+			s.log.Warn("backup: prune échoué", "schedule_id", scheduleID, "id", id, "err", err)
+			continue
+		}
+		// Le fichier est la copie de référence : sans cette suppression, backups/ grossissait sans limite.
+		s.deleteSnapFile(id)
 	}
 }
 
@@ -739,7 +761,11 @@ func (s *Scheduler) GetSnapshotData(id string) ([]byte, string, error) {
 	var data, name string
 	err := s.db.QueryRow(`SELECT data, name FROM backup_snapshots WHERE id=?`, id).Scan(&data, &name)
 	if err == nil {
-		plain, err := openSnapshot([]byte(data))
+		raw, err := s.snapshotBytes(id, data)
+		if err != nil {
+			return nil, "", err
+		}
+		plain, err := openSnapshot(raw)
 		if err != nil {
 			return nil, "", err
 		}
@@ -792,6 +818,36 @@ func (s *Scheduler) DeleteSnapshot(id string) error {
 		}
 	}
 	return fmt.Errorf("snapshot introuvable")
+}
+
+// snapFilePath retourne le fichier de snapDir d'un snapshot, ou "" s'il n'y en a pas.
+func (s *Scheduler) snapFilePath(id string) string {
+	if s.snapDir == "" || id == "" {
+		return ""
+	}
+	entries, err := os.ReadDir(s.snapDir)
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), "_"+id+".snap") {
+			return filepath.Join(s.snapDir, e.Name())
+		}
+	}
+	return ""
+}
+
+// snapshotBytes retourne le contenu chiffré d'un snapshot : celui de la base quand il y est encore
+// (snapshots d'avant le stockage en fichier, ou snapDir absent), sinon son fichier.
+func (s *Scheduler) snapshotBytes(id, inDB string) ([]byte, error) {
+	if inDB != "" {
+		return []byte(inDB), nil
+	}
+	p := s.snapFilePath(id)
+	if p == "" {
+		return nil, fmt.Errorf("fichier du snapshot introuvable")
+	}
+	return os.ReadFile(p)
 }
 
 func (s *Scheduler) deleteSnapFile(id string) {
