@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -513,6 +514,7 @@ func (s *Server) handleAgentContainerStart(w http.ResponseWriter, r *http.Reques
 	}
 	if existing != nil {
 		merged := mergeDiscoveryBackends(existing.Backends, backends)
+		unchanged := slices.Equal(existing.Backends, merged)
 		existing.Backends = merged
 		// Re-label : ce conteneur n'est plus canary/shadow
 		if existing.Canary != nil && containerIDMatch(existing.Canary.ContainerID, p.ContainerID) {
@@ -524,7 +526,14 @@ func (s *Server) handleAgentContainerStart(w http.ResponseWriter, r *http.Reques
 		applyMeta(existing)
 		s.table.Upsert(existing)
 		metrics.Edge.RouteCount.Set(float64(s.table.Len()))
-		s.log.Info("agent: backend ajouté au pool", "host", p.Host, "container", p.ContainerID, "backends", len(merged), "agent", p.AgentName)
+		// Une réannonce identique (poll Portainer, resync de l'Agent) ne change rien : elle ne passe pas
+		// en information, sinon chaque conteneur ajoutait une ligne de log par annonce (1 600 par minute
+		// observées sur un serveur réel, soit 90 % des insertions de l'Admin).
+		if unchanged {
+			s.log.Debug("agent: backend déjà dans le pool", "host", p.Host, "container", p.ContainerID, "backends", len(merged), "agent", p.AgentName)
+		} else {
+			s.log.Info("agent: backend ajouté au pool", "host", p.Host, "container", p.ContainerID, "backends", len(merged), "agent", p.AgentName)
+		}
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
