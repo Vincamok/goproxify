@@ -1,6 +1,6 @@
 # ADR 0010 — Logs : agrégats par minute, base séparée, fichiers par période
 
-**Statut :** proposé · **Date :** 2026-10-18
+**Statut :** proposé, étape 1 partiellement livrée (Admin 0.164.0) · **Date :** 2026-10-18
 **Complète :** ADR-0002 (SQLite pour l'Admin) · **Respecte :** ADR-0006 (autonomie des composants)
 
 ---
@@ -94,6 +94,7 @@ Les logs passent dans leurs propres fichiers SQLite, dans un dossier voisin de l
 ## Ordre de mise en œuvre
 
 1. Agrégats par minute et écriture par lots, dans `admin.db` (gain le plus grand, aucun changement de fichier). Mesurer à ce stade si les blocages de fichiers statiques disparaissent.
+   *Livré en Admin 0.164.0 (agrégats seuls)* : table `logs_minute` (requêtes, octets, latences, robots ; clé minute × passerelle × domaine × code), alimentée par une tâche de fond qui avance un repère d'id dans la même transaction (au lieu d'une accumulation en mémoire à l'écriture : même résultat, rattrapage de l'historique inclus, `Store.Write` inchangé). KPIs, courbe, codes HTTP et SLO les lisent pour toute fenêtre d'au moins une heure sans filtre IP ni chemin. Restent : l'écriture par lots, l'histogramme de logs, `/nodes/live`, les p95 par bucket et les IP uniques.
 2. Déplacer les logs et les agrégats dans leurs fichiers, hors de `admin.db`.
 3. Découper par période et par type, avec la couche de lecture multi-fichiers, la rétention par fichier et l'effacement RGPD.
 

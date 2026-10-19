@@ -154,9 +154,14 @@ func where(p Params) (string, []any) {
 // rawKPIs fait un seul scan pour extraire les métriques agrégées de la période.
 // Pas de COUNT(DISTINCT ip) ici — trop coûteux ; voir GetUniqueIPs.
 func rawKPIs(db *sql.DB, p Params) (reqs, bw, errs, bots int64, avgLat float64) {
-	w, args := where(p)
 	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
+	if aggUsable(ctx, db, p) {
+		if r, b, e, bt, a, err := aggTotals(ctx, db, p); err == nil {
+			return r, b, e, bt, a
+		}
+	}
+	w, args := where(p)
 	db.QueryRowContext(ctx, //nolint:errcheck
 		`SELECT
 		   COUNT(*),
@@ -186,7 +191,7 @@ func GetKPIs(db *sql.DB, p Params, includeUnique bool) KPIs {
 	reqs, bw, errs, bots, avgLat := rawKPIs(db, p)
 
 	dur := p.To.Sub(p.From)
-	prev := Params{Proxy: p.Proxy, NodeName: p.NodeName, From: p.From.Add(-dur), To: p.From}
+	prev := Params{Proxy: p.Proxy, NodeName: p.NodeName, From: p.From.Add(-dur), To: p.From.Add(-time.Second)}
 	preReqs, preBW, preErrs, _, _ := rawKPIs(db, prev)
 
 	errRate, preErrRate := 0.0, 0.0
@@ -245,9 +250,14 @@ func GetTimeline(db *sql.DB, p Params, bucket string) []TimePoint {
 	default:
 		tfmt = "%Y-%m-%dT%H:00"
 	}
-	w, args := where(p)
 	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
+	if aggUsable(ctx, db, p) {
+		if out, err := aggTimeline(ctx, db, p, tfmt); err == nil {
+			return out
+		}
+	}
+	w, args := where(p)
 	rows, err := db.QueryContext(ctx,
 		`SELECT strftime('`+tfmt+`', ts, 'localtime') as b, COUNT(*), SUM(CASE WHEN status>=400 THEN 1 ELSE 0 END), COALESCE(SUM(bytes),0)
 		 FROM logs `+w+` GROUP BY b ORDER BY b`, args...)
@@ -266,11 +276,18 @@ func GetTimeline(db *sql.DB, p Params, bucket string) []TimePoint {
 
 // GetStatusGroups retourne la répartition par famille de codes HTTP.
 func GetStatusGroups(db *sql.DB, p Params) []StatusGroup {
-	w, args := where(p)
 	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
-	rows, err := db.QueryContext(ctx,
-		`SELECT status, COUNT(*) FROM logs `+w+` GROUP BY status ORDER BY status`, args...)
+	var rows *sql.Rows
+	var err error
+	if aggUsable(ctx, db, p) {
+		rows, err = aggStatusCounts(ctx, db, p)
+	}
+	if rows == nil || err != nil {
+		w, args := where(p)
+		rows, err = db.QueryContext(ctx,
+			`SELECT status, COUNT(*) FROM logs `+w+` GROUP BY status ORDER BY status`, args...)
+	}
 	if err != nil {
 		return nil
 	}

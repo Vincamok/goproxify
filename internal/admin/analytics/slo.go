@@ -99,6 +99,14 @@ type SLO struct {
 }
 
 func countReqErr(ctx context.Context, db *sql.DB, p Params) (reqs, errs int64) {
+	if aggUsable(ctx, db, p) {
+		w, args := aggWhere(p)
+		if err := db.QueryRowContext(ctx,
+			`SELECT COALESCE(SUM(requests),0), COALESCE(SUM(CASE WHEN status >= 500 THEN requests ELSE 0 END),0) FROM logs_minute `+w,
+			args...).Scan(&reqs, &errs); err == nil {
+			return
+		}
+	}
 	w, args := where(p)
 	_ = db.QueryRowContext(ctx,
 		`SELECT COUNT(*), COALESCE(SUM(CASE WHEN status >= 500 THEN 1 ELSE 0 END),0) FROM logs `+w, args...).Scan(&reqs, &errs)

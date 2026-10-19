@@ -95,7 +95,7 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - [x] **Portail Access : enregistrement et rejeu des sessions** (sortie du terminal chiffrée sur la passerelle, conservation réglable, lecteur dans l'admin ; API, CLI, MCP) — livré
 - [x] **Portail Access : observation en direct d'une session** (sortie du terminal, journalisée ; UI, API, CLI) et **notification email** des demandes d'accès — livré
 - [x] SBOM attaché à chaque Release (workflow sbom-sign.yml)
-- [ ] **Logs à grande échelle** : agrégats par minute pour les tableaux de bord (Prism, SLO, histogramme), base de logs séparée de `admin.db`, fichiers par période avec rétention par suppression de fichier — conception dans [ADR 0010](../docs/adr/0010-logs-agregats-et-fichiers-par-periode.md), aucun code livré
+- [ ] **Logs à grande échelle** (agrégats par minute pour KPIs, courbe, codes HTTP et SLO livrés en Admin 0.164.0 ; reste l'histogramme, les IP uniques, la base séparée et les fichiers par période) : agrégats par minute pour les tableaux de bord (Prism, SLO, histogramme), base de logs séparée de `admin.db`, fichiers par période avec rétention par suppression de fichier — conception dans [ADR 0010](../docs/adr/0010-logs-agregats-et-fichiers-par-periode.md), aucun code livré
 
 ### Résilience backend (v0.4)
 

@@ -182,6 +182,25 @@ func migrate(db *sql.DB) error {
 		// status dans l'index : les comptages par période (SLO 30 j…) ne lisent pas la table.
 		`CREATE INDEX IF NOT EXISTS idx_logs_access_ts_status ON logs (ts, status) WHERE status > 0`,
 		`CREATE INDEX IF NOT EXISTS idx_logs_access_domain_ts ON logs (domain, ts) WHERE status > 0`,
+		// Agrégats d'accès par minute (ADR 0010) : les tableaux de bord les lisent à la place des lignes
+		// de logs. Aucune IP, aucun identifiant : données non personnelles, conservées plus longtemps
+		// que les lignes brutes. minute = AAAA-MM-JJTHH:MM en UTC. logs_minute_state porte le dernier id
+		// de logs déjà agrégé et l'indicateur « historique rattrapé ».
+		`CREATE TABLE IF NOT EXISTS logs_minute (
+			minute         TEXT    NOT NULL,
+			node_name      TEXT    NOT NULL DEFAULT '',
+			domain         TEXT    NOT NULL DEFAULT '',
+			status         INTEGER NOT NULL,
+			requests       INTEGER NOT NULL,
+			bytes          INTEGER NOT NULL DEFAULT 0,
+			latency_ms_sum INTEGER NOT NULL DEFAULT 0,
+			bots           INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (minute, node_name, domain, status)
+		) WITHOUT ROWID`,
+		`CREATE TABLE IF NOT EXISTS logs_minute_state (
+			k TEXT PRIMARY KEY,
+			v INTEGER NOT NULL
+		)`,
 		// Bans IP (Fail2Ban, CrowdSec, natif)
 		`CREATE TABLE IF NOT EXISTS security_bans (
 			id         TEXT PRIMARY KEY,

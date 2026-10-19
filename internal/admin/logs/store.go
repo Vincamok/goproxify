@@ -744,6 +744,7 @@ func (s *Store) purgeRetained() {
 	s.db.Exec(`DELETE FROM logs WHERE retained_until IS NOT NULL AND retained_until < ?`, //nolint:errcheck
 		time.Now().UTC().Format(time.RFC3339))
 	s.purgeIPTraces()
+	s.purgeAggregates(DefaultRetentionAggDays)
 }
 
 // purgeIPTraces applique la rétention aux tables qui gardent une IP hors de `logs` : l'historique
