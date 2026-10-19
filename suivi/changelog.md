@@ -22,6 +22,12 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ### Corrigé
 
+- **Admin : `admin.db-wal` à 16 Go et logs gonflés par le polling (Admin 0.163.1)** : sur un serveur réel, `admin.db` pesait 5,3 Go et son WAL 16,3 Go. Les tableaux de bord rafraîchis toutes les quelques secondes ne laissaient jamais le créneau sans lecture dont SQLite a besoin pour recycler le WAL, et chacun de leurs appels ajoutait une ligne à `logs`.
+  - **WAL** : point de contrôle `TRUNCATE` chaque minute, `journal_size_limit` à 256 Mo ; avertissement dans les journaux si une lecture longue le retarde.
+  - **Espace rendu** : `auto_vacuum` incrémental (une base existante se compacte une fois, voir `docs/sauvegardes.md` §7) ; `incremental_vacuum` à chaque passe de maintenance.
+  - **Logs** : l'Admin ne journalise plus les lectures réussies de rafraîchissement (`/nodes/live`, `/metrics/`, `/prism/`, `/backends/health`, `/certs/acme-monitor`, `/portal/sessions`) ni ses fichiers statiques ; erreurs et écritures restent journalisées.
+  - **ADR 0010** : rétention des logs d'accès corrigée à 90 jours (365 avant Admin 0.163.0) et WAL ajouté aux problèmes mesurés.
+
 - **RGPD : l'effacement par IP couvre les bans, leur historique et le cache GeoIP, et leur rétention est appliquée (Admin 0.162.1)** : `DELETE /api/v1/logs/by-ip/{ip}` ne supprimait que les lignes de `logs`, alors que `security_bans`, `security_ban_history` et `geoip_cache` gardent l'IP en clair (le cache y ajoute ville et coordonnées). La documentation annonçait aussi 730 jours pour l'historique des bans, mais aucune purge n'existait.
   - **Effacement** : la réponse devient `{deleted, bans_deleted, ban_history_deleted, geoip_cache_deleted, ip}` ; l'IP est trouvée quelle que soit sa notation (IPv6). Les bans supprimés sont aussi levés sur les passerelles (comme un déban), y compris ceux qu'elles ont posés elles-mêmes. L'audit `rgpd_erasure_ip` détaille les compteurs, toujours sans l'IP en clair.
   - **Rétention** : la purge quotidienne supprime l'historique des bans et les bans **expirés** depuis plus de `retention_ban_days` (730 par défaut, `GET/PUT /api/v1/logs/settings`, réglage `logs.retention_ban_days`), et les entrées du cache GeoIP plus anciennes que `retention_access_days`. Un ban encore actif, ou permanent, n'est jamais purgé.

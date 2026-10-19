@@ -9,18 +9,19 @@
 
 Tous les logs (accès HTTP des passerelles, système, audit de l'Admin lui-même) vont dans une seule table `logs` de `admin.db`, à côté des nœuds, des tokens, des bans et de la configuration. Sur un serveur réel elle dépasse 5 millions de lignes. L'Admin écrit ses propres requêtes dans cette table : chaque appel d'API ajoute une ligne.
 
-Trois problèmes mesurés le 2026-10-18 :
+Quatre problèmes mesurés les 2026-10-18 et 2026-10-19 :
 
 1. **Les tableaux de bord relisent toute leur fenêtre à chaque appel.** Sur ce serveur, `/prism/compare` met 5,2 s, `/logs/histogram` 4,7 s, `/prism/kpis` 3,5 s, `/prism/anomalies` 2,6 s, `/prism/slo` 1,7 s. Le coût suit le nombre de lignes de la période, donc le trafic.
 2. **Un mauvais plan suffit à parcourir toute la table.** Sans `ANALYZE` (jamais exécuté), la sonde `/nodes/live`, appelée toutes les 5 s, lisait tout un index : 1,2 s par appel, jusqu'à 9 s sous charge. Corrigé avec `INDEXED BY` (Admin 0.156.1), mais rien n'empêche la même erreur ailleurs.
 3. **Les logs et la configuration partagent un fichier.** Une grosse lecture ou une purge de logs ralentit la configuration, les sauvegardes embarquent des gigaoctets de logs, et la purge (`DELETE` massif) laisse un fichier qui ne rétrécit pas.
+4. **Le WAL ne se recycle jamais.** Relevé le 2026-10-19 sur ce serveur : `admin.db` 5,3 Go, `admin.db-wal` **16,3 Go**. Le point de contrôle automatique ne recycle le WAL que lorsqu'aucune lecture n'est en cours ; les tableaux de bord rafraîchis toutes les quelques secondes sur 10 connexions ne laissent jamais ce créneau. Corrigé en Admin 0.163.1 (point de contrôle `TRUNCATE` chaque minute, `journal_size_limit`, `auto_vacuum` incrémental), indépendamment des trois changements ci-dessous. Admin 0.163.1 cesse aussi de journaliser les lectures de rafraîchissement et les fichiers statiques de son interface.
 
 Deux faits relevés dans le code limitent ce qu'on peut affirmer :
 
 - Le pool compte 10 connexions en mode WAL : le blocage observé de fichiers statiques (jusqu'à 4 s) **n'est donc pas** un verrou de connexion unique. La cause n'est pas établie (CPU, disque, point de contrôle WAL ?) ; à mesurer avant de promettre que la séparation la supprime.
 - `Store.Write` fait un `INSERT` et une transaction par entrée, sans regroupement.
 
-La rétention existe déjà en deux classes : accès HTTP 365 jours, système 90 jours (`retained_until`, purge quotidienne par `DELETE`).
+La rétention existe déjà en deux classes : accès HTTP 90 jours (ramené de 365 à 90 par Admin 0.163.0, défauts RGPD), système 90 jours, historique des bans 365 jours (`retained_until`, purge quotidienne par `DELETE`).
 
 ---
 
@@ -51,7 +52,7 @@ Les logs passent dans leurs propres fichiers SQLite, dans un dossier voisin de l
 
 ### 3. Un fichier par période et par type
 
-- **Accès HTTP** (`status > 0`) : un fichier par semaine. **Système et audit** : un fichier par mois. La rétention de chaque type garde ses valeurs par défaut (365 et 90 jours).
+- **Accès HTTP** (`status > 0`) : un fichier par semaine. **Système et audit** : un fichier par mois. La rétention de chaque type garde ses valeurs par défaut (90 jours chacun).
 - **Écriture** : seul le fichier courant est ouvert en écriture ; les autres sont en lecture seule.
 - **Lecture** : une requête interroge les fichiers qui recouvrent sa fenêtre, un par un, et fusionne dans le code Go (pas d'`ATTACH`, limité à 10 fichiers par défaut). Une fenêtre de 24 h touche un ou deux fichiers.
 - **Identifiants** : `id` devient global, `(numéro de fichier << 40) | rowid`, pour que `before_id` et la pagination continuent de fonctionner à travers les fichiers.

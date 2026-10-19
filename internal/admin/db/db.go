@@ -26,7 +26,11 @@ func Open(path string) (*sql.DB, error) {
 	// contrairement à db.Exec("PRAGMA ...") qui n'affecte qu'une seule connexion.
 	// busy_timeout=10000 : attend jusqu'à 10 s avant de retourner SQLITE_BUSY.
 	// journal_mode=WAL : lectures concurrentes sans bloquer les écritures.
-	dsn := "file:" + path + "?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)"
+	// auto_vacuum(INCREMENTAL) ne s'applique qu'à une base créée avec (ou après un VACUUM) : il permet à
+	// la purge des logs de rendre l'espace au disque. journal_size_limit tronque le WAL à 256 Mo après
+	// un point de contrôle complet au lieu de le laisser à sa taille maximale.
+	dsn := "file:" + path + "?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)" +
+		"&_pragma=auto_vacuum(2)&_pragma=journal_size_limit(268435456)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("ouverture SQLite %q : %w", path, err)

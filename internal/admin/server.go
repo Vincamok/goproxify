@@ -631,6 +631,8 @@ func (s *Server) Start(ctx context.Context) error {
 	mon := monitor.New(s.db, s.log, s.alertingEngine, monitor.DefaultConfig())
 	mon.Start(ctx)
 
+	admindb.StartMaintenance(ctx, s.db, s.log)
+
 	// Rétention des logs RGPD (lit logs.retention_access_days / logs.retention_system_days dans settings).
 	s.logStore.StartRetentionLoop(ctx, func() (accessDays, systemDays, banDays int) {
 		parseInt := func(key string, def int) int {

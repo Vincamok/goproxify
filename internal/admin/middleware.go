@@ -45,6 +45,41 @@ func (sw *statusWriter) Flush() {
 	}
 }
 
+// pollingPrefixes liste les lectures que l'interface rappelle toutes les 4 à 30 s : une ligne par
+// appel noyait la table logs (une page ouverte = plus de 17 000 lignes par jour et par onglet).
+var pollingPrefixes = []string{
+	"/api/v1/nodes/live",
+	"/api/v1/metrics/",
+	"/api/v1/prism/",
+	"/api/v1/backends/health",
+	"/api/v1/certs/acme-monitor",
+	"/api/v1/portal/sessions",
+}
+
+var staticExts = []string{".js", ".css", ".map", ".svg", ".png", ".jpg", ".ico", ".woff", ".woff2"}
+
+// isPollingRead écarte du journal les lectures réussies de rafraîchissement et les fichiers
+// statiques de l'interface ; les erreurs (>= 400) et toute écriture restent journalisées.
+func isPollingRead(method, path string, status int) bool {
+	if (method != http.MethodGet && method != http.MethodHead) || status >= 400 {
+		return false
+	}
+	for _, p := range pollingPrefixes {
+		if strings.HasPrefix(path, p) {
+			return true
+		}
+	}
+	if strings.HasPrefix(path, "/api/") {
+		return false
+	}
+	for _, e := range staticExts {
+		if strings.HasSuffix(path, e) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) logMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -57,7 +92,8 @@ func (s *Server) logMiddleware(next http.Handler) http.Handler {
 
 		if strings.HasPrefix(r.URL.Path, "/api/v1/health") ||
 			strings.HasPrefix(r.URL.Path, "/api/v1/logs/live") ||
-			strings.HasPrefix(r.URL.Path, "/internal/v1/") {
+			strings.HasPrefix(r.URL.Path, "/internal/v1/") ||
+			isPollingRead(r.Method, r.URL.Path, sw.status) {
 			return
 		}
 		latency := time.Since(start).Milliseconds()

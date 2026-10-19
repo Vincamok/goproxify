@@ -156,3 +156,15 @@ Si `GPX_BACKUP_KEY` est définie, le snapshot contient en plus une section `secr
 4. Pour un cluster HA, définir `GPX_BACKUP_KEY` : la config HA effective est dans la section `secrets`, restaurée dans `restored-config/` (§2.3).
 5. Pour les passerelles, vérifier dans la page Sauvegardes (ou les journaux de l'Admin) qu'aucune n'était injoignable lors du snapshot : une passerelle absente est signalée par une alerte `backup_failed`.
 6. Tester une restauration sur une instance de test après tout changement majeur.
+
+## 7. Taille de `admin.db` et de son WAL
+
+L'Admin garde son journal d'écriture (`admin.db-wal`) sous 256 Mo : un point de contrôle `TRUNCATE` est lancé chaque minute, et `journal_size_limit` tronque le fichier après un point de contrôle complet. Une lecture très longue peut le retarder ; l'Admin le signale alors dans ses journaux (`point de contrôle WAL incomplet`).
+
+La purge des logs libère des pages sans rétrécir le fichier. Une base **créée** par Admin ≥ 0.163.1 est en `auto_vacuum` incrémental et rend l'espace au disque (jusqu'à ~40 Mo par minute). Une base plus ancienne doit être compactée **une fois**, Admin arrêté, avec de la place libre ≥ à sa taille :
+
+```bash
+sqlite3 admin.db "PRAGMA auto_vacuum=INCREMENTAL; VACUUM;"
+```
+
+Si `admin.db-wal` est déjà énorme, l'Admin le recopie et le tronque au premier démarrage de cette version (plusieurs minutes pour quelques dizaines de Go) ; ne pas supprimer ce fichier à la main, il contient des écritures non encore reportées dans `admin.db`.
