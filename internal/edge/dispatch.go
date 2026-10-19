@@ -145,7 +145,9 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 	// Utilise CF-Connecting-IP / X-Forwarded-For si disponible (Cloudflare, reverse proxy).
 	remoteIP := edgelog.RealIP(r)
 	if blocked, reason := s.profileStore.CheckBlocked(remoteIP); blocked {
-		s.log.Warn("ip bloquée par profil", "ip", remoteIP, "profile", reason)
+		if ok, n := s.blockLog.Allow("profil|" + remoteIP); ok {
+			s.log.Warn("ip bloquée par profil", blockedAttrs(n, "ip", remoteIP, "profile", reason)...)
+		}
 		tracing.Event(r.Context(), "ip_profile.blocked")
 		serveDefaultError(w, r, http.StatusForbidden)
 		return
@@ -153,7 +155,9 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 	// Bans Fail2Ban / CrowdSec / natifs — les profils allow (et IPs privées) passent outre.
 	if !s.profileStore.IsAllowed(remoteIP) {
 		if blocked, reason := s.banStore.CheckBlocked(remoteIP); blocked {
-			s.log.Warn("ip bloquée par ban", "ip", remoteIP, "reason", reason)
+			if ok, n := s.blockLog.Allow("ban|" + remoteIP); ok {
+				s.log.Warn("ip bloquée par ban", blockedAttrs(n, "ip", remoteIP, "reason", reason)...)
+			}
 			tracing.Event(r.Context(), "ban.blocked", attribute.String("source", banSource(reason)))
 			if strings.HasPrefix(reason, "threat") {
 				s.rejectThreat(w, r)
@@ -172,7 +176,9 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 			r = threat.WithSignal(r, reason)
 			tracing.Event(r.Context(), "ephor.signal", attribute.String("reason", reason), attribute.Bool("blocked", blocked))
 			if blocked {
-				s.log.Warn("ip bloquée par moteur de détection", "ip", remoteIP, "reason", reason)
+				if ok, n := s.blockLog.Allow("moteur|" + remoteIP); ok {
+					s.log.Warn("ip bloquée par moteur de détection", blockedAttrs(n, "ip", remoteIP, "reason", reason)...)
+				}
 				s.rejectThreat(w, r)
 				return
 			}

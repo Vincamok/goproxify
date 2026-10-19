@@ -68,6 +68,7 @@ type Server struct {
 	providerStore   *router.AuthProviderStore
 	profileStore    *router.IPProfileStore
 	banStore        *router.BanStore
+	blockLog        *repeatLimiter // regroupe les refus répétés d'une même IP dans le journal
 	bansDB          *bansdb.DB
 	threatEngine    *threat.Engine
 	f2bEngine       *edgef2b.Engine
@@ -174,6 +175,7 @@ func New(cfg *config.EdgeConfig) (*Server, error) {
 		providerStore:   router.NewAuthProviderStore(),
 		profileStore:    router.NewIPProfileStore(),
 		banStore:        router.NewBanStore(),
+		blockLog:        newRepeatLimiter(blockLogWindow),
 		bansDB:          bdb,
 		cache:           edgecache.New(cachePath, secret),
 		tcpPorts:        make(map[string]interface{ Stop() }),
