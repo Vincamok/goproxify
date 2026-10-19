@@ -202,18 +202,22 @@ func ipProtectionPushed(db *sql.DB) bool {
 	return false
 }
 
+// errorCountsQuery : INDEXED BY idx_logs_ts, sans quoi (aucun ANALYZE) SQLite choisit un autre index et
+// parcourt toute la table : 1 min 39 s pour une fenêtre de 10 minutes sur 5,4 millions de lignes, lancée
+// toutes les 30 s.
+const errorCountsQuery = `SELECT ip, COUNT(*) as n FROM logs INDEXED BY idx_logs_ts
+	 WHERE ts > ?
+	   AND status >= 400 AND status < 500 AND status != 404
+	   AND ip != '' AND component = 'edge' AND ip_truncated = 0
+	 GROUP BY ip HAVING n >= ? OR instr(ip, ':') > 0`
+
 // errorCounts compte, depuis since, les erreurs client par cible de ban (voir banKey). Seules les
 // erreurs CLIENT (4xx hors 404) comptent — les 5xx (502, 503…) sont des erreurs backend, pas de
 // l'abus utilisateur. En SQL, le seuil n'écarte que les IPv4 seules : les autres valeurs (IPv6,
 // IP:port) sont regroupées ici et c'est le groupe qui doit l'atteindre. Les IP tronquées par la
 // passerelle sont écartées : x.x.x.0 ne bannirait personne, un /48 tronqué bannirait son premier /64.
 func (e *Engine) errorCounts(since time.Time, maxErr int, whitelist []string) map[string]int {
-	rows, err := e.db.Query(
-		`SELECT ip, COUNT(*) as n FROM logs
-		 WHERE ts > ?
-		   AND status >= 400 AND status < 500 AND status != 404
-		   AND ip != '' AND component = 'edge' AND ip_truncated = 0
-		 GROUP BY ip HAVING n >= ? OR instr(ip, ':') > 0`, since.UTC().Format(time.RFC3339Nano), maxErr)
+	rows, err := e.db.Query(errorCountsQuery, since.UTC().Format(time.RFC3339Nano), maxErr)
 	if err != nil {
 		return nil
 	}
