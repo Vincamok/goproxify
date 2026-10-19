@@ -43,6 +43,10 @@ type GeoResolver struct {
 
 	mu     sync.Mutex
 	reader *maxminddb.Reader
+
+	// scannedID : les logs jusqu'à cet id ont tous une entrée de cache. Sans cette borne, chaque minute
+	// relisait les millions de lignes de logs (24 s, 23 Mo/s de disque) pour constater qu'il n'y avait rien à résoudre.
+	scannedID int64
 }
 
 type ipAPIResult struct {
@@ -308,11 +312,17 @@ func (g *GeoResolver) backfillPositions(ctx context.Context) {
 }
 
 func (g *GeoResolver) resolve(ctx context.Context) {
+	var maxID int64
+	if err := g.DB.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM logs`).Scan(&maxID); err != nil {
+		g.log().Warn("geoip: lecture du dernier log échouée", "err", err)
+		return
+	}
+	limit := g.batchLimit()
 	rows, err := g.DB.QueryContext(ctx,
 		`SELECT DISTINCT ip FROM logs
-		 WHERE ip != '' AND status > 0
+		 WHERE id > ? AND id <= ? AND ip != '' AND status > 0
 		   AND ip NOT IN (SELECT ip FROM geoip_cache)
-		 LIMIT ?`, g.batchLimit())
+		 LIMIT ?`, g.scannedID, maxID, limit)
 	if err != nil {
 		g.log().Warn("geoip: lecture IPs échouée", "err", err)
 		return
@@ -326,8 +336,10 @@ func (g *GeoResolver) resolve(ctx context.Context) {
 	}
 	var toResolve []pending
 	queryToLog := map[string][]string{} // queryIP → log IPs
+	seenRows := 0
 
 	for rows.Next() {
+		seenRows++
 		var raw string
 		if rows.Scan(&raw) != nil || raw == "" {
 			continue
@@ -343,7 +355,13 @@ func (g *GeoResolver) resolve(ctx context.Context) {
 	}
 	rows.Close()
 
+	// Moins de lignes que la limite : la plage est épuisée, la prochaine passe repart de maxID.
+	exhausted := seenRows < limit
+
 	if len(toResolve) == 0 {
+		if exhausted {
+			g.scannedID = maxID
+		}
 		g.backfillPositions(ctx)
 		return
 	}
@@ -384,6 +402,9 @@ func (g *GeoResolver) resolve(ctx context.Context) {
 			g.cacheResult(logIP, r)
 			cached++
 		}
+	}
+	if exhausted {
+		g.scannedID = maxID
 	}
 	g.log().Debug("geoip: cache mis à jour", "resolved", cached, "queried", len(queries))
 }
