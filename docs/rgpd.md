@@ -8,13 +8,14 @@
 
 | Data | Component | Storage | Default retention |
 |---|---|---|---|
-| Client IP address | Edge (access log) | Log file on Edge + forwarded to Admin SQLite | 90 days |
-| HTTP method, path, host, status, latency | Edge (access log) | Log file on Edge + Admin SQLite | 90 days |
-| User-Agent header | Edge (access log) | Log file on Edge + Admin SQLite | 90 days |
-| Referrer header | Edge (access log) | Log file on Edge + Admin SQLite | 90 days |
+| Client IP address | Edge (access log) | Local log database on the Edge (365 days) + forwarded to Admin SQLite (90 days) | 365 days on the Edge, 90 days on the Admin |
+| HTTP method, path, host, status, latency | Edge (access log) | Local log database on the Edge (365 days) + Admin SQLite (90 days) | 365 days on the Edge, 90 days on the Admin |
+| User-Agent header | Edge (access log) | Local log database on the Edge (365 days) + Admin SQLite (90 days) | 365 days on the Edge, 90 days on the Admin |
+| Referrer header | Edge (access log) | Local log database on the Edge (365 days) + Admin SQLite (90 days) | 365 days on the Edge, 90 days on the Admin |
 | WAF rule matches (categories only, no payload) | Passerelle (access log) | Admin SQLite | 90 days |
 | Banned IP + ban reason + expiry, ban history | Passerelle / Admin | Admin SQLite (`security_bans`, `security_ban_history`, IP in clear) | History and expired bans: 365 days (`retention_ban_days`); an active ban is kept until it expires |
 | GeoIP cache of observed IPs (country, city, coordinates) | Admin | Admin SQLite (`geoip_cache`, IP in clear) | Same as access logs (`retention_access_days`) |
+| Client errors per IP and per minute (4xx except 404), for the global Fail2Ban | Edge → Admin | Local log database on the Edge (`ip_errors`) + Admin SQLite (`edge_ip_errors`), IP in clear; never sent for an anonymised or pseudonymised IP | 48 hours on the Edge, 24 hours on the Admin |
 | Admin user email + bcrypt password hash | Admin | Admin SQLite | Until deleted |
 | Admin user session JWT | Admin | In-memory + cookie (browser session) | Until logout or expiry |
 | Audit log (who did what, when) | Admin | Admin SQLite | 90 days |
@@ -77,7 +78,7 @@ Older entries are purged automatically every night: access and system logs, the 
 
 ### IP pseudonymisation (recommandé pour RGPD strict)
 
-Mode plus fort que l'anonymisation : l'IP est **chiffrée** (AES-GCM 256 bits) en base SQLite côté Admin. Le fichier de log de la passerelle reçoit toujours une IP tronquée. L'IP réelle ne peut être obtenue que par un utilisateur possédant le scope `gdpr:reveal` (voir §3 bis).
+Mode plus fort que l'anonymisation : l'IP est **chiffrée** (AES-GCM 256 bits) en base SQLite côté Admin. Dans la base de logs de la passerelle, la colonne `ip` reçoit toujours une IP tronquée ; l'IP réelle y est aussi gardée chiffrée (AES-GCM, clé propre à la passerelle, `log-ip-key.gpx`) et n'en sort que par une révélation demandée à la passerelle. L'IP réelle ne peut être obtenue que par un utilisateur possédant le scope `gdpr:reveal` (voir §3 bis).
 
 Activer dans l'interface Admin → page **Logs** → réglages (icône engrenage, admins) → **Adresses IP des clients (RGPD)** → *Pseudonymisées*, ou via API :
 
@@ -90,7 +91,7 @@ Ou dans `edge.json` (non supporté — ce réglage est Admin-side).
 
 | Comportement | Anonymisation | Pseudonymisation |
 |---|---|---|
-| IP dans fichier passerelle | tronquée (x.x.x.0) | tronquée (x.x.x.0) |
+| IP dans la base de logs de la passerelle (colonne `ip`) | tronquée (x.x.x.0) | tronquée (x.x.x.0) |
 | IP dans SQLite Admin | tronquée | chiffrée AES-GCM |
 | Fail2Ban/Ephor de la passerelle | IP réelle ✓ | IP réelle ✓ |
 | Fail2Ban de l'Admin (logs) | IP tronquée ignorée | IP pseudonymisée ignorée |
@@ -118,12 +119,12 @@ Removes all log entries of the given IP, **including pseudonymised entries**: ea
 The erasure also covers what the Admin keeps about that IP **outside the logs**, all stored in clear: the bans (`security_bans`), the ban history (`security_ban_history`) and the GeoIP cache entry (`geoip_cache`: country, city, coordinates). The response counts each one:
 
 ```json
-{ "deleted": 12, "bans_deleted": 1, "ban_history_deleted": 3, "geoip_cache_deleted": 1, "audit_ip_cleared": 2, "ip": "203.0.113.42" }
+{ "deleted": 12, "bans_deleted": 1, "ban_history_deleted": 3, "geoip_cache_deleted": 1, "ip_counters_deleted": 2, "audit_ip_cleared": 2, "ip": "203.0.113.42" }
 ```
 
 Deleting a ban also lifts it on the gateways, like an unban, including bans a gateway set itself. The IP is matched whatever its notation (IPv6). `audit_ip_cleared` counts the audit entries whose address was blanked: the entry (who did what, when) stays, only the actor's IP goes.
 
-**On the gateways** (Admin `0.163.0`, Edge `0.73.0`): the Admin also sends an `erase_ips` order. Each gateway rewrites its access log file and its rotations (including the compressed ones) without the lines of that IP, and deletes the IP from its local ban history. A gateway that is offline when you erase receives the order when it reconnects: the Admin keeps it in `edge_erasure_queue`, **the IP encrypted with the GDPR key**, for 90 days (the longest a gateway keeps its log files), then drops it. While a gateway rewrites its file, its writes are paused for a moment.
+**On the gateways** (Admin `0.163.0`, Edge `0.73.0`): the Admin also sends an `erase_ips` order. Each gateway deletes the lines of that IP from its local log database — in clear or pseudonymised (matched by the IP fingerprint) — with `secure_delete` and a truncation of the write-ahead log so the erased value does not stay readable in the files, and deletes the IP from its local ban history. Its writes are not paused. A gateway that is offline when you erase receives the order when it reconnects: the Admin keeps it in `edge_erasure_queue`, **the IP encrypted with the GDPR key**, for 365 days (the longest a gateway keeps its access lines by default), then drops it.
 
 **Not covered by the erasure** (see [rgpd-conformite.md §4](rgpd-conformite.md#4-exercer-les-droits-des-personnes) for the full list): backups already taken, the in-memory state of the gateways' Fail2Ban and Ephor (gone at restart or expiry), the unban records of the gateways (`unbans`: they stop a lifted ban from being set again), and third-party services (CrowdSec, alert channels). Erasing the history of an IP also means a gateway that missed its unban can no longer be replayed it.
 
@@ -139,7 +140,7 @@ or `{ "user_id": "…" }` (exactly one of the two). Admin only (`logs:write` for
 - for an IP: the log entries (pseudonymised ones are found through their fingerprint and show the IP you asked for, never decrypted), the bans, the ban history, the GeoIP position and the audit entries carrying that address;
 - for an account: the profile (e-mail, role, teams, creation date — never the password hash), the log entries attributed to it and its audit entries.
 
-Logs are capped at 100 000 lines (`logs_truncated`). The gateways' access log files are not part of the export. The export is audited (`rgpd_export_ip`, `rgpd_export_user`) with the reason and the counts, not the IP in clear.
+Logs are capped at 100 000 lines (`logs_truncated`). The gateways' local log databases are not part of the export. The export is audited (`rgpd_export_ip`, `rgpd_export_user`) with the reason and the counts, not the IP in clear.
 
 ```bash
 goproxify logs subject-export --by-ip 203.0.113.42 --reason "GDPR Art.15 request" --output export.json

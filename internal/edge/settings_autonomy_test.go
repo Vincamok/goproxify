@@ -22,7 +22,7 @@ func newSettingsGateway(t *testing.T, dir string) *Server {
 	return &Server{
 		cfg:       &config.EdgeConfig{},
 		log:       edgelog.New("error", "text", ""),
-		accessLog: edgelog.NewAccessLogger(""),
+		accessLog: edgelog.NewAccessLogger(),
 		cache:     edgecache.New(filepath.Join(dir, "edge-cache.gpx"), "cle-passerelle"),
 	}
 }

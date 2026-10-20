@@ -659,7 +659,7 @@ gpx_threat_*
 gpx_bans_active_total
 ```
 
-L'access log JSON inclut les décisions WAF (`waf_matches`, `waf_score`) sur chaque requête. Les refus d'un plugin de détection comme Coraza y figurent aussi (catégorie = nom du plugin) et peuvent bannir l'IP sous la source `plugin:<nom>` (voir [plugins.md](plugins.md#plugins-de-détection)). La page **Prism** permet d'analyser le trafic par IP, code HTTP et domaine, avec accès direct aux bans depuis la table des IPs.
+Les logs d'accès incluent les décisions WAF (`waf_matches`, `waf_score`) sur chaque requête. Les refus d'un plugin de détection comme Coraza y figurent aussi (catégorie = nom du plugin) et peuvent bannir l'IP sous la source `plugin:<nom>` (voir [plugins.md](plugins.md#plugins-de-détection)). La page **Prism** permet d'analyser le trafic par IP, code HTTP et domaine, avec accès direct aux bans depuis la table des IPs.
 
 ---
 

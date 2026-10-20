@@ -1214,15 +1214,7 @@ func (s *Server) handleAgentEvent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAgentLogs(w http.ResponseWriter, r *http.Request) {
-	// Relais transparent vers Admin (Prism / Logs) — pas de stockage local.
-	var batch struct {
-		ContainerID   string `json:"container_id"`
-		ContainerName string `json:"container_name"`
-		Entries       []struct {
-			T    time.Time `json:"t"`
-			Line string    `json:"line"`
-		} `json:"entries"`
-	}
+	var batch agentLogBatch
 	if err := json.NewDecoder(r.Body).Decode(&batch); err != nil {
 		http.Error(w, "JSON invalide", http.StatusBadRequest)
 		return
@@ -1231,6 +1223,17 @@ func (s *Server) handleAgentLogs(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	// Avec la base de logs locale, le lot est gardé avant l'accusé de réception : l'Agent n'avance sa position
+	// qu'après, et l'Admin le reçoit par le flux numéroté (rejoué après une coupure).
+	if s.logStore != nil {
+		if err := s.storeAgentLogs(batch); err != nil {
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// Sans base locale : relais direct vers l'Admin, perdu si aucun n'est connecté.
 	payload := make([]edgews.LogEntryPayload, 0, len(batch.Entries))
 	for _, e := range batch.Entries {
 		ts := e.T

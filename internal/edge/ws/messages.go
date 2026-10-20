@@ -30,7 +30,8 @@ const (
 	TypePushIPProfiles      = "push_ip_profiles"
 	TypePushBans            = "push_bans"
 	TypeUnbanIPs            = "unban_ips" // lève les bans d'IPs débannies depuis l'Admin, toutes sources confondues (payload : []UnbanEntry)
-	TypeEraseIPs            = "erase_ips" // efface d'une passerelle les traces d'IPs (droit à l'effacement RGPD) : fichiers d'access log et historique des bans (payload : []EraseEntry)
+	TypeEraseIPs            = "erase_ips" // efface d'une passerelle les traces d'IPs (droit à l'effacement RGPD) : lignes d'accès de sa base de logs et historique des bans (payload : []EraseEntry)
+	TypeLogResume           = "log_resume" // Admin → passerelle : reprendre l'envoi des logs après la position que l'Admin a déjà enregistrée (payload : LogResumePayload)
 	TypePushSettings        = "push_settings"
 	TypePushClusterPeers    = "push_cluster_peers"
 	TypePushGatewayPeers    = "push_gateway_peers"
@@ -83,7 +84,10 @@ const (
 	TypeAgentPending          = "agent_pending"
 	TypeNodeUpdate            = "node_update"
 	TypeEdgeHeartbeat         = "edge_heartbeat"
-	TypeAccessLog             = "access_log" // batches d'access logs (Prism / Logs)
+	TypeAccessLog             = "access_log" // batches d'access logs (Prism / Logs) d'une passerelle sans base de logs locale
+	TypeLogStream             = "log_stream" // lot de logs numérotés lus dans la base de logs de la passerelle (payload : LogStreamPayload)
+	TypeAggStream             = "agg_stream" // cumuls par minute calculés par la passerelle avec ses lignes (payload : MinuteStreamPayload)
+	TypeIPStream              = "ip_stream"  // compteurs d'erreurs client par IP et par minute, pour le Fail2Ban global de l'Admin (payload : IPStreamPayload)
 	TypePortalInviteCompleted = "portal_invite_completed"
 	TypePortalSendEmailOTP    = "portal_send_email_otp"
 	TypePortalAudit           = "portal_audit"
@@ -204,6 +208,74 @@ type LogEntryPayload struct {
 	ThreatSignal string   `json:"threat_signal,omitempty"`
 	TLSJA3       string   `json:"tls_ja3,omitempty"`
 	TLSJA4       string   `json:"tls_ja4,omitempty"`
+	// Seq est l'identifiant de la ligne dans la base de logs de la passerelle : le curseur du flux
+	// (LogStreamPayload). Absent d'un lot envoyé sans base de logs locale.
+	Seq int64 `json:"seq,omitempty"`
+}
+
+// Flux de logs : la passerelle garde ses lignes et l'Admin retient, par flux, la dernière position qu'il a
+// enregistrée. Un flux est "access" (requêtes HTTP) ou "system" (logs de la passerelle).
+const (
+	LogStreamAccess = "access"
+	LogStreamSystem = "system"
+)
+
+// LogResumePayload : positions de l'Admin par flux. 0 ou absent : depuis le début de la base de la passerelle.
+type LogResumePayload struct {
+	Cursors map[string]int64 `json:"cursors"`
+}
+
+// LogStreamPayload est un lot de lignes contiguës d'un flux. After est la position qui précède la première
+// ligne : l'Admin n'accepte le lot que si elle n'est pas au-delà de la sienne, sinon il manque des lignes et il
+// redemande l'envoi depuis sa position.
+type LogStreamPayload struct {
+	Stream  string            `json:"stream"`
+	After   int64             `json:"after"`
+	Entries []LogEntryPayload `json:"entries"`
+}
+
+// LogStreamMinute est le flux des cumuls par minute. Contrairement aux flux de lignes, une ligne de cumul revient
+// avec sa valeur à jour chaque fois qu'elle change : l'Admin la remplace, ce qui rend un renvoi sans effet.
+const LogStreamMinute = "minute"
+
+// MinuteRowPayload est le cumul d'une minute pour un domaine et un code de statut. Il ne contient ni IP ni chemin.
+type MinuteRowPayload struct {
+	Minute       string `json:"minute"` // AAAA-MM-JJTHH:MM, UTC
+	NodeName     string `json:"node_name"`
+	Domain       string `json:"domain"`
+	Status       int    `json:"status"`
+	Requests     int64  `json:"requests"`
+	Bytes        int64  `json:"bytes"`
+	LatencyMsSum int64  `json:"latency_ms_sum"`
+	Bots         int64  `json:"bots"`
+	// Seq est le numéro de la dernière mise à jour de la ligne : le curseur du flux.
+	Seq int64 `json:"seq"`
+}
+
+// MinuteStreamPayload est un lot de cumuls dans l'ordre de leurs mises à jour. After est la position qui précède
+// le premier : même règle que LogStreamPayload.
+type MinuteStreamPayload struct {
+	After int64              `json:"after"`
+	Rows  []MinuteRowPayload `json:"rows"`
+}
+
+// LogStreamIPErrors est le flux des compteurs d'erreurs client par IP : même contrat que LogStreamMinute (la valeur
+// à jour d'une ligne remplace la précédente).
+const LogStreamIPErrors = "iperr"
+
+// IPErrorRowPayload est le nombre d'erreurs client (4xx hors 404) d'une IP lisible pendant une minute. Une IP
+// tronquée par l'anonymisation ou la pseudonymisation n'est jamais envoyée.
+type IPErrorRowPayload struct {
+	Minute string `json:"minute"` // AAAA-MM-JJTHH:MM, UTC
+	IP     string `json:"ip"`
+	Errors int64  `json:"errors"`
+	Seq    int64  `json:"seq"`
+}
+
+// IPStreamPayload est un lot de compteurs dans l'ordre de leurs mises à jour ; After a le sens de LogStreamPayload.
+type IPStreamPayload struct {
+	After int64               `json:"after"`
+	Rows  []IPErrorRowPayload `json:"rows"`
 }
 
 // EdgeHeartbeatPayload est envoyé par passerelle → Admin toutes les 30 s.

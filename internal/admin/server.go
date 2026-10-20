@@ -170,40 +170,14 @@ func (s *Server) Start(ctx context.Context) error {
 	manager.SetLogBatchHandler(func(entries []edgeWS.LogEntryPayload) {
 		batch := make([]logs.Entry, 0, len(entries))
 		for _, item := range entries {
-			ts, _ := time.Parse(time.RFC3339Nano, item.Ts)
-			if ts.IsZero() {
-				ts, _ = time.Parse(time.RFC3339, item.Ts)
-			}
-			if ts.IsZero() {
-				ts = time.Now()
-			}
-			batch = append(batch, logs.Entry{
-				Ts:        ts,
-				Level:     item.Level,
-				Component: nvlStr(item.Component, "edge"),
-				NodeName:  item.NodeName,
-				NodeID:    item.NodeID,
-				Domain:    item.Domain,
-				Method:    item.Method,
-				Path:      item.Path,
-				Status:    item.Status,
-				IP:        item.IP,
-				RealIP:    item.RealIP,
-				IPTruncated:  item.IPTruncated,
-				LatencyMs:    item.LatencyMs,
-				Bytes:        item.Bytes,
-				Message:      item.Message,
-				Referrer:     item.Referrer,
-				RequestID:    item.RequestID,
-				WAFMatches:   item.WAFMatches,
-				ThreatSignal: item.ThreatSignal,
-				TLSJA3:       item.TLSJA3,
-				TLSJA4:       item.TLSJA4,
-			})
+			batch = append(batch, edgews.LogEntryFromPayload(item))
 		}
 		// Une transaction par lot et non par entrée : voir logs.Store.WriteBatch.
 		s.logStore.WriteBatch(batch)
 	})
+	// Lots numérotés lus dans la base de logs des passerelles : la position de chacune est enregistrée avec ses
+	// lignes et annoncée à sa reconnexion, ce qui comble une coupure de l'Admin (ADR 0012).
+	manager.SetLogStreamIngestor(&edgews.LogStreamIngestor{Store: s.logStore, Log: s.log})
 
 	backupSched := backup.New(s.db, s.log)
 	if s.cfg.Storage.BasePath != "" {

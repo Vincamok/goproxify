@@ -19,10 +19,12 @@ import (
 	"time"
 
 	"github.com/vincamok/goproxify/internal/admin/gdpr"
+	"github.com/vincamok/goproxify/internal/ipcrypt"
 )
 
-// edgeLogMaxAgeDays est la conservation maximale des fichiers d'access log d'une passerelle (rotation lumberjack).
-const edgeLogMaxAgeDays = 90
+// edgeLogMaxAgeDays est la conservation maximale des accès dans la base de logs d'une passerelle (365 jours par défaut, ADR 0012) :
+// un ordre d'effacement doit durer autant, pour être rejoué à une passerelle absente tant qu'elle garde la ligne.
+const edgeLogMaxAgeDays = 365
 
 // Durées de rétention par défaut — modifiables via settings DB (clés logs.retention_access_days,
 // logs.retention_system_days, logs.retention_ban_days).
@@ -44,24 +46,24 @@ type Entry struct {
 	// internal/admin/edgews/manager.go. Contrairement à NodeName, il ne
 	// change pas si le nœud est renommé, ce qui permet de filtrer
 	// l'historique complet d'un nœud malgré un renommage.
-	NodeID        string     `json:"node_id,omitempty"`
-	Domain        string     `json:"domain"`
-	Method        string     `json:"method"`
-	Path          string     `json:"path"`
-	Status        int        `json:"status"`
-	IP            string     `json:"ip"`
-	LatencyMs     int64      `json:"latency_ms"`
-	Bytes         int64      `json:"bytes"`
-	Message       string     `json:"message"`
-	Referrer      string     `json:"referrer,omitempty"`
-	UserID        string     `json:"user_id,omitempty"`
-	RequestID     string     `json:"request_id,omitempty"`
+	NodeID    string `json:"node_id,omitempty"`
+	Domain    string `json:"domain"`
+	Method    string `json:"method"`
+	Path      string `json:"path"`
+	Status    int    `json:"status"`
+	IP        string `json:"ip"`
+	LatencyMs int64  `json:"latency_ms"`
+	Bytes     int64  `json:"bytes"`
+	Message   string `json:"message"`
+	Referrer  string `json:"referrer,omitempty"`
+	UserID    string `json:"user_id,omitempty"`
+	RequestID string `json:"request_id,omitempty"`
 	// WAFMatches (catégories WAF déclenchées) et ThreatSignal (signal Ephor) sont le
 	// contexte de sécurité calculé par la passerelle pour la requête d'origine — vides
 	// pour l'immense majorité des requêtes propres (200 OK), renseignés seulement quand
 	// une protection s'est déclenchée.
-	WAFMatches    []string   `json:"waf_matches,omitempty"`
-	ThreatSignal  string     `json:"threat_signal,omitempty"`
+	WAFMatches   []string `json:"waf_matches,omitempty"`
+	ThreatSignal string   `json:"threat_signal,omitempty"`
 	// TLSJA3/TLSJA4 : empreintes TLS du ClientHello calculées par la passerelle (vides en HTTP clair ou sans TLS terminé).
 	TLSJA3        string     `json:"tls_ja3,omitempty"`
 	TLSJA4        string     `json:"tls_ja4,omitempty"`
@@ -117,6 +119,10 @@ type Store struct {
 	subscribers map[int64]chan Entry
 	nextID      int64
 
+	// Dernière position reçue de chaque passerelle par flux (cache de edge_log_cursors).
+	cursorMu sync.Mutex
+	cursors  map[string]int64
+
 	// Durées de rétention actives (modifiables sans redémarrage).
 	retentionMu         sync.RWMutex
 	retentionAccessDays int
@@ -125,7 +131,7 @@ type Store struct {
 
 	// Pseudonymisation RGPD (AES-GCM). La clé reste chargée mode désactivé : les entrées
 	// déjà pseudonymisées doivent rester révélables pendant leur rétention.
-	pseudoMu  sync.RWMutex
+	pseudoMu     sync.RWMutex
 	gdprKey      []byte
 	pseudonymize bool
 }
@@ -215,7 +221,7 @@ func (s *Store) RevealIP(entryID int64) (string, error) {
 	if key == nil {
 		return "", ErrNoGDPRKey
 	}
-	return gdpr.Decrypt(key, enc)
+	return ipcrypt.Decrypt(key, enc)
 }
 
 func (s *Store) retainedUntil(isAccess bool) time.Time {
@@ -249,9 +255,9 @@ func (s *Store) insertArgs(e *Entry) []any {
 	}
 	s.pseudoMu.RUnlock()
 	if key != nil && e.RealIP != "" {
-		if enc, err := gdpr.Encrypt(key, e.RealIP); err == nil {
+		if enc, err := ipcrypt.Encrypt(key, e.RealIP); err == nil {
 			ipEnc = enc
-			ipHmac = gdpr.IPIndex(key, e.RealIP)
+			ipHmac = ipcrypt.IPIndex(key, e.RealIP)
 			e.IP = PseudonymizedIP
 		}
 	}
@@ -804,6 +810,7 @@ func (s *Store) purgeRetained() {
 		time.Now().UTC().Format(time.RFC3339))
 	s.purgeIPTraces()
 	s.purgeAggregates(DefaultRetentionAggDays)
+	s.PurgeIPErrors(time.Now())
 }
 
 // purgeIPTraces applique la rétention aux tables qui gardent une IP hors de `logs` : l'historique
@@ -829,6 +836,8 @@ type IPErasure struct {
 	BanHistory int64 `json:"ban_history_deleted"`
 	Bans       int64 `json:"bans_deleted"`
 	GeoCache   int64 `json:"geoip_cache_deleted"`
+	// IPCounters compte les compteurs d'erreurs par IP que les passerelles ont envoyés pour le Fail2Ban global.
+	IPCounters int64 `json:"ip_counters_deleted"`
 	// AuditIP compte les entrées d'audit dont l'adresse a été vidée : l'entrée (qui a fait quoi, quand)
 	// reste, seule l'IP de l'acteur disparaît.
 	AuditIP int64 `json:"audit_ip_cleared"`
@@ -842,7 +851,7 @@ func (s *Store) EraseIP(ip string) (IPErasure, error) {
 	if out.Logs, err = s.DeleteByIP(ip); err != nil {
 		return out, err
 	}
-	canon := gdpr.CanonicalIP(ip)
+	canon := ipcrypt.CanonicalIP(ip)
 	for _, t := range []struct {
 		table string
 		n     *int64
@@ -850,6 +859,7 @@ func (s *Store) EraseIP(ip string) (IPErasure, error) {
 		{"security_ban_history", &out.BanHistory},
 		{"security_bans", &out.Bans},
 		{"geoip_cache", &out.GeoCache},
+		{"edge_ip_errors", &out.IPCounters},
 	} {
 		res, err := s.db.Exec(`DELETE FROM `+t.table+` WHERE ip IN (?, ?)`, ip, canon)
 		if err != nil {
@@ -870,14 +880,14 @@ func (s *Store) EraseIP(ip string) (IPErasure, error) {
 // DeleteByIP supprime tous les logs d'une IP (droit à l'effacement RGPD), entrées
 // pseudonymisées comprises. Retourne le nombre de lignes supprimées.
 func (s *Store) DeleteByIP(ip string) (int64, error) {
-	canon := gdpr.CanonicalIP(ip)
+	canon := ipcrypt.CanonicalIP(ip)
 	s.pseudoMu.RLock()
 	key := s.gdprKey
 	s.pseudoMu.RUnlock()
 	q, args := `DELETE FROM logs WHERE ip IN (?, ?)`, []any{ip, canon}
 	if key != nil {
 		q += ` OR ip_hmac = ?`
-		args = append(args, gdpr.IPIndex(key, canon))
+		args = append(args, ipcrypt.IPIndex(key, canon))
 	}
 	res, err := s.db.Exec(q, args...)
 	if err != nil {
@@ -894,9 +904,9 @@ func (s *Store) IPReference(ip string) string {
 	key := s.gdprKey
 	s.pseudoMu.RUnlock()
 	if key != nil {
-		return "hmac:" + gdpr.IPIndex(key, ip)
+		return "hmac:" + ipcrypt.IPIndex(key, ip)
 	}
-	a, err := netip.ParseAddr(gdpr.CanonicalIP(ip))
+	a, err := netip.ParseAddr(ipcrypt.CanonicalIP(ip))
 	if err != nil {
 		return "?"
 	}
@@ -942,11 +952,11 @@ func (s *Store) BackfillIPIndex(ctx context.Context) (int, error) {
 		}
 		for _, r := range batch {
 			lastID = r.id
-			ip, err := gdpr.Decrypt(key, r.enc)
+			ip, err := ipcrypt.Decrypt(key, r.enc)
 			if err != nil {
 				continue
 			}
-			if _, err := s.db.ExecContext(ctx, `UPDATE logs SET ip_hmac = ? WHERE id = ?`, gdpr.IPIndex(key, ip), r.id); err != nil {
+			if _, err := s.db.ExecContext(ctx, `UPDATE logs SET ip_hmac = ? WHERE id = ?`, ipcrypt.IPIndex(key, ip), r.id); err != nil {
 				return done, err
 			}
 			done++
@@ -1001,4 +1011,176 @@ func statusMatches(code int, filter string) bool {
 		return code >= lo && code < hi
 	}
 	return strconv.Itoa(code) == filter
+}
+
+// StreamCursor retourne la dernière position reçue de la passerelle nodeID pour un flux de logs (0 : rien reçu).
+func (s *Store) StreamCursor(nodeID, stream string) (int64, error) {
+	key := nodeID + "\x00" + stream
+	s.cursorMu.Lock()
+	defer s.cursorMu.Unlock()
+	if v, ok := s.cursors[key]; ok {
+		return v, nil
+	}
+	var seq int64
+	err := s.db.QueryRow(`SELECT last_seq FROM edge_log_cursors WHERE node_id = ? AND stream = ?`, nodeID, stream).Scan(&seq)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+	if s.cursors == nil {
+		s.cursors = map[string]int64{}
+	}
+	s.cursors[key] = seq
+	return seq, nil
+}
+
+// WriteStream écrit des lignes envoyées par une passerelle et avance la position du flux jusqu'à lastSeq dans
+// la même transaction : ou bien les deux sont enregistrées, ou bien aucune, et la passerelle renvoie alors les
+// mêmes lignes. Les lignes sont ensuite diffusées au mode Live.
+func (s *Store) WriteStream(nodeID, stream string, entries []Entry, lastSeq int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	stmt, err := tx.Prepare(insertLogSQL)
+	if err != nil {
+		tx.Rollback() //nolint:errcheck
+		return err
+	}
+	defer stmt.Close()
+	for i := range entries {
+		res, err := stmt.Exec(s.insertArgs(&entries[i])...)
+		if err != nil {
+			tx.Rollback() //nolint:errcheck
+			return err
+		}
+		if id, err2 := res.LastInsertId(); err2 == nil {
+			entries[i].ID = id
+		}
+	}
+	if err := advanceCursor(tx, nodeID, stream, lastSeq); err != nil {
+		tx.Rollback() //nolint:errcheck
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.cacheCursor(nodeID, stream, lastSeq)
+	for _, e := range entries {
+		s.broadcast(e)
+	}
+	return nil
+}
+
+// advanceCursor fait avancer, dans la transaction du lot, la position d'un flux ; elle ne recule jamais.
+func advanceCursor(tx *sql.Tx, nodeID, stream string, seq int64) error {
+	_, err := tx.Exec(`INSERT INTO edge_log_cursors (node_id, stream, last_seq) VALUES (?, ?, ?)
+		ON CONFLICT (node_id, stream) DO UPDATE SET last_seq = excluded.last_seq, updated_at = CURRENT_TIMESTAMP
+		WHERE excluded.last_seq > last_seq`, nodeID, stream, seq)
+	return err
+}
+
+func (s *Store) cacheCursor(nodeID, stream string, seq int64) {
+	s.cursorMu.Lock()
+	defer s.cursorMu.Unlock()
+	if s.cursors == nil {
+		s.cursors = map[string]int64{}
+	}
+	if key := nodeID + "\x00" + stream; seq > s.cursors[key] {
+		s.cursors[key] = seq
+	}
+}
+
+// MinuteRow est un cumul par minute reçu d'une passerelle : les colonnes de logs_minute.
+type MinuteRow struct {
+	Minute       string
+	NodeName     string
+	Domain       string
+	Status       int
+	Requests     int64
+	Bytes        int64
+	LatencyMsSum int64
+	Bots         int64
+}
+
+// WriteMinutes enregistre des cumuls reçus d'une passerelle et avance la position du flux « minute » dans la même
+// transaction. Un cumul remplace la valeur de sa minute au lieu de s'y ajouter : la passerelle renvoie la valeur
+// à jour chaque fois qu'elle change, donc un renvoi est sans effet.
+func (s *Store) WriteMinutes(nodeID string, rows []MinuteRow, lastSeq int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	stmt, err := tx.Prepare(`INSERT INTO logs_minute (minute, node_name, domain, status, requests, bytes, latency_ms_sum, bots)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (minute, node_name, domain, status) DO UPDATE SET
+			requests = excluded.requests, bytes = excluded.bytes,
+			latency_ms_sum = excluded.latency_ms_sum, bots = excluded.bots`)
+	if err != nil {
+		tx.Rollback() //nolint:errcheck
+		return err
+	}
+	defer stmt.Close()
+	for _, r := range rows {
+		if _, err := stmt.Exec(r.Minute, r.NodeName, r.Domain, r.Status, r.Requests, r.Bytes, r.LatencyMsSum, r.Bots); err != nil {
+			tx.Rollback() //nolint:errcheck
+			return err
+		}
+	}
+	if err := advanceCursor(tx, nodeID, "minute", lastSeq); err != nil {
+		tx.Rollback() //nolint:errcheck
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.cacheCursor(nodeID, "minute", lastSeq)
+	return nil
+}
+
+// IPErrorRow est le nombre d'erreurs client d'une IP pendant une minute, reçu d'une passerelle.
+type IPErrorRow struct {
+	Minute string // AAAA-MM-JJTHH:MM, UTC
+	IP     string
+	Errors int64
+}
+
+// IPErrorsRetention : les compteurs d'erreurs par IP servent une fenêtre de quelques minutes ; une IP en clair
+// ne reste pas au-delà d'un jour.
+const IPErrorsRetention = 24 * time.Hour
+
+// WriteIPErrors enregistre des compteurs d'erreurs par IP reçus d'une passerelle et avance la position du flux
+// dans la même transaction. Un compteur remplace la valeur de sa minute, comme les cumuls.
+func (s *Store) WriteIPErrors(nodeID string, rows []IPErrorRow, lastSeq int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	stmt, err := tx.Prepare(`INSERT INTO edge_ip_errors (node_id, minute, ip, errors) VALUES (?, ?, ?, ?)
+		ON CONFLICT (node_id, minute, ip) DO UPDATE SET errors = excluded.errors`)
+	if err != nil {
+		tx.Rollback() //nolint:errcheck
+		return err
+	}
+	defer stmt.Close()
+	for _, r := range rows {
+		if _, err := stmt.Exec(nodeID, r.Minute, r.IP, r.Errors); err != nil {
+			tx.Rollback() //nolint:errcheck
+			return err
+		}
+	}
+	if err := advanceCursor(tx, nodeID, "iperr", lastSeq); err != nil {
+		tx.Rollback() //nolint:errcheck
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.cacheCursor(nodeID, "iperr", lastSeq)
+	return nil
+}
+
+// PurgeIPErrors supprime les compteurs plus vieux que IPErrorsRetention.
+func (s *Store) PurgeIPErrors(now time.Time) {
+	cut := now.UTC().Add(-IPErrorsRetention).Format("2006-01-02T15:04")
+	s.db.Exec(`DELETE FROM edge_ip_errors WHERE minute < ?`, cut) //nolint:errcheck
 }

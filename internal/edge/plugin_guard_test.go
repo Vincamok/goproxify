@@ -173,7 +173,7 @@ func TestPluginGuard_WhitelistedIPIsNeverBanned(t *testing.T) {
 
 func TestPluginGuard_DenialReachesAccessLog(t *testing.T) {
 	s := newGuardGateway(t, t.TempDir(), true)
-	al := edgelog.NewAccessLogger("")
+	al := edgelog.NewAccessLogger()
 	got := make(chan edgelog.ShipEntry, 4)
 	al.SetForwarder(func(batch []edgelog.ShipEntry) {
 		for _, e := range batch {
@@ -194,7 +194,7 @@ func TestPluginGuard_DenialReachesAccessLog(t *testing.T) {
 
 func TestPluginGuard_NonDetectorDenialIsNotAWAFMatch(t *testing.T) {
 	s := newGuardGateway(t, t.TempDir(), false)
-	al := edgelog.NewAccessLogger("")
+	al := edgelog.NewAccessLogger()
 	got := make(chan edgelog.ShipEntry, 4)
 	al.SetForwarder(func(batch []edgelog.ShipEntry) {
 		for _, e := range batch {

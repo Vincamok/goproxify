@@ -283,7 +283,6 @@ type Settings struct {
 	TracingEndpoint string `json:"tracing_endpoint,omitempty"`
 	LogLevel        string `json:"log_level,omitempty"`
 	LogFormat       string `json:"log_format,omitempty"`
-	AccessLogPath   string `json:"access_log_path,omitempty"`
 	AdminPublicURL  string `json:"admin_public_url,omitempty"`
 	// IPAnonymize : quand true, la passerelle tronque les IPs dans les access logs (RGPD).
 	// La config locale edge.json a toujours la priorité si ip_anonymize y est défini à true.

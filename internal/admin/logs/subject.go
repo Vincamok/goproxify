@@ -7,7 +7,7 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/vincamok/goproxify/internal/admin/gdpr"
+	"github.com/vincamok/goproxify/internal/ipcrypt"
 )
 
 // SubjectExportMaxLogs borne les lignes de log d'un export : au-delà, LogsTruncated est vrai.
@@ -136,7 +136,7 @@ func (s *Store) subjectAudit(where string, args ...any) ([]SubjectAudit, error) 
 // ExportIP rassemble les données d'une IP (droit d'accès, Art. 15). Les entrées pseudonymisées sont
 // retrouvées par leur empreinte ; leur IP est celle qu'on demande, jamais déchiffrée.
 func (s *Store) ExportIP(ip string) (IPExport, error) {
-	canon := gdpr.CanonicalIP(ip)
+	canon := ipcrypt.CanonicalIP(ip)
 	out := IPExport{IP: canon, GeneratedAt: time.Now().UTC(), Bans: []SubjectBan{}, BanHistory: []SubjectBanEvent{}}
 
 	s.pseudoMu.RLock()
@@ -145,7 +145,7 @@ func (s *Store) ExportIP(ip string) (IPExport, error) {
 	where, args := `ip IN (?, ?)`, []any{ip, canon}
 	if key != nil {
 		where += ` OR ip_hmac = ?`
-		args = append(args, gdpr.IPIndex(key, canon))
+		args = append(args, ipcrypt.IPIndex(key, canon))
 	}
 	var err error
 	if out.Logs, out.LogsTruncated, err = s.subjectLogs(where, args); err != nil {

@@ -31,3 +31,5 @@ Alternatives éliminées :
 - Pour les très grands déploiements (> 1 000 nodes), une migration vers PostgreSQL pourrait être nécessaire (prévu en backlog)
 
 **Note :** La passerelle est intentionnellement sans persistance — toute sa configuration est poussée en RAM par l'Administration au démarrage et à chaque mise à jour.
+
+> **Mise à jour (2026-10-20) :** cette note n'est plus exacte. Depuis l'ADR-004 et l'ADR-0006, la passerelle garde des copies locales chiffrées de ce que l'Admin lui envoie et une base SQLite des bans (`internal/edge/bansdb`). L'[ADR 0012](0012-logs-proprietaire-edge.md) y ajoute une base de logs : la passerelle possède ses lignes brutes. SQLite n'est donc plus propre à l'Admin ; le reste de cet ADR (pas de base externe) reste valable.

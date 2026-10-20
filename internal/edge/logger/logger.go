@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/vincamok/goproxify/internal/edge/logstore"
 	"gopkg.in/lumberjack.v2"
 )
 
@@ -33,6 +34,7 @@ type DynamicLogger struct {
 
 	nodeName  string
 	forwardFn func([]ShipEntry)
+	store     *logstore.Store
 
 	shipCh   chan ShipEntry
 	shipOnce sync.Once
@@ -79,6 +81,14 @@ func (dl *DynamicLogger) SetForwarder(fn func([]ShipEntry)) {
 	dl.ptr.Store(dl.build())
 }
 
+// SetStore garde les logs système dans la base de logs locale, en plus du fichier et de l'expédition à l'Admin.
+func (dl *DynamicLogger) SetStore(s *logstore.Store) {
+	dl.mu.Lock()
+	defer dl.mu.Unlock()
+	dl.store = s
+	dl.ptr.Store(dl.build())
+}
+
 // SetNodeName associe le nom du nœud passerelle aux logs système expédiés.
 func (dl *DynamicLogger) SetNodeName(name string) {
 	dl.mu.Lock()
@@ -112,13 +122,16 @@ func (dl *DynamicLogger) build() *slog.Logger {
 	} else {
 		fileH = slog.NewJSONHandler(w, opts)
 	}
-	if dl.forwardFn == nil {
+	if dl.forwardFn == nil && dl.store == nil {
 		return slog.New(fileH)
 	}
 	shipH := &shipHandler{
 		level:    lvl,
-		ch:       dl.shipCh,
 		nodeName: dl.nodeName,
+		store:    dl.store,
+	}
+	if dl.forwardFn != nil {
+		shipH.ch = dl.shipCh
 	}
 	return slog.New(&fanoutHandler{handlers: []slog.Handler{fileH, shipH}})
 }
@@ -204,7 +217,8 @@ func (dl *DynamicLogger) shipLoop() {
 // shipHandler convertit les records slog en ShipEntry (status=0 = log système).
 type shipHandler struct {
 	level    slog.Level
-	ch       chan<- ShipEntry
+	ch       chan<- ShipEntry // nil : rien à expédier à l'Admin
+	store    *logstore.Store
 	nodeName string
 	attrs    []slog.Attr
 	groups   []string
@@ -279,10 +293,15 @@ func (h *shipHandler) Handle(ctx context.Context, r slog.Record) error {
 		Message:   msg,
 		// Status=0 → log système (distinct des access HTTP status>0).
 	}
-	select {
-	case h.ch <- e:
-	default:
-		// drop si buffer plein — ne pas bloquer le hot path
+	if h.store != nil {
+		h.store.Add(logstore.KindSystem, logstore.Entry{Ts: r.Time, Level: lvl, Component: "edge", Domain: domain, Message: msg})
+	}
+	if h.ch != nil {
+		select {
+		case h.ch <- e:
+		default:
+			// drop si buffer plein — ne pas bloquer le hot path
+		}
 	}
 	return nil
 }

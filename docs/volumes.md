@@ -35,7 +35,8 @@ Chaque service persiste ses données dans `/etc/goproxify` via un volume Docker 
 | `threat-config.gpx` | Copie chiffrée de la configuration Ephor reçue de l'Admin, rechargée au démarrage sans l'Admin |
 | `waf-config.gpx` | Copie chiffrée de l'interrupteur du WAF reçu de l'Admin, rechargée au démarrage sans l'Admin (surchargeable par `GPX_WAF_CONFIG_PATH`) ; absente ou illisible : WAF actif |
 | `edge-settings.gpx` | Copie chiffrée des réglages runtime reçus de l'Admin (anonymisation / pseudonymisation des IP, journalisation, tracing, URL publique), rechargée au démarrage sans l'Admin (surchargeable par `GPX_EDGE_SETTINGS_PATH`) |
-| `logs/access.log` | Journal d'accès HTTP du reverse proxy |
+| `logs/access-<lundi>.db`, `logs/system-<mois>.db` | Base de logs de la passerelle ([ADR 0012](adr/0012-logs-proprietaire-edge.md)) : un fichier SQLite par semaine pour les accès HTTP et par mois pour les logs système. Rétention par suppression du fichier entier : 365 jours pour les accès (`engine.log_retention_days`), 90 jours pour le système (`engine.system_log_retention_days`). Dossier réglable par `engine.log_store_dir` (défaut `/etc/goproxify/logs`). Exclu de la sauvegarde |
+| `log-ip-key.gpx` | Clé qui chiffre l'IP réelle des accès en pseudonymisation, copie locale chiffrée (surchargeable par `GPX_LOG_IP_KEY_PATH`), reprise par la sauvegarde d'état. Illisible (secret d'appairage changé sans `PreviousSecretsEnv`) : jamais remplacée, la passerelle journalise sans garder l'IP réelle |
 
 > **Note :** `proxies/` et `proxies-revisions/` sont la source de vérité de la passerelle. La passerelle reçoit sa configuration depuis l'Admin via WebSocket au démarrage — ces fichiers sont ensuite mis à jour à chaque changement de configuration.
 
@@ -52,6 +53,7 @@ Chaque service persiste ses données dans `/etc/goproxify` via un volume Docker 
 | `agent-hmacs.json` | Store des HMACs persistés |
 | `join-tokens-used.json` | Tokens de join déjà consommés (anti-rejeu) |
 | `agent-node-id` | Identité stable du nœud Agent |
+| `log-cursors.json` | Position de lecture des logs de chaque conteneur suivi (`goproxify.logs`) : l'Agent ne l'avance qu'après l'accusé de réception de sa passerelle, et reprend de là après un redémarrage ou une coupure. Perdue : le suivi repart de « maintenant » |
 
 > **Note :** Le volume Agent est léger. Sa suppression force un nouveau pairing : l'Agent repasse en état `pending` et doit être réapprouvé dans l'interface Admin (menu **Agents**).
 

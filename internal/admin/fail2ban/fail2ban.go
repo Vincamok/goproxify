@@ -209,6 +209,7 @@ const errorCountsQuery = `SELECT ip, COUNT(*) as n FROM logs INDEXED BY idx_logs
 	 WHERE ts > ?
 	   AND status >= 400 AND status < 500 AND status != 404
 	   AND ip != '' AND component = 'edge' AND ip_truncated = 0
+	   AND (node_id = '' OR node_id NOT IN (SELECT node_id FROM edge_log_cursors WHERE stream = 'iperr'))
 	 GROUP BY ip HAVING n >= ? OR instr(ip, ':') > 0`
 
 // errorCounts compte, depuis since, les erreurs client par cible de ban (voir banKey). Seules les
@@ -217,24 +218,41 @@ const errorCountsQuery = `SELECT ip, COUNT(*) as n FROM logs INDEXED BY idx_logs
 // IP:port) sont regroupées ici et c'est le groupe qui doit l'atteindre. Les IP tronquées par la
 // passerelle sont écartées : x.x.x.0 ne bannirait personne, un /48 tronqué bannirait son premier /64.
 func (e *Engine) errorCounts(since time.Time, maxErr int, whitelist []string) map[string]int {
-	rows, err := e.db.Query(errorCountsQuery, since.UTC().Format(time.RFC3339Nano), maxErr)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
 	counts := map[string]int{}
-	for rows.Next() {
-		var ip string
-		var n int
-		if rows.Scan(&ip, &n) != nil {
-			continue
-		}
+	add := func(ip string, n int) {
 		// Écarte aussi ce qui n'est pas une IP (« [pseudonymisé] »).
 		addr, ok := clientAddr(ip)
 		if !ok || isPrivateIP(addr) || whitelisted(netip.PrefixFrom(addr, addr.BitLen()), whitelist) {
-			continue
+			return
 		}
 		counts[banKey(addr, whitelist)] += n
+	}
+
+	// Passerelles qui envoient leurs lignes sans compteurs (versions antérieures) : on compte sur les lignes.
+	if rows, err := e.db.Query(errorCountsQuery, since.UTC().Format(time.RFC3339Nano), maxErr); err == nil {
+		for rows.Next() {
+			var ip string
+			var n int
+			if rows.Scan(&ip, &n) == nil {
+				add(ip, n)
+			}
+		}
+		rows.Close()
+	}
+
+	// Passerelles qui comptent elles-mêmes : un compteur par minute, donc on ne retient que les minutes entières
+	// qui suivent le début de la fenêtre. La fenêtre effective perd jusqu'à une minute au début, et la minute
+	// d'un déban n'est jamais comptée : du côté prudent, il y a moins de bans, jamais plus.
+	if rows, err := e.db.Query(`SELECT ip, SUM(errors) FROM edge_ip_errors WHERE minute > ? GROUP BY ip`,
+		since.UTC().Format("2006-01-02T15:04")); err == nil {
+		for rows.Next() {
+			var ip string
+			var n int
+			if rows.Scan(&ip, &n) == nil {
+				add(ip, n)
+			}
+		}
+		rows.Close()
 	}
 	return counts
 }

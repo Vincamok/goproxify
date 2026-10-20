@@ -125,7 +125,6 @@ func (s *Server) runtimeSettings() edgews.Settings {
 		TracingEndpoint: s.cfg.App.TracingEndpoint,
 		LogLevel:        s.cfg.EdgeDefaults.LogLevel,
 		LogFormat:       s.cfg.EdgeDefaults.LogFormat,
-		AccessLogPath:   s.cfg.EdgeDefaults.AccessLogPath,
 		AdminPublicURL:  s.resolveAdminPublicURL(),
 	}
 	if v := admindb.GetSetting(s.db, "logs.ip_anonymize", ""); v != "" {

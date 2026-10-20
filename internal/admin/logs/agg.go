@@ -48,6 +48,7 @@ func aggregate(ctx context.Context, db *sql.DB, maxChunks int) (chunks int, caug
 			 SELECT substr(ts, 1, 16), node_name, domain, status, COUNT(*), COALESCE(SUM(bytes), 0), COALESCE(SUM(latency_ms), 0),
 			        SUM(CASE WHEN lower(component) LIKE '%bot%' OR lower(message) LIKE '%bot%' THEN 1 ELSE 0 END)
 			 FROM logs WHERE id > ? AND id <= ? AND status > 0
+			   AND (node_id IS NULL OR node_id = '' OR node_id NOT IN (SELECT node_id FROM edge_log_cursors WHERE stream = 'minute'))
 			 GROUP BY 1, 2, 3, 4
 			 ON CONFLICT (minute, node_name, domain, status) DO UPDATE SET
 			   requests = requests + excluded.requests, bytes = bytes + excluded.bytes,

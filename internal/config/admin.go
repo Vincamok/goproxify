@@ -59,15 +59,14 @@ type AdminConfig struct {
 	// EdgeDefaults sont les paramètres runtime poussés aux passerelles.
 	// Chaque passerelle peut les surcharger via sa propre config locale.
 	EdgeDefaults struct {
-		LogLevel      string `mapstructure:"log_level"`       // info | debug | warn | error
-		LogFormat     string `mapstructure:"log_format"`      // json | text
-		AccessLogPath string `mapstructure:"access_log_path"` // chemin du fichier d'access log
+		LogLevel  string `mapstructure:"log_level"`  // info | debug | warn | error
+		LogFormat string `mapstructure:"log_format"` // json | text
 	} `mapstructure:"edge_defaults"`
 
 	ACME struct {
-		Enabled      bool              `mapstructure:"enabled"`
-		Email        string            `mapstructure:"email"`
-		DirectoryURL string            `mapstructure:"directory_url"` // vide = Let's Encrypt prod
+		Enabled      bool   `mapstructure:"enabled"`
+		Email        string `mapstructure:"email"`
+		DirectoryURL string `mapstructure:"directory_url"` // vide = Let's Encrypt prod
 		DNS          struct {
 			Type   string            `mapstructure:"type"`
 			Params map[string]string `mapstructure:"params"`

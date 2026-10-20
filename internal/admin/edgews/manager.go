@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -41,7 +42,6 @@ type Settings struct {
 	TracingEndpoint string `json:"tracing_endpoint,omitempty"`
 	LogLevel        string `json:"log_level,omitempty"`
 	LogFormat       string `json:"log_format,omitempty"`
-	AccessLogPath   string `json:"access_log_path,omitempty"`
 	// AdminPublicURL : origine publique de l'UI Admin (liens pages d'erreur → Logs).
 	AdminPublicURL string `json:"admin_public_url,omitempty"`
 	// IPAnonymize : quand true, la passerelle tronque les IPs dans les access logs (RGPD).
@@ -56,6 +56,8 @@ type edgeEntry struct {
 	nodeName string
 	rbacRole string
 	client   *Client
+	// resumePending : une reprise des logs est déjà programmée pour cette passerelle.
+	resumePending atomic.Bool
 }
 
 // Manager gère un client WS persistant par passerelle enregistrée.
@@ -72,6 +74,7 @@ type Manager struct {
 	settingsMu     sync.RWMutex
 	settings       Settings // derniers paramètres poussés (utilisés au full_sync)
 	onAgentPending func(id, name, version string)
+	logStream      *LogStreamIngestor
 	onLogBatch     func(entries []edgeWS.LogEntryPayload)
 	onWAFReloaded  func(nodeName string)
 	liveMu         sync.RWMutex
@@ -719,8 +722,20 @@ func (m *Manager) newClient(edgeID, endpoint string, entry *edgeEntry) *Client {
 		m.settingsMu.RUnlock()
 		m.pushAllToEntry(ctx, entry, s)
 		m.pushAdminToken(ctx, entry)
+		m.sendLogResume(entry)
 		return nil
 	}, func(msg edgeWS.Message) {
+		switch msg.Type {
+		case edgeWS.TypeLogStream:
+			m.handleLogStream(entry, msg.Payload)
+			return
+		case edgeWS.TypeAggStream:
+			m.handleAggStream(entry, msg.Payload)
+			return
+		case edgeWS.TypeIPStream:
+			m.handleIPStream(entry, msg.Payload)
+			return
+		}
 		if msg.Type == edgeWS.TypeAccessLog || msg.Type == edgeWS.TypeAgentLog {
 			msg.Payload = stampLogBatchNode(msg.Payload, edgeID, entry.nodeName)
 		}

@@ -128,8 +128,8 @@ func TestBootstrapEdgeLogPathsMatchHistoricalPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(dir, "logs", "edge_access.log"); cfg.Engine.AccessLogPath != want {
-		t.Fatalf("access_log_path = %q, attendu %q", cfg.Engine.AccessLogPath, want)
+	if want := filepath.Join(dir, "logs"); cfg.Engine.LogStoreDir != want {
+		t.Fatalf("log_store_dir = %q, attendu %q", cfg.Engine.LogStoreDir, want)
 	}
 	if want := filepath.Join(dir, "logs", "edge_system.log"); cfg.Engine.SystemLogPath != want {
 		t.Fatalf("system_log_path = %q, attendu %q", cfg.Engine.SystemLogPath, want)

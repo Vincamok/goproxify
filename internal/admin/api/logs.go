@@ -19,6 +19,7 @@ import (
 
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
+	"github.com/vincamok/goproxify/internal/admin/edgeproxy"
 	"github.com/vincamok/goproxify/internal/admin/logs"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
 )
@@ -39,6 +40,9 @@ type LogsHandler struct {
 	OnUnban func(ip string)
 	// OnEraseIP (optionnel) efface l'IP des passerelles : access log et historique des bans.
 	OnEraseIP func(ip string)
+	// Edges et BulkEdges (optionnels) interrogent la base de logs des passerelles pour `source=edge`.
+	Edges     *edgeproxy.Client
+	BulkEdges *edgeproxy.Client
 }
 
 func (h *LogsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -79,6 +83,10 @@ func (h *LogsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *LogsHandler) list(w http.ResponseWriter, r *http.Request) {
+	if sourceIsEdge(r) {
+		h.listRemote(w, r)
+		return
+	}
 	p := parseLogsParams(r)
 	entries, hasMore, err := h.Store.Search(p)
 	if err != nil {
@@ -144,6 +152,10 @@ func (h *LogsHandler) export(w http.ResponseWriter, r *http.Request) {
 	if format == "" {
 		format = "json"
 	}
+	if sourceIsEdge(r) {
+		h.exportRemote(w, r, p, format)
+		return
+	}
 	data, ct, err := h.Store.Export(p, format)
 	if err != nil {
 		logsJSONErr(w, err, http.StatusInternalServerError)
@@ -165,6 +177,10 @@ func (h *LogsHandler) facets(w http.ResponseWriter, r *http.Request) {
 	fields := []string{"level", "component", "node_name", "domain", "method"}
 	if v := r.URL.Query().Get("fields"); v != "" {
 		fields = strings.Split(v, ",")
+	}
+	if sourceIsEdge(r) {
+		h.facetsRemote(w, r, p, fields)
+		return
 	}
 	out, err := h.Store.Facets(p, fields)
 	if err != nil {
@@ -193,6 +209,10 @@ func (h *LogsHandler) histogram(w http.ResponseWriter, r *http.Request) {
 		if to.Sub(from) <= 6*time.Hour {
 			bucket = "minute"
 		}
+	}
+	if sourceIsEdge(r) {
+		h.histogramRemote(w, r, p, bucket)
+		return
 	}
 	pts, err := h.Store.Histogram(p, bucket)
 	if err != nil {
@@ -348,19 +368,25 @@ func (h *LogsHandler) revealIP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		EntryID int64  `json:"entry_id"`
-		Reason  string `json:"reason"`
+		EntryID int64 `json:"entry_id"`
+		// EntryRef désigne une ligne de la base d'une passerelle (« <passerelle>:<type>:<id> », source=edge).
+		EntryRef string `json:"entry_ref"`
+		Reason   string `json:"reason"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, r, http.StatusBadRequest, "api.err.json")
 		return
 	}
-	if body.EntryID <= 0 {
+	if body.EntryRef == "" && body.EntryID <= 0 {
 		writeErr(w, r, http.StatusBadRequest, "api.err.missing_entry_id")
 		return
 	}
 	if strings.TrimSpace(body.Reason) == "" {
 		writeErr(w, r, http.StatusBadRequest, "api.err.reason_required")
+		return
+	}
+	if body.EntryRef != "" {
+		h.revealEdgeLine(w, r, body.EntryRef, body.Reason)
 		return
 	}
 	ip, err := h.Store.RevealIP(body.EntryID)
@@ -542,3 +568,7 @@ func (h *LogsHandler) subjectExport(w http.ResponseWriter, r *http.Request) {
 	enc.SetIndent("", "  ")
 	enc.Encode(out) //nolint:errcheck
 }
+
+// sourceIsEdge : `source=edge` fait répondre les routes de logs depuis la base des passerelles (ADR 0012) ; sans lui,
+// l'Admin répond depuis sa propre base.
+func sourceIsEdge(r *http.Request) bool { return r.URL.Query().Get("source") == "edge" }

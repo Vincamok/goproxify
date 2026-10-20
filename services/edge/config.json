@@ -24,7 +24,7 @@
   "engine": {
     "log_level": "info",
     "log_format": "json",
-    "access_log_path": "/etc/goproxify/logs/edge_access.log",
+    "log_store_dir": "/etc/goproxify/logs",
     "system_log_path": "/etc/goproxify/logs/edge_system.log"
   },
   "geoip": {

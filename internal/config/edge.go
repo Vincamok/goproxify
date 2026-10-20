@@ -43,7 +43,11 @@ type EdgeConfig struct {
 	Engine struct {
 		LogLevel        string `mapstructure:"log_level"`        // info | debug | warn | error
 		LogFormat       string `mapstructure:"log_format"`       // json | text
-		AccessLogPath   string `mapstructure:"access_log_path"`  // Chemin du log d'accès HTTP
+		// LogStoreDir : dossier de la base de logs de la passerelle (accès et système, ADR 0012). Vide : /etc/goproxify/logs.
+		LogStoreDir string `mapstructure:"log_store_dir"`
+		// LogRetentionDays : conservation des accès HTTP (0 : 365 jours). SystemLogRetentionDays : logs système (0 : 90 jours).
+		LogRetentionDays       int `mapstructure:"log_retention_days"`
+		SystemLogRetentionDays int `mapstructure:"system_log_retention_days"`
 		SystemLogPath   string `mapstructure:"system_log_path"`  // Chemin du log système
 		TracingEndpoint string `mapstructure:"tracing_endpoint"` // Endpoint OTLP HTTP (vide = désactivé)
 		// TracingSampleRatio : part des nouvelles traces échantillonnées (0 ou >=1 = toutes ; une trace déjà décidée en amont est respectée).

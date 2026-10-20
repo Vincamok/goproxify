@@ -29,7 +29,7 @@ func TestStripHostPort(t *testing.T) {
 }
 
 func TestAccessLoggerForwarder(t *testing.T) {
-	al := NewAccessLogger("")
+	al := NewAccessLogger()
 	var (
 		mu   sync.Mutex
 		got  []ShipEntry
@@ -123,7 +123,7 @@ func TestIPFieldsAnonymizeWinsOverPseudonymize(t *testing.T) {
 }
 
 func TestAccessLoggerSkipsInternal(t *testing.T) {
-	al := NewAccessLogger("")
+	al := NewAccessLogger()
 	var got int
 	al.SetForwarder(func(batch []ShipEntry) {
 		got += len(batch)
@@ -142,7 +142,7 @@ func TestAccessLoggerSkipsInternal(t *testing.T) {
 }
 
 func TestAccessLoggerRecordsTLSFingerprint(t *testing.T) {
-	al := NewAccessLogger("")
+	al := NewAccessLogger()
 	got := make(chan ShipEntry, 16)
 	al.SetForwarder(func(batch []ShipEntry) {
 		for _, e := range batch {

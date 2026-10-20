@@ -14,8 +14,7 @@
   },
   "edge_defaults": {
     "log_level": "info",
-    "log_format": "json",
-    "access_log_path": ""
+    "log_format": "json"
   },
   "ha": {
     "enabled": false,

@@ -18,7 +18,7 @@ Un enregistrement par finalité. Les durées sont les **défauts** d'une install
 | Personnes | Visiteurs des services publiés derrière la passerelle |
 | Données | Adresse IP, date, méthode, domaine, chemin, code de réponse, taille, durée, User-Agent, Referer, empreintes TLS (JA3/JA4), catégories WAF déclenchées, identifiant de requête. **Jamais** : corps de requête ou de réponse, cookies, en-têtes d'autorisation |
 | Destinataires | Comptes de l'Admin disposant du scope `logs:read`, dans la limite de leurs équipes. Aucun tiers |
-| Durée | 90 jours (`retention_access_days`), 90 jours pour les fichiers de la passerelle (rotation). Maximum recommandé par la CNIL : 13 mois |
+| Durée | 90 jours sur l'Admin (`retention_access_days`), 365 jours dans la base de logs de la passerelle (`engine.log_retention_days` d'`edge.json`, réglable par passerelle). Maximum recommandé par la CNIL : 13 mois |
 | Protection des IP | Entières (défaut), anonymisées ou pseudonymisées (AES-GCM) : voir [rgpd.md](rgpd.md) |
 | Transferts hors UE | Aucun par défaut |
 | Mesures de sécurité | Voir §5 |
@@ -87,7 +87,7 @@ Une AIPD est exigée quand le traitement est « susceptible d'engendrer un risqu
 | Risque | Mesure fournie |
 |---|---|
 | Accès illégitime aux logs | Rôles, équipes et scopes ; lecture limitée aux administrateurs ; révélation d'IP réservée au super-administrateur et au rôle `dpo`, avec motif obligatoire et audit |
-| Conservation excessive | Purge nocturne ; durées courtes par défaut ; fichiers des passerelles en rotation à 90 jours |
+| Conservation excessive | Purge nocturne ; durées courtes par défaut ; bases de logs des passerelles purgées par fichier de période (365 jours, réglable) |
 | Ré-identification | Anonymisation (irréversible) ou pseudonymisation (clé AES-GCM, empreinte HMAC pour l'effacement) |
 | Perte de maîtrise des droits | Export d'accès (`logs subject-export`), effacement par IP ou par compte (`logs delete`), y compris sur les passerelles |
 | Fuite via les sauvegardes | Chiffrement des sauvegardes (`GPX_BACKUP_KEY`), obligatoire si elles contiennent des données personnelles |

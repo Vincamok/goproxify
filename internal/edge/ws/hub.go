@@ -9,6 +9,7 @@ package ws
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -600,6 +601,28 @@ func (h *Hub) BroadcastToAdmins(msg Message) {
 			h.log.Warn("ws/admin: erreur envoi broadcast", "node", ac.id, "err", err)
 		}
 	}
+}
+
+// HasAdmin indique si l'Admin d'identifiant id est connecté.
+func (h *Hub) HasAdmin(id string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	_, ok := h.adminConns[id]
+	return ok
+}
+
+// ErrAdminNotConnected : l'Admin visé n'est pas (ou plus) connecté.
+var ErrAdminNotConnected = errors.New("ws: Admin non connecté")
+
+// SendToAdmin envoie un message à l'Admin d'identifiant id.
+func (h *Hub) SendToAdmin(id string, msg Message) error {
+	h.mu.RLock()
+	ac, ok := h.adminConns[id]
+	h.mu.RUnlock()
+	if !ok {
+		return ErrAdminNotConnected
+	}
+	return h.sendToAdmin(ac, msg)
 }
 
 // ConnectedAdmins retourne le nombre d'Admins connectés.

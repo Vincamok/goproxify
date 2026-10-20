@@ -15,7 +15,7 @@ import (
 // Une étape de sécurité travaille sur une copie de la requête (WithContext) : ce qu'elle signale doit
 // quand même arriver dans l'entrée du journal, qui n'a que la requête d'origine.
 func TestAccessLoggerCollectsNotesFromDerivedRequests(t *testing.T) {
-	al := NewAccessLogger("")
+	al := NewAccessLogger()
 	got := make(chan ShipEntry, 4)
 	al.SetForwarder(func(batch []ShipEntry) {
 		for _, e := range batch {

@@ -201,6 +201,25 @@ func migrate(db *sql.DB) error {
 			k TEXT PRIMARY KEY,
 			v INTEGER NOT NULL
 		)`,
+		// Erreurs client (4xx hors 404) par IP et par minute, envoyées par les passerelles pour le Fail2Ban global
+		// (ADR 0012) : une IP en clair, donc gardées 24 h seulement et effacées avec l'IP.
+		`CREATE TABLE IF NOT EXISTS edge_ip_errors (
+			node_id TEXT    NOT NULL,
+			minute  TEXT    NOT NULL,
+			ip      TEXT    NOT NULL,
+			errors  INTEGER NOT NULL,
+			PRIMARY KEY (node_id, minute, ip)
+		) WITHOUT ROWID`,
+		`CREATE INDEX IF NOT EXISTS idx_edge_ip_errors_minute ON edge_ip_errors (minute)`,
+		// Dernière position reçue de chaque passerelle, par flux de logs (ADR 0012) : écrite dans la même transaction
+		// que les lignes, elle dit à la passerelle d'où reprendre après une coupure.
+		`CREATE TABLE IF NOT EXISTS edge_log_cursors (
+			node_id    TEXT NOT NULL,
+			stream     TEXT NOT NULL,
+			last_seq   INTEGER NOT NULL DEFAULT 0,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (node_id, stream)
+		) WITHOUT ROWID`,
 		// Bans IP (Fail2Ban, CrowdSec, natif)
 		`CREATE TABLE IF NOT EXISTS security_bans (
 			id         TEXT PRIMARY KEY,

@@ -1,18 +1,17 @@
 // Copyright 2024-2026 Vincamok / GoProxify contributors
 // SPDX-License-Identifier: Apache-2.0
 
-// Package gdpr fournit les primitives de chiffrement pour la pseudonymisation RGPD.
+// Package gdpr garde la clé de pseudonymisation RGPD de l'Admin et la file des effacements à rejouer aux
+// passerelles. Les primitives de chiffrement sont dans internal/ipcrypt.
 package gdpr
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
+
+	"github.com/vincamok/goproxify/internal/ipcrypt"
 )
 
 const keyRow = "ip_pseudonymize_key"
@@ -33,10 +32,9 @@ func EnsureKey(db *sql.DB) ([]byte, error) {
 		return nil, fmt.Errorf("gdpr: lecture clé : %w", err)
 	}
 
-	// Génération d'une nouvelle clé aléatoire 256 bits.
-	key := make([]byte, 32)
-	if _, err := io.ReadFull(rand.Reader, key); err != nil {
-		return nil, fmt.Errorf("gdpr: génération clé : %w", err)
+	key, err := ipcrypt.NewKey()
+	if err != nil {
+		return nil, err
 	}
 	encoded = base64.StdEncoding.EncodeToString(key)
 	_, err = db.Exec(`INSERT OR REPLACE INTO gdpr_keys (key, value) VALUES (?, ?)`, keyRow, encoded)
@@ -44,48 +42,4 @@ func EnsureKey(db *sql.DB) ([]byte, error) {
 		return nil, fmt.Errorf("gdpr: persistance clé : %w", err)
 	}
 	return key, nil
-}
-
-// Encrypt chiffre plaintext avec AES-GCM et retourne la valeur encodée en base64.
-// Format : nonce(12B) || ciphertext.
-func Encrypt(key []byte, plaintext string) (string, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return "", err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return "", err
-	}
-	ct := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
-	return base64.StdEncoding.EncodeToString(ct), nil
-}
-
-// Decrypt déchiffre une valeur produite par Encrypt.
-func Decrypt(key []byte, encoded string) (string, error) {
-	data, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
-		return "", fmt.Errorf("gdpr: décodage base64 : %w", err)
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return "", err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-	ns := gcm.NonceSize()
-	if len(data) < ns {
-		return "", errors.New("gdpr: données chiffrées trop courtes")
-	}
-	plain, err := gcm.Open(nil, data[:ns], data[ns:], nil)
-	if err != nil {
-		return "", fmt.Errorf("gdpr: déchiffrement : %w", err)
-	}
-	return string(plain), nil
 }

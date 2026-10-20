@@ -153,7 +153,7 @@ L'Ephor est le moteur global de détection de menaces de la passerelle. Il s'app
 
 | Label | Valeurs | Description |
 |---|---|---|
-| `goproxify.logs` | `"true"` | Active le log forwarding (logs Docker → passerelle). |
+| `goproxify.logs` | `"true"` | Active le log forwarding (logs Docker → passerelle). Rien n'est perdu si la passerelle est injoignable ou si l'Agent redémarre : Docker garde les lignes, l'Agent reprend depuis la dernière position acquittée. La passerelle les garde dans sa base de logs (logs système, composant `agent`) avant d'acquitter. |
 | `goproxify.logs.format` | `combined` \| `json` \| `minimal` | Format des logs d'accès. |
 | `goproxify.logs.level` | `debug` \| `info` \| `warn` \| `error` | Niveau de log. |
 

@@ -3,6 +3,8 @@
 **Statut :** proposé, étape 1 partiellement livrée (Admin 0.164.0) · **Date :** 2026-10-18
 **Complète :** ADR-0002 (SQLite pour l'Admin) · **Respecte :** ADR-0006 (autonomie des composants)
 
+> **Réorienté par l'[ADR 0012](0012-logs-proprietaire-edge.md) (2026-10-20).** Cet ADR range mieux les logs sur l'Admin sans remettre en cause leur provenance : chaque requête de chaque passerelle y est copiée, et une coupure de l'Admin laisse un trou que rien ne comble. L'ADR 0012 donne la propriété des lignes brutes aux passerelles. Les étapes 2 et 3 (base séparée, fichiers par période) sont **remplacées** : elles s'appliquent à la passerelle, pas à l'Admin. L'étape 1 est **réorientée** : les cumuls par minute sont calculés par la passerelle ; les tables livrées en Admin 0.164.0 et 0.164.2 sont une étape intermédiaire que l'ADR 0012 supprime à sa livraison 8. Le contexte ci-dessous reste exact.
+
 ---
 
 ## Contexte

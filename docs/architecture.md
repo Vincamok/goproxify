@@ -255,7 +255,8 @@ Admin and Edge each have a Docker volume mounted at `/etc/goproxify/` (separate 
 ├── certs/
 └── logs/
     ├── edge_system.log
-    └── edge_access.log
+    ├── access-2026-10-19.db          # one SQLite file per week (access), per month (system-2026-10.db)
+    └── system-2026-10.db
 ```
 
 ---
@@ -275,24 +276,20 @@ Admin and Edge each have a Docker volume mounted at `/etc/goproxify/` (separate 
 }
 ```
 
-### HTTP access log (`edge_access.log`)
+### HTTP access log (SQLite database, `logs/access-<monday>.db`)
 
-```json
-{
-  "time": "2026-07-15T23:55:01.123Z",
-  "component": "edge-router",
-  "client_ip": "193.56.21.10",
-  "host": "app.example.com",
-  "method": "GET",
-  "path": "/api/v1/status",
-  "status": 200,
-  "duration_ms": 14.2,
-  "bytes_sent": 1024,
-  "user_agent": "Mozilla/5.0...",
-  "upstream_backend": "http://172.18.0.5:8880",
-  "http_version": "HTTP/3"
-}
-```
+The gateway no longer writes `edge_access.log`: its access lines go into a local SQLite database (one file per week, system logs one per month in `logs/system-<month>.db`), per [ADR 0012](adr/0012-logs-proprietaire-edge.md). Writes are batched (500 lines or 250 ms) on a dedicated goroutine and never slow a request: a full disk or a damaged file loses lines instead.
+
+| Column | Content |
+|---|---|
+| `id` | Row id; the global, increasing id used as a cursor is `(period number << 40) \| id` |
+| `ts` | Request start, UTC, fixed-width `2026-07-15T23:55:01.123456Z` |
+| `domain`, `method`, `path`, `status`, `bytes`, `latency_ms` | The request and its outcome |
+| `ip`, `ip_truncated` | The IP as readable in the database: real, or truncated by anonymisation / pseudonymisation |
+| `ip_enc`, `ip_hmac` | Pseudonymisation only: the real IP encrypted (AES-GCM, key in `log-ip-key.gpx`) and a deterministic fingerprint used to find and erase it |
+| `user_agent`, `referrer`, `request_id`, `waf_matches`, `threat_signal`, `tls_ja3`, `tls_ja4` | Request context and security signals |
+
+Retention deletes whole period files: 365 days for access lines, 90 days for system lines. Erasing an IP is a `DELETE` by `ip` or `ip_hmac` with `secure_delete` and a WAL truncation, so the erased value does not stay readable in the files.
 
 ---
 

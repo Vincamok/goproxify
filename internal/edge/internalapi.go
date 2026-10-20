@@ -4,7 +4,9 @@
 package edge
 
 import (
+	"github.com/vincamok/goproxify/internal/edge/logapi"
 	"github.com/vincamok/goproxify/internal/httpx"
+	"github.com/vincamok/goproxify/internal/ipcrypt"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/vincamok/goproxify/internal/edge/plugins"
 	"context"
@@ -20,7 +22,6 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	edgecrowdsec "github.com/vincamok/goproxify/internal/edge/crowdsec"
 	"github.com/vincamok/goproxify/internal/edge/errorpages"
-	edgelog "github.com/vincamok/goproxify/internal/edge/logger"
 	edgef2b "github.com/vincamok/goproxify/internal/edge/fail2ban"
 	"github.com/vincamok/goproxify/internal/edge/metrics"
 	"github.com/vincamok/goproxify/internal/edge/portal"
@@ -109,6 +110,12 @@ func (s *Server) startInternalAPI() error {
 	mux.HandleFunc("DELETE /internal/v1/agent/containers", s.handleAgentContainerStop)
 	mux.HandleFunc("POST /internal/v1/agent/events", s.handleAgentEvent)
 	mux.HandleFunc("POST /internal/v1/agent/logs", s.handleAgentLogs)
+
+	// Recherche dans la base de logs de la passerelle (appelée par l'Admin, ADR 0012).
+	mux.HandleFunc("GET "+logapi.PathSearch, s.handleLogSearch)
+	mux.HandleFunc("GET "+logapi.PathHistogram, s.handleLogHistogram)
+	mux.HandleFunc("GET "+logapi.PathFacets, s.handleLogFacets)
+	mux.HandleFunc("POST "+logapi.PathReveal, s.handleLogReveal)
 
 	// Relay Admin → Agent (Admin appelle passerelle, Passerelle relaie à l'Agent)
 	mux.HandleFunc("POST /internal/v1/agent/{name}/rescan", s.handleAgentRescanRelay)
@@ -892,7 +899,6 @@ type pushedSettings struct {
 	TracingEndpoint string `json:"tracing_endpoint"`
 	LogLevel        string `json:"log_level"`
 	LogFormat       string `json:"log_format"`
-	AccessLogPath   string `json:"access_log_path"`
 	AdminPublicURL  string `json:"admin_public_url"`
 	IPAnonymize     *bool  `json:"ip_anonymize,omitempty"`
 	IPPseudonymize  *bool  `json:"ip_pseudonymize,omitempty"`
@@ -908,7 +914,6 @@ func (p pushedSettings) merge(next pushedSettings) pushedSettings {
 		{&p.TracingEndpoint, next.TracingEndpoint},
 		{&p.LogLevel, next.LogLevel},
 		{&p.LogFormat, next.LogFormat},
-		{&p.AccessLogPath, next.AccessLogPath},
 		{&p.AdminPublicURL, next.AdminPublicURL},
 	} {
 		if f.src != "" {
@@ -959,12 +964,6 @@ func (s *Server) applyPushedSettings(payload pushedSettings) {
 	if level != "" || format != "" {
 		s.log.Reload(level, format, s.cfg.Engine.SystemLogPath)
 		s.log.Info("settings: logger rechargé depuis Admin", "level", level, "format", format)
-	}
-
-	// Access log path — rechargement à chaud, local wins
-	if s.cfg.Engine.AccessLogPath == "" && payload.AccessLogPath != "" {
-		s.accessLog.Reopen(payload.AccessLogPath)
-		s.log.Info("settings: access log redirigé depuis Admin", "path", payload.AccessLogPath)
 	}
 
 	// Protection des IP, appliquée d'un bloc : l'anonymisation de edge.json ne peut pas être levée
@@ -1580,23 +1579,25 @@ func bucketQuantile(buckets map[float64]float64, count, sum, q float64) float64 
 	return sum / count
 }
 
-// applyEraseIPs retire d'une passerelle les traces d'IPs que l'Admin a effacées : lignes d'access
-// log (fichier courant et rotations) et historique des bans. L'ordre arrive aussi à chaque
+// applyEraseIPs retire d'une passerelle les traces d'IPs que l'Admin a effacées : lignes d'accès de la base
+// de logs locale (en clair ou pseudonymisées) et historique des bans. L'ordre arrive aussi à chaque
 // connexion tant qu'il est conservé, d'où l'absence de journal par IP (elle ne doit pas y réapparaître).
 func (s *Server) applyEraseIPs(list []edgews.EraseEntry) {
-	var lines int
+	var lines int64
 	var bans int64
 	for _, e := range list {
 		if e.IP == "" {
 			continue
 		}
-		n, err := s.accessLog.EraseIP(e.IP)
-		if err != nil {
-			s.log.Warn("rgpd: effacement d'une IP dans l'access log échoué", "err", err)
+		if s.logStore != nil {
+			n, err := s.logStore.EraseIP(e.IP)
+			if err != nil {
+				s.log.Warn("rgpd: effacement d'une IP dans les logs d'accès échoué", "err", err)
+			}
+			lines += n
 		}
-		lines += n
 		if s.bansDB != nil {
-			canon := edgelog.CanonicalIP(e.IP)
+			canon := ipcrypt.CanonicalIP(e.IP)
 			b, err := s.bansDB.EraseIP(e.IP, canon)
 			if err != nil {
 				s.log.Warn("rgpd: effacement d'une IP dans l'historique des bans échoué", "err", err)

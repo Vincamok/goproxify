@@ -20,7 +20,7 @@ import (
 // Le journal d'accès enveloppe les étapes de sécurité : sans support partagé, les catégories du WAF et le
 // signal Ephor posés sur la copie de la requête n'arrivaient jamais dans l'entrée (waf_matches toujours vide).
 func TestAccessLog_RecordsWAFBlockAndEphorSignal(t *testing.T) {
-	al := edgelog.NewAccessLogger("")
+	al := edgelog.NewAccessLogger()
 	got := make(chan edgelog.ShipEntry, 4)
 	al.SetForwarder(func(batch []edgelog.ShipEntry) {
 		for _, e := range batch {

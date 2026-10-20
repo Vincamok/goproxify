@@ -116,13 +116,9 @@ func BootstrapEdge(path string) error {
 			"api_host":          envOr("GPX_NETWORK_API_HOST", nodeName),
 		},
 		"engine": map[string]any{
-			"log_level":  logLevel,
-			"log_format": "json",
-			// Chemins historiques (template services/edge/config.json qui
-			// équipait les images jusqu'à d25555a) — un nom de fichier
-			// différent ne perd aucune donnée mais éparpille les logs entre
-			// l'ancien et le nouveau fichier sur le même volume.
-			"access_log_path": filepath.Join(basePath, "logs", "edge_access.log"),
+			"log_level":       logLevel,
+			"log_format":      "json",
+			"log_store_dir":   filepath.Join(basePath, "logs"),
 			"system_log_path": filepath.Join(basePath, "logs", "edge_system.log"),
 		},
 		"geoip": map[string]any{

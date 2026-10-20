@@ -95,7 +95,7 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - [x] **Portail Access : enregistrement et rejeu des sessions** (sortie du terminal chiffrée sur la passerelle, conservation réglable, lecteur dans l'admin ; API, CLI, MCP) — livré
 - [x] **Portail Access : observation en direct d'une session** (sortie du terminal, journalisée ; UI, API, CLI) et **notification email** des demandes d'accès — livré
 - [x] SBOM attaché à chaque Release (workflow sbom-sign.yml)
-- [ ] **Logs à grande échelle** (agrégats par minute pour KPIs, courbe, codes HTTP et SLO livrés en Admin 0.164.0 ; reste l'histogramme, les IP uniques, la base séparée et les fichiers par période) : agrégats par minute pour les tableaux de bord (Prism, SLO, histogramme), base de logs séparée de `admin.db`, fichiers par période avec rétention par suppression de fichier — conception dans [ADR 0010](../docs/adr/0010-logs-agregats-et-fichiers-par-periode.md), aucun code livré
+- [ ] **Logs à grande échelle** (recherche dans les logs des passerelles livrée (`source=edge`, Edge `0.79.0` / Admin `0.168.0`) ; compteurs d'erreurs par IP pour le Fail2Ban global livrés (Edge `0.78.0` / Admin `0.167.0`) ; cumuls par minute calculés par la passerelle livrés (Edge `0.77.0` / Admin `0.166.0`) ; agrégats par minute pour KPIs, courbe, codes HTTP et SLO livrés en Admin 0.164.0 ; l'écriture par lots en Admin 0.164.2) : conception reprise par l'[ADR 0012](../docs/adr/0012-logs-proprietaire-edge.md), qui remplace les étapes 2 et 3 de l'[ADR 0010](../docs/adr/0010-logs-agregats-et-fichiers-par-periode.md). Les passerelles possèdent leurs lignes brutes (base locale par période, rétention 365 jours, IP réelle chiffrée par une clé locale) et calculent les cumuls ; l'Admin reçoit cumuls, compteurs et événements de sécurité avec numéro de séquence et rejeu après coupure ; recherche des lignes brutes déportée sur les passerelles ; exporteur SIEM ; export complet signé et gel légal utilisables Admin éteint. Livraisons : ~~base locale et clé IP~~ (livrée, Edge `0.74.0`), ~~curseur et rejeu Edge ↔ Admin~~ (livré, Edge `0.75.0` / Admin `0.165.0` , Agent `0.12.0` / Edge `0.76.0` pour les logs de conteneurs), cumuls à la source, recherche déportée, effacement RGPD, SIEM, export signé, nettoyage de l'Admin
 
 ### Résilience backend (v0.4)
 
@@ -118,6 +118,7 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 
 ### Fonctionnalités à venir
 
+- [ ] **Collecteur communautaire de bans** : service public (dépôt séparé) où les installations partagent leurs bans d'IP, déban/faux positifs, plages et signatures ; publication par consensus de plusieurs installations et réputation, liste de protection, partage et réception en option, bans reçus sous la source `community` (ADR 0013) — prévu
 - [x] **Forward-auth** compatible Authelia, Authentik, oauth2-proxy (2xx accepté, redirection de connexion, jokers d'en-têtes, en-têtes d'identité forgés retirés) — livré
 - [x] **Routage avancé** : split pondéré avec affectation A/B persistante, condition sur claim JWT — livré
 - [x] **URLs signées** (HMAC + expiration), **quotas par clé d'API ou cookie**, **plafond de débit par réponse** — livré

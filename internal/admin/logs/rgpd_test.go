@@ -13,6 +13,7 @@ import (
 
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
 	"github.com/vincamok/goproxify/internal/admin/gdpr"
+	"github.com/vincamok/goproxify/internal/ipcrypt"
 )
 
 func newRGPDStore(t *testing.T) (*Store, *sql.DB, []byte) {
@@ -66,7 +67,7 @@ func TestBackfillIPIndex(t *testing.T) {
 	s, db, key := newRGPDStore(t)
 	// Entrées pseudonymisées écrites avant l'existence de ip_hmac.
 	for _, ip := range []string{"198.51.100.1", "198.51.100.2"} {
-		enc, err := gdpr.Encrypt(key, ip)
+		enc, err := ipcrypt.Encrypt(key, ip)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -123,7 +124,7 @@ func TestIPTruncatedExposedInSearchAndStream(t *testing.T) {
 
 func TestIPReferenceHidesTheIP(t *testing.T) {
 	s, _, key := newRGPDStore(t)
-	if ref := s.IPReference("203.0.113.42"); ref != "hmac:"+gdpr.IPIndex(key, "203.0.113.42") {
+	if ref := s.IPReference("203.0.113.42"); ref != "hmac:"+ipcrypt.IPIndex(key, "203.0.113.42") {
 		t.Fatalf("IPReference avec clé = %q", ref)
 	}
 	s.SetGDPRKey(nil)

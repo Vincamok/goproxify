@@ -6,12 +6,13 @@ package gdpr
 import (
 	"database/sql"
 	"fmt"
+	"github.com/vincamok/goproxify/internal/ipcrypt"
 )
 
 // QueueEdgeErasure mémorise une IP effacée pour la rejouer aux passerelles qui n'étaient pas
 // connectées. L'IP est chiffrée : la base ne la garde pas en clair après l'effacement.
 func QueueEdgeErasure(db *sql.DB, key []byte, ip string) error {
-	enc, err := Encrypt(key, CanonicalIP(ip))
+	enc, err := ipcrypt.Encrypt(key, ipcrypt.CanonicalIP(ip))
 	if err != nil {
 		return err
 	}
@@ -34,7 +35,7 @@ func PendingEdgeErasures(db *sql.DB, key []byte) ([]string, error) {
 		if err := rows.Scan(&enc); err != nil {
 			return nil, err
 		}
-		ip, err := Decrypt(key, enc)
+		ip, err := ipcrypt.Decrypt(key, enc)
 		if err != nil || seen[ip] {
 			continue
 		}
@@ -44,8 +45,8 @@ func PendingEdgeErasures(db *sql.DB, key []byte) ([]string, error) {
 	return out, rows.Err()
 }
 
-// PurgeEdgeErasures supprime les ordres plus vieux que days : les fichiers de log des passerelles
-// ne gardent pas plus longtemps (rotation à 90 jours), il n'y a plus rien à effacer.
+// PurgeEdgeErasures supprime les ordres plus vieux que days : les accès de la base de logs des passerelles
+// ne gardent pas plus longtemps (365 jours par défaut), il n'y a plus rien à effacer.
 func PurgeEdgeErasures(db *sql.DB, days int) error {
 	_, err := db.Exec(`DELETE FROM edge_erasure_queue WHERE created_at < datetime('now', ?)`, fmt.Sprintf("-%d days", days))
 	return err

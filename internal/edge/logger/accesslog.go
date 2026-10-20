@@ -8,19 +8,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/vincamok/goproxify/internal/edge/logstore"
 	"github.com/vincamok/goproxify/internal/edge/tlsfp"
-	"gopkg.in/lumberjack.v2"
 )
 
 type notesKey struct{}
@@ -63,17 +60,13 @@ func NoteThreat(ctx context.Context, signal string) {
 	}
 }
 
-// AccessLogger écrit les access logs JSON de façon asynchrone et les pousse
-// vers l'Admin (via SetForwarder et/ou SetRemote).
+// AccessLogger enregistre les accès dans la base de logs locale de la passerelle (SetStore) de façon asynchrone
+// et les pousse vers l'Admin (via SetForwarder et/ou SetRemote).
 type AccessLogger struct {
 	disabled atomic.Bool
-	ch     chan accessEntry
-	shipCh chan accessEntry
-
-	mu     sync.Mutex
-	enc    *json.Encoder
-	path   string    // fichier courant ("" : stdout)
-	closer io.Closer // writer du fichier courant, fermé avant réécriture
+	ch       chan accessEntry
+	shipCh   chan accessEntry
+	store    atomic.Pointer[logstore.Store]
 
 	remoteMu    sync.RWMutex
 	remoteURL   string
@@ -87,80 +80,102 @@ type AccessLogger struct {
 	proxyTapMu sync.RWMutex
 	proxyTap   func(domain string, status int)
 
-	anonymizeMu    sync.RWMutex
-	anonymize      bool
-	pseudonymize   bool
+	anonymizeMu  sync.RWMutex
+	anonymize    bool
+	pseudonymize bool
 }
 
 type accessEntry struct {
-	Time          string   `json:"time"`
-	RequestID     string   `json:"request_id,omitempty"`
-	Method        string   `json:"method"`
-	Host          string   `json:"host"`
-	Path          string   `json:"path"`
-	Status        int      `json:"status"`
-	BytesSent     int      `json:"bytes_sent"`
-	DurationMs    int64    `json:"duration_ms"`
-	RemoteIP      string   `json:"remote_ip"`
-	// ShipIP est l'IP réelle à envoyer à l'Admin pour pseudonymisation (non loguée dans le fichier passerelle).
-	ShipIP        string   `json:"-"`
-	IPTruncated   bool     `json:"-"`
-	UserAgent     string   `json:"user_agent"`
-	Referrer      string   `json:"referrer,omitempty"`
-	WAFMatches    []string `json:"waf_matches,omitempty"`
-	ThreatSignal  string   `json:"threat_signal,omitempty"`
-	TLSJA3        string   `json:"tls_ja3,omitempty"`
-	TLSJA4        string   `json:"tls_ja4,omitempty"`
+	Start      time.Time
+	Time       string // Start en RFC3339Nano UTC, le format de ShipEntry.Ts
+	RequestID  string
+	Method     string
+	Host       string
+	Path       string
+	Status     int
+	BytesSent  int
+	DurationMs int64
+	RemoteIP   string
+	// ShipIP est l'IP réelle en mode pseudonymisation : chiffrée dans la base locale, envoyée à l'Admin, jamais
+	// écrite en clair avec l'IP tronquée.
+	ShipIP       string
+	IPTruncated  bool
+	UserAgent    string
+	Referrer     string
+	WAFMatches   []string
+	ThreatSignal string
+	TLSJA3       string
+	TLSJA4       string
+}
+
+// accessLevel est le niveau d'un accès d'après son code de statut.
+func accessLevel(status int) string {
+	switch {
+	case status >= 500:
+		return "error"
+	case status >= 400:
+		return "warn"
+	}
+	return "info"
+}
+
+// storeEntry convertit l'accès en ligne de la base locale.
+func (e accessEntry) storeEntry() logstore.Entry {
+	return logstore.Entry{
+		Ts: e.Start, Level: accessLevel(e.Status), Component: "edge", Domain: stripHostPort(e.Host),
+		Method: e.Method, Path: e.Path, Status: e.Status, Bytes: int64(e.BytesSent), LatencyMs: e.DurationMs,
+		IP: e.RemoteIP, RealIP: e.ShipIP, IPTruncated: e.IPTruncated, UserAgent: e.UserAgent, Referrer: e.Referrer,
+		RequestID: e.RequestID, WAFMatches: e.WAFMatches, ThreatSignal: e.ThreatSignal, TLSJA3: e.TLSJA3, TLSJA4: e.TLSJA4,
+	}
 }
 
 // ShipEntry est le format attendu par l'Admin (WS access_log / POST /internal/v1/logs).
 type ShipEntry struct {
-	Ts            string   `json:"ts"`
-	Level         string   `json:"level"`
-	Component     string   `json:"component"`
-	NodeName      string   `json:"node_name,omitempty"`
-	Domain        string   `json:"domain"`
-	Method        string   `json:"method"`
-	Path          string   `json:"path"`
-	Status        int      `json:"status"`
-	IP            string   `json:"ip"`
+	Ts        string `json:"ts"`
+	Level     string `json:"level"`
+	Component string `json:"component"`
+	NodeName  string `json:"node_name,omitempty"`
+	Domain    string `json:"domain"`
+	Method    string `json:"method"`
+	Path      string `json:"path"`
+	Status    int    `json:"status"`
+	IP        string `json:"ip"`
 	// RealIP est présent uniquement en mode pseudonymisation (non loggé, chiffré côté Admin).
-	RealIP        string   `json:"real_ip,omitempty"`
+	RealIP string `json:"real_ip,omitempty"`
 	// IPTruncated signale que IP est tronquée (anonymisation ou pseudonymisation) : la valeur ne
 	// le dit pas, et l'Admin ne voit pas un ip_anonymize posé dans edge.json.
-	IPTruncated   bool     `json:"ip_truncated,omitempty"`
-	LatencyMs     int64    `json:"latency_ms"`
-	Bytes         int64    `json:"bytes"`
-	Message       string   `json:"message"`
-	Referrer      string   `json:"referrer,omitempty"`
-	RequestID     string   `json:"request_id,omitempty"`
-	WAFMatches    []string `json:"waf_matches,omitempty"`
-	ThreatSignal  string   `json:"threat_signal,omitempty"`
-	TLSJA3        string   `json:"tls_ja3,omitempty"`
-	TLSJA4        string   `json:"tls_ja4,omitempty"`
+	IPTruncated  bool     `json:"ip_truncated,omitempty"`
+	LatencyMs    int64    `json:"latency_ms"`
+	Bytes        int64    `json:"bytes"`
+	Message      string   `json:"message"`
+	Referrer     string   `json:"referrer,omitempty"`
+	RequestID    string   `json:"request_id,omitempty"`
+	WAFMatches   []string `json:"waf_matches,omitempty"`
+	ThreatSignal string   `json:"threat_signal,omitempty"`
+	TLSJA3       string   `json:"tls_ja3,omitempty"`
+	TLSJA4       string   `json:"tls_ja4,omitempty"`
+	// Seq : identifiant de la ligne dans la base de logs locale, le curseur du flux vers l'Admin.
+	Seq int64 `json:"seq,omitempty"`
 }
 
-func NewAccessLogger(path string) *AccessLogger {
-	enc, closer, path := openAccessWriter(path)
+func NewAccessLogger() *AccessLogger {
 	al := &AccessLogger{
 		ch:     make(chan accessEntry, 8192),
 		shipCh: make(chan accessEntry, 8192),
-		enc:    enc,
-		path:   path,
-		closer: closer,
 	}
 	go al.drain()
 	go al.ship()
 	return al
 }
 
+// SetStore branche la base de logs locale. Sans elle, les accès ne sont que expédiés à l'Admin.
+func (a *AccessLogger) SetStore(s *logstore.Store) { a.store.Store(s) }
+
 func (a *AccessLogger) drain() {
 	for e := range a.ch {
-		a.mu.Lock()
-		a.enc.Encode(e) //nolint:errcheck
-		a.mu.Unlock()
-
-		// Tap Fail2Ban passerelle (non-bloquant).
+		if s := a.store.Load(); s != nil {
+			s.Add(logstore.KindAccess, e.storeEntry())
+		}
 		// Transfert non-bloquant vers le shipper Admin.
 		select {
 		case a.shipCh <- e:
@@ -189,15 +204,9 @@ func (a *AccessLogger) ship() {
 
 		payload := make([]ShipEntry, len(batch))
 		for i, e := range batch {
-			lvl := "info"
-			if e.Status >= 500 {
-				lvl = "error"
-			} else if e.Status >= 400 {
-				lvl = "warn"
-			}
 			se := ShipEntry{
 				Ts:           e.Time,
-				Level:        lvl,
+				Level:        accessLevel(e.Status),
 				Component:    "edge",
 				NodeName:     nodeName,
 				Domain:       stripHostPort(e.Host),
@@ -355,41 +364,6 @@ func (a *AccessLogger) SetRemote(adminURL, token string) {
 	a.remoteMu.Unlock()
 }
 
-// Reopen recrée le writer vers un nouveau chemin (hot-reload).
-// Si path est vide, bascule vers stdout.
-func (a *AccessLogger) Reopen(path string) {
-	enc, closer, path := openAccessWriter(path)
-	a.mu.Lock()
-	if a.closer != nil {
-		a.closer.Close() //nolint:errcheck
-	}
-	a.enc, a.closer, a.path = enc, closer, path
-	a.mu.Unlock()
-}
-
-// reopenLocked rouvre le fichier courant ; a.mu doit être tenu.
-func (a *AccessLogger) reopenLocked() {
-	a.enc, a.closer, a.path = openAccessWriter(a.path)
-}
-
-// openAccessWriter ouvre le fichier d'access log avec rotation ; sans chemin, ou si le dossier
-// est inutilisable, il écrit sur stdout et retourne un chemin vide.
-func openAccessWriter(path string) (*json.Encoder, io.Closer, string) {
-	if path != "" {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err == nil {
-			w := &lumberjack.Logger{
-				Filename:   path,
-				MaxSize:    200,
-				MaxBackups: 7,
-				MaxAge:     90,
-				Compress:   true,
-			}
-			return json.NewEncoder(w), w, path
-		}
-	}
-	return json.NewEncoder(os.Stdout), nil, ""
-}
-
 // Middleware wraps un http.Handler pour loguer chaque requête.
 func (a *AccessLogger) Middleware(next http.Handler) http.Handler {
 	if a.disabled.Load() {
@@ -440,6 +414,7 @@ func (a *AccessLogger) Middleware(next http.Handler) http.Handler {
 		}
 		select {
 		case a.ch <- accessEntry{
+			Start:        start,
 			Time:         start.UTC().Format(time.RFC3339Nano),
 			RequestID:    r.Header.Get("X-Request-ID"),
 			Method:       r.Method,
@@ -567,3 +542,23 @@ func (sw *statusWriter) Unwrap() http.ResponseWriter { return sw.ResponseWriter 
 
 // SetDisabled court-circuite le middleware (benchmark) : aucun log, aucun tap Fail2Ban/proxy.
 func (a *AccessLogger) SetDisabled(off bool) { a.disabled.Store(off) }
+
+// ShipEntryFromRow reconstitue l'entrée expédiée à l'Admin à partir d'une ligne de la base de logs locale.
+// Seq porte l'identifiant de la ligne : le curseur du flux. RealIP n'est présente que pour une ligne lue avec
+// logstore.Store.ReadAfterRevealed.
+func ShipEntryFromRow(r logstore.Row, kind logstore.Kind, nodeName string) ShipEntry {
+	e := ShipEntry{
+		Ts: r.Ts.UTC().Format(time.RFC3339Nano), Level: r.Level, Component: r.Component, NodeName: nodeName,
+		Domain: r.Domain, Method: r.Method, Path: r.Path, Status: r.Status, IP: r.IP, RealIP: r.RealIP,
+		IPTruncated: r.IPTruncated, LatencyMs: r.LatencyMs, Bytes: r.Bytes, Message: r.Message, Referrer: r.Referrer,
+		RequestID: r.RequestID, WAFMatches: r.WAFMatches, ThreatSignal: r.ThreatSignal, TLSJA3: r.TLSJA3,
+		TLSJA4: r.TLSJA4, Seq: r.ID,
+	}
+	if kind == logstore.KindAccess {
+		e.Message = shipMessage(accessEntry{
+			Time: e.Ts, Method: r.Method, Path: r.Path, Status: r.Status, BytesSent: int(r.Bytes), RemoteIP: r.IP,
+			UserAgent: r.UserAgent, Referrer: r.Referrer,
+		})
+	}
+	return e
+}

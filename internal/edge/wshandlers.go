@@ -370,6 +370,9 @@ func (s *Server) handleWSAdminMessage(connID string, msg edgews.Message) error {
 		s.applyTunnelConfig(payload)
 		s.log.Info("ws/admin: tunnel peers mis à jour", "count", len(payload.Peers))
 
+	case edgews.TypeLogResume:
+		return s.handleLogResume(connID, msg.Payload)
+
 	default:
 		s.log.Debug("ws/admin: message inconnu ignoré", "type", msg.Type)
 	}

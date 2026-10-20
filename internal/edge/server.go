@@ -23,6 +23,7 @@ import (
 	"github.com/vincamok/goproxify/internal/config"
 	edgeagent "github.com/vincamok/goproxify/internal/edge/agent"
 	"github.com/vincamok/goproxify/internal/edge/bansdb"
+	"github.com/vincamok/goproxify/internal/edge/logstore"
 	edgecache "github.com/vincamok/goproxify/internal/edge/cache"
 	"github.com/vincamok/goproxify/internal/edge/cluster"
 	edgecrowdsec "github.com/vincamok/goproxify/internal/edge/crowdsec"
@@ -55,9 +56,14 @@ import (
 
 // Server est le Data Plane — reverse proxy HTTP/TLS/TCP/UDP.
 type Server struct {
+	logGate     *logSearchGate // plafond des recherches simultanées dans la base de logs
+	logGateOnce sync.Once
 	cfg       *config.EdgeConfig
 	log       *edgelog.DynamicLogger
 	accessLog *edgelog.AccessLogger
+	logStore  *logstore.Store // base de logs locale (ADR 0012) ; nil si elle n'a pas pu s'ouvrir
+	logStreams logStreams // envoi des logs de la base vers chaque Admin connecté
+	agentLogs  agentLogDedup // dernière ligne gardée par conteneur d'Agent
 
 	table           *router.Table
 	certStore       *edgetls.CertStore
@@ -138,7 +144,7 @@ func New(cfg *config.EdgeConfig) (*Server, error) {
 	cfg.Identity.NodeName = nodeident.Resolve("edge")
 
 	log := edgelog.New(cfg.Engine.LogLevel, cfg.Engine.LogFormat, cfg.Engine.SystemLogPath)
-	accessLog := edgelog.NewAccessLogger(cfg.Engine.AccessLogPath)
+	accessLog := edgelog.NewAccessLogger()
 	accessLog.SetIPAnonymize(cfg.Engine.IPAnonymize)
 	accessLog.SetDisabled(cfg.Engine.AccessLogDisabled)
 	metrics.SetRequestMetricsDisabled(cfg.Engine.MetricsDisabled)
@@ -185,6 +191,7 @@ func New(cfg *config.EdgeConfig) (*Server, error) {
 		nodeStore:       edgeagent.NewNodeStore(),
 		tunnelManager:   tunnel.New(log.Logger()),
 	}
+	s.initLogStore()
 	s.initProxyStore()
 	if u := os.Getenv("GPX_ADMIN_PUBLIC_URL"); u != "" {
 		errorpages.SetAdminBaseURL(u)
@@ -293,44 +300,27 @@ func New(cfg *config.EdgeConfig) (*Server, error) {
 	})
 	s.portal.SetAuthProviders(s.providerStore)
 
-	// Access logs + system logs → Admin (Prism / Logs) via WS dès qu'un Admin est connecté.
+	// Access logs + system logs → Admin (Prism / Logs). Avec la base de logs locale, l'Admin demande les lignes
+	// qui lui manquent à chaque connexion (TypeLogResume, voir logstream.go) : rien n'est perdu pendant une
+	// coupure. Sans elle, repli sur l'ancien envoi en direct, perdu si aucun Admin n'est connecté.
 	// Convention : status>0 = access HTTP ; status=0 = système (slog passerelle).
-	shipLogs := func(batch []edgelog.ShipEntry) {
-		payload := make([]edgews.LogEntryPayload, len(batch))
-		for i, e := range batch {
-			payload[i] = edgews.LogEntryPayload{
-				Ts:        e.Ts,
-				Level:     e.Level,
-				Component: e.Component,
-				NodeName:  e.NodeName,
-				Domain:    e.Domain,
-				Method:    e.Method,
-				Path:      e.Path,
-				Status:    e.Status,
-				IP:        e.IP,
-				RealIP:    e.RealIP,
-				IPTruncated:  e.IPTruncated,
-				LatencyMs:    e.LatencyMs,
-				Bytes:        e.Bytes,
-				Message:      e.Message,
-				Referrer:     e.Referrer,
-				RequestID:    e.RequestID,
-				WAFMatches:   e.WAFMatches,
-				ThreatSignal: e.ThreatSignal,
-				TLSJA3:       e.TLSJA3,
-				TLSJA4:       e.TLSJA4,
-			}
-		}
-		msg, err := edgews.NewMessage(0, edgews.TypeAccessLog, payload)
-		if err != nil {
-			return
-		}
-		s.wsHub.BroadcastToAdmins(msg)
-	}
 	s.accessLog.SetNodeName(cfg.Identity.NodeName)
-	s.accessLog.SetForwarder(shipLogs)
 	s.log.SetNodeName(cfg.Identity.NodeName)
-	s.log.SetForwarder(shipLogs)
+	if s.logStore == nil {
+		shipLogs := func(batch []edgelog.ShipEntry) {
+			payload := make([]edgews.LogEntryPayload, len(batch))
+			for i, e := range batch {
+				payload[i] = shipPayload(e)
+			}
+			msg, err := edgews.NewMessage(0, edgews.TypeAccessLog, payload)
+			if err != nil {
+				return
+			}
+			s.wsHub.BroadcastToAdmins(msg)
+		}
+		s.accessLog.SetForwarder(shipLogs)
+		s.log.SetForwarder(shipLogs)
+	}
 	s.wsHub.SetAgentPendingCallback(func(agentID, agentName, version string) {
 		s.log.Info("ws/agent: nouvel Agent en attente", "id", agentID, "name", agentName)
 		s.nodeStore.SetPending(agentID, agentName, version)
@@ -593,6 +583,10 @@ func (s *Server) Stop(ctx context.Context) {
 	if s.rulesEngine != nil {
 		s.accessLog.SetProxyTap(nil)
 		s.rulesEngine.Stop()
+	}
+	s.logStreams.stopAll()
+	if s.logStore != nil {
+		_ = s.logStore.Close()
 	}
 	if s.bansDB != nil {
 		_ = s.bansDB.Close()
