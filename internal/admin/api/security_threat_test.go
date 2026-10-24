@@ -18,6 +18,9 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/vincamok/goproxify/internal/admin/api"
+	"github.com/vincamok/goproxify/internal/admin/prismedge"
+	"github.com/vincamok/goproxify/internal/edge/logapi/logapitest"
+	"github.com/vincamok/goproxify/internal/edge/logstore"
 )
 
 func TestThreatConfigIsStoredAndPushedPerEdge(t *testing.T) {
@@ -77,11 +80,12 @@ func TestSimulateThreatEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	at := time.Now().UTC().Add(-5 * time.Minute).Format(time.RFC3339Nano)
-	if _, err := db.Exec(`INSERT INTO logs (ts, component, domain, method, path, status, ip) VALUES (?, 'edge', 'a.test', 'GET', '/wp-admin/x', 200, '9.9.9.9')`, at); err != nil {
+	gw := logapitest.New(t, "gw-a")
+	if err := gw.Register(db); err != nil {
 		t.Fatal(err)
 	}
-	h := &api.SecurityHandler{DB: db}
+	gw.Add(logstore.Entry{Ts: time.Now().UTC().Add(-5 * time.Minute), Component: "edge", Domain: "a.test", Method: "GET", Path: "/wp-admin/x", Status: 200, IP: "9.9.9.9"})
+	h := &api.SecurityHandler{DB: db, Edge: &prismedge.Source{DB: db}}
 
 	body := `{"config":{"enabled":true,"custom_lists":{"paths":["/wp-admin"]}},"hours":1}`
 	rec := httptest.NewRecorder()

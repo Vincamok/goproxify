@@ -11,7 +11,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 
 	"github.com/google/uuid"
@@ -29,7 +28,7 @@ import (
 // Un nœud déjà accepté (token actif en DB) reçoit son token directement (reconnexion).
 // Endpoint public : POST /internal/v1/pair
 func (s *Server) handlePair(w http.ResponseWriter, r *http.Request) {
-	configuredSecret := os.Getenv("GPX_PAIRING_SECRET")
+	roots := pairing.RootKeys() // le secret racine courant, puis ses précédents pendant une rotation
 
 	var req struct {
 		Secret   string `json:"secret"`
@@ -42,7 +41,7 @@ func (s *Server) handlePair(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "corps JSON invalide", http.StatusBadRequest)
 		return
 	}
-	if configuredSecret == "" {
+	if len(roots) == 0 {
 		http.Error(w, "pairing non configuré", http.StatusServiceUnavailable)
 		return
 	}
@@ -55,12 +54,20 @@ func (s *Server) handlePair(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Une passerelle présente le secret racine ; un Agent peut se contenter de la clé dérivée.
-	var valid bool
+	var valid, previous bool
 	if req.Role == "agent" {
 		// Selon GPX_AGENT_PAIRING_ROOT, le secret racine reste ou non accepté d'un Agent.
-		valid, _ = pairing.ServerAcceptsAgent(configuredSecret, req.Secret)
+		valid, _, previous = pairing.ServerAcceptsAgentKeys(pairing.AgentKeysFromRoots(roots), roots, req.Secret)
 	} else {
-		valid = auth.SecureEqual(configuredSecret, req.Secret)
+		for _, k := range roots {
+			if auth.SecureEqual(k.Value, req.Secret) {
+				valid, previous = true, k.Previous
+				break
+			}
+		}
+	}
+	if valid && previous {
+		s.log.Warn("pair: nœud appairé avec un secret précédent — rotation en cours, lui donner le courant puis retirer GPX_PAIRING_SECRET_PREVIOUS", "role", req.Role, "node", req.NodeName)
 	}
 	if !valid {
 		s.loginLimit.failN(pairKey, pairMaxFails)
@@ -82,50 +89,45 @@ func (s *Server) handlePair(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Reconnexion par token_id stable (edges avec edge.json v0.3.84+).
-	// Si le node_name a changé (renommage), on met à jour la DB et on retourne le token existant.
+	// Un nœud qui a déjà un jeton ne le retrouve qu'en le présentant (Authorization: Bearer). Le secret d'appairage, commun
+	// à tous les composants, ne suffit pas à reprendre l'identité d'un nœud existant : il lui ferait rendre son jeton.
+	// Sans preuve, le nœud passe par l'approbation de l'opérateur comme un nœud inconnu.
+	presented := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	var existingID, existing, existingName string
 	if req.TokenID != "" {
-		var existingToken, existingName string
 		_ = s.db.QueryRowContext(r.Context(),
-			`SELECT token, node_name FROM tokens WHERE id=? AND revoked=0 LIMIT 1`,
+			`SELECT id, token, node_name FROM tokens WHERE id=? AND revoked=0 LIMIT 1`,
 			req.TokenID,
-		).Scan(&existingToken, &existingName)
-		if existingToken != "" {
+		).Scan(&existingID, &existing, &existingName)
+	}
+	if existing == "" {
+		_ = s.db.QueryRowContext(r.Context(),
+			`SELECT id, token, node_name FROM tokens WHERE role=? AND node_name=? AND revoked=0 LIMIT 1`,
+			role, nodeName,
+		).Scan(&existingID, &existing, &existingName)
+	}
+	hasToken := existing != ""
+	if hasToken {
+		plain := existing
+		if p, err := auth.OpenNodeToken(existing); err == nil {
+			plain = p
+		}
+		if presented != "" && auth.SecureEqual(plain, presented) {
 			if existingName != nodeName {
-				_, _ = s.db.ExecContext(r.Context(),
-					`UPDATE tokens SET node_name=? WHERE id=?`, nodeName, req.TokenID)
-				s.log.Info("pair: node renommé via token_id", "old", existingName, "new", nodeName, "id", req.TokenID)
-			}
-			if plain, err := auth.OpenNodeToken(existingToken); err == nil {
-				existingToken = plain
+				_, _ = s.db.ExecContext(r.Context(), `UPDATE tokens SET node_name=? WHERE id=?`, nodeName, existingID)
+				s.log.Info("pair: node renommé via son jeton", "old", existingName, "new", nodeName, "id", existingID)
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted", "token": existingToken})
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted", "token": plain})
 			return
 		}
+		s.log.Warn("pair: nœud déjà appairé qui ne présente pas son jeton, mis en attente d'approbation", "role", role, "node", nodeName)
 	}
 
-	// Reconnexion par node_name (edges sans token_id ou anciens edges).
-	var existing string
-	_ = s.db.QueryRowContext(r.Context(),
-		`SELECT token FROM tokens WHERE role=? AND node_name=? AND revoked=0 LIMIT 1`,
-		role, nodeName,
-	).Scan(&existing)
-	if existing != "" {
-		if plain, err := auth.OpenNodeToken(existing); err == nil {
-			existing = plain
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted", "token": existing})
-		return
-	}
-
-	// Auto-acceptation des passerelles : le pairing secret valide suffit — pas de validation manuelle.
-	// La passerelle est déployée par le même opérateur que l'Admin (même docker-compose / infra maîtrisée).
-	// Sans cela, une DB Admin fraîche (volume recréé, restart) force l'opérateur à ré-accepter
-	// manuellement à chaque fois, même si la passerelle n'a pas changé.
-	// Agents déclarés via wizard architecture (auto_accept) : même traitement.
-	if configuredSecret != "" && (role == "edge" || role == "agent" || api.NodeAutoAccept(s.db, nodeName)) {
+	// Auto-acceptation : seulement pour un nœud déclaré avec auto_accept ou couvert par un ticket d'installation valide,
+	// et seulement s'il n'a pas encore de jeton. Avoir le secret d'appairage ne suffit pas : une passerelle ou un Agent
+	// inconnu attend l'approbation de l'opérateur. Un ticket sert une fois.
+	if len(roots) > 0 && !hasToken && api.NodeAutoAccept(s.db, nodeName) {
 		tok := auth.GenerateToken(role, nodeName)
 		// Utilise le token_id fourni par la passerelle si disponible, sinon génère un UUID.
 		tokenID := req.TokenID
@@ -146,6 +148,7 @@ func (s *Server) handlePair(w http.ResponseWriter, r *http.Request) {
 			`UPDATE pending_nodes SET status='accepted', token=? WHERE node_name=? AND role=? AND status='pending'`,
 			tok, nodeName, role,
 		)
+		api.ConsumeBootstrapTicket(s.db, nodeName)
 		s.log.Info("pair: nœud auto-accepté", "role", role, "node", nodeName, "token_id", tokenID)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted", "token": tok})
@@ -159,10 +162,17 @@ func (s *Server) handlePair(w http.ResponseWriter, r *http.Request) {
 		nodeName, role,
 	).Scan(&pendingID, &pendingStatus, &pendingToken)
 
-	if pendingStatus == "accepted" && pendingToken != "" {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted", "token": pendingToken})
-		return
+	if pendingStatus == "accepted" {
+		if pendingToken != "" {
+			// Remis une fois : un jeton qui resterait dans cette ligne serait rendu à quiconque présente le secret.
+			_, _ = s.db.ExecContext(r.Context(), `UPDATE pending_nodes SET token='' WHERE id=?`, pendingID)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted", "token": pendingToken})
+			return
+		}
+		// Jeton déjà remis : une nouvelle demande passe par une nouvelle approbation.
+		_, _ = s.db.ExecContext(r.Context(), `DELETE FROM pending_nodes WHERE id=?`, pendingID)
+		pendingID, pendingStatus = "", ""
 	}
 	if pendingStatus == "rejected" {
 		http.Error(w, "connexion refusée par l'administrateur", http.StatusForbidden)
@@ -215,6 +225,13 @@ func (s *Server) handlePairStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	switch status {
 	case "accepted":
+		if token == "" {
+			w.WriteHeader(http.StatusGone)
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "delivered"})
+			return
+		}
+		// Remis une fois, comme dans handlePair.
+		_, _ = s.db.ExecContext(r.Context(), `UPDATE pending_nodes SET token='' WHERE id=?`, pendingID)
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted", "token": token})
 	case "rejected":
 		w.WriteHeader(http.StatusForbidden)

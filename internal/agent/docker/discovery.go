@@ -15,6 +15,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/vincamok/goproxify/internal/agent/statepub"
 )
 
 // LifecycleEventFn est appelé pour start/die/destroy sur les conteneurs gérés.
@@ -33,7 +35,10 @@ type Discovery struct {
 	onLifecycle  LifecycleEventFn
 	known        map[string]string // containerID → name (proxies goproxify)
 
-	endpointFn func() string // passerelle courante (bascule HA) ; nil = edgeEndpoint
+	endpointFn func() string       // passerelle courante (bascule HA) ; nil = edgeEndpoint
+	state      *statepub.Publisher // état complet de la source ; nil = publication route par route seulement
+	stateOK    atomic.Bool         // la passerelle a pris le dernier état complet : un événement en provoque un nouveau
+	stateTimer *time.Timer         // regroupe les événements rapprochés en un seul état complet
 
 	// dirty : un envoi vers la passerelle a échoué, l'état publié est peut-être en retard.
 	dirty atomic.Bool
@@ -75,6 +80,13 @@ func (d *Discovery) endpoint() string {
 		}
 	}
 	return fixed
+}
+
+// SetStatePublisher active l'envoi de l'état complet à la fin d'un scan.
+func (d *Discovery) SetStatePublisher(p *statepub.Publisher) {
+	d.mu.Lock()
+	d.state = p
+	d.mu.Unlock()
 }
 
 // SetToken met à jour le token d'authentification (après un appairage différé).
@@ -180,13 +192,15 @@ func (d *Discovery) ScanAll(ctx context.Context) {
 	d.mu.RUnlock()
 
 	var containers []ContainerSummary
-	if err := d.client.Get(ctx, "/containers/json?all=false", &containers); err != nil {
+	if err := d.client.Get(ctx, "/containers/json?all=true", &containers); err != nil {
 		d.log.Error("docker: liste containers", "err", err)
 		return
 	}
 	running := make(map[string]struct{}, len(containers))
 	for _, c := range containers {
-		running[c.ID] = struct{}{}
+		if containerRunning(c.State) {
+			running[c.ID] = struct{}{}
+		}
 	}
 	for id, name := range knownBefore {
 		if _, ok := running[id]; ok {
@@ -201,10 +215,19 @@ func (d *Discovery) ScanAll(ctx context.Context) {
 			d.reportStop(ctx, id, name)
 		}
 	}
+	var all []*ProxySpec
+	var inactive []map[string]any
 	for _, c := range containers {
 		netName, ip := firstNetworkWithIP(c)
 		specs := ParseLabelsMulti(c.ID, firstName(c.Names), c.Image, netName, c.Labels, firstExposedPortsFromSummary(c), ip)
 		if len(specs) == 0 {
+			continue
+		}
+		// Un conteneur qui ne tourne pas n'a pas de route : il part dans l'inventaire des inactifs, que l'Admin affiche.
+		if !containerRunning(c.State) {
+			for _, spec := range specs {
+				inactive = append(inactive, inactivePayload(spec, c.State))
+			}
 			continue
 		}
 		if d.netManager != nil && netName != "" {
@@ -214,12 +237,93 @@ func (d *Discovery) ScanAll(ctx context.Context) {
 		}
 		for _, spec := range specs {
 			d.resolveNetworkWhitelist(ctx, spec, netName)
-			d.report(ctx, spec)
+			all = append(all, spec)
 		}
 		d.mu.Lock()
 		d.known[c.ID] = trimSlash(firstName(c.Names))
 		d.mu.Unlock()
 	}
+	if d.publishState(ctx, all, inactive) {
+		return
+	}
+	for _, spec := range all {
+		d.report(ctx, spec)
+	}
+}
+
+// publishState envoie à la passerelle tout ce que Docker publie : elle retire ce qu'elle gardait de cet Agent et qui
+// n'y est plus. Faux si la passerelle ne connaît pas l'appel (version ancienne) : l'Agent publie alors route par route.
+func (d *Discovery) publishState(ctx context.Context, specs []*ProxySpec, inactive []map[string]any) bool {
+	d.mu.RLock()
+	pub, token := d.state, d.authToken
+	d.mu.RUnlock()
+	if pub == nil {
+		return false
+	}
+	routes := make([]map[string]any, 0, len(specs))
+	for _, spec := range specs {
+		routes = append(routes, d.payload(spec))
+	}
+	res, err := pub.PutState(ctx, d.endpoint(), token, "docker", "", routes, inactive)
+	switch res {
+	case statepub.Sent:
+		d.stateOK.Store(true)
+		d.log.Info("docker: état complet envoyé à la passerelle", "routes", len(routes), "inactifs", len(inactive))
+		return true
+	case statepub.Failed:
+		d.dirty.Store(true)
+		d.log.Warn("docker: état complet non envoyé", "err", err)
+		return true
+	}
+	d.stateOK.Store(false)
+	return false
+}
+
+// containerRunning : seul un conteneur en cours d'exécution sert une route. Un état vide (liste sans état) vaut « tourne ».
+func containerRunning(state string) bool {
+	s := strings.ToLower(strings.TrimSpace(state))
+	return s == "" || s == "running"
+}
+
+// inactivePayload décrit un conteneur découvert qui ne tourne pas (arrêté, en pause, qui redémarre).
+func inactivePayload(spec *ProxySpec, state string) map[string]any {
+	shortID := spec.ContainerID
+	if len(shortID) > 12 {
+		shortID = shortID[:12]
+	}
+	return map[string]any{
+		"id":           "docker:" + shortID + ":" + spec.Host,
+		"host":         spec.Host,
+		"aliases":      spec.Aliases,
+		"container_id": spec.ContainerID,
+		"name":         strings.TrimPrefix(spec.ContainerName, "/"),
+		"state":        strings.ToLower(state),
+	}
+}
+
+// stateAfterEventDelay regroupe les événements rapprochés (un stack qui démarre) en un seul état complet.
+const stateAfterEventDelay = 2 * time.Second
+
+// scheduleState renvoie l'état complet peu après un événement : la passerelle qui reçoit directement l'Agent a déjà la
+// route par le POST ou le DELETE, c'est cet état qui atteint les autres membres du groupe HA. Sans effet tant que la
+// passerelle n'a pas pris d'état complet (publication route par route, passerelle ancienne).
+func (d *Discovery) scheduleState(ctx context.Context) {
+	if !d.stateOK.Load() {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.stateTimer != nil {
+		return
+	}
+	d.stateTimer = time.AfterFunc(stateAfterEventDelay, func() {
+		d.mu.Lock()
+		d.stateTimer = nil
+		d.mu.Unlock()
+		if ctx.Err() == nil {
+			d.ScanAll(ctx)
+		}
+	})
 }
 
 // handleEvent réagit aux événements start/die/destroy.
@@ -257,6 +361,7 @@ func (d *Discovery) handleEvent(ctx context.Context, ev Event) {
 		d.known[ev.Actor.ID] = trimSlash(name)
 		d.mu.Unlock()
 		d.emitLifecycle(ev.Actor.ID, trimSlash(name), "start")
+		d.scheduleState(ctx)
 
 	case "die", "destroy":
 		name := ev.Actor.Attributes["name"]
@@ -279,6 +384,7 @@ func (d *Discovery) handleEvent(ctx context.Context, ev Event) {
 			action = "stop"
 		}
 		d.emitLifecycle(ev.Actor.ID, name, action)
+		d.scheduleState(ctx)
 	}
 }
 
@@ -313,8 +419,8 @@ func (d *Discovery) resolveNetworkWhitelist(ctx context.Context, spec *ProxySpec
 	spec.EphorWhitelist = existing
 }
 
-// report envoie la config proxy vers la passerelle.
-func (d *Discovery) report(ctx context.Context, spec *ProxySpec) {
+// payload construit la charge utile qu'une route Docker envoie à la passerelle.
+func (d *Discovery) payload(spec *ProxySpec) map[string]any {
 	shortID := spec.ContainerID
 	if len(shortID) > 12 {
 		shortID = shortID[:12]
@@ -337,6 +443,12 @@ func (d *Discovery) report(ctx context.Context, spec *ProxySpec) {
 		payload["canary_weight"] = spec.CanaryWeight
 	}
 	AttachSecurityPayload(payload, spec)
+	return payload
+}
+
+// report envoie la config proxy vers la passerelle.
+func (d *Discovery) report(ctx context.Context, spec *ProxySpec) {
+	payload := d.payload(spec)
 
 	d.mu.RLock()
 	token := d.authToken

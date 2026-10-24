@@ -64,6 +64,9 @@ type Config struct {
 
 	// Tarpit : ralentit la réponse aux IP bloquées ou bannies par Ephor (désactivé par défaut).
 	Tarpit TarpitConfig `json:"tarpit,omitempty"`
+
+	// Behavior : la note commune par IP et les signaux de comportement (ADR 0011).
+	Behavior BehaviorConfig `json:"behavior,omitempty"`
 }
 
 // IPScoreConfig active un score par IP qui s'additionne d'une requête à l'autre et décroît avec le

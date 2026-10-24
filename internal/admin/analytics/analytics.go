@@ -10,10 +10,10 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
-	"github.com/vincamok/goproxify/internal/admin/logs"
 )
 
 const queryTimeout = 25 * time.Second
@@ -116,193 +116,78 @@ func domainCond(col, proxy string) (string, []any) {
 	return col + " IN (?" + strings.Repeat(",?", len(args)-1) + ")", args
 }
 
-func where(p Params) (string, []any) {
-	var conds []string
-	var args []any
-	if !p.From.IsZero() {
-		conds = append(conds, "ts >= ?")
-		args = append(args, p.From.UTC().Format(time.RFC3339))
-	}
-	if !p.To.IsZero() {
-		conds = append(conds, "ts <= ?")
-		args = append(args, p.To.UTC().Format(time.RFC3339))
-	}
-	if c, a := domainCond("domain", p.Proxy); c != "" {
-		conds = append(conds, c)
-		args = append(args, a...)
-	}
-	if p.NodeName != "" {
-		conds = append(conds, "node_name = ?")
-		args = append(args, p.NodeName)
-	}
-	if p.IP != "" {
-		conds = append(conds, "ip = ?")
-		args = append(args, p.IP)
-	}
-	if p.Path != "" {
-		conds = append(conds, "path LIKE ?")
-		args = append(args, p.Path+"%")
-	}
-	// Filtre uniquement les logs d'accès HTTP (status > 0)
-	conds = append(conds, "status > 0")
-	if len(conds) == 0 {
-		return "", args
-	}
-	return "WHERE " + strings.Join(conds, " AND "), args
+// Totals sont les totaux d'une période : de quoi calculer les KPIs, quelle que soit la source (cumuls, lignes de l'Admin
+// ou classement des passerelles).
+type Totals struct {
+	Requests, Bytes, Errors, Bots int64
+	AvgLatencyMs                  float64
 }
 
-// rawKPIs fait un seul scan pour extraire les métriques agrégées de la période.
-// Pas de COUNT(DISTINCT ip) ici — trop coûteux ; voir GetUniqueIPs.
-func rawKPIs(db *sql.DB, p Params) (reqs, bw, errs, bots int64, avgLat float64) {
-	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
-	defer cancel()
-	if aggUsable(ctx, db, p) {
-		if r, b, e, bt, a, err := aggTotals(ctx, db, p); err == nil {
-			return r, b, e, bt, a
-		}
-	}
-	w, args := where(p)
-	db.QueryRowContext(ctx, //nolint:errcheck
-		`SELECT
-		   COUNT(*),
-		   COALESCE(SUM(bytes), 0),
-		   COALESCE(AVG(latency_ms), 0),
-		   SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END),
-		   SUM(CASE WHEN lower(component) LIKE '%bot%' OR lower(message) LIKE '%bot%' THEN 1 ELSE 0 END)
-		 FROM logs `+w, args...,
-	).Scan(&reqs, &bw, &avgLat, &errs, &bots)
-	return
-}
-
-// GetUniqueIPs compte les IPs distinctes (requête séparée, chargée en différé côté UI).
-func GetUniqueIPs(db *sql.DB, p Params) int64 {
-	w, args := where(p)
-	var n int64
-	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
-	defer cancel()
-	db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT ip) FROM logs `+w, args...).Scan(&n) //nolint:errcheck
-	return n
-}
-
-// GetKPIs retourne les KPIs pour la période + delta vs période précédente.
-// 2 scans au total (période courante + précédente). UniqueIPs reste à 0
-// sauf si includeUnique est true (évite de bloquer le above-the-fold).
-func GetKPIs(db *sql.DB, p Params, includeUnique bool) KPIs {
-	reqs, bw, errs, bots, avgLat := rawKPIs(db, p)
-
+// PreviousPeriod rend la période qui précède p, de même durée. Les cumuls sont à la minute et incluent les deux bornes :
+// la période précédente s'arrête avant la minute où la courante commence, sinon cette minute compterait dans les deux.
+func PreviousPeriod(p Params, onMinutes bool) Params {
 	dur := p.To.Sub(p.From)
 	prev := Params{Proxy: p.Proxy, NodeName: p.NodeName, From: p.From.Add(-dur), To: p.From.Add(-time.Second)}
-	preReqs, preBW, preErrs, _, _ := rawKPIs(db, prev)
+	if onMinutes {
+		prev.To = p.From.Truncate(time.Minute).Add(-time.Second)
+	}
+	return prev
+}
 
+// BuildKPIs calcule les KPIs et leurs écarts avec la période précédente.
+func BuildKPIs(cur, prev Totals, uniqueIPs int64) KPIs {
 	errRate, preErrRate := 0.0, 0.0
-	if reqs > 0 {
-		errRate = float64(errs) / float64(reqs) * 100
+	if cur.Requests > 0 {
+		errRate = float64(cur.Errors) / float64(cur.Requests) * 100
 	}
-	if preReqs > 0 {
-		preErrRate = float64(preErrs) / float64(preReqs) * 100
+	if prev.Requests > 0 {
+		preErrRate = float64(prev.Errors) / float64(prev.Requests) * 100
 	}
-
-	pct := func(cur, pre int64) float64 {
-		if pre == 0 {
+	pct := func(c, p int64) float64 {
+		if p == 0 {
 			return 0
 		}
-		return float64(cur-pre) / float64(pre) * 100
+		return float64(c-p) / float64(p) * 100
 	}
-	pctF := func(cur, pre float64) float64 {
-		if pre == 0 {
+	pctF := func(c, p float64) float64 {
+		if p == 0 {
 			return 0
 		}
-		return (cur - pre) / pre * 100
+		return (c - p) / p * 100
 	}
-
 	botShare := 0.0
-	if reqs > 0 {
-		botShare = float64(bots) / float64(reqs) * 100
+	if cur.Requests > 0 {
+		botShare = float64(cur.Bots) / float64(cur.Requests) * 100
 	}
-
-	var uIPs int64
-	if includeUnique {
-		uIPs = GetUniqueIPs(db, p)
-	}
-
 	return KPIs{
-		Requests:       reqs,
-		RequestsDelta:  pct(reqs, preReqs),
-		Bandwidth:      bw,
-		BandwidthDelta: pct(bw, preBW),
+		Requests:       cur.Requests,
+		RequestsDelta:  pct(cur.Requests, prev.Requests),
+		Bandwidth:      cur.Bytes,
+		BandwidthDelta: pct(cur.Bytes, prev.Bytes),
 		ErrorRate:      errRate,
 		ErrorRateDelta: pctF(errRate, preErrRate),
-		UniqueIPs:      uIPs,
-		AvgLatencyMs:   avgLat,
+		UniqueIPs:      uniqueIPs,
+		AvgLatencyMs:   cur.AvgLatencyMs,
 		BotShare:       botShare,
 	}
 }
 
-// GetTimeline retourne les requêtes agrégées par bucket temporel.
-func GetTimeline(db *sql.DB, p Params, bucket string) []TimePoint {
-	// bucket: "hour" | "day" | "minute"
-	var tfmt string
-	switch bucket {
-	case "minute":
-		tfmt = "%Y-%m-%dT%H:%M"
-	case "day":
-		tfmt = "%Y-%m-%d"
-	default:
-		tfmt = "%Y-%m-%dT%H:00"
+// StatusGroupsFromCounts répartit des requêtes par code HTTP en familles (2xx à 5xx) avec le détail de chaque code.
+func StatusGroupsFromCounts(counts map[int]int64) []StatusGroup {
+	type codeCnt struct {
+		code  int
+		count int64
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
-	defer cancel()
-	if aggUsable(ctx, db, p) {
-		if out, err := aggTimeline(ctx, db, p, tfmt); err == nil {
-			return out
-		}
-	}
-	w, args := where(p)
-	rows, err := db.QueryContext(ctx,
-		`SELECT strftime('`+tfmt+`', ts, 'localtime') as b, COUNT(*), SUM(CASE WHEN status>=400 THEN 1 ELSE 0 END), COALESCE(SUM(bytes),0)
-		 FROM logs `+w+` GROUP BY b ORDER BY b`, args...)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	var out []TimePoint
-	for rows.Next() {
-		var tp TimePoint
-		rows.Scan(&tp.Bucket, &tp.Requests, &tp.Errors, &tp.Bytes) //nolint:errcheck
-		out = append(out, tp)
-	}
-	return out
-}
-
-// GetStatusGroups retourne la répartition par famille de codes HTTP.
-func GetStatusGroups(db *sql.DB, p Params) []StatusGroup {
-	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
-	defer cancel()
-	var rows *sql.Rows
-	var err error
-	if aggUsable(ctx, db, p) {
-		rows, err = aggStatusCounts(ctx, db, p)
-	}
-	if rows == nil || err != nil {
-		w, args := where(p)
-		rows, err = db.QueryContext(ctx,
-			`SELECT status, COUNT(*) FROM logs `+w+` GROUP BY status ORDER BY status`, args...)
-	}
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-
-	type codeCnt struct{ code int; count int64 }
-	groups := map[string][]codeCnt{
-		"2xx": {}, "3xx": {}, "4xx": {}, "5xx": {},
-	}
+	groups := map[string][]codeCnt{"2xx": {}, "3xx": {}, "4xx": {}, "5xx": {}}
+	codes := make([]int, 0, len(counts))
 	var total int64
-	for rows.Next() {
-		var code int
-		var cnt int64
-		rows.Scan(&code, &cnt) //nolint:errcheck
+	for code, cnt := range counts {
+		codes = append(codes, code)
 		total += cnt
+	}
+	sort.Ints(codes)
+	for _, code := range codes {
+		cnt := counts[code]
 		switch {
 		case code >= 200 && code < 300:
 			groups["2xx"] = append(groups["2xx"], codeCnt{code, cnt})
@@ -314,23 +199,18 @@ func GetStatusGroups(db *sql.DB, p Params) []StatusGroup {
 			groups["5xx"] = append(groups["5xx"], codeCnt{code, cnt})
 		}
 	}
-
-	order := []string{"2xx", "3xx", "4xx", "5xx"}
 	var out []StatusGroup
-	for _, g := range order {
-		codes := groups[g]
+	for _, g := range []string{"2xx", "3xx", "4xx", "5xx"} {
+		cs := groups[g]
 		var gTotal int64
-		for _, c := range codes {
+		for _, c := range cs {
 			gTotal += c.count
 		}
-		sg := StatusGroup{
-			Group: g,
-			Count: gTotal,
-		}
+		sg := StatusGroup{Group: g, Count: gTotal}
 		if total > 0 {
 			sg.Pct = float64(gTotal) / float64(total) * 100
 		}
-		for _, c := range codes {
+		for _, c := range cs {
 			pct := 0.0
 			if gTotal > 0 {
 				pct = float64(c.count) / float64(gTotal) * 100
@@ -342,81 +222,45 @@ func GetStatusGroups(db *sql.DB, p Params) []StatusGroup {
 	return out
 }
 
-// GetTopPaths retourne les chemins les plus fréquents.
-// Pas de COUNT(DISTINCT path) : on lit limit+1 pour savoir s'il y a une page suivante.
-func GetTopPaths(db *sql.DB, p Params, search string, limit, offset int) (paths []PathEntry, hasMore bool) {
-	if limit <= 0 {
-		limit = 20
+// MinutePoint : le trafic d'une minute (UTC, AAAA-MM-JJTHH:MM), tel que les passerelles le rendent pour une sélection.
+type MinutePoint struct {
+	Minute   string
+	Requests int64
+	Errors   int64
+	Bytes    int64
+}
+
+// TimelineFromMinutes regroupe des minutes en points de la courbe (heure locale du serveur, comme GetTimeline) :
+// bucket vaut "minute", "hour" ou "day".
+func TimelineFromMinutes(points []MinutePoint, bucket string) []TimePoint {
+	layout := "2006-01-02T15:00"
+	switch bucket {
+	case "minute":
+		layout = "2006-01-02T15:04"
+	case "day":
+		layout = "2006-01-02"
 	}
-	w, args := where(p)
-	if search != "" {
-		if w == "" {
-			w = "WHERE status > 0 AND path LIKE ?"
-		} else {
-			w += " AND path LIKE ?"
+	agg := map[string]*TimePoint{}
+	for _, m := range points {
+		t, err := time.Parse("2006-01-02T15:04", m.Minute)
+		if err != nil {
+			continue
 		}
-		args = append(args, "%"+search+"%")
+		key := t.Local().Format(layout)
+		tp := agg[key]
+		if tp == nil {
+			tp = &TimePoint{Bucket: key}
+			agg[key] = tp
+		}
+		tp.Requests += m.Requests
+		tp.Errors += m.Errors
+		tp.Bytes += m.Bytes
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
-	defer cancel()
-	rows, err := db.QueryContext(ctx,
-		`SELECT path, COUNT(*) as n,
-		        SUM(CASE WHEN status>=400 THEN 1 ELSE 0 END),
-		        COALESCE(AVG(latency_ms),0),
-		        COALESCE(SUM(bytes),0)
-		 FROM logs `+w+` GROUP BY path ORDER BY n DESC LIMIT ? OFFSET ?`,
-		append(args, limit+1, offset)...)
-	if err != nil {
-		return nil, false
+	out := make([]TimePoint, 0, len(agg))
+	for _, tp := range agg {
+		out = append(out, *tp)
 	}
-	defer rows.Close()
-	var out []PathEntry
-	for rows.Next() {
-		var e PathEntry
-		rows.Scan(&e.Path, &e.Requests, &e.Errors, &e.AvgLatMs, &e.Bytes) //nolint:errcheck
-		out = append(out, e)
-	}
-	if len(out) > limit {
-		return out[:limit], true
-	}
-	return out, false
-}
-
-// GetTopIPs retourne les IPs les plus actives.
-func GetTopIPs(db *sql.DB, p Params, limit int) []IPEntry {
-	return topIPs(db, p, limit, false)
-}
-
-// topIPs : attributableOnly écarte les IP tronquées ou pseudonymisées, qui regroupent plusieurs
-// clients sous une même valeur.
-func topIPs(db *sql.DB, p Params, limit int, attributableOnly bool) []IPEntry {
-	if limit <= 0 {
-		limit = 50
-	}
-	w, args := where(p)
-	if attributableOnly {
-		w += " AND ip_truncated = 0 AND ip <> ?"
-		args = append(args, logs.PseudonymizedIP)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
-	defer cancel()
-	rows, err := db.QueryContext(ctx,
-		`SELECT ip, COUNT(*) as n,
-		        SUM(CASE WHEN status>=400 THEN 1 ELSE 0 END),
-		        COALESCE(SUM(bytes),0), MAX(ip_truncated)
-		 FROM logs `+w+` GROUP BY ip ORDER BY n DESC LIMIT ?`,
-		append(args, limit)...)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	var out []IPEntry
-	for rows.Next() {
-		var e IPEntry
-		rows.Scan(&e.IP, &e.Requests, &e.Errors, &e.Bytes, &e.IPTruncated) //nolint:errcheck
-		out = append(out, e)
-	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Bucket < out[j].Bucket })
 	return out
 }
 
@@ -425,6 +269,9 @@ var botKeywords = []string{
 	"go-http-client", "libwww", "httpclient", "nmap", "masscan", "zgrab",
 	"nikto", "nuclei", "sqlmap", "dirbuster", "gobuster", "ffuf",
 }
+
+// IsBot dit si le nom ressemble à un robot connu.
+func IsBot(agent string) bool { return isBot(agent) }
 
 func isBot(agent string) bool {
 	low := strings.ToLower(agent)
@@ -436,59 +283,9 @@ func isBot(agent string) bool {
 	return false
 }
 
-// GetTopAgents retourne les user-agents les plus fréquents (déduit du composant ou du message).
-// En l'absence de colonne user_agent, on parse le champ message si format "METHOD PATH agent=…"
-// sinon on utilise component comme proxy.
-func GetTopAgents(db *sql.DB, p Params, limit int) []AgentEntry {
-	if limit <= 0 {
-		limit = 30
-	}
-	w, args := where(p)
-	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
-	defer cancel()
-	rows, err := db.QueryContext(ctx,
-		`SELECT component, COUNT(*) as n FROM logs `+w+` GROUP BY component ORDER BY n DESC LIMIT ?`,
-		append(args, limit)...)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	var total int64
-	var entries []struct {
-		name  string
-		count int64
-	}
-	for rows.Next() {
-		var name string
-		var cnt int64
-		rows.Scan(&name, &cnt) //nolint:errcheck
-		if name == "" {
-			name = "unknown"
-		}
-		entries = append(entries, struct {
-			name  string
-			count int64
-		}{name, cnt})
-		total += cnt
-	}
-	var out []AgentEntry
-	for _, e := range entries {
-		pct := 0.0
-		if total > 0 {
-			pct = float64(e.count) / float64(total) * 100
-		}
-		out = append(out, AgentEntry{
-			Name:     e.name,
-			Requests: e.count,
-			Pct:      pct,
-			IsBot:    isBot(e.name),
-		})
-	}
-	return out
-}
-
 // GetProxies retourne les domaines configurés (table proxies), sans scanner logs.
-// Si nodeName est non vide, ne retourne que les domaines vus dans les logs d'accès de cette passerelle.
+// Si nodeName est non vide, ne retourne que les domaines vus par cette passerelle dans les cumuls par minute (ses accès
+// ordinaires ne sont plus dans la base de l'Admin).
 func GetProxies(db *sql.DB, nodeName string) []ProxyOption {
 	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
@@ -499,10 +296,8 @@ func GetProxies(db *sql.DB, nodeName string) []ProxyOption {
 	if nodeName != "" {
 		rows, err = db.QueryContext(ctx,
 			`SELECT DISTINCT domain, domain
-			 FROM logs
-			 WHERE status > 0
-			   AND node_name = ?
-			   AND domain IS NOT NULL AND domain != ''
+			 FROM logs_minute
+			 WHERE node_name = ? AND domain != ''
 			 ORDER BY domain`, nodeName)
 	} else {
 		// Les proxies TCP/UDP (config.host vide, voir router.Route) n'étaient jamais listés
@@ -545,107 +340,39 @@ type ReferrerEntry struct {
 	Pct      float64 `json:"pct"`
 }
 
-// GetTopReferrers retourne les référents les plus fréquents.
-func GetTopReferrers(db *sql.DB, p Params, limit int) []ReferrerEntry {
-	if limit <= 0 {
-		limit = 30
-	}
-	w, args := where(p)
-	// Remplace "WHERE status > 0" par condition sur referrer non vide
-	w2 := strings.Replace(w, "status > 0", "status > 0 AND referrer != ''", 1)
-	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
-	defer cancel()
-	rows, err := db.QueryContext(ctx,
-		`SELECT referrer, COUNT(*) as n FROM logs `+w2+` GROUP BY referrer ORDER BY n DESC LIMIT ?`,
-		append(args, limit)...)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	var out []ReferrerEntry
-	var total int64
-	for rows.Next() {
-		var e ReferrerEntry
-		rows.Scan(&e.Referrer, &e.Requests) //nolint:errcheck
-		total += e.Requests
-		out = append(out, e)
-	}
-	for i := range out {
-		if total > 0 {
-			out[i].Pct = float64(out[i].Requests) / float64(total) * 100
-		}
-	}
-	return out
+// ExportRow est une ligne d'un export de Prism.
+type ExportRow struct {
+	Ts        string `json:"ts"`
+	Domain    string `json:"domain"`
+	Method    string `json:"method"`
+	Path      string `json:"path"`
+	Status    int    `json:"status"`
+	IP        string `json:"ip"`
+	LatencyMs int64  `json:"latency_ms"`
+	Bytes     int64  `json:"bytes"`
+	Message   string `json:"message,omitempty"`
 }
 
-// ExportCSV exporte les données brutes filtrées en CSV.
-func ExportCSV(db *sql.DB, p Params) ([]byte, error) {
-	w, args := where(p)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	rows, err := db.QueryContext(ctx,
-		`SELECT ts, domain, method, path, status, ip, latency_ms, bytes, message
-		 FROM logs `+w+` ORDER BY ts DESC LIMIT 50000`, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+// ExportMaxRows borne les lignes d'un export.
+const ExportMaxRows = 50000
 
+// CSVFromRows met des lignes d'export en CSV.
+func CSVFromRows(rows []ExportRow) []byte {
 	var sb strings.Builder
 	cw := csv.NewWriter(&sb)
 	cw.Write([]string{"ts", "domain", "method", "path", "status", "ip", "latency_ms", "bytes", "message"}) //nolint:errcheck
-	for rows.Next() {
-		var ts, domain, method, path, ip, msg string
-		var status int
-		var lat, byt int64
-		rows.Scan(&ts, &domain, &method, &path, &status, &ip, &lat, &byt, &msg) //nolint:errcheck
-		cw.Write([]string{ts, domain, method, path, fmt.Sprintf("%d", status), ip, fmt.Sprintf("%d", lat), fmt.Sprintf("%d", byt), msg}) //nolint:errcheck
+	for _, r := range rows {
+		cw.Write([]string{r.Ts, r.Domain, r.Method, r.Path, fmt.Sprintf("%d", r.Status), r.IP, fmt.Sprintf("%d", r.LatencyMs), fmt.Sprintf("%d", r.Bytes), r.Message}) //nolint:errcheck
 	}
 	cw.Flush()
-	return []byte(sb.String()), nil
+	return []byte(sb.String())
 }
 
-// ExportJSON exporte les données brutes filtrées en JSON.
-func ExportJSON(db *sql.DB, p Params) ([]byte, error) {
-	w, args := where(p)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	rows, err := db.QueryContext(ctx,
-		`SELECT ts, domain, method, path, status, ip, latency_ms, bytes, message
-		 FROM logs `+w+` ORDER BY ts DESC LIMIT 50000`, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+// JSONFromRows met des lignes d'export en JSON.
+func JSONFromRows(rows []ExportRow) ([]byte, error) { return json.MarshalIndent(rows, "", "  ") }
 
-	type Row struct {
-		Ts       string `json:"ts"`
-		Domain   string `json:"domain"`
-		Method   string `json:"method"`
-		Path     string `json:"path"`
-		Status   int    `json:"status"`
-		IP       string `json:"ip"`
-		LatencyMs int64 `json:"latency_ms"`
-		Bytes    int64  `json:"bytes"`
-		Message  string `json:"message,omitempty"`
-	}
-	var out []Row
-	for rows.Next() {
-		var r Row
-		rows.Scan(&r.Ts, &r.Domain, &r.Method, &r.Path, &r.Status, &r.IP, &r.LatencyMs, &r.Bytes, &r.Message) //nolint:errcheck
-		out = append(out, r)
-	}
-	return json.MarshalIndent(out, "", "  ")
-}
-
-// ExportHTML génère un rapport HTML statique autonome.
-func ExportHTML(db *sql.DB, p Params) ([]byte, error) {
-	kpis := GetKPIs(db, p, true)
-	timeline := GetTimeline(db, p, "hour")
-	statusGroups := GetStatusGroups(db, p)
-	paths, _ := GetTopPaths(db, p, "", 20, 0)
-	ips := GetTopIPs(db, p, 20)
-
+// HTMLReport met en page le rapport HTML de Prism.
+func HTMLReport(p Params, kpis KPIs, timeline []TimePoint, statusGroups []StatusGroup, paths []PathEntry, ips []IPEntry) []byte {
 	var sb strings.Builder
 	sb.WriteString(`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Prism Report — Goproxify</title>
 <style>body{font-family:system-ui,sans-serif;background:#0f1117;color:#e2e8f0;margin:0;padding:24px}
@@ -729,7 +456,7 @@ h2{font-size:15px;margin:24px 0 10px;color:#94a3b8}
 			htmlEsc(i2.IP), i2.Requests, i2.Errors)
 	}
 	sb.WriteString(`</tbody></table></body></html>`)
-	return []byte(sb.String()), nil
+	return []byte(sb.String())
 }
 
 func htmlEsc(s string) string {

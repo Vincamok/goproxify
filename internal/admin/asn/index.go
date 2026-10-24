@@ -15,6 +15,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/vincamok/goproxify/internal/asncompact"
 )
 
 // Range est une plage d'adresses contiguë, bornes incluses.
@@ -121,6 +123,15 @@ func ParseGzip(r io.Reader) (*Index, error) {
 	}
 	defer zr.Close()
 	return Parse(zr)
+}
+
+// Compact sérialise l'index pour les passerelles (internal/asncompact) : plages et numéros d'ASN seulement, ni noms ni pays.
+func (x *Index) Compact() (data []byte, version string, err error) {
+	ranges := make([]asncompact.Range, len(x.sorted))
+	for i, r := range x.sorted {
+		ranges[i] = asncompact.Range{Start: r.start, End: r.end, ASN: r.asn}
+	}
+	return asncompact.Encode(ranges)
 }
 
 // Len retourne le nombre d'ASN et de plages.

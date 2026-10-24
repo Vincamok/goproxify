@@ -15,7 +15,10 @@ import (
 // gardent leur propre borne, plus basse que celle-ci.
 const (
 	maxPublicBody = 64 << 10 // routes sans authentification : identifiants, codes, secret d'appairage
-	maxAPIBody    = 64 << 20 // le plus gros envoi légitime est l'import de configuration (32 Mio)
+	maxAPIBody    = 64 << 20
+	// maxImportBody : l'aperçu et l'import d'une sauvegarde reçoivent un snapshot entier, centaines de Mio avec les états
+	// de passerelles ; le handler a sa propre borne (api.ImportBackupMaxBytes), identique.
+	maxImportBody = 512 << 20
 )
 
 // publicBodyPaths : routes accessibles sans authentification qui lisent un corps.
@@ -26,6 +29,9 @@ var publicBodyPaths = []string{
 }
 
 func bodyLimitFor(path string) int64 {
+	if path == "/api/v1/import/backup/preview" || path == "/api/v1/import/backup/apply" {
+		return maxImportBody
+	}
 	for _, p := range publicBodyPaths {
 		if path == p || (strings.HasSuffix(p, "/") && strings.HasPrefix(path, p)) {
 			return maxPublicBody

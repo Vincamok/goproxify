@@ -12,6 +12,9 @@ import (
 	"time"
 
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
+	"github.com/vincamok/goproxify/internal/admin/prismedge"
+	"github.com/vincamok/goproxify/internal/edge/logapi/logapitest"
+	"github.com/vincamok/goproxify/internal/edge/logstore"
 	"github.com/vincamok/goproxify/internal/sqltime"
 )
 
@@ -29,13 +32,21 @@ func TestIPTraceFollowsACIDRAcrossSources(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	gw := logapitest.New(t, "gw-a")
+	if err := gw.Register(db); err != nil {
+		t.Fatal(err)
+	}
+	src := &prismedge.Source{DB: db}
 	logRow := func(at time.Time, ip string, status int, waf string) {
-		exec(`INSERT INTO logs (ts, ip, domain, method, path, status, waf_matches) VALUES (?, ?, 'a.test', 'GET', '/admin', ?, ?)`,
-			at.Format(time.RFC3339Nano), ip, status, waf)
+		e := logstore.Entry{Ts: at, IP: ip, Domain: "a.test", Method: "GET", Path: "/admin", Status: status}
+		if waf != "" {
+			e.WAFMatches = []string{waf}
+		}
+		gw.Add(e)
 	}
 	// Deux épisodes à 40 jours d'écart, deux IP du /24, plus du bruit hors cible.
 	logRow(ago(41*24*time.Hour), "203.0.113.5", 404, "")
-	logRow(ago(41*24*time.Hour-time.Minute), "203.0.113.6", 403, `["sqli"]`)
+	logRow(ago(41*24*time.Hour-time.Minute), "203.0.113.6", 403, "sqli")
 	logRow(ago(2*time.Hour), "203.0.113.5", 200, "")
 	logRow(ago(2*time.Hour), "203.0.114.5", 200, "")
 	logRow(ago(2*time.Hour), "198.51.100.1", 200, "")
@@ -49,7 +60,7 @@ func TestIPTraceFollowsACIDRAcrossSources(t *testing.T) {
 	get := func(path string) map[string]any {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		(&SecurityHandler{DB: db}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		(&SecurityHandler{DB: db, Edge: src}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s : %d %s", path, rec.Code, rec.Body)
 		}

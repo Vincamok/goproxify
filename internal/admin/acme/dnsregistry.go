@@ -144,3 +144,20 @@ func ValidateDNSParams(typ string, params map[string]any) error {
 	}
 	return nil
 }
+
+// DefaultProviderConfig résout le fournisseur DNS par défaut de l'Admin. dnsType est un type (`ovh`, `cloudflare`…) ou,
+// parce que l'écran Infrastructure y enregistre ce qu'on choisit dans sa liste, l'identifiant d'un fournisseur nommé :
+// celui-ci apporte alors son type et ses paramètres. configured : paramètres posés dans la configuration de l'Admin, qui
+// remplacent ceux de l'environnement pour un type.
+func DefaultProviderConfig(dnsType string, configured map[string]string, named *ProviderStore) ProviderConfig {
+	if named != nil {
+		if e, err := named.Get(dnsType); err == nil && e != nil {
+			return ProviderConfig{Type: e.Type, Params: e.Params}
+		}
+	}
+	cfg := ProviderConfigFromEnv(dnsType)
+	if len(configured) > 0 {
+		cfg.Params = configured
+	}
+	return cfg
+}

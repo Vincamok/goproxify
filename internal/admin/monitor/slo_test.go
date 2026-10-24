@@ -24,7 +24,7 @@ func TestSLOEvents(t *testing.T) {
 	at := time.Now().UTC().Add(-20 * time.Minute).Format(time.RFC3339)
 	ins := func(node string, status, n int) {
 		for i := 0; i < n; i++ {
-			d.Exec(`INSERT INTO logs (ts, domain, node_name, ip, status) VALUES (?,?,?,?,?)`, at, "a.fr", node, "1.1.1.1", status)
+			d.Exec(`INSERT INTO logs_minute (minute, domain, node_name, status, requests) VALUES (?,?,?,?,1) ON CONFLICT (minute, node_name, domain, status) DO UPDATE SET requests = requests + 1, latency_ms_sum = latency_ms_sum + excluded.latency_ms_sum`, at[:16], "a.fr", node, status)
 		}
 	}
 	ins("paris-01", 200, 400)
@@ -65,7 +65,7 @@ func TestSLOEventsPerNodeOverride(t *testing.T) {
 		if i == 0 {
 			status = 502
 		}
-		d.Exec(`INSERT INTO logs (ts, domain, node_name, ip, status) VALUES (?,?,?,?,?)`, at, "a.fr", "paris-01", "1.1.1.1", status)
+		d.Exec(`INSERT INTO logs_minute (minute, domain, node_name, status, requests) VALUES (?,?,?,?,1) ON CONFLICT (minute, node_name, domain, status) DO UPDATE SET requests = requests + 1, latency_ms_sum = latency_ms_sum + excluded.latency_ms_sum`, at[:16], "a.fr", "paris-01", status)
 	}
 
 	m := New(d, slog.Default(), nil, DefaultConfig()) // objectif global 99,9 %

@@ -66,6 +66,8 @@ type IPExport struct {
 	GeneratedAt   time.Time         `json:"generated_at"`
 	Logs          []Entry           `json:"logs"`
 	LogsTruncated bool              `json:"logs_truncated,omitempty"`
+	// GatewaysMissing : passerelles qui n'ont pas répondu, dont les lignes manquent à cet export.
+	GatewaysMissing []string `json:"gateways_missing,omitempty"`
 	Bans          []SubjectBan      `json:"bans"`
 	BanHistory    []SubjectBanEvent `json:"ban_history"`
 	GeoIP         *SubjectGeo       `json:"geoip,omitempty"`

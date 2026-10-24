@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -43,6 +44,12 @@ type LogsHandler struct {
 	// Edges et BulkEdges (optionnels) interrogent la base de logs des passerelles pour `source=edge`.
 	Edges     *edgeproxy.Client
 	BulkEdges *edgeproxy.Client
+	// Live (optionnel) demande aux passerelles d'envoyer leurs nouvelles lignes tant qu'une vue Live est ouverte.
+	Live interface{ AcquireLive() func() }
+	// SIEM (optionnel) pousse la configuration de l'exporteur SIEM aux passerelles et rend leur état.
+	SIEM SIEMControl
+	// Retention (optionnel) pousse aux passerelles la durée de conservation de leurs logs et rend celle qu'elles annoncent.
+	Retention EdgeRetentionControl
 }
 
 func (h *LogsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -62,6 +69,12 @@ func (h *LogsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.export(w, r)
 	case r.Method == http.MethodGet && path == "correlate":
 		h.correlate(w, r)
+	case r.Method == http.MethodGet && path == "siem":
+		h.getSIEM(w, r)
+	case r.Method == http.MethodPut && path == "siem":
+		h.putSIEM(w, r)
+	case r.Method == http.MethodGet && path == "siem/status":
+		h.siemStatus(w, r)
 	case r.Method == http.MethodGet && path == "settings":
 		h.getSettings(w, r)
 	case r.Method == http.MethodPut && path == "settings":
@@ -88,6 +101,7 @@ func (h *LogsHandler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := parseLogsParams(r)
+	h.canonNodeID(r.Context(), &p)
 	entries, hasMore, err := h.Store.Search(p)
 	if err != nil {
 		logsJSONErr(w, err, http.StatusInternalServerError)
@@ -143,6 +157,10 @@ func (h *LogsHandler) attachCountries(entries []logs.Entry) {
 
 func (h *LogsHandler) live(w http.ResponseWriter, r *http.Request) {
 	filter := parseLogsParams(r)
+	h.canonNodeID(r.Context(), &filter)
+	if h.Live != nil {
+		defer h.Live.AcquireLive()()
+	}
 	h.Store.StreamSSE(w, r, filter)
 }
 
@@ -156,6 +174,7 @@ func (h *LogsHandler) export(w http.ResponseWriter, r *http.Request) {
 		h.exportRemote(w, r, p, format)
 		return
 	}
+	h.canonNodeID(r.Context(), &p)
 	data, ct, err := h.Store.Export(p, format)
 	if err != nil {
 		logsJSONErr(w, err, http.StatusInternalServerError)
@@ -182,6 +201,7 @@ func (h *LogsHandler) facets(w http.ResponseWriter, r *http.Request) {
 		h.facetsRemote(w, r, p, fields)
 		return
 	}
+	h.canonNodeID(r.Context(), &p)
 	out, err := h.Store.Facets(p, fields)
 	if err != nil {
 		logsJSONErr(w, err, http.StatusInternalServerError)
@@ -214,6 +234,7 @@ func (h *LogsHandler) histogram(w http.ResponseWriter, r *http.Request) {
 		h.histogramRemote(w, r, p, bucket)
 		return
 	}
+	h.canonNodeID(r.Context(), &p)
 	pts, err := h.Store.Histogram(p, bucket)
 	if err != nil {
 		logsJSONErr(w, err, http.StatusInternalServerError)
@@ -222,8 +243,10 @@ func (h *LogsHandler) histogram(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"bucket": bucket, "points": pts})
 }
 
-func parseLogsParams(r *http.Request) logs.SearchParams {
-	q := r.URL.Query()
+func parseLogsParams(r *http.Request) logs.SearchParams { return logsParamsFromValues(r.URL.Query()) }
+
+// logsParamsFromValues lit les filtres de logs d'une requête ou d'un appel d'outil.
+func logsParamsFromValues(q url.Values) logs.SearchParams {
 	page, _ := strconv.Atoi(q.Get("page"))
 	pageSize, _ := strconv.Atoi(q.Get("page_size"))
 	beforeID, _ := strconv.ParseInt(q.Get("before_id"), 10, 64)
@@ -239,6 +262,7 @@ func parseLogsParams(r *http.Request) logs.SearchParams {
 		Path:            q.Get("path"),
 		TLSJA3:          q.Get("tls_ja3"),
 		TLSJA4:          q.Get("tls_ja4"),
+		RequestID:       q.Get("request_id"),
 		Search:          q.Get("search"),
 		DateFrom:        q.Get("date_from"),
 		DateTo:          q.Get("date_to"),
@@ -296,6 +320,7 @@ func (h *LogsHandler) getSettings(w http.ResponseWriter, r *http.Request) {
 		"retention_ban_days":    parseInt("logs.retention_ban_days", h.Store.BanRetentionDays()),
 		"ip_anonymize":          ipAnonymize,
 		"ip_pseudonymize":       ipPseudonymize,
+		"edge_retention":       h.edgeRetentionView(),
 		"defaults": map[string]any{
 			"access_days": logs.DefaultRetentionAccessDays,
 			"system_days": logs.DefaultRetentionSystemDays,
@@ -311,6 +336,8 @@ func (h *LogsHandler) putSettings(w http.ResponseWriter, r *http.Request) {
 		RetentionBanDays    int   `json:"retention_ban_days"`
 		IPAnonymize        *bool `json:"ip_anonymize,omitempty"`
 		IPPseudonymize      *bool `json:"ip_pseudonymize,omitempty"`
+		// EdgeRetention : conservation des logs dans les passerelles, qui portent les accès HTTP (365 jours par défaut).
+		EdgeRetention *EdgeRetention `json:"edge_retention,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, r, http.StatusBadRequest, "api.err.json")
@@ -319,6 +346,12 @@ func (h *LogsHandler) putSettings(w http.ResponseWriter, r *http.Request) {
 	if body.RetentionAccessDays < 0 || body.RetentionSystemDays < 0 || body.RetentionBanDays < 0 {
 		writeErr(w, r, http.StatusBadRequest, "api.err.retention")
 		return
+	}
+	if body.EdgeRetention != nil {
+		if err := body.EdgeRetention.validate(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	prevAnon := admindb.GetSetting(h.DB, "logs.ip_anonymize", "false") == "true"
 	prevPseudo := admindb.GetSetting(h.DB, "logs.ip_pseudonymize", "false") == "true"
@@ -341,6 +374,14 @@ func (h *LogsHandler) putSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.RetentionBanDays > 0 {
 		admindb.SetSetting(h.DB, "logs.retention_ban_days", strconv.Itoa(body.RetentionBanDays)) //nolint:errcheck
+	}
+	if er := body.EdgeRetention; er != nil {
+		if err := h.saveEdgeRetention(*er); err != nil {
+			logsJSONErr(w, err, http.StatusInternalServerError)
+			return
+		}
+		_ = admindb.WriteAudit(h.DB, adminauth.UserIDFromContext(r.Context()), "logs_edge_retention", "logs",
+			fmt.Sprintf("access=%dj system=%dj exceptions=%d", er.AccessDays, er.SystemDays, len(er.Nodes)))
 	}
 	h.Store.SetRetention(body.RetentionAccessDays, body.RetentionSystemDays)
 	h.Store.SetBanRetention(body.RetentionBanDays)
@@ -443,13 +484,21 @@ func (h *LogsHandler) deleteByIP(w http.ResponseWriter, r *http.Request, ip stri
 		h.OnUnban(ip)
 	}
 	if h.OnEraseIP != nil {
-		h.OnEraseIP(ip)
+		h.OnEraseIP(ip) // mis en file : rejoué aux passerelles qui ne répondent pas maintenant
+	}
+	gateways := h.eraseOnGateways(r.Context(), ip)
+	var gwLines, gwPending int64
+	for _, g := range gateways {
+		gwLines += g.LogLines
+		if g.Status != "erased" {
+			gwPending++
+		}
 	}
 
 	// Trace de l'effacement sans réinscrire l'IP effacée en clair (audit et logs système).
 	ref := h.Store.IPReference(ip)
-	detail := fmt.Sprintf("ip=%s deleted=%d bans=%d ban_history=%d geoip_cache=%d audit_ip=%d reason=%q",
-		ref, res.Logs, res.Bans, res.BanHistory, res.GeoCache, res.AuditIP, reason)
+	detail := fmt.Sprintf("ip=%s deleted=%d bans=%d ban_history=%d geoip_cache=%d audit_ip=%d gateway_log_lines=%d gateways_pending=%d reason=%q",
+		ref, res.Logs, res.Bans, res.BanHistory, res.GeoCache, res.AuditIP, gwLines, gwPending, reason)
 	_ = admindb.WriteAudit(h.DB, actor, "rgpd_erasure_ip", "logs", detail)
 	h.Store.Write(logs.Entry{
 		Level:     "info",
@@ -464,6 +513,7 @@ func (h *LogsHandler) deleteByIP(w http.ResponseWriter, r *http.Request, ip stri
 		"ban_history_deleted": res.BanHistory,
 		"geoip_cache_deleted": res.GeoCache,
 		"audit_ip_cleared":    res.AuditIP,
+		"gateways":            gateways,
 		"ip":                  ip,
 	})
 }
@@ -548,6 +598,7 @@ func (h *LogsHandler) subjectExport(w http.ResponseWriter, r *http.Request) {
 			logsJSONErr(w, err, http.StatusInternalServerError)
 			return
 		}
+		h.addGatewayLogs(r.Context(), body.IP, &res)
 		out, action, name = res, "rgpd_export_ip", "ip"
 		detail = fmt.Sprintf("ip=%s logs=%d bans=%d ban_history=%d audit=%d reason=%q",
 			h.Store.IPReference(body.IP), len(res.Logs), len(res.Bans), len(res.BanHistory), len(res.Audit), reason)

@@ -70,6 +70,7 @@ func dockerSource(d Deps) (*Instance, error) {
 		d.Log,
 	)
 	disc.SetEndpointFunc(d.Edges.Current)
+	disc.SetStatePublisher(d.State)
 	runtime := "docker"
 	if strings.Contains(cfg.Docker.SocketPath, "podman") {
 		runtime = "podman"
@@ -103,6 +104,7 @@ func portainerSource(d Deps) (*Instance, error) {
 		epEdges,
 	)
 	disc.SetEndpointFunc(d.Edges.Current)
+	disc.SetStatePublisher(d.State)
 	return &Instance{Impl: disc, Start: disc.Start, Blocking: true, SetToken: disc.SetToken, Reannounce: disc.Resync, Runtimes: []string{"portainer"}}, nil
 }
 
@@ -115,5 +117,6 @@ func kubernetesSource(d Deps) (*Instance, error) {
 		return nil, err
 	}
 	disc.SetEndpointFunc(d.Edges.Current)
+	disc.SetStatePublisher(d.State)
 	return &Instance{Impl: disc, Start: disc.Start, Blocking: true, SetToken: disc.SetToken, Reannounce: disc.Resync, Runtimes: []string{"kubernetes"}}, nil
 }

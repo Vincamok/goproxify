@@ -19,6 +19,7 @@ import (
 
 	agentdocker "github.com/vincamok/goproxify/internal/agent/docker"
 	"github.com/vincamok/goproxify/internal/agent/edgeset"
+	"github.com/vincamok/goproxify/internal/agent/statepub"
 	"github.com/vincamok/goproxify/internal/config"
 	"github.com/vincamok/goproxify/internal/modules"
 )
@@ -31,6 +32,8 @@ type Deps struct {
 	Docker *agentdocker.Client
 	Net    *agentdocker.NetworkManager
 	Edges  *edgeset.Set
+	// State envoie à la passerelle l'état complet d'une source ; nil : publication route par route seulement.
+	State *statepub.Publisher
 }
 
 // Settings retourne la configuration d'une source qui n'a pas de section dédiée dans

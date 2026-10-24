@@ -112,7 +112,7 @@ var mcpTools = []string{
 	"list_domains", "create_domain", "renew_domain", "rotate_cert",
 	"list_certs", "get_cert_status", "list_cert_deploy_targets", "list_cert_deploy_types", "list_internal_cas", "list_internal_certs", "get_ech_status", "list_dns_providers", "list_dns_provider_types",
 	"obtain_cert", "import_cert", "trigger_cert_deploy", "create_internal_ca", "issue_internal_cert", "revoke_internal_cert",
-	"list_logs", "simulate_ephor_config", "trace_ip", "preview_security_ban", "preview_asn_ban", "get_prism_anomalies", "get_prism_geo", "get_prism_tls_fingerprints", "get_prism_slo", "list_teams",
+	"list_logs", "get_siem_status", "simulate_ephor_config", "get_ephor_references", "suggest_ephor_thresholds", "trace_ip", "preview_security_ban", "preview_asn_ban", "get_prism_anomalies", "get_prism_geo", "get_prism_tls_fingerprints", "get_prism_slo", "list_teams",
 	"get_audit_log", "get_security_overview", "list_security_bans", "list_security_engine_types", "get_waf_activity", "list_plugins", "lookup_asn", "list_security_threats", "list_security_cves",
 	"list_ip_profiles", "list_auth_providers", "list_auth_provider_types",
 	"list_flows", "get_flow", "list_flow_versions", "list_flow_runs", "get_flow_run", "get_automation_catalog", "list_flow_templates", "list_silences", "export_automation",
@@ -257,7 +257,7 @@ func ToolRequiredScope(tool string) string {
 	case "obtain_cert", "import_cert", "trigger_cert_deploy",
 		"create_internal_ca", "issue_internal_cert", "revoke_internal_cert":
 		return ScopeCertsWrite
-	case "list_logs", "simulate_ephor_config", "trace_ip", "preview_security_ban", "preview_asn_ban", "get_prism_anomalies", "get_prism_geo", "get_prism_tls_fingerprints", "get_prism_slo":
+	case "list_logs", "get_siem_status", "simulate_ephor_config", "get_ephor_references", "suggest_ephor_thresholds", "trace_ip", "preview_security_ban", "preview_asn_ban", "get_prism_anomalies", "get_prism_geo", "get_prism_tls_fingerprints", "get_prism_slo":
 		return ScopeLogsRead
 	case "list_teams":
 		return ScopeTeamsRead
@@ -298,7 +298,7 @@ func ToolRequiresAdmin(tool string) bool {
 		"get_architecture", "list_discovery_sources", "list_dns_providers", "list_dns_provider_types",
 		"list_backups", "list_users", "list_teams",
 		"get_security_overview", "list_security_bans", "list_security_engine_types", "get_waf_activity", "list_plugins", "lookup_asn", "list_security_threats", "list_security_cves",
-		"create_security_ban", "delete_security_ban", "ban_ip", "unban_ip", "simulate_ephor_config", "trace_ip", "preview_security_ban", "preview_asn_ban", "list_ban_whitelist", "add_ban_whitelist", "remove_ban_whitelist", "import_security_bans", "ban_asn", "unban_asn",
+		"create_security_ban", "delete_security_ban", "ban_ip", "unban_ip", "get_siem_status", "simulate_ephor_config", "get_ephor_references", "suggest_ephor_thresholds", "trace_ip", "preview_security_ban", "preview_asn_ban", "list_ban_whitelist", "add_ban_whitelist", "remove_ban_whitelist", "import_security_bans", "ban_asn", "unban_asn",
 		"list_auth_providers", "list_auth_provider_types", "create_auth_provider", "delete_auth_provider",
 		"list_internal_cas", "list_internal_certs", "get_ech_status", "create_internal_ca", "issue_internal_cert", "revoke_internal_cert",
 		"list_flows", "get_flow", "list_flow_versions", "list_flow_runs", "get_flow_run", "get_automation_catalog", "list_flow_templates", "list_silences", "export_automation",

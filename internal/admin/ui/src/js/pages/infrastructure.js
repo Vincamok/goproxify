@@ -684,7 +684,7 @@ async function agentContainers(nodeName, displayName) {
       return `<tr>
         <td style="padding:6px 10px;font-size:12px;font-family:monospace;">${esc(c.host || '—')}</td>
         <td style="padding:6px 10px;font-size:11px;color:var(--text2);">${esc(backends)}</td>
-        <td style="padding:6px 10px;font-size:11px;color:var(--text2);">${esc(c.edge_name || '—')}${tls}</td>
+        <td style="padding:6px 10px;font-size:11px;color:var(--text2);">${esc(c.group || c.edge_label || c.edge_name || '—')}${tls}</td>
       </tr>`;
     }).join('');
     return `<div style="overflow-x:auto;max-height:280px;overflow-y:auto;margin-bottom:16px;">

@@ -4,9 +4,9 @@
 package analytics
 
 import (
+	"context"
 	"database/sql"
 	"testing"
-	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -33,23 +33,15 @@ func geoTestDB(t *testing.T) *sql.DB {
 
 func TestGetGeoPoints(t *testing.T) {
 	db := geoTestDB(t)
-	ts := time.Now().UTC().Format(time.RFC3339)
-	for _, l := range []struct {
-		ip     string
-		status int
-		n      int
-	}{{"1.1.1.1", 200, 3}, {"1.1.1.1", 500, 1}, {"2.2.2.2", 200, 2}, {"3.3.3.3", 200, 5}, {"4.4.4.4", 200, 4}} {
-		for i := 0; i < l.n; i++ {
-			db.Exec(`INSERT INTO logs (ts, ip, status) VALUES (?,?,?)`, ts, l.ip, l.status)
-		}
-	}
+	// Le trafic de chaque IP, additionné sur les passerelles (voir GeoPointsFromIPs).
+	counts := []IPCount{{IP: "1.1.1.1", Requests: 4, Errors: 1}, {IP: "2.2.2.2", Requests: 2}, {IP: "3.3.3.3", Requests: 5}, {IP: "4.4.4.4", Requests: 4}, {IP: "5.5.5.5", Requests: 9}}
 	db.Exec(`INSERT INTO geoip_cache VALUES ('1.1.1.1','FR','France',48.85,2.35,'Paris','IDF')`)
 	db.Exec(`INSERT INTO geoip_cache VALUES ('2.2.2.2','FR','France',48.86,2.34,'Paris','IDF')`)
 	db.Exec(`INSERT INTO geoip_cache VALUES ('3.3.3.3','DE','Germany',52.52,13.4,'Berlin','BE')`)
 	db.Exec(`INSERT INTO geoip_cache VALUES ('4.4.4.4','XX','Unknown',0,0,'','')`) // position inconnue
 	db.Exec(`INSERT INTO security_bans VALUES ('2.2.2.2', NULL)`)
 
-	pts := GetGeoPoints(db, Params{From: time.Now().Add(-time.Hour)}, 0)
+	pts := GeoPointsFromIPs(context.Background(), db, counts, 0) // 5.5.5.5 n'est pas dans le cache : ignorée
 	if len(pts) != 2 {
 		t.Fatalf("2 villes attendues (IP non localisée exclue), got %d: %+v", len(pts), pts)
 	}

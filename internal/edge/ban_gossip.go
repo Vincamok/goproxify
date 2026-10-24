@@ -138,7 +138,7 @@ func (s *Server) mergePeerBans(list []router.RuntimeBan) int {
 		if b.ExpiresAt != nil && !b.ExpiresAt.After(now) {
 			continue
 		}
-		if err := s.bansDB.UpsertScopedBan(b.ID, b.IP, "", b.Reason, b.Source, b.Scope, b.ExpiresAt); err != nil {
+		if err := s.bansDB.UpsertRuntimeBan(&b); err != nil {
 			s.log.Warn("bans: persistance d'un ban de pair échouée", "err", err)
 			continue
 		}

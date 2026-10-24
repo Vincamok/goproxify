@@ -28,6 +28,7 @@ const (
 	TriggerIPProfileRefreshFailed TriggerType = "ip_profile_refresh_failed" // feed d'un profil IP en échec de façon répétée
 	TriggerSLOBurn                TriggerType = "slo_burn"                  // budget d'erreur SLO consommé trop vite ou épuisé
 	TriggerAutomationNotify       TriggerType = "automation_notify"         // action « notifier » d'un flux d'automatisation
+	TriggerSIEMExportLag          TriggerType = "siem_export_lag"           // l'export vers un SIEM prend du retard sur des logs qui vont être purgés
 )
 
 // AllTriggers liste tous les déclencheurs disponibles.
@@ -37,7 +38,7 @@ var AllTriggers = []TriggerType{
 	TriggerBackupFailed, TriggerHighErrorRate, TriggerHighLatency,
 	TriggerAdminAuthFailures, TriggerScaleEvent, TriggerHealthEscalation,
 	TriggerEphorBan, TriggerBackendDown, TriggerCertDeployFailed, TriggerIPProfileRefreshFailed,
-	TriggerSLOBurn, TriggerAutomationNotify,
+	TriggerSLOBurn, TriggerAutomationNotify, TriggerSIEMExportLag,
 }
 
 // TriggerOutputs liste les clés de Detail que porte chaque déclencheur : un flux déclenché par
@@ -58,6 +59,7 @@ var TriggerOutputs = map[TriggerType][]string{
 	TriggerIPProfileRefreshFailed: {"profile_id", "profile", "consecutive_failures", "error", "last_updated_at"},
 	TriggerSLOBurn:                {"node_name", "state", "target", "availability", "budget_left", "burn_1h", "burn_6h"},
 	TriggerAutomationNotify:       {"flow_id", "flow_name", "message"},
+	TriggerSIEMExportLag:          {"destination", "node_name", "lag_min", "at_risk", "error"},
 }
 
 // TriggerLabels associe chaque déclencheur à son libellé lisible.
@@ -80,6 +82,7 @@ var TriggerLabels = map[TriggerType]string{
 	TriggerIPProfileRefreshFailed: "Mise à jour d'un profil IP en échec répété",
 	TriggerSLOBurn:                "Budget d'erreur SLO consommé trop vite",
 	TriggerAutomationNotify:       "Notification d'un flux d'automatisation",
+	TriggerSIEMExportLag:          "Export SIEM en retard",
 }
 
 // Severity classe la sévérité d'une alerte.

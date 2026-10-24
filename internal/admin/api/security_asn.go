@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/vincamok/goproxify/internal/admin/asn"
+	"github.com/vincamok/goproxify/internal/admin/prismedge"
 	"github.com/vincamok/goproxify/internal/admin/security"
 )
 
@@ -199,7 +200,7 @@ func LookupASN(ctx context.Context, db *sql.DB, store *asn.Store, q string) ([]A
 
 // ASNPreview mesure l'effet d'un ban d'ASN sans rien créer : trafic récent venant de l'ASN et rapport de
 // simulation des bans (plages créées, ignorées, rejetées).
-func ASNPreview(ctx context.Context, db *sql.DB, store *asn.Store, groups GroupResolver, raw string, hours int, requester string) (map[string]any, error) {
+func ASNPreview(ctx context.Context, db *sql.DB, edge *prismedge.Source, store *asn.Store, groups GroupResolver, raw string, hours int, requester string) (map[string]any, error) {
 	e, err := resolveASN(ctx, store, raw)
 	if err != nil {
 		return nil, err
@@ -211,45 +212,15 @@ func ASNPreview(ctx context.Context, db *sql.DB, store *asn.Store, groups GroupR
 		return nil, err
 	}
 	since := time.Now().UTC().Add(-time.Duration(hours) * time.Hour)
-	rows, err := db.QueryContext(ctx, `SELECT ip, status, COALESCE(waf_matches,''), COALESCE(threat_signal,'') FROM logs WHERE ts >= ? AND status > 0`, since.Format(time.RFC3339))
+	traffic, err := readIPTraffic(ctx, edge, since, nil, func(ip string) bool {
+		a, perr := netip.ParseAddr(ip)
+		return perr == nil && e.Contains(a)
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var requests, blocked, okRequests, scanned int
-	ipHits, okIPs := map[string]int{}, map[string]int{}
-	scanLimited := false
-	for rows.Next() {
-		var ip, waf, signal string
-		var status int
-		if rows.Scan(&ip, &status, &waf, &signal) != nil {
-			continue
-		}
-		a, perr := netip.ParseAddr(ip)
-		if perr != nil || !e.Contains(a) {
-			continue
-		}
-		if scanned++; scanned > banPreviewMaxScan {
-			scanLimited = true
-			break
-		}
-		requests++
-		if _, ok := ipHits[ip]; ok || len(ipHits) < banPreviewMaxIPs {
-			ipHits[ip]++
-		}
-		hasWAF := waf != "" && waf != "null" && waf != "[]"
-		if status == 403 || status == 429 || hasWAF || signal != "" {
-			blocked++
-			continue
-		}
-		if status < 400 {
-			okRequests++
-			if _, ok := okIPs[ip]; ok || len(okIPs) < banPreviewMaxIPs {
-				okIPs[ip]++
-			}
-		}
-	}
-	rows.Close()
+	requests, blocked, okRequests := traffic.Requests, traffic.Blocked, traffic.OKRequests
+	ipHits, okIPs, scanLimited := traffic.IPHits, traffic.OKIPs, traffic.ScanLimited
 
 	var warnings []string
 	if inASN {
@@ -272,6 +243,9 @@ func ASNPreview(ctx context.Context, db *sql.DB, store *asn.Store, groups GroupR
 	}
 	if scanLimited {
 		warnings = append(warnings, "analyse limitée aux premiers résultats : les chiffres sont une borne basse")
+	}
+	if w := traffic.missingGateways(); w != "" {
+		warnings = append(warnings, w)
 	}
 	if warnings == nil {
 		warnings = []string{}
@@ -321,6 +295,9 @@ func (h *SecurityHandler) asnRoute(w http.ResponseWriter, r *http.Request, id st
 			secJSONErr(w, fmt.Errorf("mise à jour de la base ASN impossible : %w", err), http.StatusBadGateway)
 			return
 		}
+		if h.OnASNChange != nil {
+			h.OnASNChange()
+		}
 		jsonOK(w, h.ASN.Info())
 	case r.Method == http.MethodGet && id == "preview":
 		h.asnPreview(w, r)
@@ -350,7 +327,7 @@ func (h *SecurityHandler) asnPreview(w http.ResponseWriter, r *http.Request) {
 	if hours > banPreviewMaxHours {
 		hours = banPreviewMaxHours
 	}
-	res, err := ASNPreview(r.Context(), h.DB, h.ASN, h.Groups, r.URL.Query().Get("asn"), hours, RequesterIP(r))
+	res, err := ASNPreview(r.Context(), h.DB, h.Edge, h.ASN, h.Groups, r.URL.Query().Get("asn"), hours, RequesterIP(r))
 	if err != nil {
 		secJSONErr(w, err, asnStatus(err))
 		return

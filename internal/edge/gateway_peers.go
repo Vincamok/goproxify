@@ -195,6 +195,7 @@ func (s *Server) exchangeWithPeer(ctx context.Context, p proxy.PeerInfo) {
 	if err == nil {
 		reqScores.Header.Set("Authorization", "Bearer "+p.Token)
 		if resp, err := client.Do(reqScores); err == nil {
+			s.peerSeen.mark(p.Name, time.Now())
 			var scores map[string]float64
 			if resp.StatusCode == http.StatusOK {
 				_ = json.NewDecoder(resp.Body).Decode(&scores)
@@ -210,6 +211,10 @@ func (s *Server) exchangeWithPeer(ctx context.Context, p proxy.PeerInfo) {
 	s.syncPortalReplicaFromPeer(ctx, client, p)
 	s.syncAgentReplicaFromPeer(ctx, client, p)
 	s.syncECHReplicaFromPeer(ctx, client, p)
+	s.syncAgentStateFromPeer(ctx, client, p)
+	s.syncAgentNodesFromPeer(ctx, client, p)
+	s.syncProxiesFromPeer(ctx, client, p)
+	s.syncPushedFromPeer(ctx, client, p)
 	s.syncBansFromPeer(ctx, client, p)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.Endpoint+"/internal/v1/agent/containers", nil)

@@ -108,3 +108,17 @@ func TestBansScopeFlag(t *testing.T) {
 		t.Fatalf("suffixe : %q", got)
 	}
 }
+
+func TestBansSignalsLine(t *testing.T) {
+	ban := map[string]any{"signals": []any{
+		map[string]any{"name": "custom_path", "points": 6.0, "value": "/wp-login.php"},
+		map[string]any{"name": "error4xx", "points": 2.54},
+		map[string]any{"points": 1.0},
+	}}
+	if got, want := bansSignalsLine(ban), "    ↳ custom_path 6 (/wp-login.php) · error4xx 2.5"; got != want {
+		t.Errorf("ligne = %q, attendu %q", got, want)
+	}
+	if got := bansSignalsLine(map[string]any{"reason": "manuel"}); got != "" {
+		t.Errorf("un ban sans signaux n'a pas de ligne : %q", got)
+	}
+}

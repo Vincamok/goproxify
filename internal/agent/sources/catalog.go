@@ -135,6 +135,7 @@ func catalogInstance(d Deps, typ string, l catalog.Lister, s map[string]any) *In
 	eng := catalog.New(typ, l, pollInterval(s), settingString(s, "label_prefix"),
 		d.Cfg.ControlPlane.EdgeEndpoint, d.Cfg.ControlPlane.AuthToken, d.Cfg.Identity.NodeName, d.Log)
 	eng.SetEndpointFunc(d.Edges.Current)
+	eng.SetStatePublisher(d.State)
 	return &Instance{Impl: eng, Start: eng.Start, Blocking: true, SetToken: eng.SetToken, Reannounce: eng.Resync, Runtimes: []string{typ}}
 }
 

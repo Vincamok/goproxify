@@ -19,7 +19,16 @@ type Query struct {
 	// Kinds : types à parcourir ; vide, les deux.
 	Kinds                                              []Kind
 	Level, Component, Domain, IP, Method, Status, Path string
-	TLSJA3, TLSJA4, Search                             string
+	TLSJA3, TLSJA4, Search, RequestID                  string
+	// Domains restreint à plusieurs domaines à la fois (sélection multiple de Prism) ; se combine avec Domain.
+	Domains []string
+	// PathPrefix : chemins qui commencent par cette valeur (Path cherche à l'intérieur).
+	PathPrefix string
+	// IPFrom et IPTo bornent la colonne ip comme texte, [IPFrom, IPTo[ : un sur-ensemble des adresses d'une plage (voir security.TraceIPRange), à raffiner par l'appelant. IPRanges en combine plusieurs (OU).
+	IPFrom, IPTo string
+	IPRanges     [][2]string
+	// AttributableOnly écarte les lignes à IP tronquée (anonymisation, pseudonymisation) : elles regroupent plusieurs clients.
+	AttributableOnly bool
 	// From et To bornent les dates de requête (inclusives) ; zéro, pas de borne.
 	From, To        time.Time
 	ExcludeInternal bool
@@ -97,6 +106,7 @@ func (s *Store) where(q Query) (string, []any) {
 	eq("component", q.Component)
 	eq("domain", q.Domain)
 	eq("method", q.Method)
+	eq("request_id", q.RequestID)
 	if q.IP != "" {
 		canon := ipcrypt.CanonicalIP(q.IP)
 		if s.key != nil {
@@ -125,9 +135,40 @@ func (s *Store) where(q Query) (string, []any) {
 		c = append(c, "tls_ja4 = ? AND tls_ja4 != ''")
 		a = append(a, q.TLSJA4)
 	}
+	if len(q.Domains) > 0 {
+		c = append(c, "domain IN (?"+strings.Repeat(",?", len(q.Domains)-1)+")")
+		for _, d := range q.Domains {
+			a = append(a, d)
+		}
+	}
+	if q.IPFrom != "" || q.IPTo != "" {
+		if q.IPFrom != "" {
+			c = append(c, "ip >= ?")
+			a = append(a, q.IPFrom)
+		}
+		if q.IPTo != "" {
+			c = append(c, "ip < ?")
+			a = append(a, q.IPTo)
+		}
+	}
+	if q.AttributableOnly {
+		c = append(c, "ip_truncated = 0")
+	}
+	if len(q.IPRanges) > 0 {
+		terms := make([]string, len(q.IPRanges))
+		for i, r := range q.IPRanges {
+			terms[i] = "(ip >= ? AND ip < ?)"
+			a = append(a, r[0], r[1])
+		}
+		c = append(c, "("+strings.Join(terms, " OR ")+")")
+	}
 	if q.Path != "" {
 		c = append(c, "path LIKE ?")
 		a = append(a, "%"+q.Path+"%")
+	}
+	if q.PathPrefix != "" {
+		c = append(c, "path LIKE ?")
+		a = append(a, q.PathPrefix+"%")
 	}
 	if q.Search != "" {
 		c = append(c, "(message LIKE ? OR path LIKE ? OR ip LIKE ? OR domain LIKE ? OR method LIKE ? OR level LIKE ? OR CAST(status AS TEXT) LIKE ? OR user_agent LIKE ? OR referrer LIKE ?)")

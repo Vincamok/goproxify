@@ -88,6 +88,7 @@ type Architecture struct {
 	SchemaVersion int           `json:"schema_version"`
 	Nodes         []NodeEntry   `json:"nodes"`
 	Domains       []DomainEntry `json:"domains,omitempty"`
+	Groups        []GroupEntry  `json:"groups,omitempty"`
 }
 
 // Store lit et écrit architecture.json de façon atomique.

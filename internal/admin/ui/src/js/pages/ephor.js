@@ -8,13 +8,40 @@ const SENT_TAB_KEY = 'gpx_ephor_tab';
 const SENT_SECTIONS = [
   { id: 'general',    label: 'Général' },
   { id: 'detection',  label: 'Détection' },
+  { id: 'behavior',   label: 'Comportement' },
   { id: 'ddos',       label: 'Anti-DDoS' },
   { id: 'riposte',    label: 'Riposte' },
   { id: 'lists',      label: 'Listes' },
   { id: 'exceptions', label: 'Exceptions' },
 ];
 
-const _sent = { mode: 'admin', edgeCtx: null, cfg: {}, active: [], history: [], tab: 'overview' };
+const _sent = { mode: 'admin', edgeCtx: null, cfg: {}, active: [], history: [], tab: 'overview', refs: null, sugg: null };
+
+// Signaux de comportement de la note commune (ADR 0011) : points, et ce qu'ils regardent. Tout signal naît en detect.
+const SENT_BEHAVIOR = [
+  { key: 'high_4xx_rate', points: '4', what: 'plus de 40 % de 4xx sur la fenêtre' },
+  { key: 'path_scanning', points: '3', what: '15 chemins distincts ou plus' },
+  { key: 'waf_score_accumulation', points: '3 à 5', what: 'règles WAF déclenchées requête après requête' },
+  { key: 'ua_rotation', points: '3', what: '3 User-Agents différents ou plus' },
+  { key: 'request_burst', points: '4', what: '30 requêtes en 10 secondes' },
+  { key: 'high_post_ratio', points: '2', what: 'plus de 70 % d\'écritures' },
+  { key: 'high_path_entropy', points: '2', what: 'chemins presque tous différents' },
+  { key: 'distributed_scan', points: '5 à 8', what: '5 IP ou plus du même /24 (/48 IPv6)' },
+  { key: 'ua_tls_mismatch', points: '4', what: 'User-Agent de navigateur, suites TLS d\'un client programmatique' },
+  { key: 'no_assets', points: '2', what: '25 pages HTML sans image, style ni script' },
+  { key: 'regular_interval', points: '2', what: 'requêtes à intervalles presque identiques' },
+  { key: 'scan_breadth', points: '3', what: 'chemins distincts en erreur, rapportés au volume' },
+  { key: 'asn_aggregate', points: '4', what: 'plusieurs IP du même opérateur (ASN) qui échouent' },
+  { key: 'rate_deviation', points: '3', what: 'débit de l\'IP au-dessus du normal appris pour la route et l\'heure' },
+  { key: 'fail2ban', points: '5', what: 'décision de Fail2Ban prise en entrée' },
+  { key: 'crowdsec', points: '5', what: 'décision de CrowdSec prise en entrée' },
+];
+const SENT_NEW_SIGNALS = new Set(['ua_tls_mismatch', 'no_assets', 'regular_interval', 'scan_breadth', 'asn_aggregate', 'rate_deviation']);
+
+function sentSignalMode(cfg, key) {
+  const b = cfg.behavior || {};
+  return (b.signals && b.signals[key]) || b.mode || 'detect';
+}
 
 function sentDetections(cfg) {
   const lists = cfg.lists || {};
@@ -130,7 +157,7 @@ function sentViewOverview() {
         `<div style="display:flex;flex-direction:column;gap:5px;margin-top:8px">${recent.map(b => {
           const on = sentBanIsActive(b, s.activeIds);
           const label = s.labels[sentDetectionKey(b.reason)] || esc(b.reason || 'Autre motif');
-          return `<div style="display:flex;align-items:center;gap:8px;font-size:12px;padding:5px 8px;border-radius:6px;background:var(--bg2)">
+          return `<div style="display:flex;align-items:center;gap:8px;font-size:12px;padding:5px 8px;border-radius:6px;background:var(--bg2)" title="${esc(banSignalsText(b.signals))}">
             <span class="tag ${on ? 'tag-red' : 'tag-neutral'}" style="min-width:52px;text-align:center;font-size:10px">${on ? 'ACTIF' : 'EXPIRÉ'}</span>
             <span style="font-family:monospace;color:var(--text1)">${esc(b.ip)}</span>${trBtn(b.ip)}
             <span style="color:var(--text2);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${label}</span>
@@ -153,6 +180,89 @@ function sentViewOverview() {
       <button class="btn btn-ghost btn-sm" onclick="navigate('${securityPageId('bans', _sent.mode)}')">${t('security.view_all_bans') || 'Voir tous les bans'} &rarr;</button>
     </div>`;
 }
+
+function sentViewBehavior() {
+  const cfg = _sent.cfg;
+  const rows = SENT_BEHAVIOR.map(sg => {
+    const mode = sentSignalMode(cfg, sg.key);
+    const tag = mode === 'block' ? 'tag-red' : mode === 'off' ? 'tag-neutral' : 'tag-yellow';
+    return `<tr style="border-bottom:1px solid var(--border);${mode === 'off' ? 'opacity:.55' : ''}">
+      <td style="padding:8px 6px"><b>${esc(banSignalLabel(sg.key))}</b> <span style="font-family:monospace;font-size:11px;color:var(--text3)">${sg.key}</span>${SENT_NEW_SIGNALS.has(sg.key) ? ' <span class="tag tag-yellow" style="font-size:10px">nouveau</span>' : ''}</td>
+      <td style="padding:8px 6px;font-size:12px;color:var(--text2)">${esc(sg.what)}</td>
+      <td style="text-align:right;padding:8px 6px;color:var(--text2)">${sg.points}</td>
+      <td style="text-align:right;padding:8px 6px"><span class="tag ${tag}">${mode}</span></td></tr>`;
+  }).join('');
+  return sentCard('Signaux de comportement', `
+    <p style="font-size:12px;color:var(--text2);margin:8px 0 0">La note commune d'une IP additionne son score cumulé et les signaux en <b>block</b> ; ceux en <b>detect</b> sont affichés dans les bans et comptés en note fantôme (<code>gpx_threat_shadow_bans_total</code>).</p>
+    <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:8px">
+      <thead><tr><th style="text-align:left;padding:8px 6px;border-bottom:1px solid var(--border)">Signal</th><th style="text-align:left;padding:8px 6px;border-bottom:1px solid var(--border)">Ce qu'il regarde</th>
+      <th style="text-align:right;padding:8px 6px;border-bottom:1px solid var(--border)">Points</th><th style="text-align:right;padding:8px 6px;border-bottom:1px solid var(--border)">Mode</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`, `<button class="btn btn-ghost btn-sm" onclick="openEphorSettings('behavior')">Régler</button>`);
+}
+
+// Ce que chaque passerelle a appris : débit normal par IP, route par route et heure par heure ; base ASN.
+function sentViewReferences() {
+  const r = _sent.refs;
+  if (r === null) return sentCard('Références apprises', '<div class="spinner" style="margin:12px 0"></div>');
+  if (r === false) return sentCard('Références apprises', '<p style="font-size:12px;color:var(--text2);margin:8px 0 0">Les passerelles n\'ont pas répondu.</p>');
+  const gws = (r.gateways || []);
+  if (!gws.length) return sentCard('Références apprises', '<p style="font-size:12px;color:var(--text2);margin:8px 0 0">Aucune passerelle ne répond.</p>');
+  const body = gws.map(g => {
+    const refs = g.references || [];
+    const asn = g.asn?.version ? `base ASN <span class="tr-mono">${esc(g.asn.version)}</span> (${(g.asn.v4_ranges || 0).toLocaleString()} plages IPv4, ${(g.asn.v6_ranges || 0).toLocaleString()} IPv6)` : 'pas de base ASN (installez-la dans Sécurité › ASN : l\'agrégat par ASN reste muet sans elle)';
+    const rows = refs.map(x => `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:6px">${esc(x.route)}</td><td style="padding:6px;text-align:right">${String(x.hour).padStart(2, '0')} h UTC</td>
+      <td style="padding:6px;text-align:right">${x.median}</td><td style="padding:6px;text-align:right">${x.threshold}</td>
+      <td style="padding:6px;text-align:right">${x.samples}</td>
+      <td style="padding:6px;text-align:right"><span class="tag ${x.ready ? 'tag-green' : 'tag-yellow'}" title="${esc('depuis ' + (x.since || '') + ', mise à jour ' + (x.updated || ''))}">${x.ready ? 'fiable' : 'apprentissage'}</span></td></tr>`).join('');
+    return `<div style="margin-top:12px"><div style="font-size:12.5px"><b>${esc(g.node_name)}</b> · ${g.profiles || 0} profil${(g.profiles || 0) > 1 ? 's' : ''} en cours · ${asn}</div>
+      ${refs.length ? `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px"><thead><tr style="color:var(--text3)">
+        <th style="text-align:left;padding:6px">Route</th><th style="text-align:right;padding:6px">Heure</th><th style="text-align:right;padding:6px" title="requêtes par minute et par IP, 90ᵉ centile des IP sans signal">Médiane</th>
+        <th style="text-align:right;padding:6px" title="au-delà, rate_deviation se déclenche">Seuil</th><th style="text-align:right;padding:6px" title="minutes observées pour cette heure">Minutes</th><th style="text-align:right;padding:6px">État</th></tr></thead><tbody>${rows}</tbody></table></div>`
+      : '<p style="font-size:12px;color:var(--text2);margin:6px 0 0">Rien d\'appris encore : une référence naît après quelques minutes de trafic sur une route et ne devient fiable qu\'après 24 h.</p>'}</div>`;
+  }).join('');
+  return sentCard('Références apprises', `<p style="font-size:12px;color:var(--text2);margin:8px 0 0">Débit normal par IP, estimé par médiane et écart absolu médian sur les IP sans signal, borné dans sa dérive. Il ne contient aucune IP.</p>${body}`);
+}
+
+async function sentLoadReferences() {
+  if (_sent.loadingRefs) return;
+  _sent.loadingRefs = true;
+  if (_sent.refs === null) {
+    try { _sent.refs = await api('GET', `/security/threat-references${window._secEdgeQ || ''}`); } catch { _sent.refs = false; }
+  }
+  if (_sent.sugg === null) {
+    try { _sent.sugg = await api('GET', `/security/threat-config/suggestions${window._secEdgeQ || ''}`); } catch { _sent.sugg = false; }
+  }
+  _sent.loadingRefs = false;
+  if (_sent.tab === 'detections') sentDrawTab();
+}
+
+// Seuils proposés à partir des cumuls par minute (sans IP) : l'administrateur accepte, rien n'est appliqué d'office.
+function sentViewSuggestions() {
+  const s = _sent.sugg;
+  if (s === null) return sentCard('Seuils proposés', '<div class="spinner" style="margin:12px 0"></div>');
+  const list = (s && s.suggestions) || [];
+  if (!list.length) return sentCard('Seuils proposés', '<p style="font-size:12px;color:var(--text2);margin:8px 0 0">Pas encore de trafic agrégé : les passerelles envoient leurs cumuls par minute, une proposition apparaît avec quelques heures de trafic.</p>');
+  const cur = _sent.cfg.global_rps || 0;
+  const rows = list.map(x => `<tr style="border-bottom:1px solid var(--border)">
+    <td style="padding:6px">${esc(x.node_name || '—')}</td>
+    <td style="padding:6px;text-align:right" title="médiane / p99 / p99,9 / max, en requêtes par seconde">${x.rps_median} / ${x.rps_p99} / ${x.rps_p999} / ${x.rps_max}</td>
+    <td style="padding:6px;text-align:right">${x.error_share} %</td>
+    <td style="padding:6px;text-align:right">${x.current_global_rps || '—'}</td>
+    <td style="padding:6px;text-align:right">${x.ready ? `<b>${x.suggested_global_rps}</b> req/s` : `<span style="color:var(--text3)">${esc(x.why || '')}</span>`}</td>
+    <td style="padding:6px;text-align:right">${x.ready && x.suggested_global_rps !== cur ? `<button class="btn btn-ghost btn-sm" onclick="sentApplySuggestion(${x.suggested_global_rps})">Appliquer</button>` : ''}</td></tr>`).join('');
+  return sentCard('Seuils proposés', `<p style="font-size:12px;color:var(--text2);margin:8px 0 0">${esc((s && s.note) || '')}</p>
+    <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px"><thead><tr style="color:var(--text3)">
+      <th style="text-align:left;padding:6px">Passerelle</th><th style="text-align:right;padding:6px">Débit normal (req/s)</th><th style="text-align:right;padding:6px">Erreurs</th>
+      <th style="text-align:right;padding:6px">Limite globale actuelle</th><th style="text-align:right;padding:6px">Proposée</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`);
+}
+
+// « Appliquer » ne fait que remplir le formulaire de réglages : l'administrateur relit, simule et enregistre.
+window.sentApplySuggestion = function(rps) {
+  const input = document.getElementById('threat-global-rps');
+  if (input) input.value = rps;
+  window.openEphorSettings('ddos');
+};
 
 function sentViewDetections() {
   const cfg = _sent.cfg;
@@ -187,7 +297,7 @@ function sentViewDetections() {
         <th style="text-align:right;padding:8px 6px;border-bottom:1px solid var(--border)">Effet</th>
         <th style="text-align:left;padding:8px 6px;border-bottom:1px solid var(--border)">Bans actifs</th>
         <th></th></tr></thead>
-      <tbody>${rows}${other}</tbody></table></div>`);
+      <tbody>${rows}${other}</tbody></table></div>`) + sentViewBehavior() + sentViewReferences() + sentViewSuggestions();
 }
 
 function sentChips(list, max = 8) {
@@ -259,6 +369,15 @@ function sentDrawerForm(cfg) {
       ${chk('threat-err-on', cfg.ip_score?.errors?.enabled, 'Verser les erreurs 4xx au score')}
       ${fld('Poids par code', '(un par ligne : 404=0.5 ; 0 ignore le code)', ta('threat-err-weights', 3, '404=0.5&#10;400=1&#10;403=0', Object.entries(cfg.ip_score?.errors?.weights || {}).map(([k, v]) => `${k}=${v}`)))}
       ${fld('Poids par route', '(un par ligne : /login=3 ; préfixe de chemin, 0 ignore la route)', ta('threat-err-routes', 3, '/login=3&#10;/api/=0.5', (cfg.ip_score?.errors?.routes || []).map(r => `${r.prefix}=${r.factor}`)))}`)}
+    ${sec('behavior', 'Comportement — note commune', `
+      <p style="font-size:12px;color:var(--text2);margin:0 0 10px">Ephor verse chaque requête dans un magasin commun avec le WAF, Fail2Ban et CrowdSec, et en tire des signaux de comportement. Un signal naît en <b>detect</b> : calculé, expliqué dans le ban qu'il aurait provoqué, compté en « note fantôme », jamais décisif. Passez-le en <b>block</b> après avoir lu la simulation (faux positifs). Les signaux ne comptent que si le score cumulé est activé.</p>
+      ${fld('Mode par défaut', '(signaux non réglés ci-dessous ; off : plus rien n\'est versé au magasin)', `<select id="threat-bh-mode" class="input" style="height:32px">${['detect', 'block', 'off'].map(m => `<option value="${m}" ${(cfg.behavior?.mode || 'detect') === m ? 'selected' : ''}>${m}</option>`).join('')}</select>`)}
+      ${SENT_BEHAVIOR.map(sg => `<div style="display:flex;align-items:center;gap:8px;margin:0 0 6px;font-size:12.5px">
+        <span style="flex:1;min-width:0"><b>${esc(banSignalLabel(sg.key))}</b>${SENT_NEW_SIGNALS.has(sg.key) ? ' <span class="tag tag-yellow" style="font-size:10px">nouveau</span>' : ''}<br><span style="color:var(--text3);font-size:11px">${esc(sg.what)} · ${sg.points} pts</span></span>
+        <select id="threat-bh-sig-${sg.key}" class="input" style="height:30px;width:auto"><option value="">défaut</option>${['off', 'detect', 'block'].map(m => `<option value="${m}" ${cfg.behavior?.signals?.[sg.key] === m ? 'selected' : ''}>${m}</option>`).join('')}</select></div>`).join('')}
+      ${chk('threat-bh-notrust', cfg.behavior?.no_trust, 'Couper le bonus de confiance (sinon : +1 au seuil de ban par centaine de requêtes propres et par jour d\'historique sans signal, jusqu\'à +8)')}
+      ${fld('Familles TLS', '(une par ligne : famille=empreinte JA4 « b » à 12 caractères ; complète la table livrée, famille chromium)', ta('threat-bh-tls', 2, 'chromium=8daaf6152771', Object.entries(cfg.behavior?.tls_families || {}).flatMap(([f, hs]) => (hs || []).map(h => `${f}=${h}`))))}
+      ${fld('Ancienneté minimale des références', '(défaut 24h : avant, le signal rate_deviation reste en detect)', `<input id="threat-bh-minage" class="input" value="${esc(cfg.behavior?.reference_min_age || '')}" placeholder="24h">`)}`)}
     ${sec('ddos', 'Anti-DDoS', `
       ${fld('Global req/s max', '(toutes IPs, 0 = désactivé)', `<input id="threat-global-rps" type="number" class="input" value="${cfg.global_rps || 0}" min="0" step="10" placeholder="0 = désactivé">`)}
       ${fld('Global burst', '(0 = 2× global req/s)', `<input id="threat-global-burst" type="number" class="input" value="${cfg.global_burst || 0}" min="0" step="10" placeholder="0 = 2×RPS">`)}`)}
@@ -323,7 +442,7 @@ function sentDrawSummary(sim) {
       ${row('IP bloquées', cur.blocked_ips || 0, cand.blocked_ips || 0, d.blocked_ips || 0)}
       ${row('Bans', (cur.bans || []).length, (cand.bans || []).length, d.bans || 0)}</tbody></table>
     ${tops ? `<div style="margin-top:8px;font-size:11px;color:var(--text2)">IP les plus touchées</div>${tops}` : ''}
-    <div style="font-size:11px;color:var(--text3);margin-top:8px">Non simulé : listes par défaut, limite globale, règles User-Agent et WAF. « Faux positifs » = requêtes bloquées qui avaient abouti.</div></div>`;
+    <div style="font-size:11px;color:var(--text3);margin-top:8px">Non simulé : listes par défaut, limite globale, règles WAF et agrégat par ASN. « Faux positifs » = requêtes bloquées qui avaient abouti.</div></div>`;
 }
 
 function sentDrawTab() {
@@ -335,6 +454,7 @@ function sentDrawTab() {
     b.setAttribute('aria-selected', on);
   });
   body.innerHTML = _sent.tab === 'detections' ? sentViewDetections() : _sent.tab === 'lists' ? sentViewLists() : sentViewOverview();
+  if (_sent.tab === 'detections') sentLoadReferences();
 }
 
 window.sentSetTab = function(tab) {
@@ -405,6 +525,7 @@ function sentCollectConfig(enabled) {
         routes: kv('threat-err-routes').map(([k, v]) => ({ prefix: k, factor: v })),
       },
     },
+    behavior: sentCollectBehavior(),
     error_threshold: parseInt($('threat-errs')?.value || '20', 10),
     error_window: $('threat-ewin')?.value || '10s',
     ban_duration: $('threat-dur')?.value || '24h',
@@ -417,6 +538,27 @@ function sentCollectConfig(enabled) {
     custom_lists: { ips: lines('threat-custom-ips'), uas: lines('threat-custom-uas'), paths: lines('threat-custom-paths'), tls_fingerprints: lines('threat-custom-tls') },
     whitelist: { ips: lines('threat-wl-ips'), uas: lines('threat-wl-uas'), paths: lines('threat-wl-paths') },
   };
+}
+
+function sentCollectBehavior() {
+  const $ = id => document.getElementById(id);
+  if (!$('threat-bh-mode')) return window._threatCfg?.behavior || undefined;
+  const signals = {};
+  SENT_BEHAVIOR.forEach(sg => { const v = $('threat-bh-sig-' + sg.key)?.value; if (v) signals[sg.key] = v; });
+  const fam = {};
+  ($('threat-bh-tls')?.value || '').split('\n').map(s => s.trim()).filter(l => l.includes('=')).forEach(l => {
+    const i = l.indexOf('=');
+    const f = l.slice(0, i).trim().toLowerCase(), h = l.slice(i + 1).trim();
+    if (f && h) (fam[f] = fam[f] || []).push(h);
+  });
+  const b = { mode: $('threat-bh-mode').value };
+  if (b.mode === 'detect') delete b.mode;
+  if (Object.keys(signals).length) b.signals = signals;
+  if (Object.keys(fam).length) b.tls_families = fam;
+  if ($('threat-bh-notrust')?.checked) b.no_trust = true;
+  const age = ($('threat-bh-minage')?.value || '').trim();
+  if (age) b.reference_min_age = age;
+  return Object.keys(b).length ? b : undefined;
 }
 
 window.saveThreatConfig = async function(e, keepOpen) {
@@ -501,6 +643,8 @@ async function renderEphorDashboard({ mode }) {
   content.innerHTML = `<div style="padding:20px 0"><div class="spinner"></div></div>`;
   try {
     _sent.mode = mode;
+    _sent.refs = null;
+    _sent.sugg = null;
     const d = await sentLoad(mode);
     if (mode === 'edge' && d.edgeCtx?.missing) {
       content.innerHTML = '<p style="color:var(--text2)">' + t('trafic.no_edge') + '</p>';

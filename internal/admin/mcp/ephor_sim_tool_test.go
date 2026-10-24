@@ -11,6 +11,8 @@ import (
 	"time"
 
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
+	"github.com/vincamok/goproxify/internal/edge/logapi/logapitest"
+	"github.com/vincamok/goproxify/internal/edge/logstore"
 	"github.com/vincamok/goproxify/internal/edge/threat"
 )
 
@@ -22,23 +24,19 @@ func TestSimulateEphorTool(t *testing.T) {
 	defer db.Close()
 
 	now := time.Now().UTC()
+	gw := logapitest.New(t, "gw-a")
+	if err := gw.Register(db); err != nil {
+		t.Fatal(err)
+	}
 	ins := func(at time.Time, ip, path string, status int, component string) {
-		_, err := db.Exec(`INSERT INTO logs (ts, component, domain, method, path, status, ip) VALUES (?, ?, 'a.test', 'GET', ?, ?, ?)`,
-			at.Format(time.RFC3339Nano), component, path, status, ip)
-		if err != nil {
-			t.Fatal(err)
-		}
+		gw.Add(logstore.Entry{Ts: at, Component: component, Domain: "a.test", Method: "GET", Path: path, Status: status, IP: ip})
 	}
 	ins(now.Add(-10*time.Minute), "9.9.9.9", "/wp-admin/login", 200, "edge")
 	ins(now.Add(-9*time.Minute), "9.9.9.9", "/home", 200, "edge")
 	ins(now.Add(-8*time.Minute), "8.8.8.8", "/home", 200, "edge")
 	ins(now.Add(-7*time.Minute), "[pseudonymisé]", "/wp-admin", 200, "edge")
-	ins(now.Add(-6*time.Minute), "7.7.7.7", "/wp-admin", 200, "admin")
 	ins(now.Add(-3*time.Hour), "6.6.6.6", "/wp-admin", 200, "edge")
-	if _, err := db.Exec(`INSERT INTO logs (ts, component, domain, method, path, status, ip, ip_truncated) VALUES (?, 'edge', 'a.test', 'GET', '/wp-admin', 200, '5.5.5.0', 1)`,
-		now.Add(-5*time.Minute).Format(time.RFC3339Nano)); err != nil {
-		t.Fatal(err)
-	}
+	gw.Add(logstore.Entry{Ts: now.Add(-5 * time.Minute), Component: "edge", Domain: "a.test", Method: "GET", Path: "/wp-admin", Status: 200, IP: "5.5.5.0", IPTruncated: true})
 
 	h := &Handler{DB: db}
 	r := httptest.NewRequest(http.MethodPost, "/mcp", nil)

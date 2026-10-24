@@ -960,6 +960,7 @@ async function renderTraficPage(ctx) {
 `;
 
     // ── renderPage (re-render sections) ──────────────────────────────────────
+    let containerTiles = null;
     const renderPage = () => {
       const af = window._tf;
       const typeF = af.type;
@@ -988,6 +989,7 @@ async function renderTraficPage(ctx) {
         sSec.style.display = showStreams ? '' : 'none';
         if (showStreams) sSec.innerHTML = renderSectionContent(t('trafic.streams'), streamIcon, streamItems, newStreamBtn, 'stream');
       }
+      paintContainers();
     };
 
     // ── window.* handlers ────────────────────────────────────────────────────
@@ -1044,9 +1046,11 @@ async function renderTraficPage(ctx) {
     window.setTraficSortBy  = (v) => { window._ts = v; renderPage(); };
 
     window.traficToggle = async (id, currently) => {
-      await api('PATCH', `/proxies/${id}`, { enabled: !currently });
-      const p = allP.find(x => x.id === id);
-      if (p) p.enabled = !currently;
+      try {
+        await api('PATCH', `/proxies/${id}`, { enabled: !currently });
+        const p = allP.find(x => x.id === id);
+        if (p) p.enabled = !currently;
+      } catch (e) { toast(e.message, 'error'); }
       renderPage();
     };
 
@@ -1324,10 +1328,41 @@ async function renderTraficPage(ctx) {
     // ── Tuile conteneur découvert (style proxy, actions Docker utiles) ───────
     // Pas de sélection / toggle / edit / delete / sécu : géré via labels Docker.
     // Une tuile = un conteneur (plusieurs hosts possibles) ; LB = une tuile multi-hosts + multi-backends.
+    // Nom de la passerelle ou du groupe HA tel qu'affiché : le nom de connexion (edge_name) peut être resté celui d'une ancienne installation.
+    const discoveredEdgeLabel = c => c.group || c.edge_label || c.edge_name || '';
+
+    // Les membres d'un groupe HA annoncent la même route : une seule entrée par groupe et par route.
+    function mergeGroupMembers(items) {
+      const out = [];
+      const byRoute = new Map();
+      for (const c of items) {
+        if (!c.group) { out.push(c); continue; }
+        const label = c.edge_label || c.edge_name;
+        const key = `${c.group}|${c.id}`;
+        const seen = byRoute.get(key);
+        if (!seen) {
+          const merged = { ...c, members: [label].filter(Boolean) };
+          byRoute.set(key, merged);
+          out.push(merged);
+          continue;
+        }
+        if (label && !seen.members.includes(label)) seen.members.push(label);
+        for (const k of ['aliases', 'backends', 'container_ids', 'missing']) {
+          const union = [...(seen[k] || [])];
+          for (const v of (c[k] || [])) if (!union.includes(v)) union.push(v);
+          if (union.length) seen[k] = union;
+        }
+        if (c.tls) seen.tls = true;
+        if (!seen.shadowed_by && c.shadowed_by) seen.shadowed_by = c.shadowed_by;
+        if (c.config && typeof c.config === 'object') seen.config = Object.assign({}, c.config, seen.config || {});
+      }
+      return out;
+    }
+
     function groupDiscoveredContainers(items) {
       const tiles = [];
       const pending = new Map();
-      for (const c of items) {
+      for (const c of mergeGroupMembers(items)) {
         const backends = (c.backends || []).filter(Boolean);
         const ids = (c.container_ids || []).filter(Boolean);
         const hosts = [c.host, ...(c.aliases || [])].filter(Boolean);
@@ -1338,8 +1373,8 @@ async function renderTraficPage(ctx) {
         }
         const cid = ids[0] || '';
         const key = cid
-          ? `${c.edge_name || ''}|${c.source || ''}|cid:${cid}`
-          : `${c.edge_name || ''}|${c.source || ''}|be:${backends[0] || c.id || ''}`;
+          ? `${discoveredEdgeLabel(c)}|${c.source || ''}|cid:${cid}`
+          : `${discoveredEdgeLabel(c)}|${c.source || ''}|be:${backends[0] || c.id || ''}`;
         const existing = pending.get(key);
         if (!existing) {
           pending.set(key, { ...c, hosts: [...hosts], backends: [...backends], routes: [c] });
@@ -1403,7 +1438,7 @@ async function renderTraficPage(ctx) {
       }
       if (!best) return '';
       const label = t(best === 'same' ? 'trafic.matches_container' : 'trafic.matches_container_diff');
-      const tip = `${label} (${[hit.edge_name, hit.agent_name].filter(Boolean).join(' / ')}) : ${(hit.backends || []).join(', ')}`;
+      const tip = `${label} (${[discoveredEdgeLabel(hit), hit.agent_name].filter(Boolean).join(' / ')}) :${(hit.backends || []).join(', ')}`;
       return `<span class="chip" style="color:${best === 'same' ? 'var(--accent)' : 'var(--yellow,#f59e0b)'}" title="${esc(tip)}">${esc(label)}</span>`;
     }
 
@@ -1421,11 +1456,19 @@ async function renderTraficPage(ctx) {
       const hasTLS  = !!c.tls;
       const type    = hasTLS ? 'https' : 'http';
       const allBackends = (c.backends || []).filter(Boolean);
-      const statusDot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0;" title="${esc(t('trafic.discovered'))}"></span>`;
+      const inactive = !!c.inactive;
+      const statusDot = inactive
+        ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--text3);flex-shrink:0;" title="${esc(t('trafic.inactive_hint'))}"></span>`
+        : `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0;" title="${esc(t('trafic.discovered'))}"></span>`;
 
       let chips = '';
-      if (isAdmin && c.edge_name) {
-        chips = `<span style="display:inline-flex;align-items:center;font-size:10px;color:var(--text2);background:var(--bg3);padding:1px 6px;border-radius:4px;border:1px solid var(--border);white-space:nowrap">⚙ ${esc(c.edge_name)}</span>`;
+      if (inactive) {
+        const label = c.state ? `${t('trafic.inactive')} · ${c.state}` : t('trafic.inactive');
+        chips += `<span style="display:inline-flex;align-items:center;font-size:10px;color:var(--text2);background:var(--bg3);padding:1px 6px;border-radius:4px;border:1px solid var(--border);white-space:nowrap" title="${esc(t('trafic.inactive_hint'))}">${esc(label)}</span>`;
+      }
+      if (isAdmin && discoveredEdgeLabel(c)) {
+        const members = (c.members || []).length > 1 ? ` title="${esc(c.members.join(', '))}"` : '';
+        chips = `<span${members} style="display:inline-flex;align-items:center;font-size:10px;color:var(--text2);background:var(--bg3);padding:1px 6px;border-radius:4px;border:1px solid var(--border);white-space:nowrap">⚙ ${esc(discoveredEdgeLabel(c))}</span>`;
       }
 
       const cfg = Object.assign(
@@ -1471,12 +1514,13 @@ async function renderTraficPage(ctx) {
       // Contrôles de sécurité absents (TLS, WAF, rate limit), calculés par le serveur snippets compris.
       const missing = [...new Set(routes.flatMap(r => r.missing || []))];
       chips += missing.map(k => `<span style="display:inline-flex;align-items:center;font-size:10px;color:var(--yellow,#f59e0b);background:var(--bg3);padding:1px 6px;border-radius:4px;border:1px solid var(--border);white-space:nowrap">${esc(t('cdetail.no_' + k))}</span>`).join('');
-      const detailBtn = `<button class="btn btn-ghost btn-icon" onclick="openContainerDetail('${esc(flowKey)}')" title="${esc(t('trafic.detail'))}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></button>`;
-      const convertBtn = (Role.canWrite() && convertible.length)
+      // Un conteneur arrêté n'a ni détail, ni flux, ni conversion possible : sa route n'existe pas.
+      const detailBtn = inactive ? '' : `<button class="btn btn-ghost btn-icon" onclick="openContainerDetail('${esc(flowKey)}')" title="${esc(t('trafic.detail'))}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></button>`;
+      const convertBtn = (!inactive && Role.canWrite() && convertible.length)
         ? `<button class="btn btn-ghost btn-icon" onclick="convertDiscoveredContainer('${esc(flowKey)}')" title="${esc(t('trafic.convert_proxy'))}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m17 1 4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="m7 23-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></button>` : '';
-      const flowBtn = `${detailBtn}${convertBtn}<button class="btn btn-ghost btn-icon" onclick="openTrafficFlowModal('container','${esc(flowKey)}')" title="${esc(t('trafic.flow_title'))}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><circle cx="6" cy="5" r="2"/><path d="M18 7v4a2 2 0 0 1-2 2H8a2 2 0 0 0-2 2v2"/></svg></button>`;
+      const flowBtn = inactive ? '' : `${detailBtn}${convertBtn}<button class="btn btn-ghost btn-icon" onclick="openTrafficFlowModal('container','${esc(flowKey)}')" title="${esc(t('trafic.flow_title'))}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><circle cx="6" cy="5" r="2"/><path d="M18 7v4a2 2 0 0 1-2 2H8a2 2 0 0 0-2 2v2"/></svg></button>`;
 
-      return `<div class="trafic-tile" title="${esc(c.id||'')}" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+      return `<div class="trafic-tile" title="${esc(c.name || c.id || '')}"${inactive ? ' style="opacity:.6"' : ''} onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
         <div class="trafic-tile-head">
           ${statusDot}
           ${typeBadge(type)}
@@ -1502,35 +1546,63 @@ async function renderTraficPage(ctx) {
         const all = await api('GET', '/discovered-containers') || [];
         const edgeName = edge ? (edge.node_name || edge.display_name || '') : '';
         const raw = edgeName ? all.filter(c => c.edge_name === edgeName) : all;
-        window._traficDiscovered = raw;
+        // Un conteneur arrêté n'a pas de route : il ne sert pas à rapprocher un proxy d'un conteneur.
+        window._traficDiscovered = raw.filter(c => !c.inactive);
         api('GET', '/discovered-containers/orphans').then(list => {
           window._traficOrphans = new Map((list || []).map(o => [o.proxy_id, o]));
           if (typeof window.renderPage === 'function') window.renderPage();
         }).catch(() => {});
         if (typeof window.renderPage === 'function') window.renderPage();
-        const items = groupDiscoveredContainers(raw);
-        window._traficContainers = {};
-        if (cnt) cnt.textContent = items.length ? items.length : '';
-        if (!items.length) {
-          el.innerHTML = `<div style="background:var(--bg2);border:1.5px solid var(--border);border-radius:var(--radius);padding:20px 16px;text-align:center;color:var(--text3);font-size:13px;">
-            ${t('trafic.no_containers')}
-          </div>`; return;
-        }
-        const srcColor = { docker:'#0ea5e9', k8s:'#326ce5' };
-        const srcLabel = { docker:'Docker', k8s:'Kubernetes' };
-        const bySource = {};
-        for (const c of items) { (bySource[c.source] = bySource[c.source] || []).push(c); }
-        const cols = window._tc || 3;
-        let html = '';
-        for (const [src, group] of Object.entries(bySource)) {
-          html += `<div style="margin-bottom:20px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span style="font-size:12px;font-weight:700;color:${srcColor[src]||'var(--text2)'}">${srcLabel[src]||src}</span><span class="chip">${group.length}</span></div>
-            <div class="trafic-grid" data-cols="${cols}">`;
-          for (const c of group) html += buildContainerTile(c);
-          html += `</div></div>`;
-        }
-        el.innerHTML = html;
+        containerTiles = groupDiscoveredContainers(raw);
+        paintContainers();
       } catch(e) { if (el) el.innerHTML = `<p style="color:var(--red);font-size:13px">${esc(e.message)}</p>`; }
     };
+
+    // La recherche et les filtres de la page s'appliquent aux conteneurs découverts comme aux proxies.
+    function containerMatches(c) {
+      const af = window._tf;
+      const q = (document.getElementById('trafic-search')?.value || '').toLowerCase();
+      if (af.status === 'actif' && c.inactive) return false;
+      if (af.status === 'inactif' && !c.inactive) return false;
+      if (af.type) {
+        const stream = af.type === 'tcp' || af.type === 'udp' || af.type === 'both';
+        if (stream || af.type !== (c.tls ? 'https' : 'http')) return false;
+      }
+      if (af.source && af.source !== c.source) return false;
+      if (!q) return true;
+      const key = [
+        c.id, c.host, c.agent_name, c.source, c.state, discoveredEdgeLabel(c),
+        ...(c.hosts || []), ...(c.aliases || []), ...(c.backends || []), ...(c.container_ids || []),
+      ].filter(Boolean).join(' ').toLowerCase();
+      return key.includes(q);
+    }
+
+    function paintContainers() {
+      const el  = document.getElementById('trafic-containers-content');
+      const cnt = document.getElementById('trafic-containers-count');
+      if (!el || !containerTiles) return;
+      const items = containerTiles.filter(containerMatches);
+      window._traficContainers = {};
+      if (cnt) cnt.textContent = items.length ? items.length : '';
+      if (!items.length) {
+        el.innerHTML = `<div style="background:var(--bg2);border:1.5px solid var(--border);border-radius:var(--radius);padding:20px 16px;text-align:center;color:var(--text3);font-size:13px;">
+          ${t('trafic.no_containers')}
+        </div>`; return;
+      }
+      const srcColor = { docker:'#0ea5e9', k8s:'#326ce5' };
+      const srcLabel = { docker:'Docker', k8s:'Kubernetes' };
+      const bySource = {};
+      for (const c of items) { (bySource[c.source] = bySource[c.source] || []).push(c); }
+      const cols = window._tc || 3;
+      let html = '';
+      for (const [src, group] of Object.entries(bySource)) {
+        html += `<div style="margin-bottom:20px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span style="font-size:12px;font-weight:700;color:${srcColor[src]||'var(--text2)'}">${srcLabel[src]||src}</span><span class="chip">${group.length}</span></div>
+          <div class="trafic-grid" data-cols="${cols}">`;
+        for (const c of group) html += buildContainerTile(c);
+        html += `</div></div>`;
+      }
+      el.innerHTML = html;
+    }
 
     // Convertit les routes encore issues des labels d'une tuile en proxys configurés ; un seul proxy créé s'ouvre dans l'éditeur.
     window.convertDiscoveredContainer = async (flowKey) => {

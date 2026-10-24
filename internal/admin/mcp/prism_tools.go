@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/vincamok/goproxify/internal/admin/analytics"
+	"github.com/vincamok/goproxify/internal/admin/prismedge"
 )
 
 func init() {
@@ -77,26 +78,6 @@ func (h *Handler) prismToolParams(r *http.Request, args map[string]any) analytic
 	return p
 }
 
-func (h *Handler) toolGetPrismAnomalies(r *http.Request, args map[string]any) (any, error) {
-	return analytics.DetectAnomalies(r.Context(), h.DB, h.prismToolParams(r, args)), nil
-}
-
-func (h *Handler) toolGetPrismGeo(r *http.Request, args map[string]any) (any, error) {
-	p := h.prismToolParams(r, args)
-	if level, _ := args["level"].(string); level == "city" {
-		limit := 0
-		if v, ok := args["limit"].(float64); ok {
-			limit = int(v)
-		}
-		return analytics.GetGeoPoints(h.DB, p, limit), nil
-	}
-	entries := analytics.GetGeoBreakdown(h.DB, p)
-	if entries == nil {
-		entries = []analytics.GeoEntry{}
-	}
-	return entries, nil
-}
-
 func (h *Handler) toolGetPrismSLO(r *http.Request, args map[string]any) (any, error) {
 	p := h.prismToolParams(r, args)
 	target, _ := args["target"].(float64)
@@ -104,10 +85,53 @@ func (h *Handler) toolGetPrismSLO(r *http.Request, args map[string]any) (any, er
 	return analytics.GetSLO(r.Context(), h.DB, analytics.Params{Proxy: p.Proxy, NodeName: p.NodeName}, target, int(days)), nil
 }
 
+
+func (h *Handler) toolGetPrismAnomalies(r *http.Request, args map[string]any) (any, error) {
+	return analytics.DetectAnomalies(r.Context(), h.DB, h.prismToolParams(r, args), prismedge.Anomalies{S: &prismedge.Source{DB: h.DB}}), nil
+}
+
+// Les lignes d'accès vivent dans les bases de logs des passerelles : sans passerelle, ces outils rendent des listes vides.
+func (h *Handler) toolGetPrismGeo(r *http.Request, args map[string]any) (any, error) {
+	p := h.prismToolParams(r, args)
+	src := &prismedge.Source{DB: h.DB}
+	onEdges := src.Available(r.Context(), p)
+	if level, _ := args["level"].(string); level == "city" {
+		limit := 0
+		if v, ok := args["limit"].(float64); ok {
+			limit = int(v)
+		}
+		if !onEdges {
+			return []analytics.GeoPoint{}, nil
+		}
+		pts, _, err := src.GeoPoints(r.Context(), p, limit)
+		if pts == nil {
+			pts = []analytics.GeoPoint{}
+		}
+		return pts, err
+	}
+	if !onEdges {
+		return []analytics.GeoEntry{}, nil
+	}
+	entries, _, err := src.GeoBreakdown(r.Context(), p)
+	if entries == nil {
+		entries = []analytics.GeoEntry{}
+	}
+	return entries, err
+}
+
 func (h *Handler) toolGetPrismTLSFingerprints(r *http.Request, args map[string]any) (any, error) {
 	limit := 0
 	if v, ok := args["limit"].(float64); ok {
 		limit = int(v)
 	}
-	return analytics.GetTopTLSFingerprints(h.DB, h.prismToolParams(r, args), limit), nil
+	p := h.prismToolParams(r, args)
+	src := &prismedge.Source{DB: h.DB}
+	if !src.Available(r.Context(), p) {
+		return []analytics.TLSFingerprintEntry{}, nil
+	}
+	fps, _, err := src.TopTLSFingerprints(r.Context(), p, limit)
+	if fps == nil {
+		fps = []analytics.TLSFingerprintEntry{}
+	}
+	return fps, err
 }

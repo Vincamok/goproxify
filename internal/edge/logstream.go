@@ -19,6 +19,8 @@ const (
 	logStreamBatch = 500
 	// logStreamIdle : attente maximale sans nouvelle ligne avant de vérifier que l'Admin est toujours connecté.
 	logStreamIdle = 15 * time.Second
+	// logStreamAdvance : intervalle minimal entre deux avances de curseur sans ligne à envoyer.
+	logStreamAdvance = 30 * time.Second
 )
 
 // logStreamKinds lie chaque flux de l'Admin au type de la base de logs, dans l'ordre d'envoi.
@@ -93,32 +95,68 @@ func (s *Server) streamLogs(ctx context.Context, connID string, cursors map[stri
 	}
 	minutePos := cursors[edgews.LogStreamMinute]
 	ipPos := cursors[edgews.LogStreamIPErrors]
+	var lastAdvance time.Time
 	for {
 		// Demandé avant de lire : une écriture pendant la lecture ferme ce canal, et la boucle relit.
 		changed := s.logStore.Changed()
 		sent := false
 		for _, k := range logStreamKinds {
 			for {
-				rows, err := s.logStore.ReadAfterRevealed(k.kind, pos[k.name], logStreamBatch)
+				// Les accès ordinaires restent dans la base de la passerelle : l'Admin n'en reçoit que les événements de
+				// sécurité. Le curseur avance quand même, au plus toutes les logStreamAdvance secondes tant qu'il n'y
+				// a rien à envoyer.
+				filtered := k.kind == logstore.KindAccess
+				var rows []logstore.Row
+				var through int64
+				var err error
+				if filtered {
+					rows, through, err = s.logStore.ReadSecurityAfter(k.kind, pos[k.name], logStreamBatch)
+				} else {
+					rows, err = s.logStore.ReadAfterRevealed(k.kind, pos[k.name], logStreamBatch)
+				}
 				if err != nil {
 					s.log.Warn("logs: lecture de la base pour l'Admin échouée", "stream", k.name, "err", err)
 					break
 				}
 				if len(rows) == 0 {
+					// L'Admin est plus avancé que la base : elle a été remplacée. Sans cela les lignes de la nouvelle base,
+					// numérotées depuis 1, seraient prises pour des lignes déjà reçues et sautées jusqu'à rattraper la position.
+					if pos[k.name] > s.logStore.LastID(k.kind) {
+						s.log.Warn("logs: la base est plus récente que ne le croit l'Admin, il repart du début", "stream", k.name, "position", pos[k.name])
+						msg, err := edgews.NewMessage(0, edgews.TypeLogStream, edgews.LogStreamPayload{Stream: k.name, After: pos[k.name], Reset: true})
+						if err != nil {
+							return
+						}
+						if err := s.wsHub.SendToAdmin(connID, msg); err != nil {
+							return
+						}
+						pos[k.name] = 0
+						continue
+					}
+					if filtered && through > pos[k.name] && time.Since(lastAdvance) >= logStreamAdvance {
+						msg, err := edgews.NewMessage(0, edgews.TypeLogStream, edgews.LogStreamPayload{Stream: k.name, After: pos[k.name], Through: through})
+						if err != nil {
+							return
+						}
+						if err := s.wsHub.SendToAdmin(connID, msg); err != nil {
+							return
+						}
+						pos[k.name], lastAdvance = through, time.Now()
+					}
 					break
 				}
 				entries := make([]edgews.LogEntryPayload, len(rows))
 				for i, r := range rows {
 					entries[i] = shipPayload(edgelog.ShipEntryFromRow(r, k.kind, s.cfg.Identity.NodeName))
 				}
-				msg, err := edgews.NewMessage(0, edgews.TypeLogStream, edgews.LogStreamPayload{Stream: k.name, After: pos[k.name], Entries: entries})
+				msg, err := edgews.NewMessage(0, edgews.TypeLogStream, edgews.LogStreamPayload{Stream: k.name, After: pos[k.name], Entries: entries, Through: through})
 				if err != nil {
 					return
 				}
 				if err := s.wsHub.SendToAdmin(connID, msg); err != nil {
 					return
 				}
-				pos[k.name] = rows[len(rows)-1].ID
+				pos[k.name] = max(rows[len(rows)-1].ID, through)
 				sent = true
 				if ctx.Err() != nil {
 					return

@@ -178,14 +178,9 @@ func migrate(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_logs_component ON logs (component)`,
 		`CREATE INDEX IF NOT EXISTS idx_logs_domain    ON logs (domain)`,
 		`CREATE INDEX IF NOT EXISTS idx_logs_ip_ts     ON logs (ip, ts)`,
-		// Prism : accès HTTP (status>0) filtrés par période ± domaine — partial indexes.
-		// status dans l'index : les comptages par période (SLO 30 j…) ne lisent pas la table.
-		`CREATE INDEX IF NOT EXISTS idx_logs_access_ts_status ON logs (ts, status) WHERE status > 0`,
-		`CREATE INDEX IF NOT EXISTS idx_logs_access_domain_ts ON logs (domain, ts) WHERE status > 0`,
-		// Agrégats d'accès par minute (ADR 0010) : les tableaux de bord les lisent à la place des lignes
-		// de logs. Aucune IP, aucun identifiant : données non personnelles, conservées plus longtemps
-		// que les lignes brutes. minute = AAAA-MM-JJTHH:MM en UTC. logs_minute_state porte le dernier id
-		// de logs déjà agrégé et l'indicateur « historique rattrapé ».
+		// Cumuls d'accès par minute, calculés par les passerelles et envoyés à l'Admin (ADR 0012) : les tableaux de bord
+		// les lisent, l'Admin ne reçoit plus les accès ordinaires. Aucune IP, aucun identifiant : données non
+		// personnelles, conservées 400 jours. minute = AAAA-MM-JJTHH:MM en UTC.
 		`CREATE TABLE IF NOT EXISTS logs_minute (
 			minute         TEXT    NOT NULL,
 			node_name      TEXT    NOT NULL DEFAULT '',
@@ -197,10 +192,6 @@ func migrate(db *sql.DB) error {
 			bots           INTEGER NOT NULL DEFAULT 0,
 			PRIMARY KEY (minute, node_name, domain, status)
 		) WITHOUT ROWID`,
-		`CREATE TABLE IF NOT EXISTS logs_minute_state (
-			k TEXT PRIMARY KEY,
-			v INTEGER NOT NULL
-		)`,
 		// Erreurs client (4xx hors 404) par IP et par minute, envoyées par les passerelles pour le Fail2Ban global
 		// (ADR 0012) : une IP en clair, donc gardées 24 h seulement et effacées avec l'IP.
 		`CREATE TABLE IF NOT EXISTS edge_ip_errors (
@@ -444,6 +435,9 @@ func migrate(db *sql.DB) error {
 		`ALTER TABLE security_bans ADD COLUMN target_scope TEXT NOT NULL DEFAULT ''`,
 		// ASN dont ce ban est l'une des plages (0 = ban sans rapport avec un ASN)
 		`ALTER TABLE security_bans ADD COLUMN asn INTEGER NOT NULL DEFAULT 0`,
+		// Signaux (JSON) qui expliquent un ban automatique d'Ephor ou du WAF : nom, points, valeur observée
+		`ALTER TABLE security_bans ADD COLUMN signals TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE security_ban_history ADD COLUMN signals TEXT NOT NULL DEFAULT ''`,
 		// Carte Prism : position approximative (ville) des IPs, renseignée par GeoResolver.
 		`ALTER TABLE snippets ADD COLUMN description TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE geoip_cache ADD COLUMN lat REAL`,
@@ -513,12 +507,11 @@ func migrate(db *sql.DB) error {
 		`ALTER TABLE nodes ADD COLUMN region      TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE nodes ADD COLUMN environment TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE nodes ADD COLUMN tags        TEXT NOT NULL DEFAULT '[]'`,
-		// Prism : indexes d'accès HTTP (bases déjà migrées avant l'ajout dans stmts).
-		`CREATE INDEX IF NOT EXISTS idx_logs_access_ts_status ON logs (ts, status) WHERE status > 0`,
-		`DROP INDEX IF EXISTS idx_logs_access_ts`, // remplacé par idx_logs_access_ts_status (même préfixe)
-		`CREATE INDEX IF NOT EXISTS idx_logs_access_domain_ts ON logs (domain, ts) WHERE status > 0`,
-		// Prism : analytics filtrées par nœud + période (évite full scan quand node_name est renseigné).
-		`CREATE INDEX IF NOT EXISTS idx_logs_analytics_node ON logs (node_name, ts) WHERE status > 0`,
+		// Les accès ordinaires ne sont plus dans cette table (ADR 0012) : les index qui servaient Prism disparaissent.
+		`DROP INDEX IF EXISTS idx_logs_access_ts`,
+		`DROP INDEX IF EXISTS idx_logs_access_ts_status`,
+		`DROP INDEX IF EXISTS idx_logs_access_domain_ts`,
+		`DROP INDEX IF EXISTS idx_logs_analytics_node`,
 		// RGPD pseudonymisation : IP chiffrée (AES-GCM) — vide si mode anonymisation classique.
 		`ALTER TABLE logs ADD COLUMN ip_enc TEXT NOT NULL DEFAULT ''`,
 		// Empreinte HMAC de l'IP pseudonymisée : effacement Art. 17 par IP sans tout déchiffrer.

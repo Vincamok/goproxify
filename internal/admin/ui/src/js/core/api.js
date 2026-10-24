@@ -14,7 +14,9 @@ async function api(method, path, body, fetchOpts) {
   if (res.status === 401) { doLogout(); return null; }
   if (!res.ok) {
     const txt = await res.text().catch(() => res.statusText);
-    throw new Error(txt || 'Erreur ' + res.status);
+    // Une page d'erreur de la passerelle (502/503/504) est du HTML : inutilisable dans un toast.
+    const isHTML = /^\s*<(!doctype|html)/i.test(txt);
+    throw new Error(!txt || isHTML ? 'Erreur ' + res.status + (res.statusText ? ' ' + res.statusText : '') : txt);
   }
   if (res.status === 204) return null;
   return res.json().catch(() => null);

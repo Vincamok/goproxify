@@ -95,6 +95,8 @@ type SearchParams struct {
 	Path     string
 	TLSJA3   string
 	TLSJA4   string
+	// RequestID : corrélation exacte avec la requête HTTP d'origine.
+	RequestID string
 	Search   string
 	DateFrom string
 	DateTo   string
@@ -357,6 +359,10 @@ func decodeWAFMatches(s string) []string {
 	return m
 }
 
+// Publish diffuse une entrée aux vues Live sans l'enregistrer : une passerelle qui n'envoie plus ses accès ordinaires
+// les fait passer ainsi, à la demande.
+func (s *Store) Publish(e Entry) { s.broadcast(e) }
+
 func (s *Store) broadcast(e Entry) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -569,6 +575,10 @@ func buildWhere(p SearchParams) (string, []any) {
 	if p.TLSJA4 != "" {
 		clauses = append(clauses, "tls_ja4=? AND tls_ja4 != ''")
 		args = append(args, p.TLSJA4)
+	}
+	if p.RequestID != "" {
+		clauses = append(clauses, "request_id=?")
+		args = append(args, p.RequestID)
 	}
 	if p.Path != "" {
 		clauses = append(clauses, "path LIKE ?")
@@ -827,7 +837,32 @@ func (s *Store) purgeIPTraces() {
 		time.Now().UTC().AddDate(0, 0, -banDays).Format(time.RFC3339))
 	s.db.Exec(`DELETE FROM geoip_cache WHERE cached_at < datetime('now', ?)`, //nolint:errcheck
 		fmt.Sprintf("-%d days", accessDays))
-	gdpr.PurgeEdgeErasures(s.db, edgeLogMaxAgeDays) //nolint:errcheck
+	gdpr.PurgeEdgeErasures(s.db, edgeErasureAgeDays(s.db)) //nolint:errcheck
+}
+
+// edgeErasureAgeDays est la durée pendant laquelle un ordre d'effacement reste rejouable : la plus longue conservation
+// d'accès que l'Admin impose à une passerelle (réglage commun ou exception), jamais moins que le défaut. Une passerelle
+// qui garde plus longtemps par son seul edge.json n'est pas connue de l'Admin.
+func edgeErasureAgeDays(db *sql.DB) int {
+	days := edgeLogMaxAgeDays
+	var raw string
+	if db.QueryRow(`SELECT value FROM settings WHERE key = 'logs.edge_retention'`).Scan(&raw) != nil {
+		return days
+	}
+	var r struct {
+		AccessDays int `json:"access_days"`
+		Nodes      map[string]struct {
+			AccessDays int `json:"access_days"`
+		} `json:"nodes"`
+	}
+	if json.Unmarshal([]byte(raw), &r) != nil {
+		return days
+	}
+	days = max(days, r.AccessDays)
+	for _, o := range r.Nodes {
+		days = max(days, o.AccessDays)
+	}
+	return days
 }
 
 // IPErasure détaille ce qu'un effacement par IP a supprimé.
@@ -1068,6 +1103,21 @@ func (s *Store) WriteStream(nodeID, stream string, entries []Entry, lastSeq int6
 	for _, e := range entries {
 		s.broadcast(e)
 	}
+	return nil
+}
+
+// ResetStreamCursor ramène à 0 la position d'un flux : la passerelle, dont la base a été remplacée, renverra tout ce que
+// contient la nouvelle. C'est la seule fois qu'une position recule.
+func (s *Store) ResetStreamCursor(nodeID, stream string) error {
+	if _, err := s.db.Exec(`UPDATE edge_log_cursors SET last_seq = 0, updated_at = CURRENT_TIMESTAMP WHERE node_id = ? AND stream = ?`, nodeID, stream); err != nil {
+		return err
+	}
+	s.cursorMu.Lock()
+	defer s.cursorMu.Unlock()
+	if s.cursors == nil {
+		s.cursors = map[string]int64{}
+	}
+	s.cursors[nodeID+"\x00"+stream] = 0
 	return nil
 }
 

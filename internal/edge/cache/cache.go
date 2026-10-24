@@ -15,9 +15,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vincamok/goproxify/internal/edge/router"
+	"github.com/vincamok/goproxify/internal/pairing"
 	edgetls "github.com/vincamok/goproxify/internal/edge/tls"
 )
 
@@ -59,10 +61,93 @@ type Store struct {
 // n'authentifie jamais rien (WebSocket Admin, appairage), pour qu'un secret révoqué ne reste pas valable.
 const PreviousSecretsEnv = "GPX_PAIRING_SECRET_PREVIOUS"
 
-// ResolveSecret choisit la clé de chiffrement du cache.
+// La clé locale d'une passerelle chiffre ses propres copies (cache, clé de pseudonymisation des IP des logs…). Elle lui
+// est propre et ne dépend plus du secret d'appairage, que tous les composants partagent : changer ce secret ne rend plus
+// les copies illisibles (ADR 0015).
+const (
+	// NodeKeyEnv : la clé locale, fournie par l'environnement.
+	NodeKeyEnv = "GPX_NODE_KEY"
+	// NodeKeyFileEnv : chemin d'un fichier de secret (secret Docker) qui contient la clé locale.
+	NodeKeyFileEnv = "GPX_NODE_KEY_FILE"
+	// NodeKeyPathEnv : emplacement de la clé générée par la passerelle quand rien n'est fourni.
+	NodeKeyPathEnv     = "GPX_NODE_KEY_PATH"
+	defaultNodeKeyPath = "/etc/goproxify/node.key"
+	nodeKeyMinLen      = 32
+)
+
+// NodeKeyPath est l'emplacement de la clé locale générée (à la racine du volume d'état).
+func NodeKeyPath() string {
+	if p := os.Getenv(NodeKeyPathEnv); p != "" {
+		return p
+	}
+	return defaultNodeKeyPath
+}
+
+func providedNodeKey() string {
+	if k := strings.TrimSpace(os.Getenv(NodeKeyEnv)); k != "" {
+		return k
+	}
+	if f := os.Getenv(NodeKeyFileEnv); f != "" {
+		if b, err := os.ReadFile(f); err == nil {
+			return strings.TrimSpace(string(b))
+		}
+	}
+	return ""
+}
+
+func generatedNodeKey() string {
+	b, err := os.ReadFile(NodeKeyPath())
+	if err != nil {
+		return ""
+	}
+	if k := strings.TrimSpace(string(b)); len(k) >= nodeKeyMinLen {
+		return k
+	}
+	return ""
+}
+
+// EnsureNodeKey crée la clé locale si ni l'environnement ni le volume n'en fournissent. Rend vrai quand elle vient
+// d'être générée. Un fichier présent mais illisible ou trop court n'est jamais écrasé : une clé neuve rendrait
+// définitivement illisible ce que l'ancienne aurait encore pu ouvrir.
+func EnsureNodeKey() (created bool, err error) {
+	if providedNodeKey() != "" {
+		return false, nil
+	}
+	path := NodeKeyPath()
+	if b, rerr := os.ReadFile(path); rerr == nil {
+		if len(strings.TrimSpace(string(b))) >= nodeKeyMinLen {
+			return false, nil
+		}
+		return false, fmt.Errorf("%s existe mais n'est pas une clé valide : il n'est pas écrasé", path)
+	} else if !errors.Is(rerr, os.ErrNotExist) {
+		return false, rerr
+	}
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return false, fmt.Errorf("clé aléatoire : %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return false, err
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return false, nil // créée entre-temps par un autre processus
+		}
+		return false, err
+	}
+	defer f.Close()
+	if _, err := f.WriteString(fmt.Sprintf("%x\n", raw)); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// LegacySecret est la clé d'avant la clé locale, dérivée du jeton ou du secret d'appairage. Le portail s'en sert encore
+// par défaut : sa clé maître doit être la même sur tous les membres d'un groupe HA, ce que le secret d'appairage, commun
+// à tous les composants, assure sans réglage (GPX_PORTAL_MASTER_KEY la remplace).
 // Priorité : auth_token explicite → GPX_CONTROL_PLANE_AUTH_TOKEN → GPX_PAIRING_SECRET.
-// En stack compose, auth_token est vide : on utilise GPX_PAIRING_SECRET (stable entre redémarrages).
-func ResolveSecret(authToken string) string {
+func LegacySecret(authToken string) string {
 	if authToken != "" {
 		return authToken
 	}
@@ -73,10 +158,44 @@ func ResolveSecret(authToken string) string {
 	if s := os.Getenv("GPX_CONTROLPLANE_AUTH_TOKEN"); s != "" {
 		return s
 	}
-	if s := os.Getenv("GPX_PAIRING_SECRET"); s != "" {
+	if s := pairing.Secret("GPX_PAIRING_SECRET"); s != "" {
 		return s
 	}
 	return ""
+}
+
+var (
+	olderMu      sync.Mutex
+	olderSecrets []string
+)
+
+// ResolveSecret choisit la clé de chiffrement des copies locales de la passerelle.
+// Priorité : GPX_NODE_KEY → fichier GPX_NODE_KEY_FILE → clé générée (node.key) → ancienne clé (LegacySecret).
+// Les clés écartées (jeton, secret d'appairage, clé générée) restent lisibles : New les ajoute aux anciennes clés, si bien
+// que les copies écrites avant le changement sont relues puis réécrites avec la clé courante.
+func ResolveSecret(authToken string) string {
+	chosen := providedNodeKey()
+	if chosen == "" {
+		chosen = generatedNodeKey()
+	}
+	if chosen == "" {
+		chosen = LegacySecret(authToken)
+	}
+	var older []string
+	seen := map[string]bool{chosen: true}
+	for _, c := range []string{
+		authToken, os.Getenv("GPX_CONTROL_PLANE_AUTH_TOKEN"), os.Getenv("GPX_CONTROLPLANE_AUTH_TOKEN"),
+		pairing.Secret("GPX_PAIRING_SECRET"), generatedNodeKey(),
+	} {
+		if c != "" && !seen[c] {
+			seen[c] = true
+			older = append(older, c)
+		}
+	}
+	olderMu.Lock()
+	olderSecrets = older
+	olderMu.Unlock()
+	return chosen
 }
 
 // New crée un Store.
@@ -84,11 +203,21 @@ func ResolveSecret(authToken string) string {
 func New(path, secret string) *Store {
 	key := sha256.Sum256([]byte(secret))
 	st := &Store{path: path, key: key}
-	for _, old := range strings.Split(os.Getenv(PreviousSecretsEnv), ",") {
-		if old = strings.TrimSpace(old); old != "" && old != secret {
+	seen := map[string]bool{secret: true}
+	add := func(old string) {
+		if old = strings.TrimSpace(old); old != "" && !seen[old] {
+			seen[old] = true
 			st.previous = append(st.previous, sha256.Sum256([]byte(old)))
 		}
 	}
+	for _, old := range strings.Split(os.Getenv(PreviousSecretsEnv), ",") {
+		add(old)
+	}
+	olderMu.Lock()
+	for _, old := range olderSecrets {
+		add(old)
+	}
+	olderMu.Unlock()
 	return st
 }
 

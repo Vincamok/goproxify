@@ -42,6 +42,35 @@ func TestPurgeRetainedDropsEntriesPastTheirRetention(t *testing.T) {
 	}
 }
 
+func TestErasureOrdersLastAsLongAsTheLongestGatewayRetention(t *testing.T) {
+	db, err := admindb.Open(filepath.Join(t.TempDir(), "admin.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if got := edgeErasureAgeDays(db); got != 365 {
+		t.Fatalf("sans réglage : %d jours, attendu 365", got)
+	}
+	set := func(v string) {
+		t.Helper()
+		if _, err := db.Exec(`INSERT OR REPLACE INTO settings (key, value) VALUES ('logs.edge_retention', ?)`, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	set(`{"access_days":90,"system_days":30}`)
+	if got := edgeErasureAgeDays(db); got != 365 {
+		t.Fatalf("conservation plus courte que le défaut : %d jours, attendu 365", got)
+	}
+	set(`{"access_days":400,"system_days":30,"nodes":{"frontal":{"access_days":1000}}}`)
+	if got := edgeErasureAgeDays(db); got != 1000 {
+		t.Fatalf("exception à 1000 jours : %d jours, attendu 1000", got)
+	}
+	set(`pas du json`)
+	if got := edgeErasureAgeDays(db); got != 365 {
+		t.Fatalf("réglage illisible : %d jours, attendu 365", got)
+	}
+}
+
 func TestPurgeRetainedDropsOldIPTraces(t *testing.T) {
 	db, err := admindb.Open(filepath.Join(t.TempDir(), "admin.db"))
 	if err != nil {

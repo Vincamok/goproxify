@@ -13,6 +13,9 @@ import (
 	"time"
 
 	"github.com/vincamok/goproxify/internal/admin/api"
+	"github.com/vincamok/goproxify/internal/admin/prismedge"
+	"github.com/vincamok/goproxify/internal/edge/logapi/logapitest"
+	"github.com/vincamok/goproxify/internal/edge/logstore"
 )
 
 func banRequest(h http.Handler, method, path, body, remote string) *httptest.ResponseRecorder {
@@ -152,27 +155,30 @@ func hasWarning(res previewRes, sub string) bool {
 
 func TestBanPreviewMeasuresImpact(t *testing.T) {
 	db := openBansDB(t)
-	h := &api.SecurityHandler{DB: db}
-	at := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	gw := logapitest.New(t, "gw-a")
+	if err := gw.Register(db); err != nil {
+		t.Fatal(err)
+	}
+	h := &api.SecurityHandler{DB: db, Edge: &prismedge.Source{DB: db}}
+	at := time.Now().UTC().Add(-time.Hour)
 	log := func(ip string, status int, waf string) {
 		t.Helper()
-		if _, err := db.Exec(`INSERT INTO logs (ts, ip, domain, method, path, status, waf_matches) VALUES (?, ?, 'a.test', 'GET', '/x', ?, ?)`, at, ip, status, waf); err != nil {
-			t.Fatal(err)
+		e := logstore.Entry{Ts: at, IP: ip, Domain: "a.test", Method: "GET", Path: "/x", Status: status}
+		if waf != "" {
+			e.WAFMatches = []string{waf}
 		}
+		gw.Add(e)
 	}
 	// Dans 203.0.113.0/24 : un scanner (bloqué) et un visiteur légitime (200). Hors plage : ignoré.
 	for i := 0; i < 5; i++ {
 		log("203.0.113.5", 403, "")
 	}
-	log("203.0.113.5", 404, `["sqli"]`)
+	log("203.0.113.5", 404, "sqli")
 	log("203.0.113.9", 200, "")
 	log("203.0.113.9", 200, "")
 	log("198.51.100.1", 200, "")
 	// Plus ancien que la fenêtre : ignoré.
-	old := time.Now().UTC().Add(-72 * time.Hour).Format(time.RFC3339)
-	if _, err := db.Exec(`INSERT INTO logs (ts, ip, domain, method, path, status) VALUES (?, '203.0.113.200', 'a.test', 'GET', '/', 200)`, old); err != nil {
-		t.Fatal(err)
-	}
+	gw.Add(logstore.Entry{Ts: time.Now().UTC().Add(-72 * time.Hour), IP: "203.0.113.200", Domain: "a.test", Method: "GET", Path: "/", Status: 200})
 
 	res, code := getPreview(t, h, "ip=203.0.113.7/24&hours=24", "198.51.100.9:1")
 	if code != http.StatusOK {

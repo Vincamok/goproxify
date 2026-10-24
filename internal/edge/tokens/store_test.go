@@ -145,3 +145,26 @@ func TestRevokeUnknownID(t *testing.T) {
 		t.Fatal("should error on empty id")
 	}
 }
+
+func TestRevokeNamedExceptKeepsTheGivenTokenAndOtherNames(t *testing.T) {
+	s := openTestStore(t)
+	for _, tok := range []struct{ name, raw string }{
+		{"admin-ws", "gpx_ancien_admin"}, {"admin-ws", "gpx_admin_courant"}, {"admin-edge-1", "gpx_amorcage"},
+	} {
+		if err := s.EnsureToken(tok.name, tok.raw, RoleAdmin); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n, err := s.RevokeNamedExcept("admin-ws", "gpx_admin_courant")
+	if err != nil || n != 1 {
+		t.Fatalf("un seul jeton révoqué : %d %v", n, err)
+	}
+	for raw, want := range map[string]bool{"gpx_ancien_admin": false, "gpx_admin_courant": true, "gpx_amorcage": true} {
+		if _, ok, _ := s.RoleOf(raw); ok != want {
+			t.Errorf("%s : valide=%v, attendu %v", raw, ok, want)
+		}
+	}
+	if _, err := s.RevokeNamedExcept("admin-ws", ""); err == nil {
+		t.Fatal("sans jeton à garder, rien n'est révoqué")
+	}
+}

@@ -26,7 +26,7 @@ func byBackend(insts []Instance) map[string]Instance {
 	return m
 }
 
-func TestConsul_ListsHealthyTaggedInstances(t *testing.T) {
+func TestConsul_ListsTaggedInstancesWithTheirHealth(t *testing.T) {
 	var healthQueries []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Consul-Token") != "acl" {
@@ -49,7 +49,11 @@ func TestConsul_ListsHealthyTaggedInstances(t *testing.T) {
 			 {"Node":{"Node":"n1","Address":"10.0.0.1"},"Service":{"ID":"web-1","Service":"web","Address":"10.1.0.1","Port":8080,
 			  "Tags":["goproxify.enable=true","goproxify.host=app.example.com"],"Meta":{"goproxify.tls":"true","autre":"x"}}},
 			 {"Node":{"Node":"n2","Address":"10.0.0.2"},"Service":{"ID":"web-2","Service":"web","Address":"","Port":8443,
-			  "Tags":["goproxify.enable=true","goproxify.host=app.example.com","goproxify.scheme=https"],"Meta":{}}}]`)
+			  "Tags":["goproxify.enable=true","goproxify.host=app.example.com","goproxify.scheme=https"],"Meta":{}},
+			  "Checks":[{"Status":"passing"},{"Status":"warning"}]},
+			 {"Node":{"Node":"n3","Address":"10.0.0.3"},"Service":{"ID":"web-3","Service":"web","Address":"10.1.0.3","Port":8080,
+			  "Tags":["goproxify.enable=true","goproxify.host=app.example.com"],"Meta":{}},
+			  "Checks":[{"Status":"passing"},{"Status":"critical"}]}]`)
 		default:
 			t.Errorf("appel inattendu : %s", r.URL)
 		}
@@ -65,14 +69,17 @@ func TestConsul_ListsHealthyTaggedInstances(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := byBackend(got)
-	if len(got) != 2 || m["http://10.1.0.1:8080"].Key != "web-1@n1" || m["https://10.0.0.2:8443"].Key != "web-2@n2" {
+	if len(got) != 3 || m["http://10.1.0.1:8080"].Key != "web-1@n1" || m["https://10.0.0.2:8443"].Key != "web-2@n2" {
 		t.Fatalf("instances = %+v", got)
 	}
 	if m["http://10.1.0.1:8080"].Labels["goproxify.tls"] != "true" || m["http://10.1.0.1:8080"].Labels["goproxify.host"] != "app.example.com" {
 		t.Errorf("étiquettes (tags + méta) = %v", m["http://10.1.0.1:8080"].Labels)
 	}
-	if len(healthQueries) != 1 || !strings.Contains(healthQueries[0], "passing=1") {
-		t.Errorf("seules les instances saines doivent être demandées : %v", healthQueries)
+	if len(healthQueries) != 1 || strings.Contains(healthQueries[0], "passing") {
+		t.Errorf("toutes les instances sont demandées, la santé se lit sur leurs contrôles : %v", healthQueries)
+	}
+	if m["http://10.1.0.1:8080"].Inactive != "" || m["https://10.0.0.2:8443"].Inactive != "warning" || m["http://10.1.0.3:8080"].Inactive != "critical" {
+		t.Errorf("états de santé = %q %q %q", m["http://10.1.0.1:8080"].Inactive, m["https://10.0.0.2:8443"].Inactive, m["http://10.1.0.3:8080"].Inactive)
 	}
 
 	if _, err := (&Consul{cfg: ConsulConfig{Address: srv.URL, Token: "mauvais", Prefix: "goproxify."}, client: srv.Client()}).List(context.Background()); err == nil || !strings.Contains(err.Error(), "403") {
@@ -272,11 +279,16 @@ func TestECS_ListsRunningTasksWithAnIP(t *testing.T) {
 	}
 	var backends []string
 	for _, g := range got {
-		backends = append(backends, g.Backend)
+		if g.Inactive == "" {
+			backends = append(backends, g.Backend)
+		}
 	}
 	sort.Strings(backends)
 	if strings.Join(backends, " ") != "http://10.4.0.1:3000 http://10.4.0.2:3000" {
-		t.Fatalf("backends = %v (la tâche sans IP et la tâche en échec de santé sont écartées)", backends)
+		t.Fatalf("backends = %v (la tâche sans IP est écartée, la tâche en échec de santé est inactive)", backends)
+	}
+	if d := byBackend(got)["http://10.4.0.4:3000"]; d.Inactive != "unhealthy" {
+		t.Fatalf("la tâche en échec de santé est listée inactive : %+v", d)
 	}
 	if defCalls.Load() != 1 {
 		t.Errorf("la définition de tâche partagée n'est lue qu'une fois par passe : %d", defCalls.Load())

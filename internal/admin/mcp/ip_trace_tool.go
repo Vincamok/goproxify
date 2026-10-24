@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/vincamok/goproxify/internal/admin/api"
+	"github.com/vincamok/goproxify/internal/admin/prismedge"
 )
 
 func ipTraceTools() []map[string]any {
@@ -52,5 +53,5 @@ func (h *Handler) toolTraceIP(r *http.Request, args map[string]any) (any, error)
 	if err := api.ResolveTraceScope(r.Context(), h.DB, h.ASN, &qy); err != nil {
 		return nil, err
 	}
-	return api.TraceIP(r.Context(), h.DB, qy)
+	return api.TraceIP(r.Context(), h.DB, &prismedge.Source{DB: h.DB}, qy)
 }

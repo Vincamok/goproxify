@@ -7,14 +7,18 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/vincamok/goproxify/internal/edge/engines"
 	"net/http"
-	"net/netip"
-	"time"
 
+	"github.com/vincamok/goproxify/internal/admin/analytics"
+	"github.com/vincamok/goproxify/internal/admin/prismedge"
 	"github.com/vincamok/goproxify/internal/edge/threat"
 )
+
+// errNoGatewayToReplay : la simulation rejoue le trafic des passerelles ; sans passerelle il n'y a rien à rejouer.
+var errNoGatewayToReplay = errors.New("aucune passerelle enregistrée : rien à rejouer")
 
 const (
 	SimDefaultHours = 1
@@ -24,7 +28,7 @@ const (
 
 // SimulateEphor rejoue les access logs récents contre la config Ephor de cfgKey surchargée par override,
 // et la compare à la config actuelle. Ne modifie rien.
-func SimulateEphor(ctx context.Context, db *sql.DB, cfgKey string, override map[string]any, hours int, domain string) (map[string]any, error) {
+func SimulateEphor(ctx context.Context, db *sql.DB, edge *prismedge.Source, cfgKey string, override map[string]any, hours int, domain string) (map[string]any, error) {
 	if hours <= 0 {
 		hours = SimDefaultHours
 	}
@@ -47,62 +51,33 @@ func SimulateEphor(ctx context.Context, db *sql.DB, cfgKey string, override map[
 		return nil, fmt.Errorf("config candidate invalide: %w", err)
 	}
 
-	since := time.Now().UTC().Add(-time.Duration(hours) * time.Hour)
-	q := `SELECT ts, ip, path, status, ip_truncated FROM logs
-	      WHERE status > 0 AND component <> 'admin' AND ts >= ?`
-	qargs := []any{since.Format(time.RFC3339Nano)}
-	if domain != "" {
-		q += ` AND domain = ?`
-		qargs = append(qargs, domain)
-	}
-	q += ` ORDER BY ts DESC LIMIT ?`
-	qargs = append(qargs, simMaxEvents+1)
-	rows, err := db.QueryContext(ctx, q, qargs...)
-	if err != nil {
+	// La passerelle a le moteur et les lignes : elle rejoue son propre trafic (agents utilisateur compris) et l'Admin
+	// compare les rapports.
+	if edge != nil && edge.Available(ctx, analytics.Params{}) {
+		sim, err := edge.SimulateEphor(ctx, current, candidate, hours, domain)
+		if err == nil {
+			out := map[string]any{
+				"window_hours": hours, "domain": domain, "events_replayed": sim.Events, "truncated": sim.Truncated,
+				"skipped_unattributable_ip": sim.Skipped, "current": sim.Current, "candidate": sim.Candidate,
+				"delta": map[string]int{
+					"blocked":       sim.Candidate.Blocked - sim.Current.Blocked,
+					"legit_blocked": sim.Candidate.LegitBlocked - sim.Current.LegitBlocked,
+					"blocked_ips":   sim.Candidate.BlockedIPs - sim.Current.BlockedIPs,
+					"bans":          len(sim.Candidate.Bans) - len(sim.Current.Bans),
+				},
+				"gateways":      sim.Gateways,
+				"not_simulated": []string{"default_lists", "global_rps", "waf", "asn_aggregate"},
+				"note":          "Chaque passerelle rejoue son propre trafic : les compteurs s'additionnent (une IP vue par deux passerelles compte deux fois) et top_ips fusionne les dix premières de chacune. legit_blocked = requêtes bloquées par la config qui avaient reçu un statut < 400 à l'époque : indicateur de faux positifs, pas une certitude.",
+			}
+			if sim.Meta.Degraded() {
+				out["partial"], out["unreachable"] = sim.Meta.Partial, sim.Meta.Unreachable
+			}
+			return out, nil
+		}
 		return nil, err
 	}
-	defer rows.Close()
 
-	var events []threat.SimEvent
-	skipped := 0
-	for rows.Next() {
-		var ts time.Time
-		var ip, path string
-		var status int
-		var ipTruncated bool
-		if err := rows.Scan(&ts, &ip, &path, &status, &ipTruncated); err != nil {
-			continue
-		}
-		if _, err := netip.ParseAddr(ip); err != nil || ipTruncated {
-			skipped++
-			continue
-		}
-		events = append(events, threat.SimEvent{Time: ts, IP: ip, Path: path, Status: status})
-	}
-	truncated := len(events)+skipped > simMaxEvents
-	if truncated && len(events) > simMaxEvents {
-		events = events[:simMaxEvents]
-	}
-
-	base := threat.Simulate(current, events)
-	cand := threat.Simulate(candidate, events)
-	return map[string]any{
-		"window_hours":              hours,
-		"domain":                    domain,
-		"events_replayed":           len(events),
-		"truncated":                 truncated,
-		"skipped_unattributable_ip": skipped,
-		"current":                   base,
-		"candidate":                 cand,
-		"delta": map[string]int{
-			"blocked":       cand.Blocked - base.Blocked,
-			"legit_blocked": cand.LegitBlocked - base.LegitBlocked,
-			"blocked_ips":   cand.BlockedIPs - base.BlockedIPs,
-			"bans":          len(cand.Bans) - len(base.Bans),
-		},
-		"not_simulated": []string{"default_lists", "global_rps", "user_agent_rules", "waf"},
-		"note":          "legit_blocked = requêtes bloquées par la config qui avaient reçu un statut < 400 à l'époque : indicateur de faux positifs, pas une certitude.",
-	}, nil
+	return nil, errNoGatewayToReplay
 }
 
 func (h *SecurityHandler) simulateThreat(w http.ResponseWriter, r *http.Request) {
@@ -116,7 +91,7 @@ func (h *SecurityHandler) simulateThreat(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	scope, _ := h.scope(r)
-	out, err := SimulateEphor(r.Context(), h.DB, threatConfigKey(scope), body.Config, body.Hours, body.Domain)
+	out, err := SimulateEphor(r.Context(), h.DB, h.Edge, threatConfigKey(scope), body.Config, body.Hours, body.Domain)
 	if err != nil {
 		secJSONErr(w, err, http.StatusBadRequest)
 		return

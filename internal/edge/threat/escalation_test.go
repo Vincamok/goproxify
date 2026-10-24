@@ -4,6 +4,7 @@
 package threat
 
 import (
+	"github.com/vincamok/goproxify/internal/edge/router"
 	"io"
 	"log/slog"
 	"testing"
@@ -44,7 +45,7 @@ func TestEscalationDefaults(t *testing.T) {
 func escalationEngine(prior func(string, time.Time) int, esc EscalationConfig) (*Engine, *[]time.Time) {
 	var expiries []time.Time
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-	e := New(slog.New(slog.NewTextHandler(io.Discard, nil)), func(_, _ string, exp time.Time) { expiries = append(expiries, exp) })
+	e := New(slog.New(slog.NewTextHandler(io.Discard, nil)), func(_, _ string, exp time.Time, _ []router.BanSignal) { expiries = append(expiries, exp) })
 	e.counters.now = func() time.Time { return now }
 	e.SetPriorBansFunc(prior)
 	e.UpdateConfig(Config{Enabled: true, Mode: "block", BanDuration: Duration{time.Hour}, Escalation: esc})

@@ -187,28 +187,6 @@ func TestWriteMinutesIsAllOrNothing(t *testing.T) {
 	}
 }
 
-// Une passerelle qui envoie ses cumuls n'est plus comptée deux fois : l'agrégation des lignes brutes l'ignore.
-func TestTheRawAggregatorSkipsGatewaysThatSendTheirOwnTotals(t *testing.T) {
-	s, _ := newBatchStore(t)
-	ts := time.Date(2026, 10, 21, 10, 0, 5, 0, time.UTC)
-	mk := func(node, nodeID string) Entry {
-		return Entry{Ts: ts, Component: "edge", NodeName: node, NodeID: nodeID, Domain: "a.example.com", Method: "GET", Path: "/", Status: 200, IP: "198.51.100.1"}
-	}
-	s.WriteBatch([]Entry{mk("gw-old", "id-old"), mk("gw-old", "id-old"), mk("gw-new", "id-new"), mk("gw-new", "id-new"), mk("gw-new", "id-new")})
-	if err := s.WriteMinutes("id-new", []MinuteRow{{Minute: "2026-10-21T10:00", NodeName: "gw-new", Domain: "a.example.com", Status: 200, Requests: 3}}, 1); err != nil {
-		t.Fatal(err)
-	}
-	if err := AggregateNow(t.Context(), s.db); err != nil {
-		t.Fatal(err)
-	}
-	if got := minuteRows(t, s, "gw-old")["2026-10-21T10:00|a.example.com|200"]; got[0] != 2 {
-		t.Fatalf("gw-old : %v requêtes, attendu 2 (agrégé depuis les lignes brutes)", got[0])
-	}
-	if got := minuteRows(t, s, "gw-new")["2026-10-21T10:00|a.example.com|200"]; got[0] != 3 {
-		t.Fatalf("gw-new : %v requêtes, attendu 3 (son propre cumul, pas 6)", got[0])
-	}
-}
-
 func ipCounters(t *testing.T, s *Store) map[string]int64 {
 	t.Helper()
 	rows, err := s.db.Query(`SELECT node_id, minute, ip, errors FROM edge_ip_errors`)
@@ -269,5 +247,18 @@ func TestIPErrorCountersAreErasedWithTheIPAndPurgedAfterADay(t *testing.T) {
 	}
 	if got := ipCounters(t, s); len(got) != 1 {
 		t.Fatalf("après l'effacement : %v", got)
+	}
+}
+
+func TestSearchFiltersByRequestID(t *testing.T) {
+	s, _ := newBatchStore(t)
+	entries := batchEntries(5) // request_id : req-0 … req-4
+	s.WriteBatch(entries)
+	got, _, err := s.Search(SearchParams{RequestID: "req-3"})
+	if err != nil || len(got) != 1 || got[0].RequestID != "req-3" {
+		t.Fatalf("request_id=req-3 : %d lignes, %v", len(got), err)
+	}
+	if none, _, _ := s.Search(SearchParams{RequestID: "absent"}); len(none) != 0 {
+		t.Fatalf("request_id inconnu : %d lignes", len(none))
 	}
 }

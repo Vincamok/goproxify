@@ -124,6 +124,37 @@ func (h *DomainsHandler) resolveEntryRef(ctx context.Context, ref string) (strin
 	return haEntryPrefix + group, nil
 }
 
+// groupOfEntry rend le groupe HA d'une passerelle d'entrée ("ha:<groupe>") ou d'un token passerelle, vide si elle n'en a pas.
+func (h *DomainsHandler) groupOfEntry(ctx context.Context, ref string) string {
+	if group, ok := strings.CutPrefix(ref, haEntryPrefix); ok {
+		return group
+	}
+	if h.Groups == nil || ref == "" {
+		return ""
+	}
+	var name string
+	if err := h.DB.QueryRowContext(ctx, `SELECT node_name FROM tokens WHERE id=?`, ref).Scan(&name); err != nil {
+		return ""
+	}
+	return h.Groups.GroupOf(name)
+}
+
+// checkDelegationBetweenGroups refuse une délégation dont la source et la cible sont le même groupe HA, ou la même
+// passerelle (ADR 0014, section 2) : les membres d'un groupe servent déjà les mêmes domaines, déléguer de l'un à l'autre
+// ne délègue rien. Une délégation relie deux groupes différents.
+func (h *DomainsHandler) checkDelegationBetweenGroups(ctx context.Context, entryID, delegatedID string) error {
+	if delegatedID == "" || entryID == "" {
+		return nil
+	}
+	if entryID == delegatedID {
+		return errors.New("une délégation relie deux passerelles différentes : la source et la cible sont la même")
+	}
+	if g := h.groupOfEntry(ctx, entryID); g != "" && g == h.groupOfEntry(ctx, delegatedID) {
+		return errors.New("une délégation relie deux groupes HA différents : la source et la cible appartiennent au groupe " + g)
+	}
+	return nil
+}
+
 // entryTokenIDs retourne les tokens passerelle visés par edge_id : le token lui-même, ou ceux des
 // membres du groupe pour "ha:<groupe>" (un membre sans token actif est ignoré).
 func (h *DomainsHandler) entryTokenIDs(ctx context.Context, ref string) []string {
@@ -342,6 +373,10 @@ func (h *DomainsHandler) create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if err := h.checkDelegationBetweenGroups(r.Context(), resolvedEdgeID, resolvedDelegatedToEdgeID); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	id := uuid.New().String()
 	_, err = h.DB.ExecContext(r.Context(), `
 		INSERT INTO domains (id, domain, edge_id, dns_provider, dns_credentials,
@@ -420,6 +455,10 @@ func (h *DomainsHandler) update(w http.ResponseWriter, r *http.Request, id strin
 	}
 	resolvedDelegatedToEdgeID, err := h.resolveEdgeRef(r.Context(), req.DelegatedToEdgeID)
 	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := h.checkDelegationBetweenGroups(r.Context(), resolvedEdgeID, resolvedDelegatedToEdgeID); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/vincamok/goproxify/internal/admin/api"
+	"github.com/vincamok/goproxify/internal/admin/prismedge"
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
 	"github.com/vincamok/goproxify/internal/admin/asn"
@@ -71,7 +72,7 @@ func (h *Handler) toolPreviewASNBan(r *http.Request, args map[string]any) (any, 
 	if hours > 168 {
 		hours = 168
 	}
-	return api.ASNPreview(r.Context(), h.DB, h.ASN, h.Groups, raw, hours, api.RequesterIP(r))
+	return api.ASNPreview(r.Context(), h.DB, &prismedge.Source{DB: h.DB}, h.ASN, h.Groups, raw, hours, api.RequesterIP(r))
 }
 
 func (h *Handler) toolBanASN(r *http.Request, args map[string]any) (any, error) {

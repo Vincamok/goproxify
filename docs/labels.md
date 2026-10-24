@@ -101,7 +101,7 @@ Le WAF applique les règles OWASP passerelle Rule Set (CRS) sur les requêtes HT
 | `goproxify.waf.max_body_mb` | `"10"` | Taille maximale du corps analysé par le WAF en Mo (défaut : 128 Kio). Le reste du corps est transmis sans analyse ; plus la limite est haute, plus une requête volumineuse coûte de CPU. |
 | `goproxify.waf.exclude_ids` | `"942100,941100"` | IDs de règles OWASP CRS à désactiver pour ce proxy (CSV). |
 | `goproxify.waf.behavior` | `"true"` | Active l'analyse comportementale par IP (score cumulatif sur une fenêtre glissante). |
-| `goproxify.waf.behavior.window` | `"60"` | Fenêtre d'observation en secondes (défaut : `60`). |
+| `goproxify.waf.behavior.window` | `"60"` | **Ignoré** depuis l'ADR 0011 : le magasin comportemental est unique par passerelle, sa fenêtre est de 60 s. |
 | `goproxify.waf.behavior.threshold` | `"8"` | Score comportemental avant bannissement temporaire (défaut : `8`). |
 | `goproxify.waf.trusted_proxies` | `"10.0.0.0/8,172.16.0.0/12"` | CIDRs de proxies de confiance dont le header `X-Forwarded-For` est accepté (CSV). Laisser vide pour utiliser `RemoteAddr` directement (plus sécurisé). |
 

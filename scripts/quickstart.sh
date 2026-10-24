@@ -84,6 +84,12 @@ agent_key() {
   printf '%s' "goproxify/agent-pairing/v1:$1" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -d' ' -f1
 }
 
+# Clé du canal Admin -> passerelle : propre à une passerelle, dérivée de son nom (EDGE_NODE_NAME). La passerelle ne reçoit pas
+# le secret racine. Même calcul que internal/pairing.EdgeChannelKey.
+edge_channel_key() {
+  printf '%s' "goproxify/edge-channel/v1:$1:$2" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -d' ' -f1
+}
+
 hex32() {
   if command -v openssl >/dev/null 2>&1; then
     openssl rand -hex 32
@@ -182,8 +188,11 @@ services:
       # ── OBLIGATOIRE ────────────────────────────────────────────────────────
       # openssl rand -hex 32
       - GPX_SECURITY_JWT_SECRET=${GPX_JWT_SECRET}
-      # Partagé entre Admin, Passerelle et Agent — même valeur partout
+      # Secret racine : l'Admin seul le détient. La passerelle et l'Agent reçoivent des clés qui en sont dérivées.
       - GPX_PAIRING_SECRET=${GPX_PAIRING_SECRET}
+      # L'Admin ne présente jamais le secret racine à une passerelle ni n'accepte qu'un Agent le présente.
+      - GPX_EDGE_CHANNEL_ROOT_FALLBACK=false
+      - GPX_AGENT_PAIRING_ROOT=false
       # Compte administrateur (créé au premier démarrage, ignoré ensuite)
       - GPX_FIRST_ADMIN_EMAIL=${GPX_FIRST_ADMIN_EMAIL}
       - GPX_FIRST_ADMIN_PASSWORD=${GPX_FIRST_ADMIN_PASSWORD}
@@ -257,8 +266,12 @@ services:
     environment:
       - TZ=${TZ:-Europe/Paris}
 
-      # ── OBLIGATOIRE — même valeur que l'Admin ──────────────────────────────
-      - GPX_PAIRING_SECRET=${GPX_PAIRING_SECRET}
+      # ── OBLIGATOIRE — clés dérivées du secret de l'Admin (la passerelle n'a pas le secret racine) ──
+      # Canal Admin -> passerelle : dérivée de EDGE_NODE_NAME. Si vous changez ce nom, recalculez-la (voir .env.example).
+      - GPX_EDGE_CHANNEL_KEY=${GPX_EDGE_CHANNEL_KEY}
+      - GPX_AGENT_PAIRING_KEY=${GPX_AGENT_PAIRING_KEY}
+      # Coffres des comptes SSO du portail Access : propre à la passerelle, à ne jamais changer ensuite.
+      - GPX_PORTAL_MASTER_KEY=${GPX_PORTAL_MASTER_KEY}
 
       # ── Identité du nœud (heartbeat / tokens / certificats UI) ─────────────
       # Sans cette variable, la passerelle génère un ID stable (edge-<hex>) distinct
@@ -362,6 +375,8 @@ write_env() {
   set_env_key GPX_JWT_SECRET "$jwt"
   set_env_key GPX_PAIRING_SECRET "$pairing"
   set_env_key GPX_AGENT_PAIRING_KEY "$(agent_key "$pairing")"
+  set_env_key GPX_EDGE_CHANNEL_KEY "$(edge_channel_key "${EDGE_NODE_NAME:-goproxify-edge}" "$pairing")"
+  set_env_key GPX_PORTAL_MASTER_KEY "$(hex32)"
   set_env_key GPX_FIRST_ADMIN_EMAIL "$email"
   set_env_key GPX_FIRST_ADMIN_PASSWORD "$password"
   set_env_key GOPROXIFY_ADMIN_TAG "$TAG_ADMIN"
@@ -410,6 +425,8 @@ if [ "$DO_PRINT_SECRETS" = true ]; then
   P="$(hex32)"
   echo "GPX_PAIRING_SECRET=$P"
   echo "GPX_AGENT_PAIRING_KEY=$(agent_key "$P")"
+  echo "GPX_EDGE_CHANNEL_KEY=$(edge_channel_key "${EDGE_NODE_NAME:-goproxify-edge}" "$P")"
+  echo "GPX_PORTAL_MASTER_KEY=$(hex32)"
   echo ""
   echo -e "${DIM}Copiez dans Portainer (stack.env) ou .env — ne les committez pas.${RESET}"
   exit 0
@@ -521,6 +538,6 @@ success "Conteneurs running : ${running}"
 
 echo ""
 echo -e "${GREEN}${BOLD}Prêt.${RESET} Ouvrez ${BOLD}http://localhost:${ADMIN_PORT}${RESET}"
-echo -e "  Appairage passerelle/Agent : automatique via ${BOLD}GPX_PAIRING_SECRET${RESET} (passerelle) et ${BOLD}GPX_AGENT_PAIRING_KEY${RESET} (Agent), même .env."
+echo -e "  Appairage : la passerelle utilise ${BOLD}GPX_EDGE_CHANNEL_KEY${RESET} et l'Agent ${BOLD}GPX_AGENT_PAIRING_KEY${RESET}, dérivées de ${BOLD}GPX_PAIRING_SECRET${RESET} que seul l'Admin détient."
 echo -e "  ${DIM}Ne committez pas .env — secrets à usage unique affichés uniquement à la génération.${RESET}"
 echo ""

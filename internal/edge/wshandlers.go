@@ -4,31 +4,32 @@
 package edge
 
 import (
-	"github.com/vincamok/goproxify/internal/edge/plugins"
 	"context"
 	"encoding/json"
+	"github.com/vincamok/goproxify/internal/edge/plugins"
 	"time"
 
 	edgeagent "github.com/vincamok/goproxify/internal/edge/agent"
-	"github.com/vincamok/goproxify/internal/edge/errorpages"
 	edgecrowdsec "github.com/vincamok/goproxify/internal/edge/crowdsec"
+	"github.com/vincamok/goproxify/internal/edge/errorpages"
 	edgef2b "github.com/vincamok/goproxify/internal/edge/fail2ban"
-	edgere "github.com/vincamok/goproxify/internal/edge/rulesengine"
 	"github.com/vincamok/goproxify/internal/edge/metrics"
 	"github.com/vincamok/goproxify/internal/edge/portal"
 	"github.com/vincamok/goproxify/internal/edge/router"
+	edgere "github.com/vincamok/goproxify/internal/edge/rulesengine"
+	"github.com/vincamok/goproxify/internal/edge/siem"
 	"github.com/vincamok/goproxify/internal/edge/threat"
-	"github.com/vincamok/goproxify/internal/edge/waf"
-	edgetokens "github.com/vincamok/goproxify/internal/edge/tokens"
 	edgetls "github.com/vincamok/goproxify/internal/edge/tls"
+	edgetokens "github.com/vincamok/goproxify/internal/edge/tokens"
+	"github.com/vincamok/goproxify/internal/edge/waf"
 	edgews "github.com/vincamok/goproxify/internal/edge/ws"
 )
 
 // --- Handlers WebSocket plan de contrôle ------------------------------------
 
-// handleWSAdminMessage traite les messages reçus d'un Admin via WS.
+// applyAdminMessage applique un message de l'Admin, ou le même document rattrapé auprès d'un pair du groupe HA.
 // Les types de messages correspondent aux mêmes payloads que les endpoints HTTP.
-func (s *Server) handleWSAdminMessage(connID string, msg edgews.Message) error {
+func (s *Server) applyAdminMessage(connID string, msg edgews.Message) error {
 	switch msg.Type {
 	case edgews.TypePushRoutes:
 		var routes []*router.Route
@@ -113,6 +114,20 @@ func (s *Server) handleWSAdminMessage(connID string, msg edgews.Message) error {
 			return err
 		}
 		s.applyDelegationRoutes(routes)
+
+	case edgews.TypeASNOffer:
+		var p edgews.ASNOfferPayload
+		if err := json.Unmarshal(msg.Payload, &p); err != nil {
+			return err
+		}
+		s.handleASNOffer(p)
+
+	case edgews.TypePushASN:
+		var c edgews.ASNChunkPayload
+		if err := json.Unmarshal(msg.Payload, &c); err != nil {
+			return err
+		}
+		s.applyASNChunk(c)
 
 	case edgews.TypePushPlugins:
 		var pkgs []plugins.Package
@@ -199,6 +214,20 @@ func (s *Server) handleWSAdminMessage(connID string, msg edgews.Message) error {
 		}
 		s.log.Info("fail2ban: config mise à jour", "enabled", cfg.Enabled)
 
+	case edgews.TypePushLogRetention:
+		var p edgews.LogRetentionPayload
+		if err := json.Unmarshal(msg.Payload, &p); err != nil {
+			return err
+		}
+		return s.applyLogRetention(p)
+
+	case edgews.TypePushSIEMConfig:
+		var cfg siem.Config
+		if err := json.Unmarshal(msg.Payload, &cfg); err != nil {
+			return err
+		}
+		return s.applySIEMConfig(cfg)
+
 	case edgews.TypePushThreatConfig:
 		var cfg threat.Config
 		if err := json.Unmarshal(msg.Payload, &cfg); err != nil {
@@ -258,6 +287,13 @@ func (s *Server) handleWSAdminMessage(connID string, msg edgews.Message) error {
 			return err
 		}
 		s.log.Info("ws/admin: pages d'erreur mises à jour", "count", len(tpls))
+
+	case edgews.TypePushGroupCard:
+		var card edgews.GroupCard
+		if err := json.Unmarshal(msg.Payload, &card); err != nil {
+			return err
+		}
+		return s.applyGroupCard(card)
 
 	case edgews.TypePushPortalTemplates:
 		var tpls []portal.PageTemplate
@@ -334,7 +370,7 @@ func (s *Server) handleWSAdminMessage(connID string, msg edgews.Message) error {
 			return err
 		}
 		if p.Token != "" {
-			if err := s.tokenStore.EnsureToken("admin-ws", p.Token, edgetokens.RoleAdmin); err != nil {
+			if err := s.tokenStore.EnsureToken(adminWSTokenName, p.Token, edgetokens.RoleAdmin); err != nil {
 				s.log.Warn("ws/admin: enregistrement token Admin échoué", "err", err)
 			} else {
 				s.log.Debug("ws/admin: token Admin enregistré dans le store")
@@ -343,6 +379,13 @@ func (s *Server) handleWSAdminMessage(connID string, msg edgews.Message) error {
 			s.adminToken = p.Token
 			s.adminTokenMu.Unlock()
 		}
+
+	case edgews.TypeRevokeStaleAdminTokens:
+		var p edgews.AdminTokenPayload
+		if err := json.Unmarshal(msg.Payload, &p); err != nil {
+			return err
+		}
+		return s.revokeStaleAdminTokens(p.Token)
 
 	case edgews.TypePushClusterPeers:
 		var peers map[string]string
@@ -372,6 +415,9 @@ func (s *Server) handleWSAdminMessage(connID string, msg edgews.Message) error {
 
 	case edgews.TypeLogResume:
 		return s.handleLogResume(connID, msg.Payload)
+
+	case edgews.TypeLogLive:
+		return s.handleLogLive(connID, msg.Payload)
 
 	default:
 		s.log.Debug("ws/admin: message inconnu ignoré", "type", msg.Type)

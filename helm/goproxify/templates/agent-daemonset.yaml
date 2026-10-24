@@ -47,6 +47,14 @@ spec:
                 secretKeyRef:
                   name: {{ include "goproxify.fullname" . }}-secret
                   key: agent-pairing-key
+            {{- if .Values.global.previousPairingSecret }}
+            # Rotation du secret : les clés des Agents dérivées des secrets précédents, acceptées le temps de la bascule.
+            - name: GPX_AGENT_PAIRING_KEY_PREVIOUS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "goproxify.fullname" . }}-secret
+                  key: previous-agent-pairing-key
+            {{- end }}
             {{- if .Values.security.edgeHostNetwork }}
             # La passerelle de ce nœud écoute sur l'hôte (hostNetwork) : l'Agent la joint par l'adresse du nœud.
             - name: GPX_HOST_IP

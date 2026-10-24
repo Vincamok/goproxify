@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/vincamok/goproxify/internal/admin/api"
+	"github.com/vincamok/goproxify/internal/admin/prismedge"
 	"github.com/vincamok/goproxify/internal/admin/security"
 )
 
@@ -40,7 +41,7 @@ func (h *Handler) toolPreviewSecurityBan(r *http.Request, args map[string]any) (
 	if hours > 168 {
 		hours = 168
 	}
-	return api.BanPreview(r.Context(), h.DB, t, hours, api.RequesterIP(r))
+	return api.BanPreview(r.Context(), h.DB, &prismedge.Source{DB: h.DB}, t, hours, api.RequesterIP(r))
 }
 
 // banTarget valide la cible d'un ban demandé par un outil MCP : IP ou CIDR normalisé, refus d'une

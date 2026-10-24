@@ -59,6 +59,33 @@ func TestMergePushPreservingFileProxies(t *testing.T) {
 	}
 }
 
+// Un envoi de routes de l'Admin remplace la table : les routes que seuls les Agents publient doivent y survivre, quelle
+// que soit leur source. Portainer et Podman en étaient absentes et disparaissaient jusqu'au scan suivant de l'Agent.
+func TestRoutePushKeepsEveryDiscoveredSource(t *testing.T) {
+	s := &Server{table: &router.Table{}}
+	ids := []string{"docker:a", "docker-host:b.example.fr", "k8s:c", "portainer:1:abcdef012345:d.example.fr", "podman:e"}
+	for _, id := range ids {
+		s.table.Upsert(&router.Route{ID: id, Host: id + ".local", Type: router.RouteHTTP})
+	}
+	s.table.Upsert(&router.Route{ID: "stale-admin", Host: "stale.example.fr", Type: router.RouteHTTP})
+
+	routes := s.mergePushPreservingFileProxies([]*router.Route{{ID: "manual-admin", Host: "admin.example.fr", Type: router.RouteHTTP}})
+	if err := s.table.Replace(routes); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range ids {
+		if _, ok := s.table.ByID(id); !ok {
+			t.Errorf("la route %q a disparu après un envoi de routes de l'Admin", id)
+		}
+	}
+	if _, ok := s.table.ByID("manual-admin"); !ok {
+		t.Error("la route envoyée par l'Admin manque")
+	}
+	if _, ok := s.table.ByID("stale-admin"); ok {
+		t.Error("une route de l'Admin retirée de l'envoi doit disparaître")
+	}
+}
+
 func TestProxyAPICreateDryRunPromote(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("GPX_DATA_PATH", root)

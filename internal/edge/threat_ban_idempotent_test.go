@@ -37,9 +37,9 @@ func TestThreatBanCallbackRunsOncePerIPPerMinute(t *testing.T) {
 	cb := s.threatBanCallback()
 	exp := time.Now().Add(time.Hour)
 	for i := 0; i < 50; i++ {
-		cb("203.0.113.9", "threat: path", exp)
+		cb("203.0.113.9", "threat: path", exp, nil)
 	}
-	cb("203.0.113.10", "threat: path", exp)
+	cb("203.0.113.10", "threat: path", exp, nil)
 
 	data, _ := os.ReadFile(logFile)
 	if n := strings.Count(string(data), "IP bannie"); n != 2 {

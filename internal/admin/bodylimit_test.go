@@ -54,3 +54,15 @@ func TestLimitRequestBodies_AnnouncedSizeRefusedUpFront(t *testing.T) {
 		t.Errorf("code=%d appelé=%v : une taille annoncée trop grande doit être refusée avant le handler", rec.Code, called)
 	}
 }
+
+// L'import d'une sauvegarde reçoit un snapshot entier : sa borne est celle du handler, pas les 64 Mio des autres routes.
+func TestBodyLimitForTheBackupImportRoutes(t *testing.T) {
+	for _, p := range []string{"/api/v1/import/backup/preview", "/api/v1/import/backup/apply"} {
+		if got := bodyLimitFor(p); got != maxImportBody {
+			t.Errorf("%s : %d", p, got)
+		}
+	}
+	if bodyLimitFor("/api/v1/import/config/parse") != maxAPIBody || bodyLimitFor("/api/v1/auth/login") != maxPublicBody {
+		t.Error("les autres routes gardent leur borne")
+	}
+}

@@ -24,6 +24,7 @@ import (
 	agentdocker "github.com/vincamok/goproxify/internal/agent/docker"
 	"github.com/vincamok/goproxify/internal/agent/edgeset"
 	agentsources "github.com/vincamok/goproxify/internal/agent/sources"
+	"github.com/vincamok/goproxify/internal/agent/statepub"
 	"github.com/vincamok/goproxify/internal/agent/telemetry"
 	"github.com/vincamok/goproxify/internal/agent/wsclient"
 	"github.com/vincamok/goproxify/internal/buildinfo"
@@ -56,6 +57,9 @@ type Agent struct {
 // agentEdgesPath conserve les autres membres du groupe HA annoncés par la passerelle.
 const agentEdgesPath = "/etc/goproxify/agent-edges.json"
 
+// agentStateGenPath conserve la dernière génération d'état complet envoyée : un Agent redémarré ne repart pas en dessous.
+const agentStateGenPath = "/etc/goproxify/agent-state-generation"
+
 // New crée un Agent à partir de la config.
 func New(cfg *config.AgentConfig, cfgPath string) (*Agent, error) {
 	cfg.Identity.NodeName = nodeident.Resolve("agent")
@@ -75,7 +79,7 @@ func New(cfg *config.AgentConfig, cfgPath string) (*Agent, error) {
 	// Sources de découverte (Docker/Podman, Portainer, Kubernetes… : modules du registre
 	// internal/agent/sources). Docker reste actif avec une ancienne config qui définit
 	// docker.runtime ; Docker est désactivable via docker.enabled: false.
-	srcs := agentsources.BuildBuiltin(agentsources.Deps{Cfg: cfg, Log: log, Docker: client, Net: netMgr, Edges: edges})
+	srcs := agentsources.BuildBuiltin(agentsources.Deps{Cfg: cfg, Log: log, Docker: client, Net: netMgr, Edges: edges, State: statepub.New(cfg.Identity.NodeName, agentStateGenPath)})
 	var disc *agentdocker.Discovery
 	for _, s := range srcs {
 		if d, ok := s.Impl.(*agentdocker.Discovery); ok {
@@ -217,9 +221,19 @@ func (a *Agent) pairingCredential() string {
 // setInternalAuth déclare les Bearer que l'API interne de l'Agent accepte : la clé d'appairage et sa dérivée (ce que
 // l'Admin et la passerelle envoient), plus le jeton de la passerelle.
 func (a *Agent) setInternalAuth(token string) {
-	cred, _ := pairing.AgentCredential()
-	accepted := append(pairing.AgentAccepts(cred), token)
+	accepted := append(pairing.AgentBearers(), token)
 	a.internalAPI.setAuthTokens(accepted...)
+}
+
+// pairingCredentials : la clé d'appairage courante, puis les précédentes d'une rotation en cours.
+func (a *Agent) pairingCredentials() []string {
+	_ = a.pairingCredential() // avertit si l'Agent détient le secret racine
+	creds, _ := pairing.AgentCredentials()
+	out := make([]string, 0, len(creds))
+	for _, c := range creds {
+		out = append(out, c.Value)
+	}
+	return out
 }
 
 // pairWithEdge obtient un token Agent auprès de la passerelle locale avec la clé d'appairage.
@@ -229,8 +243,8 @@ func (a *Agent) pairWithEdge(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("GPX_CONTROL_PLANE_EDGE_ENDPOINT non défini")
 	}
 	// La clé d'appairage est obligatoire (fail-closed côté passerelle/Admin).
-	secret := a.pairingCredential()
-	if secret == "" {
+	creds := a.pairingCredentials()
+	if len(creds) == 0 {
 		return "", fmt.Errorf("GPX_AGENT_PAIRING_KEY non défini")
 	}
 
@@ -239,50 +253,62 @@ func (a *Agent) pairWithEdge(ctx context.Context) (string, error) {
 		nodeName = "agent-1"
 	}
 
-	payload, _ := json.Marshal(map[string]string{
-		"secret":    secret,
-		"node_name": nodeName,
-		"role":      "agent",
-	})
+	var lastErr error
+	for i, secret := range creds {
+		payload, _ := json.Marshal(map[string]string{
+			"secret":    secret,
+			"node_name": nodeName,
+			"role":      "agent",
+		})
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		a.edges.Current()+"/internal/v1/pair", bytes.NewReader(payload))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("edge injoignable: %w", err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		if resp.StatusCode == http.StatusForbidden {
-			return "", fmt.Errorf("appairage refusé : secret invalide")
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+			a.edges.Current()+"/internal/v1/pair", bytes.NewReader(payload))
+		if err != nil {
+			return "", err
 		}
-		if resp.StatusCode == http.StatusServiceUnavailable {
-			return "", fmt.Errorf("appairage refusé : pairing non configuré côté passerelle")
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("edge injoignable: %w", err)
 		}
-		return "", fmt.Errorf("appairage passerelle échoué: status %d", resp.StatusCode)
-	}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
 
-	var result struct {
-		Token string `json:"token"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil || result.Token == "" {
-		return "", fmt.Errorf("réponse appairage invalide")
-	}
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+			if resp.StatusCode == http.StatusForbidden {
+				// Pendant une rotation, la passerelle peut n'avoir encore que l'autre clé : on essaie la suivante.
+				lastErr = fmt.Errorf("appairage refusé : secret invalide")
+				if i < len(creds)-1 {
+					continue
+				}
+				return "", lastErr
+			}
+			if resp.StatusCode == http.StatusServiceUnavailable {
+				return "", fmt.Errorf("appairage refusé : pairing non configuré côté passerelle")
+			}
+			return "", fmt.Errorf("appairage passerelle échoué: status %d", resp.StatusCode)
+		}
 
-	if err := os.WriteFile(agentTokenPath, []byte(result.Token), 0600); err != nil {
-		a.log.Warn("agent: impossible de persister le token passerelle", "err", err)
+		var result struct {
+			Token string `json:"token"`
+		}
+		if err := json.Unmarshal(body, &result); err != nil || result.Token == "" {
+			return "", fmt.Errorf("réponse appairage invalide")
+		}
+
+		if err := os.WriteFile(agentTokenPath, []byte(result.Token), 0600); err != nil {
+			a.log.Warn("agent: impossible de persister le token passerelle", "err", err)
+		}
+		a.cfg.ControlPlane.AuthToken = result.Token
+		a.setInternalAuth(result.Token)
+		if i > 0 {
+			a.log.Warn("agent: appairé avec une clé précédente — rotation en cours, mettre GPX_AGENT_PAIRING_KEY à la clé courante de la passerelle")
+		}
+		a.log.Info("agent: appairage passerelle réussi — token obtenu et persisté", "node", nodeName)
+		return result.Token, nil
 	}
-	a.cfg.ControlPlane.AuthToken = result.Token
-	a.setInternalAuth(result.Token)
-	a.log.Info("agent: appairage passerelle réussi — token obtenu et persisté", "node", nodeName)
-	return result.Token, nil
+	return "", lastErr
 }
 
 // pairWithAdmin obtient un token Agent auprès de l'Admin avec la clé d'appairage.
@@ -315,6 +341,10 @@ func (a *Agent) pairWithAdmin(ctx context.Context) (string, error) {
 			return "", err
 		}
 		req.Header.Set("Content-Type", "application/json")
+		// Un Agent déjà appairé présente son jeton : sans lui, l'Admin ne le lui rend pas et attend l'approbation.
+		if tok := a.resolveAuthToken(); tok != "" {
+			req.Header.Set("Authorization", "Bearer "+tok)
+		}
 
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {

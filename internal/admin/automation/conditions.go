@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vincamok/goproxify/internal/admin/logs"
 	"github.com/vincamok/goproxify/internal/modules"
 	"github.com/vincamok/goproxify/internal/sqltime"
 )
@@ -235,13 +236,13 @@ func evalProxyErrorRate(ctx context.Context, s *Service, cfg map[string]any) (bo
 		return false, nil, err
 	}
 	threshold := cfgFloat(cfg, "error_rate_threshold", 20)
-	// logs.ts est en RFC3339 (exception documentée de sqltime).
+	// Lus dans les cumuls par minute que calculent les passerelles : la fenêtre commence à la minute qui contient son début.
 	query := `
-		SELECT p.id, p.name, COUNT(*) AS total, SUM(CASE WHEN l.status >= 500 THEN 1 ELSE 0 END)
-		FROM logs l
+		SELECT p.id, p.name, SUM(l.requests) AS total, SUM(CASE WHEN l.status >= 500 THEN l.requests ELSE 0 END)
+		FROM logs_minute l
 		JOIN proxies p ON p.enabled=1 AND (l.domain='' OR l.domain=json_extract(p.config,'$.domain'))
-		WHERE l.ts >= ? AND l.status > 0`
-	args := []any{time.Now().Add(-d).UTC().Format(time.RFC3339)}
+		WHERE l.minute >= ?`
+	args := []any{logs.MinuteKey(time.Now().Add(-d))}
 	if id := cfgStr(cfg, "proxy_id"); id != "" {
 		query += ` AND p.id=?`
 		args = append(args, id)

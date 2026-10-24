@@ -68,6 +68,25 @@ type consulHealth struct {
 		Tags    []string          `json:"Tags"`
 		Meta    map[string]string `json:"Meta"`
 	} `json:"Service"`
+	Checks []struct {
+		Status string `json:"Status"`
+	} `json:"Checks"`
+}
+
+// state rend l'état de santé d'une instance : vide si tous ses contrôles sont au vert, sinon le pire (critical avant
+// warning).
+func (h consulHealth) state() string {
+	state := ""
+	for _, c := range h.Checks {
+		switch strings.ToLower(c.Status) {
+		case "passing", "":
+		case "critical":
+			return "critical"
+		default:
+			state = strings.ToLower(c.Status)
+		}
+	}
+	return state
 }
 
 func (c *Consul) List(ctx context.Context) ([]Instance, error) {
@@ -90,9 +109,9 @@ func (c *Consul) List(ctx context.Context) ([]Instance, error) {
 
 	var out []Instance
 	for _, name := range names {
-		healthURL := c.cfg.Address + "/v1/health/service/" + url.PathEscape(name) + "?passing=1"
+		healthURL := c.cfg.Address + "/v1/health/service/" + url.PathEscape(name)
 		if q := c.query(); q != "" {
-			healthURL += "&" + q
+			healthURL += "?" + q
 		}
 		var entries []consulHealth
 		if _, err := doJSON(ctx, c.client, http.MethodGet, healthURL, hdr, nil, &entries); err != nil {
@@ -117,7 +136,7 @@ func (c *Consul) List(ctx context.Context) ([]Instance, error) {
 			if id == "" {
 				id = e.Service.Service
 			}
-			out = append(out, Instance{Key: id + "@" + e.Node.Node, Name: e.Service.Service + " (" + shortAddr(be) + ")", Backend: be, Labels: labels})
+			out = append(out, Instance{Key: id + "@" + e.Node.Node, Name: e.Service.Service + " (" + shortAddr(be) + ")", Backend: be, Labels: labels, Inactive: e.state()})
 		}
 	}
 	return out, nil

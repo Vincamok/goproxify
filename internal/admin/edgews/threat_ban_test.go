@@ -4,6 +4,7 @@
 package edgews
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
+	"github.com/vincamok/goproxify/internal/edge/router"
 	edgeWS "github.com/vincamok/goproxify/internal/edge/ws"
 )
 
@@ -50,5 +52,46 @@ func TestHandleThreatBanKeepsTheBanSource(t *testing.T) {
 		if bansSrc != src || histSrc != src || id != src+"-"+ip {
 			t.Errorf("%s : id=%q source=%q historique=%q, attendu source %q", ip, id, bansSrc, histSrc, src)
 		}
+	}
+}
+
+func TestHandleThreatBanStoresAndRelaysTheSignals(t *testing.T) {
+	db, err := admindb.Open(filepath.Join(t.TempDir(), "admin.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	m := NewManager("", db, slog.Default())
+	exp := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+
+	signals := []router.BanSignal{
+		{Name: "custom_path", Points: 6, Value: "/wp-login.php"},
+		{Name: "error4xx", Points: 2.5, Value: "404 /x"},
+		{Name: "", Points: 3},                            // sans nom : écarté
+		{Name: "rate", Points: -4, Value: "\xff\xfe-ko"}, // négatif ramené à 0, UTF-8 invalide nettoyé
+	}
+	raw, _ := json.Marshal(edgeWS.ThreatBanPayload{IP: "203.0.113.1", Reason: "threat: score cumulé", ExpiresAt: exp, NodeName: "paris", Signals: signals})
+	m.handleThreatBan(raw)
+
+	list, err := m.loadActiveBans(context.Background(), nil)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("%v %+v", err, list)
+	}
+	got := list[0].Signals
+	if len(got) != 3 || got[0] != signals[0] || got[1] != signals[1] || got[2].Name != "rate" || got[2].Points != 0 {
+		t.Fatalf("signaux relayés aux passerelles : %+v", got)
+	}
+	var hist string
+	if err := db.QueryRow(`SELECT signals FROM security_ban_history WHERE ip = ?`, "203.0.113.1").Scan(&hist); err != nil || hist == "" {
+		t.Fatalf("historique sans signaux : %q %v", hist, err)
+	}
+
+	// Un nouveau ban de la même IP remplace l'explication.
+	raw, _ = json.Marshal(edgeWS.ThreatBanPayload{IP: "203.0.113.1", Reason: "threat: rate excessif", ExpiresAt: exp, NodeName: "paris",
+		Signals: []router.BanSignal{{Name: "rate", Points: 4}}})
+	m.handleThreatBan(raw)
+	list, _ = m.loadActiveBans(context.Background(), nil)
+	if len(list) != 1 || len(list[0].Signals) != 1 || list[0].Signals[0].Name != "rate" {
+		t.Fatalf("explication non remplacée : %+v", list)
 	}
 }

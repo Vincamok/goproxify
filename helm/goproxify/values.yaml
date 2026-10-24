@@ -14,6 +14,9 @@ global:
   # plugins : un plugin non signé par l'une d'elles est refusé, même poussé par l'Admin. Vide : seule l'empreinte est
   # contrôlée. Les plugins intégrés de l'Admin ne sont pas signés et sont alors refusés. Voir docs/plugins.md.
   pluginTrustedKeys: ""
+  # Clé maître du portail Access (coffres des comptes SSO). Obligatoire avec security.edgeWithoutRootSecret si le portail est
+  # utilisé : sans le secret racine, la passerelle ne peut plus la dériver. Mettez-y la valeur actuelle du secret de couplage.
+  portalMasterKey: ""
   # Ancien nom de pairingSecret, encore lu s'il est renseigné.
   authToken: ""
   # Fuseau horaire des pods (crons, logs locaux, horloge admin)
@@ -137,6 +140,11 @@ security:
   # Accepter qu'un Agent s'appaire avec le secret racine (anciennes installations qui le lui ont donné). Défaut false :
   # l'Agent reçoit la clé dérivée (secret agent-pairing-key), qui ne permet pas de se faire passer pour l'Admin.
   agentPairingWithRootSecret: false
+  # La passerelle ne reçoit PAS le secret racine : seulement sa clé de canal (dérivée de son nom) et la clé des Agents. Une
+  # passerelle compromise ne peut plus se faire passer pour l'Admin auprès des autres. Exige edge.kind=Deployment : la clé
+  # dépend du nom de la passerelle, que le chart ne connaît d'avance que pour un Deployment (un DaemonSet se nomme d'après le
+  # nœud, connu au démarrage seulement). Pose aussi GPX_EDGE_CHANNEL_ROOT_FALLBACK=false sur l'Admin. Voir docs/deployment.md.
+  edgeWithoutRootSecret: false
   # Admin : utilisateur non privilégié (l'image n'en déclare pas, elle tournait en root), profil seccomp du runtime,
   # aucune capacité. 0 = revenir à root. readOnlyRootFilesystem n'est pas activé par défaut : à tester avec vos
   # usages (sauvegardes, GeoIP) ; /tmp est déjà un volume.

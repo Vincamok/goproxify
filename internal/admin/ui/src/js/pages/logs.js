@@ -468,6 +468,7 @@ async function renderStaticLogs() {
       <div id="logs-hist"></div>
       <div id="logs-filter-chips" class="filter-chips" hidden></div>
     </div>
+    <div id="logs-source-note"></div>
     <div class="logs-split">
       <div class="card blueprint logs-table-card" style="padding:0;overflow:hidden">
         <div class="logs-desktop table-wrap">
@@ -603,22 +604,38 @@ function prismIconBtn(domain, ip) {
   </button>`;
 }
 
-// loadStaticLogs charge une page de logs.
-// beforeID=0 → première page (réinitialise le curseur).
-// beforeID>0 → page suivante via keyset (id < beforeID).
-// beforeID<0 → page précédente (dépile logsCursorStack).
-async function loadStaticLogs(beforeID) {
-  if (beforeID === 0) {
-    logsCursorStack = [];
-    logsCurrentLastID = 0;
-  } else if (beforeID < 0) {
-    // Retour arrière : dépiler
-    beforeID = logsCursorStack.pop() || 0;
-    logsCurrentLastID = 0;
-  }
+// Les lignes viennent de la base de logs de chaque passerelle (source=edge, ADR 0012) : l'Admin interroge toutes
+// celles qui sont visées, fusionne leurs pages et renvoie un `cursor` opaque. L'audit et les logs de l'Admin lui-même
+// (component=admin) sont fusionnés dans la même réponse.
+let logsPageToken = null; // cursor de la page affichée ; null = première page
+let logsNextToken = null; // cursor de la page suivante ; null = dernière page
 
-  const params = new URLSearchParams({ page_size: 50 });
-  if (beforeID > 0) params.set('before_id', beforeID);
+// Bandeau sous les filtres : recherche partielle (délai d'une passerelle dépassé) ou passerelles injoignables.
+function renderLogsSourceNote(data) {
+  const el = document.getElementById('logs-source-note');
+  if (!el) return;
+  const notes = [];
+  const down = (data?.unreachable || []).map(n => n.node_name || n.node_id).filter(Boolean);
+  if (down.length) notes.push(t('logs.unreachable_note', { nodes: down.join(', ') }));
+  if (data?.partial) notes.push(t('logs.partial_note'));
+  if (!notes.length) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="logs-source-note" style="margin-bottom:12px;padding:8px 12px;background:color-mix(in srgb,var(--yellow) 10%,transparent);border:1px solid color-mix(in srgb,var(--yellow) 32%,transparent);border-radius:6px;font-size:12px;color:var(--text2);">${notes.map(esc).join('<br>')}</div>`;
+}
+
+// loadStaticLogs charge une page de logs.
+// token=0 → première page (réinitialise la pile) ; token=-1 → page précédente (dépile) ;
+// sinon → page désignée par ce cursor.
+async function loadStaticLogs(token) {
+  if (token === 0) {
+    logsCursorStack = [];
+    token = null;
+  } else if (token === -1) {
+    token = logsCursorStack.length ? logsCursorStack.pop() : null;
+  }
+  logsPageToken = token;
+
+  const params = new URLSearchParams({ page_size: 50, source: 'edge' });
+  if (token) params.set('cursor', token);
   params.set('kind', logsScope.kind || logsFilters.kind || 'access');
   if (logsScope.node_id) { params.set('node_id', logsScope.node_id); if (logsScope.node_name) params.set('node_name', logsScope.node_name); }
   else if (logsScope.node_name) params.set('node_name', logsScope.node_name);
@@ -635,9 +652,8 @@ async function loadStaticLogs(beforeID) {
   try {
     const data = await api('GET', '/logs?' + params);
     const entries = data?.entries || [];
-    const hasMore = data?.has_more || false;
-    const lastID = data?.last_id || 0;
-    logsCurrentLastID = lastID;
+    logsNextToken = data?.has_more ? (data?.cursor || null) : null;
+    renderLogsSourceNote(data);
 
     const tbody = document.getElementById('logs-tbody');
     const list = document.getElementById('logs-list');
@@ -657,10 +673,15 @@ async function loadStaticLogs(beforeID) {
     const pager = document.getElementById('logs-pager');
     if (pager) pager.innerHTML =
       `${hasPrev ? `<button class="btn btn-secondary btn-sm" onclick="loadStaticLogs(-1)">${t('logs.prev')}</button>` : ''}
-       ${hasMore ? `<button class="btn btn-secondary btn-sm" onclick="logsCursorStack.push(${beforeID||0});loadStaticLogs(${lastID})">${t('logs.next')}</button>` : ''}`;
+       ${logsNextToken ? `<button class="btn btn-secondary btn-sm" onclick="logsPageNext()">${t('logs.next')}</button>` : ''}`;
   } catch(e) { toast(e.message, 'error'); }
 }
 window.loadStaticLogs = loadStaticLogs;
+window.logsPageNext = function() {
+  if (!logsNextToken) return;
+  logsCursorStack.push(logsPageToken);
+  loadStaticLogs(logsNextToken);
+};
 
 // Réglages de rétention : modale (remplace l'ancien onglet Paramètres). Les deux durées
 // (accès / système) sont celles réellement lues par le backend (GET/PUT /logs/settings) —
@@ -676,8 +697,32 @@ window.openLogsSettingsModal = async function() {
           <input type="radio" name="log-ip-mode" value="${m}" ${mode === m ? 'checked' : ''} style="margin-top:3px">
           <span>${esc(t('logs.ip_mode_' + m))}</span>
         </label>`;
+    const er = s.edge_retention || {};
+    const reported = Object.fromEntries((er.edges || []).map(e => [e.node_name, e]));
+    const names = [...new Set([...Object.keys(reported), ...Object.keys(er.nodes || {})])].sort();
+    const edgeRow = n => {
+      const r = reported[n], o = (er.nodes || {})[n] || {};
+      return `<tr data-edge-row="${esc(n)}"><td>${esc(n)}${r?.stale ? ` <span style="color:var(--amber)">(${esc(t('logs.siem_stale'))})</span>` : ''}</td>
+        <td>${r ? r.access_days + ' / ' + r.system_days : '—'}</td>
+        <td><input type="number" class="input" data-edge-ovr="access" min="1" max="3650" style="width:90px" value="${o.access_days || ''}" placeholder="${er.access_days ?? 365}"></td>
+        <td><input type="number" class="input" data-edge-ovr="system" min="1" max="3650" style="width:90px" value="${o.system_days || ''}" placeholder="${er.system_days ?? 90}"></td></tr>`;
+    };
+    const edgeRows = names.length
+      ? `<table class="table" style="font-size:13px;margin-top:8px"><thead><tr><th>${t('logs.node')}</th><th>${t('logs.edge_retention_applied')}</th><th>${t('logs.edge_retention_access')}</th><th>${t('logs.edge_retention_system')}</th></tr></thead><tbody>${names.map(edgeRow).join('')}</tbody></table>`
+      : `<p style="font-size:12px;color:var(--text2)">${esc(t('logs.edge_retention_none'))}</p>`;
     const body = `
       <div class="field" style="margin-bottom:14px">
+        <label class="field-label">${t('logs.edge_retention_title')}</label>
+        <div style="display:flex;gap:16px;flex-wrap:wrap">
+          <div><span style="font-size:12px;color:var(--text2)">${t('logs.edge_retention_access')}</span><br>
+            <input id="log-edge-access" type="number" class="input" value="${er.access_days ?? 365}" min="1" max="3650" style="width:120px"></div>
+          <div><span style="font-size:12px;color:var(--text2)">${t('logs.edge_retention_system')}</span><br>
+            <input id="log-edge-system" type="number" class="input" value="${er.system_days ?? 90}" min="1" max="3650" style="width:120px"></div>
+        </div>
+        <p style="font-size:12px;color:var(--text2);margin-top:8px">${esc(t('logs.edge_retention_hint'))}</p>
+        ${edgeRows}
+      </div>
+      <div class="field" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);margin-bottom:14px">
         <label class="field-label">${t('logs.retention_access')}</label>
         <input id="log-retention-access" type="number" class="input" value="${s.retention_access_days ?? 30}" min="1" max="3650" style="width:120px">
       </div>
@@ -690,6 +735,15 @@ window.openLogsSettingsModal = async function() {
         <label class="field-label">${t('logs.ip_protection')}</label>
         ${['none', 'anonymize', 'pseudonymize'].map(ipOpt).join('')}
         <p style="font-size:12px;color:var(--text2);margin-top:6px">${esc(t('logs.ip_mode_hint'))}</p>
+      </div>
+      <div class="field" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+        <label class="field-label">${t('logs.access_lines')}</label>
+        <p style="font-size:12px;color:var(--text2)">${esc(t('logs.access_lines_hint'))}</p>
+      </div>
+      <div class="field" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+        <label class="field-label">${t('logs.siem_title')}</label>
+        <button class="btn btn-secondary btn-sm" onclick="openSIEMModal()">${esc(t('logs.siem_btn'))}</button>
+        <p style="font-size:12px;color:var(--text2);margin-top:6px">${esc(t('logs.siem_hint'))}</p>
       </div>`;
     modal(t('logs.tab_settings'), body,
       `<button class="btn btn-secondary" onclick="closeModal()">${t('common.cancel')}</button>
@@ -705,13 +759,138 @@ window.saveLogsSettings = async function() {
     await api('PUT', '/logs/settings', {
       retention_access_days: access, retention_system_days: sys,
       ip_anonymize: mode === 'anonymize', ip_pseudonymize: mode === 'pseudonymize',
+      edge_retention: collectEdgeRetention(),
     });
     toast(t('logs.settings_saved'), 'success');
     closeModal();
-    logsRetention = { access, system: sys };
-    logsRetentionLoaded = true;
+    logsRetentionLoaded = false;
+    await ensureLogsRetention();
     if (logsActiveTab === 'static') refreshLogsView();
   } catch(e) { toast(e.message, 'error'); }
+};
+
+// Exporteur SIEM (ADR 0012) : chaque passerelle exporte seule ses logs avec son propre curseur ; l'Admin pousse la
+// configuration (GET/PUT /logs/siem, jetons masqués) et affiche l'état rapporté par les passerelles.
+let siemDraft = null;
+let siemStatus = [];
+
+function siemLag(sec) {
+  if (!sec) return '0';
+  return sec < 90 ? sec + ' s' : sec < 5400 ? Math.round(sec / 60) + ' min' : Math.round(sec / 3600) + ' h';
+}
+
+function siemDestHTML(d, i) {
+  const kinds = d.kinds && d.kinds.length ? d.kinds : ['access', 'system'];
+  const sys = d.type === 'syslog';
+  const hdr = Object.entries(d.headers || {}).map(([k, v]) => k + ': ' + v).join('\n');
+  const row = (label, input, hint) => `<div class="field" style="margin-bottom:8px"><label class="field-label">${esc(t(label))}</label>${input}${hint ? `<p style="font-size:12px;color:var(--text2);margin-top:4px">${esc(t(hint))}</p>` : ''}</div>`;
+  const chk = (f, on, label) => `<label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;margin-right:14px"><input type="checkbox" data-f="${f}" ${on ? 'checked' : ''}> ${esc(t(label))}</label>`;
+  return `
+    <div class="siem-dest" data-id="${esc(d.id || '')}" style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <strong>${esc(d.name || t('logs.siem_new'))}</strong>
+        <button class="btn btn-secondary btn-sm" onclick="siemRemoveDest(${i})">${t('common.delete')}</button>
+      </div>
+      ${row('logs.siem_name', `<input class="input" data-f="name" value="${esc(d.name || '')}" maxlength="80">`)}
+      ${row('logs.siem_type', `<select class="input" data-f="type" onchange="siemRender(true)">
+        <option value="http" ${d.type === 'http' || !d.type ? 'selected' : ''}>${esc(t('logs.siem_type_http'))}</option>
+        <option value="otlp" ${d.type === 'otlp' ? 'selected' : ''}>${esc(t('logs.siem_type_otlp'))}</option>
+        <option value="syslog" ${sys ? 'selected' : ''}>${esc(t('logs.siem_type_syslog'))}</option></select>`)}
+      ${row('logs.siem_address', `<input class="input" data-f="address" value="${esc(d.address || '')}" placeholder="${sys ? 'siem.example.com:6514' : d.type === 'otlp' ? 'http://collector.example.com:4318/v1/logs' : 'https://siem.example.com/ingest'}">`)}
+      ${sys ? `<div style="margin-bottom:8px">${chk('tls', d.tls, 'logs.siem_tls')}</div>` : row('logs.siem_headers', `<textarea class="input" data-f="headers" rows="2" placeholder="Authorization: Bearer …">${esc(hdr)}</textarea>`, 'logs.siem_headers_hint')}
+      ${row('logs.siem_ca', `<textarea class="input" data-f="ca_pem" rows="2" placeholder="-----BEGIN CERTIFICATE-----">${esc(d.ca_pem || '')}</textarea>`)}
+      ${row('logs.siem_nodes', `<input class="input" data-f="nodes" value="${esc((d.nodes || []).join(', '))}" placeholder="gw-paris, gw-lyon">`, 'logs.siem_nodes_hint')}
+      <div style="margin-bottom:8px">${chk('kind-access', kinds.includes('access'), 'logs.siem_kind_access')}${chk('kind-system', kinds.includes('system'), 'logs.siem_kind_system')}${chk('security_only', d.security_only, 'logs.siem_security_only')}</div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        ${row('logs.siem_min_level', `<select class="input" data-f="min_level">${['info', 'warn', 'error'].map(l => `<option ${((d.min_level || 'info') === l) ? 'selected' : ''}>${l}</option>`).join('')}</select>`)}
+        ${row('logs.siem_alert_after', `<input class="input" type="number" min="1" data-f="alert_after" value="${d.alert_after_minutes || 60}" style="width:110px">`)}
+        ${d.id ? '' : row('logs.siem_backfill', `<input class="input" type="number" min="0" max="8760" data-f="backfill" value="${d.backfill_hours || 0}" style="width:110px">`, 'logs.siem_backfill_hint')}
+      </div>
+    </div>`;
+}
+
+function siemStatusHTML() {
+  const rows = [];
+  for (const n of siemStatus) {
+    for (const d of (n.destinations || [])) {
+      const bad = d.state !== 'ok' || d.at_risk;
+      rows.push(`<tr><td>${esc(n.node_name)}${n.stale ? ` <span style="color:var(--amber)">(${esc(t('logs.siem_stale'))})</span>` : ''}</td><td>${esc(d.name)}</td>
+        <td style="color:var(${bad ? '--red' : '--green'})">${esc(d.state)}</td><td>${d.delivered}</td><td>${esc(siemLag(d.lag_sec))}${d.at_risk ? ` ⚠ ${esc(t('logs.siem_at_risk'))}` : ''}</td>
+        <td style="font-size:12px;color:var(--text2)">${esc(d.last_error || '')}</td></tr>`);
+    }
+  }
+  if (!rows.length) return `<p style="font-size:13px;color:var(--text2)">${esc(t('logs.siem_no_status'))}</p>`;
+  return `<table class="table" style="font-size:13px"><thead><tr><th>${t('logs.node')}</th><th>${t('logs.siem_name')}</th><th>${t('logs.siem_state')}</th><th>${t('logs.siem_delivered')}</th><th>${t('logs.siem_lag')}</th><th></th></tr></thead><tbody>${rows.join('')}</tbody></table>`;
+}
+
+function siemCollect() {
+  const destinations = [...document.querySelectorAll('.siem-dest')].map(el => {
+    const g = f => el.querySelector(`[data-f="${f}"]`);
+    const kinds = ['access', 'system'].filter(k => g('kind-' + k)?.checked);
+    const d = {
+      id: el.dataset.id || '', name: g('name').value.trim(), type: g('type').value, address: g('address').value.trim(),
+      kinds: kinds.length === 2 ? [] : kinds, min_level: g('min_level').value, security_only: !!g('security_only').checked,
+      alert_after_minutes: parseInt(g('alert_after').value) || 0, ca_pem: g('ca_pem').value.trim(),
+      nodes: g('nodes').value.split(',').map(s => s.trim()).filter(Boolean),
+    };
+    if (d.type === 'syslog') d.tls = !!g('tls')?.checked;
+    else {
+      d.headers = {};
+      (g('headers')?.value || '').split('\n').forEach(line => {
+        const k = line.indexOf(':');
+        if (k > 0) d.headers[line.slice(0, k).trim()] = line.slice(k + 1).trim();
+      });
+    }
+    const bf = parseInt(g('backfill')?.value) || 0;
+    if (bf) d.backfill_hours = bf;
+    return d;
+  });
+  return { enabled: !!document.getElementById('siem-enabled')?.checked, destinations };
+}
+
+window.siemRender = function(keep) {
+  if (keep && document.querySelector('.siem-dest, #siem-enabled')) siemDraft = siemCollect();
+  const d = siemDraft || { enabled: false, destinations: [] };
+  const body = `
+    <label style="display:flex;align-items:center;gap:8px;font-size:14px;margin-bottom:6px"><input id="siem-enabled" type="checkbox" ${d.enabled ? 'checked' : ''}> ${esc(t('logs.siem_enabled'))}</label>
+    <p style="font-size:12px;color:var(--text2);margin-bottom:12px">${esc(t('logs.siem_hint'))}</p>
+    ${d.destinations.map(siemDestHTML).join('')}
+    <button class="btn btn-secondary btn-sm" onclick="siemAddDest()" ${d.destinations.length >= 8 ? 'disabled' : ''}>＋ ${esc(t('logs.siem_add'))}</button>
+    <h4 style="margin:18px 0 8px">${esc(t('logs.siem_status'))}</h4>
+    ${siemStatusHTML()}`;
+  modal(t('logs.siem_title'), body,
+    `<button class="btn btn-secondary" onclick="closeModal()">${t('common.cancel')}</button>
+     <button class="btn btn-primary" onclick="saveSIEM()">${t('common.save')}</button>`, true);
+};
+
+window.siemAddDest = function() {
+  siemDraft = siemCollect();
+  siemDraft.destinations.push({ id: '', name: '', type: 'http', address: '' });
+  siemRender();
+};
+
+window.siemRemoveDest = function(i) {
+  siemDraft = siemCollect();
+  siemDraft.destinations.splice(i, 1);
+  siemRender();
+};
+
+window.openSIEMModal = async function() {
+  modal(t('logs.siem_title'), `<div class="spinner" style="margin:20px auto"></div>`);
+  try {
+    const [cfg, st] = await Promise.all([api('GET', '/logs/siem'), api('GET', '/logs/siem/status')]);
+    siemDraft = { enabled: !!cfg?.enabled, destinations: cfg?.destinations || [] };
+    siemStatus = st?.nodes || [];
+    siemRender();
+  } catch (e) { modal(t('logs.siem_title'), `<p style="color:var(--red)">${esc(e.message)}</p>`); }
+};
+
+window.saveSIEM = async function() {
+  try {
+    await api('PUT', '/logs/siem', siemCollect());
+    toast(t('logs.siem_saved'), 'success');
+    closeModal();
+  } catch (e) { toast(e.message, 'error'); }
 };
 
 async function renderLiveLogs() {
@@ -877,6 +1056,7 @@ function httpStatusBadge(code) {
 
 window.exportLogs = function(fmt) {
   const params = new URLSearchParams({ format: fmt });
+  params.set('source', 'edge');
   params.set('kind', logsScope.kind || logsFilters.kind || 'access');
   if (logsScope.node_id) { params.set('node_id', logsScope.node_id); if (logsScope.node_name) params.set('node_name', logsScope.node_name); }
   else if (logsScope.node_name) params.set('node_name', logsScope.node_name);
@@ -901,18 +1081,45 @@ window.exportLogs = function(fmt) {
 let logsQuickMs = 0;
 let logsRows = [];
 
-// Rétention effective (jours), chargée depuis GET /logs/settings — conditionne les
-// tranches de temps proposées (pas la peine d'offrir "1 an" si tout est purgé à 30 jours).
-let logsRetention = { access: 30, system: 90 };
+// Conservation des logs côté passerelles (GET /logs/settings › edge_retention) : les accès HTTP vivent dans la base de
+// chaque passerelle, qui annonce la durée qu'elle applique. Elle borne les périodes proposées ; l'Admin, lui, ne garde
+// que ses événements de sécurité.
+let logsRetention = { access: 365, system: 90 };
+let logsEdgeRetention = {};
 let logsRetentionLoaded = false;
 async function ensureLogsRetention() {
   if (logsRetentionLoaded) return logsRetention;
   try {
-    const s = await api('GET', '/logs/settings');
-    logsRetention = { access: s?.retention_access_days || 30, system: s?.retention_system_days || 90 };
+    const er = (await api('GET', '/logs/settings'))?.edge_retention || {};
+    logsEdgeRetention = Object.fromEntries((er.edges || []).map(e => [e.node_name, { access: e.access_days, system: e.system_days }]));
+    const seen = Object.values(logsEdgeRetention);
+    logsRetention = {
+      access: seen.length ? Math.max(...seen.map(x => x.access)) : (er.access_days || 365),
+      system: seen.length ? Math.max(...seen.map(x => x.system)) : (er.system_days || 90),
+    };
   } catch { /* défauts conservés */ }
   logsRetentionLoaded = true;
   return logsRetention;
+}
+
+// logsRetentionDays rend la durée, en jours, jusqu'où remonter pour le type de logs affiché : celle de la passerelle du
+// menu, ou la plus longue de toutes en vue globale.
+function logsRetentionDays() {
+  const key = isSystemLogs() ? 'system' : 'access';
+  const own = logsScope.node_name && logsEdgeRetention[logsScope.node_name];
+  return own ? own[key] : logsRetention[key];
+}
+
+// collectEdgeRetention lit la partie « passerelles » de la modale des réglages.
+function collectEdgeRetention() {
+  const num = id => parseInt(document.getElementById(id)?.value) || 0;
+  const nodes = {};
+  document.querySelectorAll('[data-edge-row]').forEach(tr => {
+    const a = parseInt(tr.querySelector('[data-edge-ovr="access"]')?.value) || 0;
+    const s = parseInt(tr.querySelector('[data-edge-ovr="system"]')?.value) || 0;
+    if (a || s) nodes[tr.dataset.edgeRow] = { access_days: a, system_days: s };
+  });
+  return { access_days: num('log-edge-access') || 365, system_days: num('log-edge-system') || 90, nodes };
 }
 
 // Échelle de temps courte, fixe (< 1 mois) — `days` = ancienneté couverte (0 = toujours
@@ -950,8 +1157,7 @@ function logsPeriodsForRetention(retentionDays) {
 
 // Toggle de période (segmenté, façon maquette), échelonné selon la rétention configurée.
 function logsPeriodSegHTML() {
-  const retention = isSystemLogs() ? logsRetention.system : logsRetention.access;
-  const periods = logsPeriodsForRetention(retention);
+  const periods = logsPeriodsForRetention(logsRetentionDays());
   const per = periods.map(c => `<button type="button" class="seg-btn${logsQuickMs === c.ms ? ' active' : ''}" data-log-quick="${c.ms}">${c.label}</button>`).join('');
   const all = `<button type="button" class="seg-btn${logsQuickMs ? '' : ' active'}" data-log-quick="0">${esc(t('lg.q_all'))}</button>`;
   return `<div class="logs-seg">${per}${all}</div>`;
@@ -1048,14 +1254,19 @@ async function loadLogsHist() {
   const from = logsFilters.date_from ? new Date(logsFilters.date_from) : new Date(to - 86400000);
   const unit = to - from <= 21600000 ? 'minute' : 'hour';
   let pts = [];
-  if (isSystemLogs()) {
-    const p = new URLSearchParams({ kind: 'system', bucket: unit, date_from: from.toISOString(), date_to: to.toISOString() });
+  // La courbe des accès vient des cumuls par minute (Prism) tant que le filtre ne porte que sur le domaine, l'IP, le
+  // chemin ou la passerelle ; un filtre qui n'existe que sur les lignes (code, méthode, texte, niveau, empreinte TLS)
+  // la calcule dans les passerelles, comme la liste.
+  const rowLevel = !!(logsFilters.search || logsFilters.method || logsFilters.status || logsFilters.level || logsFilters.tls_ja3 || logsFilters.tls_ja4);
+  if (isSystemLogs() || rowLevel) {
+    const p = new URLSearchParams({ source: 'edge', kind: isSystemLogs() ? 'system' : 'access', bucket: unit, date_from: from.toISOString(), date_to: to.toISOString() });
     if (logsScope.node_id) { p.set('node_id', logsScope.node_id); if (logsScope.node_name) p.set('node_name', logsScope.node_name); }
     else if (logsScope.node_name) p.set('node_name', logsScope.node_name);
     else if (!logsScope.lockComp && logsFilters.node_name) p.set('node_name', logsFilters.node_name);
     if (logsScope.lockComp && logsScope.component) p.set('component', logsScope.component);
     else if (logsFilters.component) p.set('component', logsFilters.component);
-    for (const k of ['level', 'domain', 'search']) if (logsFilters[k]) p.set(k, logsFilters[k]);
+    for (const k of ['level', 'domain', 'ip', 'method', 'status', 'path', 'tls_ja3', 'tls_ja4', 'search']) if (logsFilters[k]) p.set(k, logsFilters[k]);
+    if (logsHideInternal && !isSystemLogs()) p.set('exclude_internal', '1');
     pts = (await api('GET', '/logs/histogram?' + p).catch(() => null))?.points || [];
   } else {
     const p = new URLSearchParams({ from: from.toISOString(), to: to.toISOString(), bucket: unit });
@@ -1106,7 +1317,7 @@ function openLogDrawer(en, i) {
 
   // IP pseudonymisée ou tronquée par l'anonymisation (RGPD) : ni bannissable ni analysable ;
   // un détenteur de gdpr:reveal (super-admin, DPO, droit délégué) peut révéler une IP pseudonymisée.
-  const pseudo = en.ip === LOGS_PSEUDONYMIZED_IP;
+  const pseudo = en.ip === LOGS_PSEUDONYMIZED_IP || en.pseudonymized === true;
   const truncated = !pseudo && en.ip_truncated;
   const actionable = obsIPActionable(en);
   const ipCell = !en.ip ? '' : pseudo
@@ -1199,7 +1410,8 @@ window.revealLogIP = async function(i) {
   const reason = document.getElementById('log-reveal-reason')?.value.trim();
   if (!en || !reason) { toast(t('logs.reveal_reason_required'), 'error'); return; }
   try {
-    const r = await api('POST', '/logs/reveal-ip', { entry_id: en.id, reason });
+    const target = typeof en.id === 'string' ? { entry_ref: en.id } : { entry_id: en.id };
+    const r = await api('POST', '/logs/reveal-ip', { ...target, reason });
     closeModal();
     const el = document.getElementById('log-drawer-ip');
     if (el) el.textContent = r.ip;

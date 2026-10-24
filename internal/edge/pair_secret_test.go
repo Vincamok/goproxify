@@ -86,3 +86,83 @@ func TestAgentInternalAuthSendsDerivedKeyNotRoot(t *testing.T) {
 		t.Fatalf("Authorization = %q : le secret racine ne doit jamais partir vers un Agent", got)
 	}
 }
+
+// Une passerelle sans le secret racine (clé des Agents fournie) appaire les Agents avec la clé dérivée, et ne peut pas
+// accepter la racine puisqu'elle ne la détient pas.
+func TestEdgePair_WithoutTheRoot(t *testing.T) {
+	const root = "secret-racine-0123456789abcdef"
+	t.Setenv("GPX_PAIRING_SECRET", "")
+	t.Setenv("GPX_AGENT_PAIRING_KEY", pairing.AgentKey(root))
+	s := newPairServer(t)
+
+	if c := pairOnce(s, "10.0.1.1:1111", pairing.AgentKey(root)); c != http.StatusOK && c != http.StatusCreated {
+		t.Fatalf("clé dérivée refusée sans la racine : %d", c)
+	}
+	if c := pairOnce(s, "10.0.1.2:1111", root); c != http.StatusForbidden {
+		t.Fatalf("le secret racine ne s'accepte pas sans être détenu : %d", c)
+	}
+
+	t.Setenv("GPX_AGENT_PAIRING_KEY", "")
+	if c := pairOnce(s, "10.0.1.3:1111", pairing.AgentKey(root)); c != http.StatusServiceUnavailable {
+		t.Fatalf("sans clé ni racine, l'appairage n'est pas configuré : %d", c)
+	}
+}
+
+func TestAgentInternalAuthUsesTheConfiguredAgentKeyWithoutTheRoot(t *testing.T) {
+	const root = "secret-racine-0123456789abcdef"
+	t.Setenv("GPX_PAIRING_SECRET", "")
+	t.Setenv("GPX_AGENT_PAIRING_KEY", pairing.AgentKey(root))
+	req := httptest.NewRequest(http.MethodGet, "http://agent:8001/x", nil)
+	setAgentInternalAuth(req)
+	if got := req.Header.Get("Authorization"); got != "Bearer "+pairing.AgentKey(root) {
+		t.Fatalf("Authorization = %q", got)
+	}
+}
+
+// Pendant une rotation de la clé des Agents, la passerelle appaire un Agent qui présente l'ancienne comme la nouvelle, et
+// envoie la nouvelle aux Agents.
+func TestEdgePair_AcceptsThePreviousAgentKeyDuringARotation(t *testing.T) {
+	t.Setenv("GPX_PAIRING_SECRET", "")
+	t.Setenv("GPX_AGENT_PAIRING_KEY", "cle-agents-nouvelle")
+	t.Setenv("GPX_AGENT_PAIRING_KEY_PREVIOUS", "cle-agents-ancienne")
+	s := newPairServer(t)
+
+	if c := pairOnce(s, "10.0.2.1:1111", "cle-agents-nouvelle"); c != http.StatusOK && c != http.StatusCreated {
+		t.Fatalf("clé courante refusée : %d", c)
+	}
+	if c := pairOnce(s, "10.0.2.2:1111", "cle-agents-ancienne"); c != http.StatusOK && c != http.StatusCreated {
+		t.Fatalf("clé précédente refusée pendant la rotation : %d", c)
+	}
+	if c := pairOnce(s, "10.0.2.3:1111", "cle-agents-inconnue"); c != http.StatusForbidden {
+		t.Fatalf("une autre clé est refusée : %d", c)
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://agent:8001/x", nil)
+	setAgentInternalAuth(req)
+	if got := req.Header.Get("Authorization"); got != "Bearer cle-agents-nouvelle" {
+		t.Fatalf("la passerelle envoie la clé courante : %q", got)
+	}
+}
+
+// Par défaut un Agent qui présente la clé d'appairage est pré-approuvé ; GPX_AGENT_PREAPPROVAL=manual le laisse en attente
+// de l'approbation d'un opérateur, tout en lui rendant son jeton.
+func TestEdgePair_PreapprovalIsAutomaticUnlessManual(t *testing.T) {
+	const root = "secret-racine-0123456789abcdef"
+	t.Setenv("GPX_PAIRING_SECRET", root)
+	s := newPairServer(t)
+
+	if c := pairOnce(s, "10.0.3.1:1111", pairing.AgentKey(root)); c != http.StatusCreated && c != http.StatusOK {
+		t.Fatalf("appairage : %d", c)
+	}
+	if !s.wsHub.IsPreApproved("n1") {
+		t.Fatal("par défaut, l'Agent est pré-approuvé")
+	}
+
+	t.Setenv("GPX_AGENT_PREAPPROVAL", "manual")
+	s = newPairServer(t)
+	if c := pairOnce(s, "10.0.3.2:1111", pairing.AgentKey(root)); c != http.StatusCreated && c != http.StatusOK {
+		t.Fatalf("appairage manuel : %d", c)
+	}
+	if s.wsHub.IsPreApproved("n1") {
+		t.Fatal("en mode manuel, l'Agent attend l'approbation d'un opérateur")
+	}
+}

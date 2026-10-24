@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/url"
 	"os"
 	"strconv"
@@ -47,6 +48,8 @@ Sous-commandes :
 goproxify security threat get  [-edge <id>] [-admin-url …] [-token …]
 goproxify security threat set  [-edge <id>] -file <config.json> [-admin-url …] [-token …]
 goproxify security threat simulate -file <config.json> [-hours N] [-domain <d>] [-edge <id>]
+goproxify security threat suggest [-days N] [-edge <id>]   # seuils proposés à partir des cumuls par minute (rien n'est appliqué)
+goproxify security threat references [-edge <id>]   # ce que chaque passerelle a appris : débit normal par route et par heure, base ASN
 
 goproxify security engines [-admin-url …] [-token …]
 
@@ -166,6 +169,51 @@ func runSecurityThreat() {
 		var res json.RawMessage
 		if _, err := client.DoJSON("POST", path, body, &res); err != nil {
 			fmt.Fprintf(os.Stderr, "threat simulate : %v\n", err)
+			os.Exit(1)
+		}
+		out, _ := json.MarshalIndent(res, "", "  ")
+		fmt.Println(string(out))
+
+	case "suggest":
+		args := parseFlags(os.Args[4:])
+		client, err := newAdminClient(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+			os.Exit(1)
+		}
+		q := url.Values{}
+		if d := flagValue(args, "-days", ""); d != "" {
+			q.Set("days", d)
+		}
+		if edgeID := flagValue(args, "-edge", ""); edgeID != "" {
+			q.Set("edge", edgeID)
+		}
+		path := "/api/v1/security/threat-config/suggestions"
+		if len(q) > 0 {
+			path += "?" + q.Encode()
+		}
+		var res json.RawMessage
+		if _, err := client.DoJSON("GET", path, nil, &res); err != nil {
+			fmt.Fprintf(os.Stderr, "threat suggest : %v\n", err)
+			os.Exit(1)
+		}
+		out, _ := json.MarshalIndent(res, "", "  ")
+		fmt.Println(string(out))
+
+	case "references":
+		args := parseFlags(os.Args[4:])
+		client, err := newAdminClient(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+			os.Exit(1)
+		}
+		path := "/api/v1/security/threat-references"
+		if edgeID := flagValue(args, "-edge", ""); edgeID != "" {
+			path += "?edge=" + url.QueryEscape(edgeID)
+		}
+		var res json.RawMessage
+		if _, err := client.DoJSON("GET", path, nil, &res); err != nil {
+			fmt.Fprintf(os.Stderr, "threat references : %v\n", err)
 			os.Exit(1)
 		}
 		out, _ := json.MarshalIndent(res, "", "  ")
@@ -457,6 +505,30 @@ func bansEdgeSuffix(b map[string]any) string {
 	return out
 }
 
+// bansSignalsLine décrit sur une ligne les signaux qui ont causé un ban automatique : « nom points (valeur) · … ».
+// Vide pour les autres sources.
+func bansSignalsLine(b map[string]any) string {
+	list, _ := b["signals"].([]any)
+	parts := make([]string, 0, len(list))
+	for _, raw := range list {
+		s, _ := raw.(map[string]any)
+		name, _ := s["name"].(string)
+		if name == "" {
+			continue
+		}
+		pts, _ := s["points"].(float64)
+		part := fmt.Sprintf("%s %g", name, math.Round(pts*10)/10)
+		if v, _ := s["value"].(string); v != "" {
+			part += " (" + v + ")"
+		}
+		parts = append(parts, part)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "    ↳ " + strings.Join(parts, " · ")
+}
+
 func runSecurityBans() {
 	sub := subcommand(os.Args, 3)
 	switch sub {
@@ -486,6 +558,9 @@ func runSecurityBans() {
 				line += "  (exp: " + expires + ")"
 			}
 			fmt.Println(line)
+			if why := bansSignalsLine(b); why != "" {
+				fmt.Println(why)
+			}
 		}
 
 	case "add":

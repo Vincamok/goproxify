@@ -12,13 +12,16 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/vincamok/goproxify/internal/admin/edgeproxy"
 	edgeWS "github.com/vincamok/goproxify/internal/edge/ws"
+	"github.com/vincamok/goproxify/internal/pairing"
 	"nhooyr.io/websocket"
 	"nhooyr.io/websocket/wsjson"
 )
@@ -40,8 +43,17 @@ const (
 // Il gère la reconnexion automatique avec backoff exponentiel.
 type Client struct {
 	edgeID   string
+	nodeName string // nom de la passerelle : sa clé de canal peut s'en dériver quand l'identifiant n'est pas connu d'avance
 	endpoint string // ex: http://goproxify-edge:8000
-	secret   string // clé HMAC partagée
+	secret   string // secret racine : signe le canal, ou en dérive la clé de la passerelle (avec edgeID)
+	// rootKeys donne le secret racine courant et ses précédents (rotation), relus à chaque connexion ; nil = seulement secret.
+	rootKeys func() []pairing.Key
+	// preferName : la dernière connexion a été validée par la clé dérivée du nom ; on l'essaie d'abord, pour ne pas payer
+	// un refus à chaque reconnexion. Ne concerne que les clés dérivées : la racine passe toujours en dernier.
+	preferName atomic.Bool
+	// lastKind : ce qui a validé la dernière connexion (signKind*). Ne sert qu'à ne journaliser un repli qu'une fois par
+	// changement d'état : la clé dérivée du secret courant est toujours essayée en premier.
+	lastKind atomic.Int32
 
 	conn   *websocket.Conn
 	connMu sync.Mutex
@@ -68,12 +80,14 @@ type Client struct {
 // NewClient crée un nouveau client WS Admin→Passerelle.
 // onFullSync est appelé après chaque reconnexion pour ré-envoyer l'état complet.
 // onMsg est appelé pour chaque message reçu de la passerelle (peut être nil).
-func NewClient(edgeID, endpoint, hmacSecret string, onFullSync func(ctx context.Context) error, onMsg func(edgeWS.Message), log *slog.Logger) *Client {
+func NewClient(edgeID, nodeName, endpoint, hmacSecret string, rootKeys func() []pairing.Key, onFullSync func(ctx context.Context) error, onMsg func(edgeWS.Message), log *slog.Logger) *Client {
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Client{
 		edgeID:     edgeID,
+		nodeName:   nodeName,
 		endpoint:   endpoint,
 		secret:     hmacSecret,
+		rootKeys:   rootKeys,
 		onFullSync: onFullSync,
 		onMsg:      onMsg,
 		log:        log.With("edge", edgeID),
@@ -92,6 +106,13 @@ func (c *Client) Close() {
 		c.conn.Close(websocket.StatusNormalClosure, "shutdown")
 	}
 	c.connMu.Unlock()
+}
+
+// Connected dit si la connexion WebSocket à la passerelle est établie.
+func (c *Client) Connected() bool {
+	c.connMu.Lock()
+	defer c.connMu.Unlock()
+	return c.conn != nil
 }
 
 // Send envoie un message à la passerelle. Si non connecté, le message est mis en queue.
@@ -157,6 +178,99 @@ func (c *Client) connectLoop() {
 	}
 }
 
+// Ce qui signe une connexion, du plus au moins souhaitable.
+const (
+	signKindCurrent  int32 = iota // clé de canal dérivée du secret courant
+	signKindPrevious              // clé de canal dérivée d'un secret précédent (rotation en cours)
+	signKindRoot                  // secret racine lui-même (passerelle qui n'a pas sa clé dérivée)
+)
+
+// signer est une clé avec laquelle l'Admin signe sa connexion.
+type signer struct {
+	key    string
+	kind   int32
+	byName bool // clé dérivée du nom de la passerelle plutôt que de son identifiant
+}
+
+func (c *Client) roots() []pairing.Key {
+	if c.rootKeys != nil {
+		return c.rootKeys()
+	}
+	if c.secret != "" {
+		return []pairing.Key{{Value: c.secret}}
+	}
+	return nil
+}
+
+// signers donne les clés à essayer, dans l'ordre. La clé dérivée de la passerelle d'abord, avec le secret courant puis les
+// précédents : une passerelle qui ne détient plus le secret racine n'accepte qu'elle, et pendant une rotation elle peut
+// encore n'avoir que l'ancienne. Le secret racine ensuite, pour une passerelle qui ne l'a pas encore reçue
+// (GPX_EDGE_CHANNEL_ROOT_FALLBACK=false l'interdit). Sans secret, la connexion n'est pas signée.
+func (c *Client) signers() []signer {
+	roots := c.roots()
+	if len(roots) == 0 {
+		return []signer{{}}
+	}
+	var list, raw []signer
+	for _, r := range roots {
+		kind := signKindCurrent
+		if r.Previous {
+			kind = signKindPrevious
+		}
+		byID := signer{key: pairing.EdgeChannelKey(r.Value, c.edgeID), kind: kind}
+		// Helm et le démarrage rapide ne connaissent pas l'identifiant que l'Admin attribue : ils dérivent la clé du nom.
+		byName := signer{key: pairing.EdgeChannelKey(r.Value, c.nodeName), kind: kind, byName: true}
+		pair := []signer{byID, byName}
+		if c.preferName.Load() {
+			pair = []signer{byName, byID}
+		}
+		for _, sg := range pair {
+			if sg.key != "" && (!sg.byName || sg.key != byID.key) {
+				list = append(list, sg)
+			}
+		}
+		raw = append(raw, signer{key: r.Value, kind: signKindRoot})
+	}
+	if len(list) == 0 || os.Getenv("GPX_EDGE_CHANNEL_ROOT_FALLBACK") != "false" {
+		list = append(list, raw...)
+	}
+	return list
+}
+
+// dial ouvre le WebSocket en essayant chaque clé tant que la passerelle refuse la signature (401/403).
+func (c *Client) dial(wsURL string) (*websocket.Conn, error) {
+	var lastErr error
+	for _, sg := range c.signers() {
+		header := http.Header{}
+		header.Set("X-Node-ID", c.edgeID)
+		if sg.key != "" {
+			header.Set("X-Goproxify-Signature", edgeWS.BuildAdminSignature(sg.key, "GET", wsPath))
+		}
+		dialCtx, cancel := context.WithTimeout(c.ctx, 15*time.Second)
+		conn, resp, err := websocket.Dial(dialCtx, wsURL, &websocket.DialOptions{HTTPHeader: header})
+		cancel()
+		if err == nil {
+			if sg.kind != signKindRoot {
+				c.preferName.Store(sg.byName)
+			}
+			if sg.key != "" && c.lastKind.Swap(sg.kind) != sg.kind {
+				switch sg.kind {
+				case signKindRoot:
+					c.log.Warn("edgews: la passerelle n'accepte que le secret racine — lui donner GPX_EDGE_CHANNEL_KEY (clé dérivée de son identifiant, voir GET /api/v1/pairing-secret?node=), puis retirer le secret racine de son hôte", "node_id", c.edgeID)
+				case signKindPrevious:
+					c.log.Warn("edgews: la passerelle n'accepte encore que la clé de l'ancien secret — rotation en cours : lui donner la nouvelle GPX_EDGE_CHANNEL_KEY", "node_id", c.edgeID)
+				}
+			}
+			return conn, nil
+		}
+		lastErr = err
+		if resp == nil || (resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden) {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
 // connect établit la connexion WS et effectue le full_sync initial.
 func (c *Client) connect() error {
 	wsURL := "ws" + c.endpoint[4:] + wsPath // http://... → ws://..../ws/admin
@@ -164,18 +278,7 @@ func (c *Client) connect() error {
 		wsURL = "wss" + c.endpoint[5:] + wsPath
 	}
 
-	header := http.Header{}
-	header.Set("X-Node-ID", c.edgeID)
-	if c.secret != "" {
-		sig := edgeWS.BuildAdminSignature(c.secret, "GET", wsPath)
-		header.Set("X-Goproxify-Signature", sig)
-	}
-
-	dialCtx, cancel := context.WithTimeout(c.ctx, 15*time.Second)
-	conn, _, err := websocket.Dial(dialCtx, wsURL, &websocket.DialOptions{
-		HTTPHeader: header,
-	})
-	cancel()
+	conn, err := c.dial(wsURL)
 	if err != nil {
 		return err
 	}
@@ -187,6 +290,7 @@ func (c *Client) connect() error {
 	c.connMu.Unlock()
 
 	c.log.Info("edgews: connexion WS établie", "url", wsURL)
+	edgeproxy.MarkReachable(c.endpoint)
 
 	// Full sync après connexion
 	if c.onFullSync != nil {

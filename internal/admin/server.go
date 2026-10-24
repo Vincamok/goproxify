@@ -43,6 +43,7 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/mcp"
 	"github.com/vincamok/goproxify/internal/admin/mfa"
 	"github.com/vincamok/goproxify/internal/admin/monitor"
+	"github.com/vincamok/goproxify/internal/admin/prismedge"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
 	"github.com/vincamok/goproxify/internal/admin/security"
 	"github.com/vincamok/goproxify/internal/admin/setup"
@@ -138,8 +139,9 @@ func (s *Server) Start(ctx context.Context) error {
 	jwtSecret := s.cfg.Security.JWTSecret
 
 	// Manager WS Admin→Passerelle — HMAC partagé via GPX_PAIRING_SECRET
-	hmacSecret := os.Getenv("GPX_PAIRING_SECRET")
+	hmacSecret := pairing.Secret("GPX_PAIRING_SECRET")
 	manager := edgews.NewManager(hmacSecret, s.db, s.log)
+	manager.SetRootKeys(pairing.RootKeys)
 	var archStore *archstore.Store
 	if s.cfg.Storage.BasePath != "" {
 		stateDir := filepath.Join(s.cfg.Storage.BasePath, "state")
@@ -154,6 +156,10 @@ func (s *Server) Start(ctx context.Context) error {
 		groups := api.NewGroupResolver(archStore, s.db)
 		api.MigrateGroupSettings(ctx, s.db, groups, s.log)
 		api.MigratePortalGroups(ctx, s.db, groups, s.log)
+		// Un membre qui quitte un groupe fait renouveler la clé du groupe ; la liste des membres est repoussée à tous.
+		cards := &api.GroupCardSync{DB: s.db, Arch: archStore, Groups: groups, Pusher: manager, Log: s.log}
+		manager.SetGroupCards(cards)
+		go (&api.GroupMembership{DB: s.db, Groups: groups, Pusher: manager, Cards: cards, Tokens: manager, Log: s.log}).Run(ctx, 30*time.Second)
 	}
 	agentStore := api.NewAgentStore()
 	manager.SetAgentPendingHandler(func(id, name, version string) {
@@ -177,7 +183,7 @@ func (s *Server) Start(ctx context.Context) error {
 	})
 	// Lots numérotés lus dans la base de logs des passerelles : la position de chacune est enregistrée avec ses
 	// lignes et annoncée à sa reconnexion, ce qui comble une coupure de l'Admin (ADR 0012).
-	manager.SetLogStreamIngestor(&edgews.LogStreamIngestor{Store: s.logStore, Log: s.log})
+	manager.SetLogStreamIngestor(&edgews.LogStreamIngestor{Store: s.logStore, Log: s.log, })
 
 	backupSched := backup.New(s.db, s.log)
 	if s.cfg.Storage.BasePath != "" {
@@ -279,10 +285,7 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 		var provider acme.DNSProvider
 		if dnsType != "" {
-			provCfg := acme.ProviderConfigFromEnv(dnsType)
-			if len(s.cfg.ACME.DNS.Params) > 0 {
-				provCfg.Params = s.cfg.ACME.DNS.Params
-			}
+			provCfg := acme.DefaultProviderConfig(dnsType, s.cfg.ACME.DNS.Params, acmeProviderStore)
 			if p, err := acme.NewProvider(provCfg); err != nil {
 				s.log.Warn("acme: fournisseur DNS indisponible", "err", err)
 			} else {
@@ -338,7 +341,7 @@ func (s *Server) Start(ctx context.Context) error {
 		internalCAMgr.SetCertDir(filepath.Join(s.cfg.Storage.BasePath, "certs"))
 	}
 	internalCAH := &api.InternalCAHandler{Log: s.log, Manager: internalCAMgr}
-	nodesH := &api.NodesHandler{DB: s.db, Log: s.log, OnTunnelSave: func(nodeID string) {
+	nodesH := &api.NodesHandler{DB: s.db, Log: s.log, Traffic: manager.RecentTraffic, RevokeStaleAdminTokens: manager.RevokeStaleAdminTokens, RotateEdgeToken: manager.RotateEdgeToken, OnTunnelSave: func(nodeID string) {
 		ctx := context.Background()
 		s.wsManager.PushTunnelConfig(ctx, nodeID)
 	}}
@@ -349,6 +352,8 @@ func (s *Server) Start(ctx context.Context) error {
 		if manager != nil {
 			go manager.ReloadArchitecture(context.Background())
 		}
+	}, FetchCards: func(ctx context.Context, edges []string) ([]edgeWS.GroupCard, []string) {
+		return fetchGroupCards(ctx, s.db, edges)
 	}}
 	bootstrapH := &api.BootstrapHandler{
 		DB:  s.db,
@@ -373,7 +378,7 @@ func (s *Server) Start(ctx context.Context) error {
 	auditH := &api.AuditHandler{DB: s.db, Log: s.log, Auditor: s.auditor}
 	channelsH := &api.ChannelsHandler{DB: s.db, Log: s.log, Engine: s.alertingEngine, OnChange: syncConfig}
 	rulesH := &api.RulesHandler{DB: s.db, Log: s.log, Engine: s.alertingEngine, OnChange: syncConfig}
-	logsH := &api.LogsHandler{Log: s.log, Store: s.logStore, DB: s.db, Pusher: manager}
+	logsH := &api.LogsHandler{Log: s.log, Store: s.logStore, DB: s.db, Pusher: manager, Live: manager, SIEM: manager, Retention: manager}
 	f2bEngine := fail2ban.New(s.db, s.log)
 	vsScanner := vulnscan.New(s.db, s.log, "")
 	csBouncer := crowdsec.New(s.db, s.log)
@@ -397,8 +402,16 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 	}
 	asnStore := asn.NewStore(asnDBPath(s.cfg.Storage.BasePath), os.Getenv("GPX_ASN_DB_URL"), s.log)
+	if manager != nil {
+		manager.SetASNSource(asnStore.Compact)
+	}
 	// Les profils IP (dont la liste blanche des bans) ne partaient vers les passerelles qu'à leur
 	// connexion : un changement depuis l'Admin n'était appliqué qu'à la reconnexion suivante.
+	pushASN := func() {
+		if manager != nil {
+			go manager.OfferASN(context.Background())
+		}
+	}
 	pushIPProfiles := func() {
 		if manager != nil {
 			go manager.PushIPProfiles(context.Background())
@@ -431,8 +444,10 @@ func (s *Server) Start(ctx context.Context) error {
 			})
 		}
 	}
+	prismSrc := &prismedge.Source{DB: s.db}
 	securityH := &api.SecurityHandler{
 		DB:           s.db,
+		Edge:         prismSrc,
 		Log:          s.log,
 		Store:        security.New(s.db),
 		Fail2Ban:     f2bEngine,
@@ -443,6 +458,7 @@ func (s *Server) Start(ctx context.Context) error {
 		OnUnban:      pushUnban,
 		OnUnbanMany:  pushUnbanMany,
 		ASN:          asnStore,
+		OnASNChange:  pushASN,
 		OnWhitelistChange: pushIPProfiles,
 		OnThreatConfigChange: func(scope string, cfg any) {
 			if manager != nil {
@@ -526,7 +542,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.automation = autoSvc
 	automationH := &api.AutomationHandler{Svc: autoSvc}
 	importH := &api.ImportHandler{DB: s.db, Log: s.log, Scheduler: backupSched}
-	prismH := &api.PrismHandler{DB: s.db}
+	prismH := &api.PrismHandler{DB: s.db, Edge: prismSrc}
 	ipUpdater := ipprofile.New(s.db, s.log)
 	ipUpdater.OnRefreshFail = func(id, name string, failures int, cause error, lastUpdatedAt string) {
 		s.alertingEngine.Emit(alerting.Event{
@@ -551,6 +567,9 @@ func (s *Server) Start(ctx context.Context) error {
 	teamsH := &api.TeamsHandler{DB: s.db, Log: s.log, OnChange: syncUsers}
 	workspacesH := &api.WorkspacesHandler{DB: s.db, Log: s.log}
 	discoveredH := &api.DiscoveredContainersHandler{DB: s.db, Log: s.log}
+	if archStore != nil {
+		discoveredH.Groups = api.NewGroupResolver(archStore, s.db)
+	}
 	backendsHealthH := &api.BackendsHealthHandler{DB: s.db, Log: s.log}
 	domainsH := &api.DomainsHandler{DB: s.db, Log: s.log, Pusher: manager, OnChange: syncArch}
 	if archStore != nil {
@@ -585,6 +604,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	geoResolver := &analytics.GeoResolver{DB: s.db, Log: s.log, MMDBPath: s.cfg.GeoIP.CityDBPath, AllowExternal: s.cfg.GeoIP.AllowExternalLookup}
+	prismSrc.Geo = geoResolver
 	if s.cfg.GeoIP.AutoDownload && s.cfg.GeoIP.CityDBPath != "" {
 		// Téléchargement en arrière-plan (plusieurs dizaines de Mo) : d'ici là, ip-api.com sert de repli.
 		go func() {
@@ -609,7 +629,6 @@ func (s *Server) Start(ctx context.Context) error {
 	mon.Start(ctx)
 
 	admindb.StartMaintenance(ctx, s.db, s.log)
-	s.logStore.StartAggregator(ctx, s.log)
 
 	// Rétention des logs RGPD (lit logs.retention_access_days / logs.retention_system_days dans settings).
 	s.logStore.StartRetentionLoop(ctx, func() (accessDays, systemDays, banDays int) {
@@ -789,6 +808,9 @@ func (s *Server) Start(ctx context.Context) error {
 	// Révélation : ouverte aux détenteurs de gdpr:reveal (rôle dpo, droit délégué), pas
 	// seulement aux admins ; le handler vérifie la permission.
 	mux.Handle("/api/v1/logs/reveal-ip", protected(logsH))
+	// L'exporteur SIEM porte des jetons et des adresses internes : administrateurs seulement, en lecture aussi.
+	mux.Handle("/api/v1/logs/siem", adminOnly(logsH))
+	mux.Handle("/api/v1/logs/siem/status", adminOnly(logsH))
 	mux.Handle("/api/v1/security/engine-types", adminOnly(api.EngineTypesHandler{}))
 	mux.Handle("/api/v1/security", adminOnly(securityH))
 	mux.Handle("/api/v1/security/", adminOnly(securityH))
@@ -826,10 +848,26 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Pairing secret — lecture réservée aux admins (wizard Infrastructure).
 	mux.Handle("GET /api/v1/pairing-secret", adminOnly(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		secret := os.Getenv("GPX_PAIRING_SECRET")
+		secret := pairing.Secret("GPX_PAIRING_SECRET")
 		w.Header().Set("Content-Type", "application/json")
 		// secret : pour les passerelles ; agent_key : pour les Agents, qui ne doivent pas détenir le secret racine.
-		json.NewEncoder(w).Encode(map[string]string{"secret": secret, "agent_key": pairing.AgentKey(secret)}) //nolint:errcheck
+		out := map[string]string{"secret": secret, "agent_key": pairing.AgentKey(secret)}
+		// ?node=<identifiant ou nom> : la clé du canal Admin → cette passerelle, à lui donner (GPX_EDGE_CHANNEL_KEY) à la
+		// place du secret racine. Elle se dérive de l'identifiant de la passerelle, qui survit à un renommage.
+		if node := strings.TrimSpace(r.URL.Query().Get("node")); node != "" {
+			id, ok := manager.EdgeIDOf(node)
+			if !ok {
+				http.Error(w, "passerelle inconnue de l'Admin : "+node, http.StatusNotFound)
+				return
+			}
+			out["edge_channel_key"] = pairing.EdgeChannelKey(secret, id)
+			out["node_id"] = id
+			// Pour un déploiement qui ne connaît pas l'identifiant d'avance (Helm, démarrage rapide) : la clé du nom.
+			if name := manager.EdgeNameOf(id); name != "" {
+				out["edge_channel_key_by_name"] = pairing.EdgeChannelKey(secret, name)
+			}
+		}
+		json.NewEncoder(w).Encode(out) //nolint:errcheck
 	})))
 
 	// Profil utilisateur connecté
@@ -865,6 +903,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	mcpH := &mcp.Handler{
 		ProxyMetrics: func(points int) (any, any) { return proxyMetricsH.Snapshot(points) },
+		SIEMStatus:   manager.SIEMStatus,
 		ArchStore:    archStore,
 		DNSProviders: acmeProviderStore,
 		DB:           s.db, Log: s.log, Pusher: manager,

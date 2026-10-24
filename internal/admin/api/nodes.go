@@ -15,7 +15,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,6 +23,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/vincamok/goproxify/internal/admin/alerting"
 	"github.com/vincamok/goproxify/internal/admin/auth"
+	admindb "github.com/vincamok/goproxify/internal/admin/db"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
 )
 
@@ -34,6 +34,13 @@ type NodesHandler struct {
 	DB            *sql.DB
 	Log           *slog.Logger
 	OnTunnelSave  func(nodeID string) // appelé après PUT tunnel-config
+	// Traffic donne le débit de la dernière minute d'une passerelle, tel qu'elle l'annonce (ok faux : aucune annonce récente).
+	Traffic func(node string) (requests, blocked, errors int64, ok bool)
+	// RevokeStaleAdminTokens fait révoquer par chaque passerelle les jetons Admin autres que celui de cet Admin ; rend le
+	// nombre de passerelles sollicitées.
+	RevokeStaleAdminTokens func(ctx context.Context) int
+	// RotateEdgeToken remplace le jeton que l'Admin a pour une passerelle (par identifiant ou nom) ; faux si elle est inconnue.
+	RotateEdgeToken func(ctx context.Context, ref string) bool
 }
 
 type nodeRow struct {
@@ -91,6 +98,10 @@ func (h *NodesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.metricsSummary(w, r, id)
 	case r.Method == http.MethodPatch && id != "" && action == "":
 		h.patch(w, r, id)
+	case r.Method == http.MethodPost && id == "revoke-stale-admin-tokens" && action == "":
+		h.revokeStaleAdminTokens(w, r)
+	case r.Method == http.MethodPost && id != "" && action == "rotate-token":
+		h.rotateToken(w, r, id)
 	case r.Method == http.MethodPost && id != "" && action == "accept":
 		h.acceptPending(w, r, id)
 	case r.Method == http.MethodPost && id != "" && action == "reject":
@@ -112,6 +123,31 @@ func (h *NodesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeErr(w, r, http.StatusMethodNotAllowed, "api.err.method")
 	}
+}
+
+// rotateToken renouvelle le jeton d'une passerelle (ADR 0015, éviction d'urgence d'un nœud).
+func (h *NodesHandler) rotateToken(w http.ResponseWriter, r *http.Request, ref string) {
+	if h.RotateEdgeToken == nil {
+		writeErr(w, r, http.StatusServiceUnavailable, "api.err.internal")
+		return
+	}
+	if !h.RotateEdgeToken(r.Context(), ref) {
+		writeErr(w, r, http.StatusNotFound, "api.err.not_found")
+		return
+	}
+	_ = admindb.WriteAudit(h.DB, auth.UserIDFromContext(r.Context()), "rotate", "edge_token", ref)
+	jsonOK(w, map[string]any{"rotated": ref})
+}
+
+// revokeStaleAdminTokens : éviction d'urgence des jetons d'un ancien Admin sur toutes les passerelles connectées.
+func (h *NodesHandler) revokeStaleAdminTokens(w http.ResponseWriter, r *http.Request) {
+	if h.RevokeStaleAdminTokens == nil {
+		writeErr(w, r, http.StatusServiceUnavailable, "api.err.internal")
+		return
+	}
+	n := h.RevokeStaleAdminTokens(r.Context())
+	_ = admindb.WriteAudit(h.DB, auth.UserIDFromContext(r.Context()), "revoke", "admin_tokens", fmt.Sprintf("%d passerelles", n))
+	jsonOK(w, map[string]any{"gateways": n})
 }
 
 func scanNode(rows interface {
@@ -329,7 +365,28 @@ func (h *NodesHandler) fetchAgentNodesFromEdges(ctx context.Context) []nodeRow {
 		}(c.endpoint, c.token, c.nodeName)
 	}
 	wg.Wait()
-	return result
+	return dedupeAgentNodes(result)
+}
+
+// dedupeAgentNodes garde une ligne par Agent. Les membres d'un groupe HA partagent leur liste d'Agents : le même Agent
+// revient de chaque passerelle du groupe, avec le même état ou celui qu'elle en a. La plus récemment vue l'emporte (en
+// ligne à égalité), sa passerelle (target_edge) étant celle qui tient l'Agent.
+func dedupeAgentNodes(rows []nodeRow) []nodeRow {
+	best := make(map[string]int, len(rows))
+	out := make([]nodeRow, 0, len(rows))
+	for _, n := range rows {
+		i, seen := best[n.NodeName]
+		if !seen {
+			best[n.NodeName] = len(out)
+			out = append(out, n)
+			continue
+		}
+		cur := out[i]
+		if n.LastSeenAt.After(cur.LastSeenAt) || (n.LastSeenAt.Equal(cur.LastSeenAt) && n.Status == "online" && cur.Status != "online") {
+			out[i] = n
+		}
+	}
+	return out
 }
 
 func fetchNodesFromEdge(ctx context.Context, edgeEndpoint, token, edgeName string) []nodeRow {
@@ -361,6 +418,7 @@ func fetchNodesFromEdge(ctx context.Context, edgeEndpoint, token, edgeName strin
 		ContainerRuntimes []string        `json:"container_runtimes"`
 		LastSeenAt        time.Time       `json:"last_seen_at"`
 		AgentConfig       json.RawMessage `json:"agent_config"`
+		ConnectedVia      string          `json:"connected_via"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		return nil
@@ -369,6 +427,11 @@ func fetchNodesFromEdge(ctx context.Context, edgeEndpoint, token, edgeName strin
 	for _, n := range raw {
 		cpu := n.CPUPCT
 		mem := n.MemPCT
+		// La passerelle qui tient l'Agent, quand le groupe HA la connaît ; sinon celle qui répond (passerelle ancienne).
+		target := edgeName
+		if n.ConnectedVia != "" {
+			target = n.ConnectedVia
+		}
 		result = append(result, nodeRow{
 			ID:                n.NodeName,
 			NodeName:          n.NodeName,
@@ -380,7 +443,7 @@ func fetchNodesFromEdge(ctx context.Context, edgeEndpoint, token, edgeName strin
 			Status:            n.Status,
 			LastSeenAt:        n.LastSeenAt,
 			ContainerRuntimes: n.ContainerRuntimes,
-			TargetEdge:        edgeName,
+			TargetEdge:        target,
 			AgentConfig:       n.AgentConfig,
 		})
 	}
@@ -735,7 +798,7 @@ func (h *NodesHandler) pushToAgent(ctx context.Context, endpoint string, payload
 	}
 	req.Header.Set("Content-Type", "application/json")
 	// La clé dérivée, pas le secret racine : cette adresse vient d'un heartbeat, donc d'un nœud.
-	if key := pairing.AgentKey(os.Getenv("GPX_PAIRING_SECRET")); key != "" {
+	if key := pairing.AgentKey(pairing.Secret("GPX_PAIRING_SECRET")); key != "" {
 		req.Header.Set("Authorization", "Bearer "+key)
 	}
 	resp, err := internalClient.Do(req)
@@ -813,6 +876,15 @@ func (h *NodesHandler) acceptPending(w http.ResponseWriter, r *http.Request, id 
 	}
 	defer tx.Rollback() //nolint:errcheck
 
+	// Un nœud déjà appairé qu'on approuve de nouveau (jeton perdu, ou jeton à reprendre) : l'ancien jeton est révoqué, il ne
+	// doit rester qu'un jeton actif par nom.
+	if _, err = tx.ExecContext(r.Context(),
+		`UPDATE tokens SET revoked=1 WHERE role=? AND node_name=? AND revoked=0`, role, nodeName,
+	); err != nil {
+		h.Log.Error("nodes: accept pending — révocation de l'ancien jeton", "err", err)
+		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
+		return
+	}
 	stored, hash := auth.PrepareNodeTokenForStore(tok)
 	if _, err = tx.ExecContext(r.Context(),
 		`INSERT INTO tokens (id, token, token_hash, role, rbac_role, node_name) VALUES (?, ?, ?, ?, 'admin', ?)`,

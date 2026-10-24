@@ -60,12 +60,16 @@ func (s *Server) initLogStore() {
 	if dir == "" {
 		dir = defaultLogStoreDir
 	}
+	access, system := s.cfg.Engine.LogRetentionDays, s.cfg.Engine.SystemLogRetentionDays
+	if p := s.loadLogRetention(); p.AccessDays > 0 {
+		access, system = p.AccessDays, p.SystemDays
+	}
 	st, err := logstore.Open(logstore.Options{
 		Dir:   dir,
 		IPKey: s.loadOrCreateLogIPKey(),
 		Retention: map[logstore.Kind]time.Duration{
-			logstore.KindAccess: time.Duration(s.cfg.Engine.LogRetentionDays) * 24 * time.Hour,
-			logstore.KindSystem: time.Duration(s.cfg.Engine.SystemLogRetentionDays) * 24 * time.Hour,
+			logstore.KindAccess: time.Duration(access) * 24 * time.Hour,
+			logstore.KindSystem: time.Duration(system) * 24 * time.Hour,
 		},
 		OnError: func(err error) { s.log.Warn("logs: écriture dans la base de logs locale échouée", "err", err) },
 	})

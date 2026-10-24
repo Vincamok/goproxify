@@ -153,7 +153,7 @@ type Container struct {
 // ListContainers retourne les conteneurs en cours d'exécution sur un endpoint.
 func (c *Client) ListContainers(ctx context.Context, endpointID int) ([]Container, error) {
 	var containers []Container
-	path := fmt.Sprintf("/api/endpoints/%d/docker/containers/json?all=false", endpointID)
+	path := fmt.Sprintf("/api/endpoints/%d/docker/containers/json?all=true", endpointID)
 	if err := c.get(ctx, path, &containers); err != nil {
 		return nil, err
 	}

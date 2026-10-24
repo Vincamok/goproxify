@@ -28,13 +28,13 @@ func newTestEngine(t *testing.T) (*Engine, *sql.DB) {
 	return e, d
 }
 
+// insertForbidden ajoute n erreurs client de l'IP à la minute de at, comme le compteur d'une passerelle.
 func insertForbidden(t *testing.T, d *sql.DB, ip string, at time.Time, n int) {
 	t.Helper()
-	for i := 0; i < n; i++ {
-		if _, err := d.Exec(`INSERT INTO logs (ts, component, status, ip) VALUES (?, 'edge', 403, ?)`,
-			at.UTC().Format(time.RFC3339Nano), ip); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := d.Exec(`INSERT INTO edge_ip_errors (node_id, minute, ip, errors) VALUES ('edge-a', ?, ?, ?)
+		ON CONFLICT (node_id, minute, ip) DO UPDATE SET errors = errors + excluded.errors`,
+		at.UTC().Format("2006-01-02T15:04"), ip, n); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -65,16 +65,18 @@ func TestScanOnlyCountsErrorsInsideTheWindow(t *testing.T) {
 func TestScanDoesNotRebanRightAfterAnUnban(t *testing.T) {
 	e, d := newTestEngine(t)
 	const ip = "203.0.113.61"
-	// 403 servis par le ban pendant la minute précédant le déban.
-	insertForbidden(t, d, ip, time.Now().Add(-time.Minute), 20)
-	if _, err := d.Exec(`INSERT INTO security_ban_history (ip, action, source) VALUES (?, 'unbanned', 'fail2ban')`, ip); err != nil {
+	// 403 servis par le ban avant son déban. Les compteurs sont à la minute : le déban se place deux minutes plus tôt
+	// que les nouvelles erreurs, la minute du déban elle-même n'étant jamais comptée.
+	insertForbidden(t, d, ip, time.Now().Add(-3*time.Minute), 20)
+	if _, err := d.Exec(`INSERT INTO security_ban_history (ip, action, source, created_at) VALUES (?, 'unbanned', 'fail2ban', ?)`, ip,
+		time.Now().Add(-2*time.Minute).UTC().Format("2006-01-02 15:04:05")); err != nil {
 		t.Fatal(err)
 	}
 	e.scan()
 	if activeBans(t, d, ip) != 0 {
 		t.Fatal("les erreurs antérieures au déban ne doivent pas rebannir")
 	}
-	insertForbidden(t, d, ip, time.Now().Add(2*time.Second), 5)
+	insertForbidden(t, d, ip, time.Now(), 5)
 	e.scan()
 	if activeBans(t, d, ip) != 1 {
 		t.Fatal("de nouvelles erreurs après le déban doivent rebannir")
@@ -146,26 +148,11 @@ func TestScanIgnoresPseudonymizedIPs(t *testing.T) {
 	}
 }
 
-func insertTruncated(t *testing.T, d *sql.DB, ip string, n int) {
-	t.Helper()
-	for i := 0; i < n; i++ {
-		if _, err := d.Exec(`INSERT INTO logs (ts, component, status, ip, ip_truncated) VALUES (?, 'edge', 403, ?, 1)`,
-			time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano), ip); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
 
 func TestScanIgnoresTruncatedIPs(t *testing.T) {
 	e, d := newTestEngine(t)
-	// Tronquées par la passerelle : tout un /24, tout un /48 (dont 2a01:e0a:1::/64 n'est qu'une part).
-	insertTruncated(t, d, "203.0.113.0", 50)
-	insertTruncated(t, d, "2a01:e0a:1::", 50)
-	e.scan()
-	if got := allBans(t, d); len(got) != 0 {
-		t.Fatalf("une IP tronquée ne désigne aucun client : bans %v", got)
-	}
-	// Sans le marqueur, x.x.x.0 est une adresse comme une autre (ex. dans un /23).
+	// Une passerelle ne compte pas les IP qu'elle tronque ; x.x.x.0 d'un compteur est une adresse comme une autre
+	// (ex. dans un /23).
 	insertForbidden(t, d, "198.51.100.0", time.Now().Add(-time.Minute), 5)
 	e.scan()
 	if got := allBans(t, d); len(got) != 1 || got[0] != "198.51.100.0" {
@@ -229,15 +216,16 @@ func TestScanIPv6Whitelist(t *testing.T) {
 
 func TestScanDoesNotRebanIPv6PrefixRightAfterAnUnban(t *testing.T) {
 	e, d := newTestEngine(t)
-	insertForbidden(t, d, "2a01:e0a:1:2::5", time.Now().Add(-time.Minute), 20)
-	if _, err := d.Exec(`INSERT INTO security_ban_history (ip, action, source) VALUES ('2a01:e0a:1:2::/64', 'unbanned', 'fail2ban')`); err != nil {
+	insertForbidden(t, d, "2a01:e0a:1:2::5", time.Now().Add(-3*time.Minute), 20)
+	if _, err := d.Exec(`INSERT INTO security_ban_history (ip, action, source, created_at) VALUES ('2a01:e0a:1:2::/64', 'unbanned', 'fail2ban', ?)`,
+		time.Now().Add(-2*time.Minute).UTC().Format("2006-01-02 15:04:05")); err != nil {
 		t.Fatal(err)
 	}
 	e.scan()
 	if got := allBans(t, d); len(got) != 0 {
 		t.Fatalf("les erreurs antérieures au déban du /64 ne doivent pas rebannir : %v", got)
 	}
-	insertForbidden(t, d, "2a01:e0a:1:2::9", time.Now().Add(2*time.Second), 5)
+	insertForbidden(t, d, "2a01:e0a:1:2::9", time.Now(), 5)
 	e.scan()
 	if got := allBans(t, d); len(got) != 1 || got[0] != "2a01:e0a:1:2::/64" {
 		t.Fatalf("de nouvelles erreurs après le déban doivent rebannir le /64 : %v", got)

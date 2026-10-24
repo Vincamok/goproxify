@@ -5,6 +5,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -109,11 +110,12 @@ func TestSimulateEphor_RejectsInvalidCandidate(t *testing.T) {
 		"mode":         {"mode": "off"},
 		"durée":        {"ban_duration": "demain"},
 	} {
-		if _, err := SimulateEphor(t.Context(), h.DB, "threat_engine_config", cfg, 1, ""); err == nil {
+		if _, err := SimulateEphor(t.Context(), h.DB, nil, "threat_engine_config", cfg, 1, ""); err == nil {
 			t.Errorf("%s : acceptée", name)
 		}
 	}
-	if _, err := SimulateEphor(t.Context(), h.DB, "threat_engine_config", map[string]any{"enabled": true, "error_threshold": 5}, 1, ""); err != nil {
-		t.Errorf("candidate valide refusée : %v", err)
+	// Une candidate valide passe la validation ; sans passerelle il n'y a ensuite rien à rejouer.
+	if _, err := SimulateEphor(t.Context(), h.DB, nil, "threat_engine_config", map[string]any{"enabled": true, "error_threshold": 5}, 1, ""); !errors.Is(err, errNoGatewayToReplay) {
+		t.Errorf("candidate valide : %v, attendu l'absence de passerelle", err)
 	}
 }

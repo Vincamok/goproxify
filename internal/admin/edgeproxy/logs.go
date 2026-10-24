@@ -52,3 +52,48 @@ func (c *Client) LogReveal(ctx context.Context, t Target, req logapi.RevealReque
 	}
 	return &out, nil
 }
+
+// LogTop demande un regroupement par champ à la base de logs de la passerelle.
+func (c *Client) LogTop(ctx context.Context, t Target, p logapi.Params, req logapi.TopRequest) (*logapi.TopResponse, error) {
+	var out logapi.TopResponse
+	if err := c.do(ctx, t, http.MethodPost, logapi.PathTop+"?"+p.Values().Encode(), req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// LogUniqueIPs demande le résumé des IP distinctes de la passerelle.
+func (c *Client) LogUniqueIPs(ctx context.Context, t Target, p logapi.Params) (*logapi.UniqueIPsResponse, error) {
+	var out logapi.UniqueIPsResponse
+	if err := c.do(ctx, t, http.MethodGet, logapi.PathUniqueIPs+"?"+p.Values().Encode(), nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// EphorSimulate demande à la passerelle de rejouer ses accès récents contre deux configurations Ephor.
+func (c *Client) EphorSimulate(ctx context.Context, t Target, req logapi.EphorSimRequest) (*logapi.EphorSimResponse, error) {
+	var out logapi.EphorSimResponse
+	if err := c.do(ctx, t, http.MethodPost, logapi.PathEphorSim, req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// EphorReferences demande à la passerelle ce qu'elle a appris pour la note commune d'Ephor.
+func (c *Client) EphorReferences(ctx context.Context, t Target) (*logapi.EphorReferencesResponse, error) {
+	var out logapi.EphorReferencesResponse
+	if err := c.do(ctx, t, http.MethodGet, logapi.PathEphorReferences, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// LogErase demande à la passerelle d'effacer une IP de ses logs et de l'historique de ses bans, et rend ce qu'elle a supprimé.
+func (c *Client) LogErase(ctx context.Context, t Target, ip string) (*logapi.EraseResponse, error) {
+	var out logapi.EraseResponse
+	if err := c.do(ctx, t, http.MethodPost, logapi.PathErase, logapi.EraseRequest{IP: ip}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}

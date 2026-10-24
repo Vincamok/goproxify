@@ -1170,7 +1170,7 @@ function _cdtRender() {
     return `<div style="font-size:12px;display:flex;align-items:center;gap:6px;margin-bottom:3px"><span style="width:8px;height:8px;border-radius:50%;background:${col};flex-shrink:0"></span><code>${esc(u)}</code></div>`;
   }).join('');
   const overview = section(t('cdetail.overview'),
-    picker + kv(t('cdetail.route'), hosts.join(', ')) + kv(t('cdetail.edge'), c.edge_name) + kv(t('cdetail.agent'), c.agent_name) + kv(t('cdetail.source'), c.source) + kv('ID', c.id)
+    picker + kv(t('cdetail.route'), hosts.join(', ')) + kv(t('cdetail.edge'), c.group || c.edge_label || c.edge_name) + kv(t('cdetail.agent'), c.agent_name) + kv(t('cdetail.source'), c.source) + kv('ID', c.id)
     + `<div style="margin-top:8px">${backends}</div>`);
 
   const gradeColor = a.score >= 70 ? 'var(--green)' : a.score >= 40 ? 'var(--yellow,#f59e0b)' : 'var(--red)';

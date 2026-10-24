@@ -25,6 +25,7 @@ import (
 	"github.com/vincamok/goproxify/internal/edge/router"
 	edgetls "github.com/vincamok/goproxify/internal/edge/tls"
 	"github.com/vincamok/goproxify/internal/edge/threat"
+	"github.com/vincamok/goproxify/internal/edge/waf/behavior"
 	"github.com/vincamok/goproxify/internal/edge/tracing"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -141,6 +142,11 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// L'observation suit la requête : le WAF y note le score de ses règles, Ephor verse la requête au magasin comportemental
+	// une fois la réponse connue.
+	obsCtx, _ := behavior.WithObservation(r.Context())
+	r = r.WithContext(obsCtx)
+
 	// Vérification globale des profils IP (deny lists) avant le routage.
 	// Utilise CF-Connecting-IP / X-Forwarded-For si disponible (Cloudflare, reverse proxy).
 	remoteIP := edgelog.RealIP(r)
@@ -222,7 +228,7 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.threatEngine != nil && !whitelisted {
-		s.threatEngine.RecordResponse(remoteIP, r.URL.Path, rw.status)
+		s.threatEngine.Observe(r, remoteIP, route.Host, rw.status)
 	}
 }
 

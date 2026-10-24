@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/vincamok/goproxify/internal/agent/docker"
+	"github.com/vincamok/goproxify/internal/agent/statepub"
 )
 
 // netManager est l'interface minimale pour connecter la passerelle à un réseau Docker.
@@ -45,9 +46,10 @@ type Discovery struct {
 	endpointEdges map[string]endpointEdgeConf // endpoint name (lowercase) → passerelle alternatif
 
 	mu         sync.Mutex
-	endpointFn func() string   // passerelle courante de l'Agent (bascule HA) ; nil = adminEndpoint fixe
-	scanMu     sync.Mutex      // un seul scan à la fois (boucle périodique et réannonce)
-	prevSeen   map[string]bool // clés "endpointID:containerID" du scan précédent
+	endpointFn func() string       // passerelle courante de l'Agent (bascule HA) ; nil = adminEndpoint fixe
+	scanMu     sync.Mutex          // un seul scan à la fois (boucle périodique et réannonce)
+	prevSeen   map[string]bool     // clés "endpointID:containerID" du scan précédent
+	state      *statepub.Publisher // état complet par endpoint ; nil = publication route par route seulement
 }
 
 // EndpointEdgeInput est utilisé par l'appelant pour configurer les passerelles alternatifs.
@@ -113,6 +115,13 @@ func (d *Discovery) endpoint() string {
 	return d.adminEndpoint
 }
 
+// SetStatePublisher active l'envoi de l'état complet de chaque endpoint à la fin de son scan.
+func (d *Discovery) SetStatePublisher(p *statepub.Publisher) {
+	d.mu.Lock()
+	d.state = p
+	d.mu.Unlock()
+}
+
 // Resync republie tout l'état maintenant (nouvelle passerelle, reconnexion), sans attendre le
 // prochain scan périodique.
 func (d *Discovery) Resync(ctx context.Context) { d.scan(ctx) }
@@ -151,6 +160,9 @@ func (d *Discovery) scan(ctx context.Context) {
 	}
 
 	seen := map[string]bool{}
+	// failed : endpoints dont la liste a échoué ; snapshotted : endpoints dont la passerelle a pris l'état complet.
+	failed := map[string]bool{}
+	snapshotted := map[string]bool{}
 
 	d.log.Info("portainer: scan", "endpoints", len(endpoints))
 
@@ -161,12 +173,16 @@ func (d *Discovery) scan(ctx context.Context) {
 		}
 		containers, err := d.client.ListContainers(ctx, ep.ID)
 		if err != nil {
+			// Un endpoint qui ne répond pas n'a pas perdu ses conteneurs : ses routes ne sont pas retirées.
+			failed[strconv.Itoa(ep.ID)] = true
 			d.log.Warn("portainer: liste containers", "endpoint", ep.Name, "err", err)
 			continue
 		}
 		d.log.Info("portainer: endpoint scanné", "endpoint", ep.Name, "containers", len(containers))
 		epHost := endpointHost(ep.URL)
 		isLocal := epHost == "" || isLocalHost(epHost)
+		var epSpecs []*docker.ProxySpec
+		var epInactive []map[string]any
 		for _, c := range containers {
 			firstNet, firstIP := "", ""
 			for name, net := range c.NetworkSettings.Networks {
@@ -183,6 +199,13 @@ func (d *Discovery) scan(ctx context.Context) {
 				d.log.Debug("portainer: container sans labels goproxify", "container", firstName, "image", c.Image)
 				continue
 			}
+			// Un conteneur qui ne tourne pas n'a pas de route : il part dans l'inventaire des inactifs, que l'Admin affiche.
+			if !containerRunning(c.State) {
+				for _, spec := range specs {
+					epInactive = append(epInactive, d.inactivePayload(ep, spec, c.State))
+				}
+				continue
+			}
 			// Endpoint local (socket unix) : connecter la passerelle au réseau Docker du conteneur
 			// pour que l'IP interne soit joignable, comme le fait la découverte Docker locale.
 			if isLocal && d.netMgr != nil && firstNet != "" {
@@ -192,7 +215,13 @@ func (d *Discovery) scan(ctx context.Context) {
 			}
 			key := fmt.Sprintf("%d:%s:%s", ep.ID, ep.Name, c.ID)
 			seen[key] = true
-			for _, spec := range specs {
+			epSpecs = append(epSpecs, specs...)
+		}
+		switch d.publishState(ctx, ep, epSpecs, epInactive) {
+		case statepub.Sent:
+			snapshotted[strconv.Itoa(ep.ID)] = true
+		case statepub.Unsupported:
+			for _, spec := range epSpecs {
 				d.report(ctx, ep, spec)
 			}
 		}
@@ -200,14 +229,53 @@ func (d *Discovery) scan(ctx context.Context) {
 
 	d.mu.Lock()
 	prev := d.prevSeen
-	d.prevSeen = seen
 	d.mu.Unlock()
 
+	var gone []string
 	for key := range prev {
-		if !seen[key] {
-			d.removeByKey(ctx, key)
+		if seen[key] {
+			continue
+		}
+		epID, _, _ := strings.Cut(key, ":")
+		switch {
+		case failed[epID]:
+			seen[key] = true // à revérifier au prochain scan réussi de cet endpoint
+		case snapshotted[epID]:
+			// la passerelle a retiré ce que l'état complet ne contient plus
+		default:
+			gone = append(gone, key)
 		}
 	}
+	d.mu.Lock()
+	d.prevSeen = seen
+	d.mu.Unlock()
+	for _, key := range gone {
+		d.removeByKey(ctx, key)
+	}
+}
+
+// publishState envoie à la passerelle tout ce que cet endpoint publie : elle retire ce qu'elle gardait de cet Agent
+// pour cet endpoint et qui n'y est plus. Unsupported : la passerelle est ancienne, l'Agent publie route par route.
+func (d *Discovery) publishState(ctx context.Context, ep Endpoint, specs []*docker.ProxySpec, inactive []map[string]any) statepub.Result {
+	d.mu.Lock()
+	pub := d.state
+	d.mu.Unlock()
+	if pub == nil {
+		return statepub.Unsupported
+	}
+	routes := make([]map[string]any, 0, len(specs))
+	for _, spec := range specs {
+		routes = append(routes, d.payload(ep, spec))
+	}
+	edgeEndpoint, token := d.edgeFor(ep.Name)
+	res, err := pub.PutState(ctx, edgeEndpoint, token, "portainer", strconv.Itoa(ep.ID), routes, inactive)
+	switch res {
+	case statepub.Sent:
+		d.log.Info("portainer: état complet envoyé", "endpoint", ep.Name, "routes", len(routes), "inactifs", len(inactive))
+	case statepub.Failed:
+		d.log.Warn("portainer: état complet non envoyé", "endpoint", ep.Name, "err", err)
+	}
+	return res
 }
 
 // removeByKey supprime une route portainer disparue identifiée par "endpointID:endpointName:containerID".
@@ -374,9 +442,30 @@ func (d *Discovery) resolveSpecs(c Container, firstNet, firstName, containerIP, 
 	return docker.ParseLabelsMulti(c.ID, firstName, c.Image, firstNet, labels, nil, containerIP)
 }
 
-// report envoie la config proxy vers l'Administration.
-func (d *Discovery) report(ctx context.Context, ep Endpoint, spec *docker.ProxySpec) {
-	containerName := strings.TrimPrefix(spec.ContainerName, "/")
+// containerRunning : seul un conteneur en cours d'exécution sert une route. Un état vide (Portainer ancien) vaut « tourne ».
+func containerRunning(state string) bool {
+	s := strings.ToLower(strings.TrimSpace(state))
+	return s == "" || s == "running"
+}
+
+// inactivePayload décrit un conteneur découvert qui ne tourne pas.
+func (d *Discovery) inactivePayload(ep Endpoint, spec *docker.ProxySpec, state string) map[string]any {
+	shortID := spec.ContainerID
+	if len(shortID) > 12 {
+		shortID = shortID[:12]
+	}
+	return map[string]any{
+		"id":           fmt.Sprintf("portainer:%d:%s:%s", ep.ID, shortID, spec.Host),
+		"host":         spec.Host,
+		"aliases":      spec.Aliases,
+		"container_id": spec.ContainerID,
+		"name":         strings.TrimPrefix(spec.ContainerName, "/"),
+		"state":        strings.ToLower(state),
+	}
+}
+
+// payload construit la charge utile qu'une route Portainer envoie à la passerelle.
+func (d *Discovery) payload(ep Endpoint, spec *docker.ProxySpec) map[string]any {
 	shortID := spec.ContainerID
 	if len(shortID) > 12 {
 		shortID = shortID[:12]
@@ -401,6 +490,13 @@ func (d *Discovery) report(ctx context.Context, ep Endpoint, spec *docker.ProxyS
 		payload["canary_weight"] = spec.CanaryWeight
 	}
 	docker.AttachSecurityPayload(payload, spec)
+	return payload
+}
+
+// report envoie la config proxy vers l'Administration.
+func (d *Discovery) report(ctx context.Context, ep Endpoint, spec *docker.ProxySpec) {
+	containerName := strings.TrimPrefix(spec.ContainerName, "/")
+	payload := d.payload(ep, spec)
 
 	edgeEndpoint, token := d.edgeFor(ep.Name)
 

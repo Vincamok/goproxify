@@ -87,7 +87,7 @@ Les règles de la catégorie `leakage` s'appliquent au corps de la **réponse** 
 
 ### Analyse comportementale par IP
 
-Activée via `behavior_enabled`. Le moteur maintient un profil par IP sur une fenêtre glissante :
+Le magasin comportemental est **celui de la passerelle**, alimenté par Ephor sans activation par route (voir [Note commune](#note-commune-et-signaux-de-comportement-adr-0011)). `behavior_enabled` ne décide plus que du **blocage par le WAF** sur la route : refus des IP dont le score dépasse `behavior_threshold` et ban par le WAF. Le moteur maintient un profil par IP sur une fenêtre glissante :
 
 - Taux d'erreurs 4xx élevé
 - Scanning de chemins (entropie élevée des URIs)
@@ -105,7 +105,7 @@ goproxify.waf.anomaly_threshold: "10"       # 0 = premier match bloque
 goproxify.waf.max_body_mb: "1"              # taille max du corps analysé (défaut : 128 Kio ; le coût croît avec elle)
 goproxify.waf.exclude_ids: "942100,941100"  # IDs à désactiver (CSV)
 goproxify.waf.behavior: "true"              # analyse comportementale
-goproxify.waf.behavior.window: "60"         # fenêtre en secondes
+goproxify.waf.behavior.window: "60"         # ignoré : la fenêtre est celle de la passerelle (60 s)
 goproxify.waf.behavior.threshold: "8"       # score avant ban
 goproxify.waf.trusted_proxies: "10.0.0.0/8" # CIDRs pour X-Forwarded-For
 ```
@@ -207,6 +207,48 @@ Avec `ip_score.enabled` et `ip_score.errors.enabled`, chaque réponse 4xx verse 
 | `tarpit.enabled` | `false` | Retient la réponse aux IP bloquées ou bannies par Ephor au lieu de refuser aussitôt |
 | `tarpit.delay_ms` | 5000 | Durée de rétention (max 30000, sous les timeouts d'écriture usuels) |
 | `tarpit.max_concurrent` | 200 | Requêtes retenues simultanément ; au-delà, refus immédiat (`403`) |
+
+### Note commune et signaux de comportement (ADR 0011)
+
+*(Admin `0.194.0`, Edge `0.108.0`)* Ephor n'additionne plus seulement des listes et des seuils : il tient **une note de risque par IP** dans un **magasin comportemental unique par passerelle**, que le WAF partage.
+
+- **Qui l'alimente.** Ephor verse **chaque requête** (méthode, chemin, User-Agent, statut, empreinte TLS, route) une fois la réponse connue, **sans activation par route** ; le WAF y ajoute le score de ses règles ; Fail2Ban et CrowdSec y versent leurs décisions. Une requête n'est comptée qu'une fois (si le WAF l'a déjà versée, Ephor ne la reverse pas). La fenêtre est celle de la passerelle (60 s) : le label `goproxify.waf.behavior.window` n'est plus pris en compte.
+- **Ce que la note décide.** Avec `ip_score.enabled`, le ban se pose quand *score cumulé d'Ephor + signaux de comportement en `block`* atteint `ip_score.ban_threshold` (plus le bonus de confiance ci-dessous). Le ban dit tout : son explication liste les signaux d'Ephor **et** ceux de comportement, avec leurs points. Un ban remet la note à zéro.
+- **Modes (`behavior`).** Chaque signal a un mode `off | detect | block`. **Tout signal naît en `detect`** : il est calculé, listé dans l'interface, et compté en *note fantôme* — le ban qu'il aurait provoqué est journalisé (`ephor: note fantôme au-dessus du seuil`) et compté par `gpx_threat_shadow_bans_total`, rien de plus. Il passe en `block` après lecture de la simulation (`simulate_ephor_config` rejoue la note commune sur les logs : `legit_blocked` en est le critère). `behavior.mode` fixe le défaut des signaux non réglés dans `behavior.signals` ; `off` coupe tout versement. En `mode: detect` d'Ephor, rien ne bannit quelles que soient les valeurs.
+- **Signaux** (le score entre parenthèses ; les huit premiers existaient dans le WAF et gardent leur effet sur ses routes) :
+
+| Signal | Points | Ce qu'il voit |
+|---|---|---|
+| `high_4xx_rate` | 4 | au moins 40 % de 4xx, sur 5 requêtes ou plus |
+| `path_scanning` | 3 | 15 chemins distincts ou plus |
+| `waf_score_accumulation` | 3 à 5 | règles WAF déclenchées requête après requête (8 points cumulés, 15 pour 5) |
+| `ua_rotation` | 3 | 3 User-Agents différents ou plus |
+| `request_burst` | 4 | 30 requêtes en 10 s |
+| `high_post_ratio` | 2 | 70 % d'écritures sur 10 requêtes ou plus |
+| `high_path_entropy` | 2 | chemins presque tous différents (20 requêtes ou plus) |
+| `distributed_scan` | 5 à 8 | 5 IP ou plus du même /24 (/48 IPv6) |
+| `ua_tls_mismatch` | 4 | le User-Agent annonce un navigateur de la table, les suites de chiffrement du JA4 ne sont pas les siennes (3 requêtes) |
+| `no_assets` | 2 | 25 pages HTML demandées, aucune image, feuille de style, script ni police |
+| `regular_interval` | 2 | 12 intervalles ou plus presque identiques (coefficient de variation < 10 %, moyenne entre 100 ms et 30 s) |
+| `scan_breadth` | 3 | 10 chemins distincts en erreur ou plus, au moins la moitié des requêtes |
+| `asn_aggregate` | 4 | 8 IP ou plus du même ASN, 30 requêtes ou plus, 60 % en erreur, sur dix fenêtres (attaque distribuée « lente ») |
+| `rate_deviation` | 3 | débit de l'IP sur la route au-dessus du normal appris pour l'heure (voir plus bas) |
+| `fail2ban`, `crowdsec` | 5 | une décision de ces moteurs, valable le temps du ban |
+
+Les cinq premiers nouveaux signaux, et `rate_deviation`, **ne comptent pas dans le score du WAF**. Limites à connaître avant de les passer en `block` : `no_assets` voit aussi un robot d'indexation légitime (qui ne charge pas les images) ; `regular_interval` voit un client qui interroge à cadence fixe (supervision, lecteur de flux) ; `ua_tls_mismatch` voit un proxy d'entreprise qui inspecte le TLS ; `asn_aggregate` voit un gros opérateur mobile derrière un NAT. Les listes blanches d'Ephor les exemptent tous.
+
+- **Table User-Agent ↔ TLS.** Livrée avec le binaire et versionnée (`TLSTableVersion`), volontairement courte : famille `chromium` (Chrome, Edge, Opera, Brave, Electron — pile BoringSSL, 15 suites de chiffrement, JA4 `…_8daaf6152771_…`). Le User-Agent d'un navigateur Apple (tous utilisent la pile du système) et d'une famille absente de la table ne sont jamais évalués : pas de signal, pas de faux positif. `behavior.tls_families` (`famille=empreinte` à 12 caractères hexadécimaux, la partie « b » d'un JA4) la complète.
+- **Bonus de confiance.** Une IP à longue histoire propre voit son seuil de ban relevé : +1 par centaine de requêtes propres (jusqu'à 5, le bonus historique du WAF) et +1 par jour d'historique sans signal (jusqu'à 3, à partir de 50 requêtes propres). Un signal fait perdre la moitié des requêtes propres et repart l'historique. Conservé **7 jours** après la dernière requête, effacé avec l'IP (effacement RGPD) ; `behavior.no_trust` le coupe.
+- **Base ASN.** `asn_aggregate` demande de savoir à quel ASN appartient une IP. L'Admin (Sécurité › ASN, base installée) l'**annonce** (`asn_db_offer`) à chaque connexion de passerelle et quand il la met à jour ; la passerelle qui n'a pas cette version la **réclame**, la reçoit en morceaux de 512 Kio (≈ 3 Mo compacte : plages et numéros d'ASN, ni noms ni pays), en garde une copie chiffrée (`asn-db.gpx`) et s'en sert seule. Sans base, l'agrégat par ASN reste muet. Elle n'est pas répliquée entre membres d'un groupe HA : chacun la tient de l'Admin.
+- **Références apprises.** Le magasin apprend le **débit normal par IP de chaque route, heure du jour par heure du jour (UTC)** : chaque minute écoulée donne un échantillon (le 90ᵉ centile des requêtes par IP, parmi les IP sans signal) ; une médiane et un écart absolu médian robuste en tirent un seuil (médiane + 6 écarts). Le signal `rate_deviation` se déclenche quand une IP dépasse ce seuil (au moins 20 requêtes par minute) sur la route. Garde-fous : **démarrage à froid** (la référence compte à partir de 30 minutes observées pour l'heure ET 24 h d'ancienneté de la route, `behavior.reference_min_age` ; avant, le signal est marqué *froid* et ne compte jamais, quel que soit son mode), **empoisonnement** (les IP à signal ne nourrissent pas la référence ; statistiques robustes), **dérive plafonnée** (le seuil ne monte pas de plus de 25 % par 24 h). Elle ne contient aucune IP. Visible dans Ephor › Détections, `GET /api/v1/security/threat-references`, `goproxify security threat references`, MCP `get_ephor_references`.
+- **Seuils proposés.** À partir des cumuls par minute (ADR 0010, sans IP), l'Admin propose une limite globale (`global_rps`) par passerelle : quatre fois le 99,9ᵉ centile du débit par minute sur sept jours, arrondi au palier supérieur. Il ne pousse rien : « Appliquer » remplit le formulaire, l'administrateur relit, simule et enregistre. `GET /api/v1/security/threat-config/suggestions`, `goproxify security threat suggest`, MCP `suggest_ephor_thresholds`.
+- **Groupe HA.** La note d'une IP se fusionne **par maximum**, jamais par somme : une passerelle dont le pair a une note plus haute que la sienne reçoit la différence comme signal `ha_peer` jusqu'à l'expiration de l'entrée ; rejouer la même entrée ne change rien, et deux passerelles qui s'échangent leurs notes ne les gonflent pas l'une l'autre. (Avant l'ADR, la synchronisation HA du profil comportemental n'échangeait rien : son magasin d'échange n'était alimenté par personne.)
+- **Mémoire bornée.** 128 événements compacts par IP, 50 000 profils, 20 000 /24 et 5 000 ASN suivis ; au-delà, la plus ancienne information cède la place (fail-open). Coût mesuré : ≈ 4 µs et 4 allocations par requête (`BenchmarkRecordCleanTraffic`, Windows/386, 1 024 IP en rotation).
+- **Fonctionnement sans l'Admin.** Le magasin (notes en cours, historique propre, références apprises) est copié chiffré toutes les 5 minutes et à l'arrêt dans `behavior-state.gpx` (`GPX_BEHAVIOR_STATE_PATH`), relu au démarrage ; il remplace `waf-behavior.json`, qui était en clair. Les scores et fenêtres d'erreurs d'Ephor ont leur copie (`threat-state.gpx`, `GPX_THREAT_STATE_PATH`).
+
+```
+gpx_threat_shadow_bans_total   # bans que la note aurait posés (signaux en detect, ou mode detect)
+```
 
 ### Fonctionnement sans l'Admin
 
@@ -382,6 +424,8 @@ Bouncer LAPI en mode stream : les décisions CrowdSec sont poussées en temps r�
 - **Opérateur et ASN** : quand la base ASN est installée (voir [Bans par ASN](#bans-par-asn)), l'en-tête du parcours d'une IP indique son opérateur (ASN, nom, pays), avec deux boutons : **Cette IP** et **Tout l'ASN** (sans avoir à connaître le CIDR), plus « Bannir l'ASN » (aperçu d'impact puis ban). Un traçage simple ne télécharge jamais la base : l'en-tête n'apparaît que si elle est déjà installée. Les adresses privées ou réservées, que le jeu de données ne connaît pas, se tracent comme avant, en choisissant l'IP ou un CIDR à la main. Un opérateur qui annonce de très larges préfixes regroupe beaucoup d'acteurs : l'ASN entier n'est pas forcément celui d'un attaquant, d'où le choix de l'étendue. Tracer tout un ASN parcourt les logs sans borne sur l'adresse (limites habituelles du traçage).
 
 **Raccourci** : une loupe « Analyser l'IP » à côté des IP publiques (page Bans, menaces, Ephor, Prism, tiroir des logs) ouvre directement le parcours de l'IP ; l'élargissement à l'ASN se fait depuis l'en-tête (voir ci-dessus), ou à une plage par les boutons « Élargir à » (`/24`, `/16` ; `/64`, `/48` en IPv6). Les adresses privées, pseudonymisées ou tronquées n'ont pas de bouton.
+
+Quand le ban en cours ou l'étape de ban vient d'Ephor ou du WAF, la trace affiche aussi **pourquoi** : les signaux qui l'ont causé, avec leurs points et la valeur observée.
 
 API : `GET /api/v1/security/ip-trace` ; CLI : `goproxify security trace` ; MCP : `trace_ip`.
 

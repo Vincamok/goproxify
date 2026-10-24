@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/vincamok/goproxify/internal/agent/docker"
+	"github.com/vincamok/goproxify/internal/agent/statepub"
 )
 
 // Instance est une instance de service telle que la voit l'annuaire.
@@ -40,6 +41,10 @@ type Instance struct {
 	// Labels sont les étiquettes de l'instance, sous leur forme publiée : le préfixe configuré est ramené à
 	// « goproxify. » par le moteur.
 	Labels map[string]string
+	// Inactive est l'état d'une instance que l'annuaire connaît sans qu'elle serve (contrôle de santé en échec, tâche pas
+	// encore démarrée) : critical, warning, pending, unhealthy… Vide : l'instance sert. Une instance inactive n'a pas de
+	// route ; elle part dans l'inventaire des inactifs que l'Admin affiche.
+	Inactive string
 }
 
 // Lister liste les instances que l'annuaire publie, étiquetées pour GoProxify. Une erreur signifie « je ne sais pas » :
@@ -71,7 +76,17 @@ type Engine struct {
 	published  map[string]published // identifiant de conteneur → ce qui est parti à la passerelle
 	force      bool
 	reconciled bool
+	inactives  string // empreinte des instances inactives parties avec le dernier état complet
+
+	state       *statepub.Publisher // état complet de la source ; nil = publication instance par instance seulement
+	lastFull    time.Time           // dernier état complet pris par la passerelle
+	noStateFrom string              // passerelle qui a répondu ne pas connaître l'état complet
+	noStateAt   time.Time
 }
+
+// stateRefresh est le délai après lequel l'état complet est renvoyé même si l'annuaire n'a pas changé : une passerelle
+// qui a perdu ses routes sans que l'Agent s'en aperçoive les retrouve, et une instance restée là par erreur est retirée.
+const stateRefresh = 10 * time.Minute
 
 type published struct {
 	host string
@@ -101,6 +116,13 @@ func (e *Engine) SetToken(token string) {
 	e.tokMu.Lock()
 	e.token = token
 	e.tokMu.Unlock()
+}
+
+// SetStatePublisher active l'envoi de l'état complet de la source après chaque liste réussie de l'annuaire.
+func (e *Engine) SetStatePublisher(p *statepub.Publisher) {
+	e.mu.Lock()
+	e.state = p
+	e.mu.Unlock()
 }
 
 // SetEndpointFunc fait suivre au moteur la passerelle courante de l'Agent (bascule HA).
@@ -174,6 +196,64 @@ func containerID(source, key string) string {
 	return hex.EncodeToString(sum[:])[:32] + "@" + source
 }
 
+// publishState envoie à la passerelle tout ce que l'annuaire publie : elle retire les instances de cette source qu'elle
+// gardait et qui n'y sont plus, ce que la réconciliation du démarrage ne faisait qu'une fois. Rien ne part tant que
+// l'annuaire n'a pas changé (sauf après un Resync, un changement de passerelle ou stateRefresh). Faux : la passerelle
+// ne connaît pas l'appel, l'Agent publie instance par instance.
+func (e *Engine) publishState(ctx context.Context, want map[string]desired, inactive []map[string]any) bool {
+	endpoint := e.endpoint()
+	e.mu.Lock()
+	pub, force, last := e.state, e.force, e.lastFull
+	if pub == nil || (e.noStateFrom == endpoint && time.Since(e.noStateAt) < stateRefresh) {
+		e.mu.Unlock()
+		return false
+	}
+	rawInactive, _ := json.Marshal(inactive)
+	inactiveSum := sha256.Sum256(rawInactive)
+	inactiveHash := hex.EncodeToString(inactiveSum[:])
+	changed := len(e.published) != len(want) || e.inactives != inactiveHash
+	for id, w := range want {
+		if p, ok := e.published[id]; !ok || p.hash != w.hash || p.host != w.host {
+			changed = true
+			break
+		}
+	}
+	e.mu.Unlock()
+	if !changed && !force && !last.IsZero() && time.Since(last) < stateRefresh {
+		return true
+	}
+
+	ids := make([]string, 0, len(want))
+	for id := range want {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	routes := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		routes = append(routes, want[id].payload)
+	}
+	res, err := pub.PutState(ctx, endpoint, e.authToken(), e.source, "", routes, inactive)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	switch res {
+	case statepub.Sent:
+		e.published = make(map[string]published, len(want))
+		for id, w := range want {
+			e.published[id] = published{host: w.host, name: w.name, hash: w.hash}
+		}
+		e.force, e.lastFull, e.noStateFrom = false, time.Now(), ""
+		e.inactives = inactiveHash
+		e.log.Info("découverte : état complet envoyé", "source", e.source, "instances", len(want), "inactifs", len(inactive))
+		return true
+	case statepub.Failed:
+		e.force = true // réessayé au prochain cycle
+		e.log.Warn("découverte : état complet non envoyé", "source", e.source, "err", err)
+		return true
+	}
+	e.noStateFrom, e.noStateAt = endpoint, time.Now()
+	return false
+}
+
 func (e *Engine) cycle(ctx context.Context) {
 	insts, err := e.lister.List(ctx)
 	if err != nil {
@@ -182,7 +262,10 @@ func (e *Engine) cycle(ctx context.Context) {
 		}
 		return
 	}
-	want := e.build(insts)
+	want, inactive := e.build(insts)
+	if e.publishState(ctx, want, inactive) {
+		return
+	}
 	e.reconcile(ctx, want)
 
 	e.mu.Lock()
@@ -276,10 +359,11 @@ func (e *Engine) reconcile(ctx context.Context, want map[string]desired) {
 	e.mu.Unlock()
 }
 
-// build convertit les instances en routes. Une instance sans étiquette d'activation ou sans hôte est ignorée ; un hôte
-// invalide est signalé sans bloquer les autres.
-func (e *Engine) build(insts []Instance) map[string]desired {
+// build convertit les instances en routes, et celles que l'annuaire dit inactives en entrées d'inventaire sans route. Une
+// instance sans étiquette d'activation ou sans hôte est ignorée ; un hôte invalide est signalé sans bloquer les autres.
+func (e *Engine) build(insts []Instance) (map[string]desired, []map[string]any) {
 	out := map[string]desired{}
+	var inactive []map[string]any
 	for _, in := range insts {
 		labels := make(map[string]string, len(in.Labels)+3)
 		for k, v := range in.Labels {
@@ -300,6 +384,13 @@ func (e *Engine) build(insts []Instance) map[string]desired {
 		spec := docker.ParseLabels(e.source+":"+in.Key, in.Name, "", "", labels, nil, "")
 		if spec == nil {
 			e.log.Warn("découverte : étiquettes invalides, instance ignorée", "source", e.source, "instance", in.Name)
+			continue
+		}
+		if in.Inactive != "" {
+			inactive = append(inactive, map[string]any{
+				"id": e.source + ":" + id[:12] + ":" + spec.Host, "host": spec.Host, "aliases": spec.Aliases,
+				"container_id": id, "name": in.Name, "state": strings.ToLower(in.Inactive),
+			})
 			continue
 		}
 		payload := map[string]any{
@@ -323,7 +414,8 @@ func (e *Engine) build(insts []Instance) map[string]desired {
 		sum := sha256.Sum256(raw)
 		out[id] = desired{id: id, name: in.Name, host: spec.Host, payload: payload, hash: hex.EncodeToString(sum[:])}
 	}
-	return out
+	sort.Slice(inactive, func(i, j int) bool { return inactive[i]["container_id"].(string) < inactive[j]["container_id"].(string) })
+	return out, inactive
 }
 
 func (e *Engine) push(ctx context.Context, w desired) bool {

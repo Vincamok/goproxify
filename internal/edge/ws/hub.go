@@ -21,6 +21,7 @@ import (
 	"nhooyr.io/websocket/wsjson"
 
 	"github.com/vincamok/goproxify/internal/edge/metrics"
+	"github.com/vincamok/goproxify/internal/pairing"
 )
 
 const (
@@ -41,6 +42,9 @@ type Hub struct {
 	agentConns map[string]*agentConn // key = agentName
 
 	adminSecret string // clé HMAC Admin→Passerelle (vide = authentification désactivée)
+	// adminKeys, s'il est posé, donne les clés acceptées à chaque connexion (relues : un secret de fichier ou une rotation
+	// est pris en compte sans redémarrage) ; les clés précédentes y sont marquées.
+	adminKeys func() []pairing.Key
 
 	onAdminMsg MessageHandler // appelé pour chaque message Admin reçu
 	onAgentMsg MessageHandler // appelé pour chaque message Agent reçu
@@ -93,6 +97,10 @@ type agentConn struct {
 }
 
 // NewHub crée un nouveau Hub WebSocket.
+// SetAdminSecrets remplace les clés qui valident la signature de l'Admin (à appeler avant d'accepter des connexions).
+// SetAdminKeys fait donner les clés qui valident la signature de l'Admin à chaque connexion, plutôt qu'une fois pour toutes.
+func (h *Hub) SetAdminKeys(provider func() []pairing.Key) { h.adminKeys = provider }
+
 func NewHub(adminHMACSecret string, log *slog.Logger) *Hub {
 	return &Hub{
 		adminConns:    make(map[string]*adminConn),
@@ -138,7 +146,17 @@ func (h *Hub) SetAgentPendingCallback(fn func(agentID, agentName, version string
 
 // ServeAdmin gère une connexion WS entrante d'un Admin.
 func (h *Hub) ServeAdmin(w http.ResponseWriter, r *http.Request) {
-	if err := ValidateAdminHMAC(r, h.adminSecret); err != nil {
+	var keys []pairing.Key
+	if h.adminKeys != nil {
+		keys = h.adminKeys()
+	} else {
+		keys = []pairing.Key{{Value: h.adminSecret}}
+	}
+	used, err := ValidateAdminHMACKeys(r, keys)
+	if err == nil && used.Previous {
+		h.log.Warn("ws/admin: connexion signée avec une clé précédente — rotation en cours, retirer la valeur *_PREVIOUS une fois l'Admin à jour")
+	}
+	if err != nil {
 		h.log.Warn("ws/admin: authentification refusée", "err", err, "remote", r.RemoteAddr)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -361,6 +379,14 @@ func (h *Hub) unregisterAgent(agentID string, ac *agentConn) {
 
 // ApproveAgent approuve un Agent en attente et lui envoie le premier agent_hmac.
 // Si l'Agent n'est pas encore connecté, enregistre une pré-approbation (id ou name).
+// IsPreApproved dit si un Agent a été pré-approuvé et n'a pas encore ouvert sa connexion.
+func (h *Hub) IsPreApproved(agentID string) bool {
+	h.preApprovedMu.Lock()
+	defer h.preApprovedMu.Unlock()
+	_, ok := h.preApproved[agentID]
+	return ok
+}
+
 func (h *Hub) ApproveAgent(agentID string) error {
 	if agentID == "" {
 		return fmt.Errorf("agent_id vide")

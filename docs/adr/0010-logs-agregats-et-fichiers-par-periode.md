@@ -1,6 +1,6 @@
 # ADR 0010 — Logs : agrégats par minute, base séparée, fichiers par période
 
-**Statut :** proposé, étape 1 partiellement livrée (Admin 0.164.0) · **Date :** 2026-10-18
+**Statut :** remplacé par l'[ADR 0012](0012-logs-proprietaire-edge.md), mis en œuvre (Admin 0.192.1, Edge 0.105.0) : les cumuls par minute sont calculés par les passerelles, la base séparée et les fichiers par période sont ceux des passerelles · **Date :** 2026-10-18
 **Complète :** ADR-0002 (SQLite pour l'Admin) · **Respecte :** ADR-0006 (autonomie des composants)
 
 > **Réorienté par l'[ADR 0012](0012-logs-proprietaire-edge.md) (2026-10-20).** Cet ADR range mieux les logs sur l'Admin sans remettre en cause leur provenance : chaque requête de chaque passerelle y est copiée, et une coupure de l'Admin laisse un trou que rien ne comble. L'ADR 0012 donne la propriété des lignes brutes aux passerelles. Les étapes 2 et 3 (base séparée, fichiers par période) sont **remplacées** : elles s'appliquent à la passerelle, pas à l'Admin. L'étape 1 est **réorientée** : les cumuls par minute sont calculés par la passerelle ; les tables livrées en Admin 0.164.0 et 0.164.2 sont une étape intermédiaire que l'ADR 0012 supprime à sa livraison 8. Le contexte ci-dessous reste exact.
@@ -100,9 +100,11 @@ Les logs passent dans leurs propres fichiers SQLite, dans un dossier voisin de l
 2. Déplacer les logs et les agrégats dans leurs fichiers, hors de `admin.db`.
 3. Découper par période et par type, avec la couche de lecture multi-fichiers, la rétention par fichier et l'effacement RGPD.
 
-## Questions ouvertes
+## Questions tranchées
 
-- Sketch d'IP uniques ou calcul sur les lignes brutes ?
-- Périodes d'accès : semaine, ou jour pour de très gros volumes (réglable) ?
-- Import de l'historique existant : oui ou non ?
-- Durée de conservation des agrégats : 400 jours par défaut, est-ce adapté ?
+- **IP uniques** : un résumé fusionnable par passerelle (liste exacte puis HyperLogLog), calculé à l'affichage (ADR 0012).
+- **Périodes d'accès** : la semaine, sur la passerelle (ADR 0012, Edge 0.74.0).
+- **Import de l'historique existant** : non. Aucune instance n'est déployée en production ; l'ancienne table `logs` d'accès est remplacée sans reprise.
+- **Conservation des agrégats** : 400 jours (`DefaultRetentionAggDays`), inchangée.
+
+Les tables livrées en Admin 0.164.0 (`logs_minute`) et 0.164.2 (écriture par lots) restent, mais `logs_minute` n'est plus alimentée que par les cumuls des passerelles ; l'agrégation depuis les lignes brutes a été supprimée en Admin 0.176.0.

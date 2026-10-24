@@ -74,6 +74,36 @@ Navigateur Admin
 printf %s "goproxify/agent-pairing/v1:$GPX_PAIRING_SECRET" | sha256sum | cut -d' ' -f1
 ```
 
+**Passerelle sans le secret racine (`GPX_EDGE_CHANNEL_KEY`)** : de la même façon, une passerelle peut ne détenir ni `GPX_PAIRING_SECRET` ni de quoi le retrouver. L'Admin signe sa connexion à chaque passerelle avec une clé qui ne vaut que pour elle, dérivée de son **identifiant** (`dn_…`, celui que l'Admin lui connaît, visible dans les logs de l'Admin et dans `architecture.json` : il survit à un renommage) :
+
+```bash
+printf %s "goproxify/edge-channel/v1:dn_bfc1086fe4e3:$GPX_PAIRING_SECRET" | sha256sum | cut -d' ' -f1
+```
+
+`GET /api/v1/pairing-secret?node=frontal` (identifiant ou nom) la renvoie (`edge_channel_key`). Sur la passerelle, posez `GPX_EDGE_CHANNEL_KEY` (sa clé) et `GPX_AGENT_PAIRING_KEY` (la clé des Agents, ci-dessus) et **retirez `GPX_PAIRING_SECRET`** ; posez aussi `GPX_PORTAL_MASTER_KEY` si le portail Access est utilisé (il se dérive sinon du secret racine, voir plus bas). Une passerelle compromise ne peut alors plus se faire passer pour l'Admin auprès des autres. **Migration** : tant que la passerelle a `GPX_PAIRING_SECRET`, elle accepte aussi la racine ; l'Admin signe d'abord avec la clé dérivée et se replie sur la racine si la passerelle la refuse (`GPX_EDGE_CHANNEL_ROOT_FALLBACK=false` l'interdit une fois toutes les passerelles migrées). L'identifiant entre dans la clé : un renommage de la passerelle ne la change pas.
+
+**Clé du canal dérivée du nom, pour les déploiements automatisés (Admin `0.192.0`)** : le démarrage rapide et le chart Helm ne connaissent pas l'identifiant `dn_…` que l'Admin attribue à une passerelle, mais ils connaissent son nom. L'Admin essaie donc, après la clé dérivée de l'identifiant, celle dérivée du **nom** (`printf %s "goproxify/edge-channel/v1:<nom>:$GPX_PAIRING_SECRET" | sha256sum`). `GET /api/v1/pairing-secret?node=` renvoie les deux (`edge_channel_key`, `edge_channel_key_by_name`). Là où l'identifiant est connu, préférez-le : il survit à un renommage, le nom non.
+
+**Démarrage rapide et Helm sans le secret racine sur la passerelle** : `scripts/quickstart.sh` génère `GPX_EDGE_CHANNEL_KEY` (dérivée de `EDGE_NODE_NAME`), `GPX_AGENT_PAIRING_KEY` et `GPX_PORTAL_MASTER_KEY`, et la passerelle du compose n'a plus `GPX_PAIRING_SECRET` ; l'Admin y pose `GPX_EDGE_CHANNEL_ROOT_FALLBACK=false` et `GPX_AGENT_PAIRING_ROOT=false`. Si vous changez `EDGE_NODE_NAME` après coup, recalculez `GPX_EDGE_CHANNEL_KEY`. Le chart Helm a `security.edgeWithoutRootSecret` (défaut `false`, aucun changement pour une installation existante) : à `true`, la passerelle reçoit sa clé de canal (dérivée du nom de son Deployment), la clé des Agents et `global.portalMasterKey`, et plus le secret racine ; la rotation (`global.previousPairingSecret`) passe aux Agents, aux passerelles et à l'Admin leurs valeurs `*_PREVIOUS`. Cela exige `edge.kind: Deployment` : un DaemonSet se nomme d'après le nœud Kubernetes, connu au démarrage seulement, donc sa clé ne peut pas être calculée par le chart sans lui donner le secret racine. Le chart n'a pas pu être rendu par `helm` ici : validez avec `helm template` avant de l'utiliser.
+
+**Secrets de fichier et rotation (Admin `0.190.0`, passerelle `0.104.0`, Agent `0.18.0`)** : chacun des secrets `GPX_PAIRING_SECRET`, `GPX_EDGE_CHANNEL_KEY` et `GPX_AGENT_PAIRING_KEY` peut venir d'un fichier (un secret Docker) en posant `<NOM>_FILE=/run/secrets/…` à la place de la variable. Le fichier est **relu à chaque usage** (connexion de l'Admin, appairage, appel d'un Agent) : une valeur changée sur disque est prise en compte sans redémarrer le conteneur. Chacun accepte aussi `<NOM>_PREVIOUS` (ou `<NOM>_PREVIOUS_FILE`) : les valeurs précédentes, séparées par des virgules, acceptées **le temps d'une rotation**. Chaque connexion ou appairage qui passe par une valeur précédente est journalisé (`rotation en cours`), pour savoir quand la retirer.
+
+Pour changer le secret racine sans interruption, dans cet ordre (chaque étape laisse tout fonctionner) :
+
+1. Calculez les nouvelles clés avec le nouveau secret : celle des Agents, et celle de canal de chaque passerelle (voir plus haut).
+2. **Agents** : `GPX_AGENT_PAIRING_KEY` = nouvelle clé des Agents, `GPX_AGENT_PAIRING_KEY_PREVIOUS` = l'ancienne. Ils acceptent alors les deux en Bearer.
+3. **Passerelles** : `GPX_EDGE_CHANNEL_KEY` = nouvelle clé de la passerelle, `GPX_EDGE_CHANNEL_KEY_PREVIOUS` = l'ancienne ; `GPX_AGENT_PAIRING_KEY` et `GPX_AGENT_PAIRING_KEY_PREVIOUS` comme les Agents. Elles acceptent l'Admin avec l'une ou l'autre clé et envoient la nouvelle aux Agents.
+4. **Admin** : `GPX_PAIRING_SECRET` = nouveau secret, `GPX_PAIRING_SECRET_PREVIOUS` = l'ancien. Il signe avec la nouvelle clé, et se rabat sur l'ancienne devant une passerelle qui ne l'a pas encore (journalisé).
+5. Quand plus aucun journal ne signale de rotation en cours, **retirez tous les `*_PREVIOUS`**. L'ancien secret ne vaut plus rien. Pour que le recouvrement se termine seul, posez `<NOM>_PREVIOUS_UNTIL` (date RFC 3339, par exemple `GPX_PAIRING_SECRET_PREVIOUS_UNTIL=2026-11-01T00:00:00Z`) : à cette date, les valeurs précédentes ne sont plus acceptées. Une date illisible les supprime aussi.
+
+**Secret racine présenté par un Agent (`GPX_AGENT_PAIRING_ROOT`)** : l'Admin et les passerelles l'acceptent encore par défaut, pour qu'une installation dont les Agents ont reçu la racine continue de fonctionner ; chaque appairage de ce type est journalisé. Posez `GPX_AGENT_PAIRING_ROOT=false` dès que vos Agents ont `GPX_AGENT_PAIRING_KEY` : le chart Helm et le démarrage rapide le font déjà. Le défaut ne change pas dans le code, parce qu'un changement casserait silencieusement les Agents que vous n'avez pas encore migrés.
+
+**Approbation des Agents** : par défaut, un Agent qui présente la clé d'appairage à sa passerelle est pré-approuvé. `GPX_AGENT_PREAPPROVAL=manual` sur la passerelle le laisse en attente de l'approbation d'un opérateur (*Infrastructure*, ou `goproxify nodes accept`), tout en lui rendant son jeton.
+
+**Éviction d'un membre** : quand un membre quitte un groupe, l'Admin renouvelle la clé du groupe et le jeton de chaque membre restant (ils les ont donnés à la liste des pairs du membre sorti). Pour évincer une machine pour de bon, supprimez-la aussi de l'Admin (son jeton est révoqué), et ne lui laissez pas le secret racine : migrez les passerelles vers leurs clés dérivées avant, ou faites tourner le secret racine après.
+
+Un Agent s'appaire avec sa clé courante puis, si la passerelle la refuse, avec la précédente. Il ne se réappaire que s'il a perdu son jeton, donc rarement pendant la fenêtre.
+
 L'écran *Infrastructure → Ajouter un Agent*, `GET /api/v1/pairing-secret` (`agent_key`), `scripts/quickstart.sh` et le chart Helm la fournissent. **Migration** : un Agent qui n'a que `GPX_PAIRING_SECRET` continue de fonctionner (la passerelle et l'Admin acceptent encore le secret racine d'un Agent) mais journalise un avertissement ; une fois tous les Agents passés à `GPX_AGENT_PAIRING_KEY`, posez `GPX_AGENT_PAIRING_ROOT=false` sur l'Admin et les passerelles pour refuser le secret racine côté Agent (le chart le fait par défaut). Pour retirer un secret racine déjà copié sur des hôtes d'application, **changez-le** (Admin, passerelles), puis redistribuez la clé dérivée du nouveau secret : l'ancienne clé est invalide.
 
 ---
@@ -751,7 +781,26 @@ volumes:
 
 ---
 
+## Clé locale de la passerelle
+
+Depuis la passerelle `0.98.0`, les copies locales (cache de routes, certificats et plugins, configurations, clé de pseudonymisation des IP des logs) sont chiffrées par une **clé locale propre à la passerelle**, et plus par une clé dérivée du secret d'appairage. Changer `GPX_PAIRING_SECRET` ne les rend donc plus illisibles.
+
+Ordre de choix de la clé :
+
+1. `GPX_NODE_KEY` : la clé elle-même (32 caractères au moins).
+2. `GPX_NODE_KEY_FILE` : le chemin d'un fichier de secret Docker qui la contient.
+3. Sinon, la passerelle **génère** une clé au premier démarrage dans `node.key` à la racine du volume d'état (`GPX_NODE_KEY_PATH` pour changer l'emplacement), avec un avertissement dans les logs.
+4. Sinon, l'ancienne clé dérivée du jeton ou du secret d'appairage.
+
+Il n'y a rien à reconfigurer à la mise à jour : au premier démarrage, la passerelle relit ses copies avec l'ancienne clé et les réécrit avec la nouvelle. Une clé fournie plus tard par `GPX_NODE_KEY` ne rend pas illisible ce que la clé générée avait chiffré.
+
+- **La clé générée est sur le même disque que les données.** Elle sépare le chiffrement du secret d'appairage, pas plus : pour la garder hors du volume, fournissez `GPX_NODE_KEY` ou un fichier de secret.
+- **Sauvegardez `node.key` avec le volume** (la sauvegarde d'état de la passerelle l'inclut) : sans elle, une restauration sur un volume neuf ne relit plus les copies chiffrées, et la passerelle repart de ce que l'Admin lui renvoie.
+- **Le portail Access** garde sa clé maître propre (`GPX_PORTAL_MASTER_KEY`, sinon dérivée du secret d'appairage) : elle doit être identique sur tous les membres d'un groupe HA pour que les coffres des comptes SSO se déchiffrent partout.
+
 ## Changer le secret d'appairage
+
+Depuis la passerelle `0.98.0`, la procédure ci-dessous ne concerne plus que les passerelles qui n'ont pas encore démarré avec une clé locale (voir ci-dessus) et la clé maître du portail quand `GPX_PORTAL_MASTER_KEY` n'est pas posée.
 
 À faire après une fuite, un départ, ou périodiquement. Le secret `GPX_PAIRING_SECRET` fait deux choses sur la passerelle : il authentifie le WebSocket de l'Admin et l'appairage des Agents, et **il dérive la clé qui chiffre ses copies locales** (routes, certificats, plugins, réglages, règles automatiques, portail Access). Le changer sans précaution rend ces copies illisibles : la passerelle repart « sans config » et ne sert plus rien de ce qu'elle tenait de l'Admin tant qu'il ne lui renvoie pas tout — c'est exactement ce que l'autonomie (ADR 0006) doit éviter. Mesuré sur un cluster : après un changement sans précaution, la passerelle journalise `cache local illisible`, `paquet ignoré` pour chaque plugin et `copie locale illisible` pour les réglages, le portail et les règles.
 
@@ -766,7 +815,7 @@ Procédure (le principe est le même avec Compose, Portainer ou Helm) :
 
 - **`GPX_PAIRING_SECRET_PREVIOUS` ne sert qu'à relire des données locales** ; il n'authentifie jamais rien. Après une fuite, l'ancien secret cesse donc d'ouvrir `/ws/admin` et l'appairage dès le redémarrage, même si la variable reste posée.
 - **Les jetons déjà émis restent valables** : l'ancien secret ne permet plus d'en obtenir, mais un jeton d'Agent ou de passerelle volé continue de fonctionner jusqu'à sa révocation (Admin → Jetons, ou suppression du nœud). Après une fuite, révoquez-les et réappairez les nœuds.
-- **Le portail Access** dérive sa clé du même secret quand `GPX_PORTAL_MASTER_KEY` n'est pas posée : la base du portail (coffres d'identifiants) suit la même règle. Poser `GPX_PORTAL_MASTER_KEY` dès le départ la rend indépendante du secret d'appairage ; la changer est une autre opération.
+- **Le portail Access** dérive sa clé du même secret quand `GPX_PORTAL_MASTER_KEY` n'est pas posée : la base du portail, les coffres d'identifiants des comptes SSO et les enregistrements de sessions en dérivent. Pour le rendre indépendant du secret d'appairage, posez `GPX_PORTAL_MASTER_KEY` avec **la valeur actuelle** du secret (ou de `GPX_CONTROL_PLANE_AUTH_TOKEN` s'il est posé), identique sur tous les membres d'un groupe HA : rien ne change et le portail ne suit plus le secret d'appairage. **Ne la remplacez pas par une clé neuve** : les coffres SSO et les enregistrements existants ne se relisent pas avec une autre valeur (`GPX_PAIRING_SECRET_PREVIOUS` ne relit que le fichier de la base).
 - **Vérifié** sur un cluster à Admin coupé : secret changé sans l'ancien → cache, deux plugins, réglages, règles et portail illisibles ; avec `GPX_PAIRING_SECRET_PREVIOUS` → tout relu, plugins chargés (2) ; redémarrage sans la variable → plugins chargés (2). Admin remis en route : passerelle et Agent en ligne, plugins conservés, aucun refus côté Agent.
 
 ## Épingler les clés de signature des plugins
@@ -796,6 +845,6 @@ Les passerelles et les Agents gardent leur identité, leurs certificats chiffré
 
 **Joindre les passerelles.** L'Admin ne devine pas l'adresse d'une passerelle : déclarez-les avec `admin.edgeEndpoints` (`--set "admin.edgeEndpoints[0].name=<nœud>" --set "admin.edgeEndpoints[0].url=http://<IP du nœud>:8000"`). Le nom est celui du nœud Kubernetes (`kubectl get nodes`), l'adresse celle du nœud (hostNetwork). Avec `edge.kind=Deployment`, la passerelle est déclarée automatiquement.
 
-**Découverte Kubernetes.** Annotez un `Service` ou un `Ingress` : label `goproxify.enabled=true` (sélection) et annotation `goproxify.host=app.example.com` ; l'Agent du nœud annonce la route à sa passerelle.
+**Découverte Kubernetes.** Annotez un `Service` ou un `Ingress` : label `goproxify.enabled=true` (sélection) et annotation `goproxify.host=app.example.com` ; l'Agent du nœud annonce la route à sa passerelle. Un `Service` dont l'objet `Endpoints` n'a aucune adresse prête (zéro réplique, pods pas prêts) s'affiche **inactif** dans l'Admin et n'a plus de route tant qu'un pod n'est pas prêt ; le chart donne déjà à l'Agent le droit de lire les `endpoints`, sinon aucun Service n'est donné inactif.
 
 Limites : le chart a été installé sur un cluster kind (un plan de contrôle, deux nœuds de travail) : Admin en utilisateur 10001, appairage de chaque Agent à la passerelle de son nœud, Admin ↔ passerelles, découverte d'un `Service` et d'un `Ingress` annotés (route créée puis retirée à la suppression), trafic jusqu'au pod par chaque nœud, identité conservée à la suppression des pods, mode `Deployment`. Choisissez `DaemonSet` ou `Deployment` à l'installation : en changer plus tard laisse les Agents avec le jeton de l'ancienne passerelle. Non éprouvé : un runtime Docker/Podman, un vrai cloud (stockage, LoadBalancer).

@@ -51,6 +51,11 @@ type Store struct {
 	mu  sync.Mutex
 	idx *Index
 	mod time.Time
+
+	// compact : la forme poussée aux passerelles, recalculée quand l'index change.
+	compactFor *Index
+	compactBuf []byte
+	compactVer string
 }
 
 // NewStore retourne un Store ; path est l'emplacement du fichier .tsv.gz, url sa source.
@@ -103,6 +108,26 @@ func (s *Store) Installed(ctx context.Context) (*Index, bool) {
 	}
 	idx, err := s.Index(ctx)
 	return idx, err == nil
+}
+
+// Compact retourne la base compacte à pousser aux passerelles et sa version ; faux si la base n'est pas installée (il ne
+// télécharge rien : une passerelle ne doit pas déclencher un téléchargement de 9 Mo).
+func (s *Store) Compact(ctx context.Context) (data []byte, version string, ok bool) {
+	idx, installed := s.Installed(ctx)
+	if !installed {
+		return nil, "", false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.compactFor != idx {
+		buf, ver, err := idx.Compact()
+		if err != nil {
+			s.log.Warn("asn: base compacte impossible", "err", err)
+			return nil, "", false
+		}
+		s.compactFor, s.compactBuf, s.compactVer = idx, buf, ver
+	}
+	return s.compactBuf, s.compactVer, true
 }
 
 // Refresh retélécharge le jeu de données même s'il est présent.

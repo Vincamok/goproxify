@@ -4,13 +4,13 @@
 package edgews
 
 import (
-	edgere "github.com/vincamok/goproxify/internal/edge/rulesengine"
-	"github.com/vincamok/goproxify/internal/edge/plugins"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/vincamok/goproxify/internal/edge/plugins"
+	edgere "github.com/vincamok/goproxify/internal/edge/rulesengine"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -24,17 +24,21 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/api"
 	"github.com/vincamok/goproxify/internal/admin/archstore"
 	"github.com/vincamok/goproxify/internal/admin/auth"
+	admindb "github.com/vincamok/goproxify/internal/admin/db"
 	"github.com/vincamok/goproxify/internal/admin/delegation"
+	"github.com/vincamok/goproxify/internal/admin/ech"
 	"github.com/vincamok/goproxify/internal/admin/edgeproxy"
 	"github.com/vincamok/goproxify/internal/admin/gdpr"
 	"github.com/vincamok/goproxify/internal/admin/mailer"
-	"github.com/vincamok/goproxify/internal/admin/ech"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
+	"github.com/vincamok/goproxify/internal/admin/security"
+	"github.com/vincamok/goproxify/internal/admin/siemcfg"
 	"github.com/vincamok/goproxify/internal/edge/errorpages"
 	"github.com/vincamok/goproxify/internal/edge/portal"
 	"github.com/vincamok/goproxify/internal/edge/router"
 	edgetls "github.com/vincamok/goproxify/internal/edge/tls"
 	edgeWS "github.com/vincamok/goproxify/internal/edge/ws"
+	"github.com/vincamok/goproxify/internal/pairing"
 )
 
 // Settings regroupe les paramètres runtime poussés aux passerelles.
@@ -66,21 +70,29 @@ type Manager struct {
 	mu         sync.RWMutex
 	edges      map[string]*edgeEntry // key = edgeID (UUID)
 	hmacSecret string
+	// rootKeys donne le secret racine courant et ses précédents (rotation), relus à chaque connexion ; nil = hmacSecret seul.
+	rootKeys func() []pairing.Key
 	db         *sql.DB
 	log        *slog.Logger
 	dataDir    string           // basePath Admin pour fallback disque snippets/providers
 	archStore  *archstore.Store // référentiel architecture disque
+	groupCards *api.GroupCardSync // fiches des groupes HA, poussées à la connexion de chaque membre
 
 	settingsMu     sync.RWMutex
 	settings       Settings // derniers paramètres poussés (utilisés au full_sync)
 	onAgentPending func(id, name, version string)
 	logStream      *LogStreamIngestor
-	onLogBatch     func(entries []edgeWS.LogEntryPayload)
+	live           liveState
+	traffic        trafficState
+	siem           siemState
+	logInfo        logInfoState
+	onLogBatch    func(entries []edgeWS.LogEntryPayload)
 	onWAFReloaded  func(nodeName string)
 	liveMu         sync.RWMutex
 	portalLive     map[string][]portal.LiveSession // instantané par passerelle (node_name)
 	alertEngine    *alerting.Engine
 	automation     AutomationRules
+	asnSource      ASNSource // base IP → ASN de l'Admin, annoncée aux passerelles
 }
 
 // NewManager crée un Manager WS Admin→Passerelle.
@@ -475,12 +487,18 @@ func (m *Manager) HandleEdgeMessage(msg edgeWS.Message) {
 	switch msg.Type {
 	case edgeWS.TypeEdgeHeartbeat:
 		m.handleEdgeHeartbeat(msg)
+	case edgeWS.TypeEdgeTraffic:
+		m.handleEdgeTraffic(msg.Payload)
+	case edgeWS.TypeSIEMStatus:
+		m.handleSIEMStatus(msg.Payload)
+	case edgeWS.TypeLogInfo:
+		m.handleLogInfo(msg.Payload)
 	case edgeWS.TypeAgentPending:
 		var p edgeWS.AgentPendingPayload
 		if err := json.Unmarshal(msg.Payload, &p); err == nil && m.onAgentPending != nil {
 			m.onAgentPending(p.AgentID, p.AgentName, p.Version)
 		}
-	case edgeWS.TypeAccessLog, edgeWS.TypeAgentLog:
+	case edgeWS.TypeAgentLog:
 		m.handleLogBatch(msg.Payload)
 	case edgeWS.TypeAgentEvent:
 		m.handleAgentEvent(msg.Payload)
@@ -501,6 +519,8 @@ func (m *Manager) HandleEdgeMessage(msg edgeWS.Message) {
 		m.handlePortalAudit(msg.Payload)
 	case edgeWS.TypeThreatBan:
 		m.handleThreatBan(msg.Payload)
+	case edgeWS.TypeASNWant:
+		m.handleASNWant(msg.Payload)
 	case edgeWS.TypeF2BBan:
 		m.handleF2BBan(msg.Payload)
 	case edgeWS.TypeCrowdSecDecisions:
@@ -549,15 +569,16 @@ func (m *Manager) handleThreatBan(raw json.RawMessage) {
 		source = p.Source
 	}
 	banID := source + "-" + p.IP
+	signals := security.EncodeBanSignals(p.Signals)
 	m.db.Exec( //nolint:errcheck
-		`INSERT INTO security_bans (id, ip, domain, reason, source, expires_at, edge_name)
-		 VALUES (?, ?, '', ?, ?, ?, ?)
-		 ON CONFLICT(id) DO UPDATE SET reason=excluded.reason, expires_at=excluded.expires_at`,
-		banID, p.IP, p.Reason, source, expiresAt, p.NodeName,
+		`INSERT INTO security_bans (id, ip, domain, reason, source, expires_at, edge_name, signals)
+		 VALUES (?, ?, '', ?, ?, ?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET reason=excluded.reason, expires_at=excluded.expires_at, signals=excluded.signals`,
+		banID, p.IP, p.Reason, source, expiresAt, p.NodeName, signals,
 	)
 	m.db.Exec( //nolint:errcheck
-		`INSERT INTO security_ban_history (ip, domain, action, reason, source, ban_id, edge_name) VALUES (?,?,'banned',?,?,?,?)`,
-		p.IP, "", p.Reason, source, banID, p.NodeName)
+		`INSERT INTO security_ban_history (ip, domain, action, reason, source, ban_id, edge_name, signals) VALUES (?,?,'banned',?,?,?,?,?)`,
+		p.IP, "", p.Reason, source, banID, p.NodeName, signals)
 	if source == "threat" && m.alertEngine != nil {
 		m.alertEngine.Emit(alerting.Event{
 			Trigger:  alerting.TriggerEphorBan,
@@ -716,13 +737,15 @@ func (m *Manager) handleEdgeHeartbeat(msg edgeWS.Message) {
 
 // newClient crée un Client WS pour une passerelle donné.
 func (m *Manager) newClient(edgeID, endpoint string, entry *edgeEntry) *Client {
-	return NewClient(edgeID, endpoint, m.hmacSecret, func(ctx context.Context) error {
+	return NewClient(edgeID, entry.nodeName, endpoint, m.hmacSecret, m.rootKeys, func(ctx context.Context) error {
 		m.settingsMu.RLock()
 		s := m.settings
 		m.settingsMu.RUnlock()
 		m.pushAllToEntry(ctx, entry, s)
 		m.pushAdminToken(ctx, entry)
+		m.revokeStaleIfPending(ctx, entry)
 		m.sendLogResume(entry)
+		m.sendLiveSubscribe(entry)
 		return nil
 	}, func(msg edgeWS.Message) {
 		switch msg.Type {
@@ -735,8 +758,11 @@ func (m *Manager) newClient(edgeID, endpoint string, entry *edgeEntry) *Client {
 		case edgeWS.TypeIPStream:
 			m.handleIPStream(entry, msg.Payload)
 			return
+		case edgeWS.TypeLogLiveRows:
+			m.handleLiveRows(entry, msg.Payload)
+			return
 		}
-		if msg.Type == edgeWS.TypeAccessLog || msg.Type == edgeWS.TypeAgentLog {
+		if msg.Type == edgeWS.TypeAgentLog {
 			msg.Payload = stampLogBatchNode(msg.Payload, edgeID, entry.nodeName)
 		}
 		m.HandleEdgeMessage(msg)
@@ -782,6 +808,105 @@ func stampLogBatchNode(raw json.RawMessage, nodeID, nodeName string) json.RawMes
 // pushAdminToken envoie à passerelle le token HTTP qu'Admin utilisera pour ses appels REST internes.
 // Passerelle l'enregistre dans son tokenStore (RoleAdmin) afin de valider les requêtes Admin→Passerelle.
 func (m *Manager) pushAdminToken(ctx context.Context, entry *edgeEntry) {
+	tok := m.adminTokenFor(ctx, entry)
+	if tok == "" {
+		return
+	}
+	msg, err := edgeWS.NewMessage(0, edgeWS.TypeAdminToken, edgeWS.AdminTokenPayload{Token: tok})
+	if err != nil {
+		return
+	}
+	entry.client.Send(msg)
+}
+
+// RevokeStaleAdminTokens demande à chaque passerelle connectée de révoquer tous les jetons qu'un Admin lui a poussés,
+// sauf celui de cet Admin (ADR 0015, éviction d'urgence). À lancer quand l'Admin a été remplacé : les jetons de l'ancien
+// restent valables sur les passerelles tant qu'on ne les retire pas. Rend le nombre de passerelles sollicitées.
+func (m *Manager) RevokeStaleAdminTokens(ctx context.Context) int {
+	n := 0
+	for _, e := range m.allEntries() {
+		tok := m.adminTokenFor(ctx, e)
+		if tok == "" {
+			continue
+		}
+		msg, err := edgeWS.NewMessage(0, edgeWS.TypeRevokeStaleAdminTokens, edgeWS.AdminTokenPayload{Token: tok})
+		if err != nil {
+			continue
+		}
+		e.client.Send(msg)
+		n++
+	}
+	return n
+}
+
+// pendingRevokeKey : drapeau « la passerelle doit encore révoquer les anciens jetons Admin » (passerelle hors ligne
+// quand son jeton a tourné).
+func pendingRevokeKey(edgeID string) string { return "edge.token.revoke-pending." + edgeID }
+
+// RotateEdgeToken remplace le jeton qu'a cet Admin pour une passerelle, le lui pousse et lui fait révoquer l'ancien, puis
+// redonne la liste des pairs à toutes les passerelles (elles s'appellent avec ces jetons). À faire quand un membre quitte
+// un groupe : il connaît les jetons de ses pairs, que l'Admin lui avait donnés avec la liste des pairs. Une passerelle hors
+// ligne révoque l'ancien à sa prochaine connexion. Rend vrai si la passerelle est connue de l'Admin.
+func (m *Manager) RotateEdgeToken(ctx context.Context, ref string) bool {
+	id, ok := m.EdgeIDOf(ref)
+	if !ok {
+		return false
+	}
+	var entry *edgeEntry
+	for _, e := range m.allEntries() {
+		if e.id == id {
+			entry = e
+		}
+	}
+	if entry == nil {
+		return false
+	}
+	plain := auth.GenerateToken("edge", entry.nodeName)
+	stored, hash := auth.PrepareNodeTokenForStore(plain)
+	res, err := m.db.ExecContext(ctx, `UPDATE tokens SET token=?, token_hash=? WHERE id=? AND revoked=0`, stored, hash, id)
+	if err != nil {
+		m.log.Error("edgews/manager: rotation du jeton de la passerelle", "edge", entry.nodeName, "err", err)
+		return false
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return false
+	}
+	m.saveEdgeTokensToDisk(ctx)
+	_ = admindb.SetSetting(m.db, pendingRevokeKey(id), "1")
+	m.pushAdminToken(ctx, entry)
+	m.revokeStaleIfPending(ctx, entry)
+	m.log.Warn("edgews/manager: jeton de la passerelle renouvelé", "edge", entry.nodeName)
+	go m.PushGatewayPeers(ctx)
+	return true
+}
+
+// RotateEdgeTokens renouvelle le jeton de chaque passerelle de la liste (par nom ou identifiant).
+func (m *Manager) RotateEdgeTokens(ctx context.Context, refs []string) {
+	for _, r := range refs {
+		m.RotateEdgeToken(ctx, r)
+	}
+}
+
+// revokeStaleIfPending envoie à la passerelle l'ordre de révoquer les anciens jetons Admin, si une rotation l'attend.
+// Le drapeau n'est levé que si l'ordre est parti : une passerelle hors ligne le reçoit à sa reconnexion.
+func (m *Manager) revokeStaleIfPending(ctx context.Context, entry *edgeEntry) {
+	if admindb.GetSetting(m.db, pendingRevokeKey(entry.id), "") == "" || !entry.client.Connected() {
+		return
+	}
+	tok := m.adminTokenFor(ctx, entry)
+	if tok == "" {
+		return
+	}
+	msg, err := edgeWS.NewMessage(0, edgeWS.TypeRevokeStaleAdminTokens, edgeWS.AdminTokenPayload{Token: tok})
+	if err != nil {
+		return
+	}
+	entry.client.Send(msg)
+	_ = admindb.SetSetting(m.db, pendingRevokeKey(entry.id), "")
+}
+
+// adminTokenFor : le jeton que cet Admin présente à la passerelle, en clair ("" s'il n'en a pas).
+func (m *Manager) adminTokenFor(ctx context.Context, entry *edgeEntry) string {
 	var tok string
 	if err := m.db.QueryRowContext(ctx,
 		`SELECT token FROM tokens WHERE id=? AND revoked=0`, entry.id).Scan(&tok); err != nil || tok == "" {
@@ -794,14 +919,9 @@ func (m *Manager) pushAdminToken(ctx context.Context, entry *edgeEntry) {
 			 LIMIT 1`, entry.nodeName).Scan(&tok)
 	}
 	if tok == "" {
-		return
+		return ""
 	}
-	tok = auth.PlainNodeToken(tok)
-	msg, err := edgeWS.NewMessage(0, edgeWS.TypeAdminToken, edgeWS.AdminTokenPayload{Token: tok})
-	if err != nil {
-		return
-	}
-	entry.client.Send(msg)
+	return auth.PlainNodeToken(tok)
 }
 
 // allEntries retourne une copie sûre des entrées courantes.
@@ -1157,6 +1277,60 @@ func (m *Manager) PushPortal(ctx context.Context, edgeName string, payload any) 
 	m.log.Warn("edgews/manager: push portal — passerelle introuvable", "edge", edgeName)
 }
 
+// EdgeIDOf résout une passerelle connue de l'Admin, par identifiant ou par nom, en son identifiant : celui qui entre dans
+// la clé de son canal (pairing.EdgeChannelKey).
+func (m *Manager) EdgeIDOf(ref string) (string, bool) {
+	for _, e := range m.allEntries() {
+		if e.id == ref {
+			return e.id, true
+		}
+	}
+	for _, e := range m.allEntries() {
+		if e.nodeName == ref {
+			return e.id, true
+		}
+	}
+	return "", false
+}
+
+// SetRootKeys fait relire le secret racine à chaque connexion à une passerelle : un secret de fichier ou une rotation
+// (GPX_PAIRING_SECRET_PREVIOUS) est pris en compte sans redémarrer l'Admin.
+func (m *Manager) SetRootKeys(provider func() []pairing.Key) { m.rootKeys = provider }
+
+// EdgeNameOf rend le nom d'une passerelle connue de l'Admin, à partir de son identifiant.
+func (m *Manager) EdgeNameOf(id string) string {
+	for _, e := range m.allEntries() {
+		if e.id == id {
+			return e.nodeName
+		}
+	}
+	return ""
+}
+
+// SetGroupCards branche les fiches de groupe : celle d'une passerelle lui est poussée à sa connexion.
+func (m *Manager) SetGroupCards(c *api.GroupCardSync) { m.groupCards = c }
+
+// PushGroupCard envoie la fiche de son groupe à une passerelle.
+func (m *Manager) PushGroupCard(ctx context.Context, edgeName string, card edgeWS.GroupCard) {
+	for _, e := range m.allEntries() {
+		if e.nodeName != edgeName {
+			continue
+		}
+		if err := e.client.PushJSON(edgeWS.TypePushGroupCard, card); err != nil {
+			m.log.Warn("edgews/manager: push group card", "edge", e.nodeName, "err", err)
+		}
+		return
+	}
+}
+
+func (m *Manager) pushGroupCardTo(ctx context.Context, e *edgeEntry) {
+	if card, ok := m.groupCards.CardFor(ctx, e.nodeName); ok {
+		if err := e.client.PushJSON(edgeWS.TypePushGroupCard, card); err != nil {
+			m.log.Warn("edgews/manager: push group card", "edge", e.nodeName, "err", err)
+		}
+	}
+}
+
 // PushSettings envoie les paramètres runtime à toutes les passerelles.
 func (m *Manager) PushSettings(ctx context.Context, s Settings) {
 	m.settingsMu.Lock()
@@ -1447,6 +1621,12 @@ func (m *Manager) PushAll(ctx context.Context, settings Settings) {
 	}
 }
 
+// syncProxiesRetryWaits : délais avant chaque nouvel essai du rattrapage des proxies. Une passerelle qui n'a pas répondu
+// reste écartée des lectures pendant edgeretry : les essais suivants doivent tomber après ce délai, sinon ils retombent
+// tous sur « passerelle injoignable, nouvel essai différé » (quatre essais en 15 s abandonnaient avant qu'elle soit
+// de nouveau interrogée, quand l'Admin démarrait pendant qu'une passerelle redémarrait).
+var syncProxiesRetryWaits = []time.Duration{10 * time.Second, edgeproxy.EdgeRetry + 5*time.Second, edgeproxy.EdgeRetry + 5*time.Second}
+
 // syncProxiesFromPeers rattrape sur e les proxies de production manquants.
 func (m *Manager) syncProxiesFromPeers(ctx context.Context, e *edgeEntry) {
 	targets, err := edgeproxy.ListTargets(ctx, m.db)
@@ -1466,17 +1646,20 @@ func (m *Manager) syncProxiesFromPeers(ctx context.Context, e *edgeEntry) {
 	}
 	// Au démarrage de l'Admin, les passerelles répondent 401 tant que leur token n'est pas pris en compte.
 	total := 0
-	for attempt := 1; attempt <= 4; attempt++ {
+	for attempt := 1; attempt <= len(syncProxiesRetryWaits)+1; attempt++ {
 		n, err := edgeproxy.NewClient().SyncMissing(ctx, *self, targets)
 		total += n
 		if err == nil {
 			break
 		}
 		m.log.Warn("edgews/manager: sync proxies", "edge", e.nodeName, "attempt", attempt, "synced", n, "err", err)
+		if attempt > len(syncProxiesRetryWaits) {
+			break
+		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(5 * time.Second):
+		case <-time.After(syncProxiesRetryWaits[attempt-1]):
 		}
 	}
 	if total > 0 {
@@ -1554,6 +1737,12 @@ func (m *Manager) pushAllToEntry(ctx context.Context, e *edgeEntry, s Settings) 
 		}()
 	}
 
+	// Fiche du groupe HA : une passerelle revenue après une coupure la retrouve sans attendre un changement du groupe.
+	go m.pushGroupCardTo(ctx, e)
+
+	// Base ASN : annoncée seulement ; la passerelle la réclame si elle n'a pas cette version.
+	go m.offerASNTo(ctx, e)
+
 	// Peers Raft
 	go m.PushClusterPeers(ctx)
 	// Peers gateway LB cross-passerelle
@@ -1572,6 +1761,16 @@ func (m *Manager) pushAllToEntry(ctx context.Context, e *edgeEntry, s Settings) 
 		tpls := api.LoadPortalPageTemplatesForPush(m.db)
 		if err := e.client.PushJSON(edgeWS.TypePushPortalTemplates, tpls); err != nil {
 			m.log.Warn("edgews/manager: push portal templates", "edge", e.nodeName, "err", err)
+		}
+	}()
+
+	// Conservation des logs : une durée changée pendant la coupure de la passerelle doit l'atteindre.
+	go m.pushLogRetentionTo(e)
+
+	// Exporteur SIEM : la passerelle exporte seule, mais une configuration changée pendant sa coupure doit l'atteindre.
+	go func() {
+		if err := e.client.PushJSON(edgeWS.TypePushSIEMConfig, siemcfg.ForNode(siemcfg.Load(m.db), e.nodeName)); err != nil {
+			m.log.Warn("edgews/manager: push siem config", "edge", e.nodeName, "err", err)
 		}
 	}()
 
@@ -1849,7 +2048,7 @@ func (m *Manager) loadActiveBans(ctx context.Context, e *edgeEntry) ([]router.Ru
 		}
 	}
 	rows, err := m.db.QueryContext(ctx, `
-		SELECT id, ip, reason, source, expires_at, target_scope
+		SELECT id, ip, reason, source, expires_at, target_scope, signals
 		FROM security_bans
 		WHERE (expires_at IS NULL OR expires_at = '' OR datetime(expires_at) > CURRENT_TIMESTAMP)
 		  AND target_scope IN (?, ?, ?, ?)`, scopes...)
@@ -1861,9 +2060,11 @@ func (m *Manager) loadActiveBans(ctx context.Context, e *edgeEntry) ([]router.Ru
 	for rows.Next() {
 		var b router.RuntimeBan
 		var expires sql.NullString
-		if err := rows.Scan(&b.ID, &b.IP, &b.Reason, &b.Source, &expires, &b.Scope); err != nil {
+		var signals string
+		if err := rows.Scan(&b.ID, &b.IP, &b.Reason, &b.Source, &expires, &b.Scope, &signals); err != nil {
 			continue
 		}
+		b.Signals = security.DecodeBanSignals(signals)
 		if expires.Valid && expires.String != "" {
 			if t, err := time.Parse(time.RFC3339, expires.String); err == nil {
 				b.ExpiresAt = &t

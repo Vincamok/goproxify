@@ -18,6 +18,7 @@ import (
 
 func TestASNTools(t *testing.T) {
 	h := setupMCPDB(t)
+	h.DB.Exec(`DELETE FROM tokens`) //nolint:errcheck — aucune passerelle : l'aperçu n'a pas de trafic à mesurer
 	path := filepath.Join(t.TempDir(), "ip2asn.tsv.gz")
 	var buf bytes.Buffer
 	zw := gzip.NewWriter(&buf)

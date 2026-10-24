@@ -202,16 +202,6 @@ func ipProtectionPushed(db *sql.DB) bool {
 	return false
 }
 
-// errorCountsQuery : INDEXED BY idx_logs_ts, sans quoi (aucun ANALYZE) SQLite choisit un autre index et
-// parcourt toute la table : 1 min 39 s pour une fenêtre de 10 minutes sur 5,4 millions de lignes, lancée
-// toutes les 30 s.
-const errorCountsQuery = `SELECT ip, COUNT(*) as n FROM logs INDEXED BY idx_logs_ts
-	 WHERE ts > ?
-	   AND status >= 400 AND status < 500 AND status != 404
-	   AND ip != '' AND component = 'edge' AND ip_truncated = 0
-	   AND (node_id = '' OR node_id NOT IN (SELECT node_id FROM edge_log_cursors WHERE stream = 'iperr'))
-	 GROUP BY ip HAVING n >= ? OR instr(ip, ':') > 0`
-
 // errorCounts compte, depuis since, les erreurs client par cible de ban (voir banKey). Seules les
 // erreurs CLIENT (4xx hors 404) comptent — les 5xx (502, 503…) sont des erreurs backend, pas de
 // l'abus utilisateur. En SQL, le seuil n'écarte que les IPv4 seules : les autres valeurs (IPv6,
@@ -228,19 +218,7 @@ func (e *Engine) errorCounts(since time.Time, maxErr int, whitelist []string) ma
 		counts[banKey(addr, whitelist)] += n
 	}
 
-	// Passerelles qui envoient leurs lignes sans compteurs (versions antérieures) : on compte sur les lignes.
-	if rows, err := e.db.Query(errorCountsQuery, since.UTC().Format(time.RFC3339Nano), maxErr); err == nil {
-		for rows.Next() {
-			var ip string
-			var n int
-			if rows.Scan(&ip, &n) == nil {
-				add(ip, n)
-			}
-		}
-		rows.Close()
-	}
-
-	// Passerelles qui comptent elles-mêmes : un compteur par minute, donc on ne retient que les minutes entières
+	// Chaque passerelle compte elle-même les erreurs client de ses IP : un compteur par minute, donc on ne retient que les minutes entières
 	// qui suivent le début de la fenêtre. La fenêtre effective perd jusqu'à une minute au début, et la minute
 	// d'un déban n'est jamais comptée : du côté prudent, il y a moins de bans, jamais plus.
 	if rows, err := e.db.Query(`SELECT ip, SUM(errors) FROM edge_ip_errors WHERE minute > ? GROUP BY ip`,

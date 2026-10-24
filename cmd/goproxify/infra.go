@@ -56,6 +56,27 @@ func runNodes() {
 			os.Exit(1)
 		}
 		printJSON(out)
+	case "rotate-token":
+		args := parseFlags(os.Args[3:])
+		client := mustAdminClient(args)
+		id := requireFlag(args, "-id", "ID ou nom de la passerelle")
+		var out any
+		if _, err := client.DoJSON("POST", "/api/v1/nodes/"+id+"/rotate-token", nil, &out); err != nil {
+			fmt.Fprintf(os.Stderr, "nodes rotate-token : %v\n", err)
+			os.Exit(1)
+		}
+		printJSON(out)
+	case "revoke-stale-admin-tokens":
+		args := parseFlags(os.Args[3:])
+		client := mustAdminClient(args)
+		var out struct {
+			Gateways int `json:"gateways"`
+		}
+		if _, err := client.DoJSON("POST", "/api/v1/nodes/revoke-stale-admin-tokens", nil, &out); err != nil {
+			fmt.Fprintf(os.Stderr, "nodes revoke-stale-admin-tokens : %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Demande envoyée à %d passerelle(s) : elles révoquent les jetons Admin autres que celui de cet Admin.\n", out.Gateways)
 	case "help", "-h", "--help":
 		nodesUsage()
 	default:
@@ -73,6 +94,8 @@ Actions :
   live     Santé, débit (req/s) et score de risque de chaque nœud (60 s glissantes)
   accept   Accepte un nœud en attente
   reject   Rejette un nœud en attente
+  rotate-token   Renouvelle le jeton qu'a l'Admin pour une passerelle (-id), à lui pousser et à redonner à ses pairs
+  revoke-stale-admin-tokens   Fait révoquer par les passerelles les jetons d'un ancien Admin (à lancer après un remplacement d'Admin)
 
 Exemples :
   goproxify nodes list

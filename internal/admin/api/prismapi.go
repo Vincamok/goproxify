@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/vincamok/goproxify/internal/admin/analytics"
+	"github.com/vincamok/goproxify/internal/admin/prismedge"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
 	"github.com/vincamok/goproxify/internal/sqltime"
 )
@@ -20,6 +21,9 @@ import (
 // PrismHandler sert les endpoints d'analyse Prism.
 type PrismHandler struct {
 	DB *sql.DB
+	// Edge (optionnel) fournit les classements et les IP uniques à partir des bases de logs des passerelles (ADR 0012) ;
+	// absent, ou avec source=admin, Prism lit la copie des lignes que garde l'Admin.
+	Edge *prismedge.Source
 }
 
 func (h *PrismHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -120,109 +124,9 @@ func prismParams(r *http.Request) analytics.Params {
 	return p
 }
 
-func (h *PrismHandler) kpis(w http.ResponseWriter, r *http.Request) {
-	p := prismParams(r)
-	includeUnique := r.URL.Query().Get("unique_ips") == "1"
-	kpis := analytics.GetKPIs(h.DB, p, includeUnique)
-	jsonOK(w, kpis)
-}
-
-func (h *PrismHandler) uniqueIPs(w http.ResponseWriter, r *http.Request) {
-	p := prismParams(r)
-	jsonOK(w, map[string]int64{"unique_ips": analytics.GetUniqueIPs(h.DB, p)})
-}
-
-func (h *PrismHandler) timeline(w http.ResponseWriter, r *http.Request) {
-	p := prismParams(r)
-	bucket := r.URL.Query().Get("bucket")
-	if bucket == "" {
-		bucket = "hour"
-	}
-	pts := analytics.GetTimeline(h.DB, p, bucket)
-	jsonOK(w, pts)
-}
-
-func (h *PrismHandler) status(w http.ResponseWriter, r *http.Request) {
-	p := prismParams(r)
-	groups := analytics.GetStatusGroups(h.DB, p)
-	jsonOK(w, groups)
-}
-
-func (h *PrismHandler) paths(w http.ResponseWriter, r *http.Request) {
-	p := prismParams(r)
-	q := r.URL.Query()
-	search := q.Get("search")
-	limit, _ := strconv.Atoi(q.Get("limit"))
-	offset, _ := strconv.Atoi(q.Get("offset"))
-	if limit <= 0 {
-		limit = 20
-	}
-	paths, hasMore := analytics.GetTopPaths(h.DB, p, search, limit, offset)
-	jsonOK(w, map[string]any{
-		"paths":    paths,
-		"has_more": hasMore,
-		"limit":    limit,
-		"offset":   offset,
-	})
-}
-
-func (h *PrismHandler) ips(w http.ResponseWriter, r *http.Request) {
-	p := prismParams(r)
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	ips := analytics.GetTopIPs(h.DB, p, limit)
-	jsonOK(w, ips)
-}
-
-func (h *PrismHandler) agents(w http.ResponseWriter, r *http.Request) {
-	p := prismParams(r)
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	agents := analytics.GetTopAgents(h.DB, p, limit)
-	jsonOK(w, agents)
-}
-
 func (h *PrismHandler) proxies(w http.ResponseWriter, r *http.Request) {
 	opts := analytics.GetProxies(h.DB, r.URL.Query().Get("node_name"))
 	jsonOK(w, opts)
-}
-
-func (h *PrismHandler) liveIPs(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	since := time.Now().Add(-10 * time.Second)
-	if s := q.Get("since"); s != "" {
-		if t, err := time.Parse(time.RFC3339, s); err == nil {
-			since = t
-		} else if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
-			since = t
-		}
-	}
-	limit := 100
-	if l, err := strconv.Atoi(q.Get("limit")); err == nil && l > 0 {
-		limit = l
-	}
-	events := analytics.GetLiveIPs(h.DB, since, q.Get("proxy"), q.Get("node_name"), limit)
-	if events == nil {
-		events = []analytics.LiveIPEvent{}
-	}
-	jsonOK(w, events)
-}
-
-func (h *PrismHandler) geo(w http.ResponseWriter, r *http.Request) {
-	p := prismParams(r)
-	entries := analytics.GetGeoBreakdown(h.DB, p)
-	jsonOK(w, entries)
-}
-
-func (h *PrismHandler) geoPoints(w http.ResponseWriter, r *http.Request) {
-	p := prismParams(r)
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	jsonOK(w, analytics.GetGeoPoints(h.DB, p, limit))
-}
-
-func (h *PrismHandler) referrers(w http.ResponseWriter, r *http.Request) {
-	p := prismParams(r)
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	refs := analytics.GetTopReferrers(h.DB, p, limit)
-	jsonOK(w, refs)
 }
 
 // compare retourne les KPIs de deux périodes côte à côte.
@@ -262,50 +166,14 @@ func (h *PrismHandler) compare(w http.ResponseWriter, r *http.Request) {
 	if p2.To.IsZero() {
 		p2.To = time.Now()
 	}
-	k1 := analytics.GetKPIs(h.DB, p1, true)
-	k2 := analytics.GetKPIs(h.DB, p2, true)
+	k1, _, _ := h.kpisFor(r, p1, true)
+	k2, _, _ := h.kpisFor(r, p2, true)
 	tl1 := analytics.GetTimeline(h.DB, p1, "hour")
 	tl2 := analytics.GetTimeline(h.DB, p2, "hour")
 	jsonOK(w, map[string]any{
 		"period1": map[string]any{"from": p1.From, "to": p1.To, "kpis": k1, "timeline": tl1},
 		"period2": map[string]any{"from": p2.From, "to": p2.To, "kpis": k2, "timeline": tl2},
 	})
-}
-
-func (h *PrismHandler) export(w http.ResponseWriter, r *http.Request) {
-	p := prismParams(r)
-	format := r.URL.Query().Get("format")
-	ts := time.Now().Format("20060102-150405")
-
-	switch format {
-	case "json":
-		data, err := analytics.ExportJSON(h.DB, p)
-		if err != nil {
-			prismJSONErr(w, err, http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Content-Disposition", "attachment; filename=prism-export-"+ts+".json")
-		w.Write(data) //nolint:errcheck
-	case "html":
-		data, err := analytics.ExportHTML(h.DB, p)
-		if err != nil {
-			prismJSONErr(w, err, http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Content-Disposition", "attachment; filename=prism-report-"+ts+".html")
-		w.Write(data) //nolint:errcheck
-	default: // csv
-		data, err := analytics.ExportCSV(h.DB, p)
-		if err != nil {
-			prismJSONErr(w, err, http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "text/csv")
-		w.Header().Set("Content-Disposition", "attachment; filename=prism-export-"+ts+".csv")
-		w.Write(data) //nolint:errcheck
-	}
 }
 
 // backendErrors retourne le taux d'erreurs par proxy/backend sur la fenêtre Prism (from/to).
@@ -373,7 +241,7 @@ func (h *PrismHandler) slo(w http.ResponseWriter, r *http.Request) {
 
 // anomalies retourne les écarts détectés sur la fenêtre Prism (pic d'erreurs, IP dominante, pays, backends, bots).
 func (h *PrismHandler) anomalies(w http.ResponseWriter, r *http.Request) {
-	jsonOK(w, analytics.DetectAnomalies(r.Context(), h.DB, prismParams(r)))
+	jsonOK(w, analytics.DetectAnomalies(r.Context(), h.DB, prismParams(r), h.anomalySource()))
 }
 
 // deploys : changements de configuration de proxy sur la fenêtre Prism (annotations de courbe).
@@ -500,9 +368,3 @@ func (h *PrismHandler) bansTopIPs(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, out)
 }
 
-// tlsFingerprints : empreintes TLS (JA4) les plus actives, avec leur part de requêtes signalées.
-func (h *PrismHandler) tlsFingerprints(w http.ResponseWriter, r *http.Request) {
-	p := prismParams(r)
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	jsonOK(w, analytics.GetTopTLSFingerprints(h.DB, p, limit))
-}

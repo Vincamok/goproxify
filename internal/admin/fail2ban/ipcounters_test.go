@@ -15,13 +15,6 @@ func insertCounter(t *testing.T, d *sql.DB, node, ip string, at time.Time, n int
 	}
 }
 
-func markStreaming(t *testing.T, d *sql.DB, node string) {
-	t.Helper()
-	if _, err := d.Exec(`INSERT INTO edge_log_cursors (node_id, stream, last_seq) VALUES (?, 'iperr', 1)`, node); err != nil {
-		t.Fatal(err)
-	}
-}
-
 // Une IP bannie d'après les seuls compteurs envoyés par les passerelles, sans aucune ligne brute.
 func TestScanBansFromGatewayCounters(t *testing.T) {
 	e, d := newTestEngine(t)
@@ -47,30 +40,6 @@ func TestCountersFromSeveralGatewaysAreAdded(t *testing.T) {
 	e.scan()
 	if activeBans(t, d, "203.0.113.9") != 1 {
 		t.Fatal("3 erreurs sur chacune de deux passerelles (6 > 5) devaient bannir l'IP")
-	}
-}
-
-// Une passerelle qui envoie des compteurs n'est pas comptée une deuxième fois d'après ses lignes brutes.
-func TestRawLinesOfAGatewayThatSendsCountersAreNotCountedTwice(t *testing.T) {
-	e, d := newTestEngine(t)
-	now := time.Now()
-	markStreaming(t, d, "edge-a")
-	for i := 0; i < 4; i++ { // 4 lignes brutes de edge-a : ignorées, ses compteurs font foi
-		if _, err := d.Exec(`INSERT INTO logs (ts, component, status, ip, node_id) VALUES (?, 'edge', 403, '203.0.113.9', 'edge-a')`,
-			now.Add(-30*time.Second).UTC().Format(time.RFC3339Nano)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	insertCounter(t, d, "edge-a", "203.0.113.9", now.Add(-90*time.Second), 3)
-	e.scan()
-	if activeBans(t, d, "203.0.113.9") != 0 {
-		t.Fatal("3 (compteurs) + 4 (lignes brutes) = 7 : la passerelle a été comptée deux fois")
-	}
-	// Une passerelle sans compteurs reste comptée d'après ses lignes brutes.
-	insertForbidden(t, d, "203.0.113.20", now.Add(-30*time.Second), 6)
-	e.scan()
-	if activeBans(t, d, "203.0.113.20") != 1 {
-		t.Fatal("les lignes brutes d'une passerelle sans compteurs doivent encore compter")
 	}
 }
 

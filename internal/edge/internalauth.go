@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/vincamok/goproxify/internal/edge/router"
 	edgetokens "github.com/vincamok/goproxify/internal/edge/tokens"
 )
 
@@ -24,6 +25,8 @@ func agentTokenMayCall(method, path string) bool {
 		return true
 	case method == http.MethodDelete && path == "/internal/v1/agent/containers":
 		return true
+	case method == http.MethodPut && path == "/internal/v1/agent/state":
+		return true
 	case method == http.MethodDelete && strings.HasPrefix(path, "/internal/v1/routes/"):
 		id := strings.TrimPrefix(path, "/internal/v1/routes/")
 		return isAgentDiscoveredRouteID(id)
@@ -34,12 +37,7 @@ func agentTokenMayCall(method, path string) bool {
 // isAgentDiscoveredRouteID : un Agent ne retire que les routes issues de sa découverte, jamais une route configurée
 // depuis l'Admin ni une délégation.
 func isAgentDiscoveredRouteID(id string) bool {
-	for _, p := range []string{"docker:", "docker-host:", "k8s:", "portainer:", "podman:"} {
-		if strings.HasPrefix(id, p) {
-			return true
-		}
-	}
-	return false
+	return router.IsDiscoveredID(id)
 }
 
 // Avec GPX_AGENT_BIND_IDENTITY=true, un Agent ne peut agir qu'au nom de l'Agent dont le jeton porte le nom : sans cela,

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/vincamok/goproxify/internal/admin/audit"
+	"github.com/vincamok/goproxify/internal/admin/prismedge"
 	"github.com/vincamok/goproxify/internal/admin/security"
 	"github.com/vincamok/goproxify/internal/edge/router"
 )
@@ -76,7 +77,7 @@ func (h *SecurityHandler) banPreview(w http.ResponseWriter, r *http.Request) {
 	if hours > banPreviewMaxHours {
 		hours = banPreviewMaxHours
 	}
-	res, err := BanPreview(r.Context(), h.DB, t, hours, RequesterIP(r))
+	res, err := BanPreview(r.Context(), h.DB, h.Edge, t, hours, RequesterIP(r))
 	if err != nil {
 		secJSONErr(w, err, http.StatusInternalServerError)
 		return
@@ -85,7 +86,7 @@ func (h *SecurityHandler) banPreview(w http.ResponseWriter, r *http.Request) {
 }
 
 // BanPreview calcule l'aperçu d'impact d'un ban (voir banPreview).
-func BanPreview(ctx context.Context, db *sql.DB, t security.BanTarget, hours int, requester string) (map[string]any, error) {
+func BanPreview(ctx context.Context, db *sql.DB, edge *prismedge.Source, t security.BanTarget, hours int, requester string) (map[string]any, error) {
 	since := time.Now().UTC().Add(-time.Duration(hours) * time.Hour)
 	out := map[string]any{
 		"target":       t.Value,
@@ -99,48 +100,16 @@ func BanPreview(ctx context.Context, db *sql.DB, t security.BanTarget, hours int
 	}
 
 	// ── Trafic récent de la plage ─────────────────────────────────────────────
-	query := `SELECT ip, status, COALESCE(waf_matches,''), COALESCE(threat_signal,'') FROM logs
-	          WHERE ts >= ? AND status > 0`
-	args := []any{since.Format(time.RFC3339)}
+	var ranges [][2]string
 	if lo, hi, ok := security.TraceIPRange(t.Prefix); ok {
-		query += ` AND ip >= ? AND ip < ?`
-		args = append(args, lo, hi)
+		ranges = [][2]string{{lo, hi}}
 	}
-	rows, err := db.QueryContext(ctx, query, args...)
+	traffic, err := readIPTraffic(ctx, edge, since, ranges, func(ip string) bool { return security.TraceMatch(t.Prefix, ip) })
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var requests, blocked, okRequests, scanned int
-	ipHits, okIPs := map[string]int{}, map[string]int{}
-	scanLimited := false
-	for rows.Next() {
-		var ip, waf, signal string
-		var status int
-		if rows.Scan(&ip, &status, &waf, &signal) != nil || !security.TraceMatch(t.Prefix, ip) {
-			continue
-		}
-		if scanned++; scanned > banPreviewMaxScan {
-			scanLimited = true
-			break
-		}
-		requests++
-		if _, ok := ipHits[ip]; ok || len(ipHits) < banPreviewMaxIPs {
-			ipHits[ip]++
-		}
-		hasWAF := waf != "" && waf != "null" && waf != "[]"
-		if status == 403 || status == 429 || hasWAF || signal != "" {
-			blocked++
-			continue
-		}
-		if status < 400 {
-			okRequests++
-			if _, ok := okIPs[ip]; ok || len(okIPs) < banPreviewMaxIPs {
-				okIPs[ip]++
-			}
-		}
-	}
-	rows.Close()
+	requests, blocked, okRequests := traffic.Requests, traffic.Blocked, traffic.OKRequests
+	ipHits, okIPs, scanLimited := traffic.IPHits, traffic.OKIPs, traffic.ScanLimited
 	out["requests"] = requests
 	out["blocked"] = blocked
 	out["ok_requests"] = okRequests
@@ -248,6 +217,9 @@ func BanPreview(ctx context.Context, db *sql.DB, t security.BanTarget, hours int
 	}
 	if scanLimited {
 		warnings = append(warnings, "analyse limitée aux premiers résultats : les chiffres sont une borne basse")
+	}
+	if w := traffic.missingGateways(); w != "" {
+		warnings = append(warnings, w)
 	}
 	if warnings == nil {
 		warnings = []string{}

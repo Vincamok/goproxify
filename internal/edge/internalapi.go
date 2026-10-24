@@ -6,7 +6,6 @@ package edge
 import (
 	"github.com/vincamok/goproxify/internal/edge/logapi"
 	"github.com/vincamok/goproxify/internal/httpx"
-	"github.com/vincamok/goproxify/internal/ipcrypt"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/vincamok/goproxify/internal/edge/plugins"
 	"context"
@@ -89,6 +88,13 @@ func (s *Server) startInternalAPI() error {
 	mux.HandleFunc("POST /internal/v1/portal/replica", s.handlePortalReplicaImport)
 	mux.HandleFunc("GET /internal/v1/agents/replica", s.handleAgentReplicaExport)
 	mux.HandleFunc("POST /internal/v1/agents/replica", s.handleAgentReplicaImport)
+	mux.HandleFunc("GET "+agentNodesReplicaPath, s.handleAgentNodesReplicaExport)
+	mux.HandleFunc("GET "+proxyReplicaPath, s.handleProxyReplicaExport)
+	mux.HandleFunc("GET "+pushedReplicaPath, s.handlePushedReplicaExport)
+	mux.HandleFunc("GET "+groupCardPath, s.handleGroupCard)
+	mux.HandleFunc("POST "+groupRuleFiredPath, s.handleGroupRuleFired)
+	mux.HandleFunc("GET "+agentStateReplicaPath, s.handleAgentStateReplicaExport)
+	mux.HandleFunc("POST "+agentStateReplicaPath, s.handleAgentStateReplicaImport)
 	mux.HandleFunc("GET "+echReplicaPath, s.handleECHReplicaExport)
 	mux.HandleFunc("POST "+echReplicaPath, s.handleECHReplicaImport)
 	mux.HandleFunc("POST /internal/v1/cluster/peers", s.handlePushClusterPeers)
@@ -108,14 +114,12 @@ func (s *Server) startInternalAPI() error {
 	mux.HandleFunc("POST /internal/v1/agent/heartbeat", s.handleAgentHeartbeat)
 	mux.HandleFunc("POST /internal/v1/agent/containers", s.handleAgentContainerStart)
 	mux.HandleFunc("DELETE /internal/v1/agent/containers", s.handleAgentContainerStop)
+	mux.HandleFunc("PUT /internal/v1/agent/state", s.handleAgentState)
 	mux.HandleFunc("POST /internal/v1/agent/events", s.handleAgentEvent)
 	mux.HandleFunc("POST /internal/v1/agent/logs", s.handleAgentLogs)
 
 	// Recherche dans la base de logs de la passerelle (appelée par l'Admin, ADR 0012).
-	mux.HandleFunc("GET "+logapi.PathSearch, s.handleLogSearch)
-	mux.HandleFunc("GET "+logapi.PathHistogram, s.handleLogHistogram)
-	mux.HandleFunc("GET "+logapi.PathFacets, s.handleLogFacets)
-	mux.HandleFunc("POST "+logapi.PathReveal, s.handleLogReveal)
+	s.registerLogRoutes(mux)
 
 	// Relay Admin → Agent (Admin appelle passerelle, Passerelle relaie à l'Agent)
 	mux.HandleFunc("POST /internal/v1/agent/{name}/rescan", s.handleAgentRescanRelay)
@@ -296,9 +300,7 @@ func (s *Server) handlePushRoutes(w http.ResponseWriter, r *http.Request) {
 
 func isAgentRoute(id string) bool {
 	return strings.HasPrefix(id, portalPublicRouteID) ||
-		strings.HasPrefix(id, "docker:") ||
-		strings.HasPrefix(id, "docker-host:") ||
-		strings.HasPrefix(id, "k8s:") ||
+		router.IsDiscoveredID(id) ||
 		strings.HasPrefix(id, "deleg-")
 }
 
@@ -477,7 +479,7 @@ func (s *Server) handleHAWAFBehaviorSync(w http.ResponseWriter, r *http.Request)
 // Comme pour Fail2Ban, le ban est persisté localement : il s'applique et survit à un redémarrage sans
 // l'Admin, qui est seulement notifié.
 func (s *Server) threatBanCallback() threat.BanCallback {
-	return func(ip, reason string, expires time.Time) {
+	return func(ip, reason string, expires time.Time, signals []router.BanSignal) {
 		// Un scanner qui ouvre des centaines de connexions avant que le premier ban soit actif rappelait ce
 		// callback à chaque requête : base locale, pairs, rechargement des bans et Admin, autant de fois.
 		if ok, _ := s.blockLog.Allow("threatban|" + ip); !ok {
@@ -489,11 +491,12 @@ func (s *Server) threatBanCallback() threat.BanCallback {
 			Reason:    reason,
 			Source:    "threat",
 			ExpiresAt: &expires,
+			Signals:   signals,
 		}
 		s.addBanEvent(ip, "threat")
 		s.gossipBanToPeers(b)
 		if s.bansDB != nil {
-			if err := s.bansDB.UpsertBan(b.ID, b.IP, "", b.Reason, b.Source, b.ExpiresAt); err != nil {
+			if err := s.bansDB.UpsertRuntimeBan(b); err != nil {
 				s.log.Warn(threat.Name+": persistance ban DB échouée", "err", err)
 			}
 		}
@@ -506,6 +509,7 @@ func (s *Server) threatBanCallback() threat.BanCallback {
 			Reason:    reason,
 			ExpiresAt: expires.UTC().Format(time.RFC3339),
 			NodeName:  s.cfg.Identity.NodeName,
+			Signals:   signals,
 		}
 		if msg, err := edgews.NewMessage(0, edgews.TypeThreatBan, payload); err == nil {
 			s.wsHub.BroadcastToAdmins(msg)
@@ -537,6 +541,13 @@ func (s *Server) onF2BBan(b edgef2b.Ban) {
 		Reason:    b.Reason,
 		Source:    "fail2ban",
 		ExpiresAt: expires,
+	}
+	if s.threatEngine != nil {
+		var until time.Time
+		if expires != nil {
+			until = *expires
+		}
+		s.threatEngine.NoteDecision(b.IP, behavior.SignalFail2Ban, 5, until)
 	}
 	s.addBanEvent(b.IP, "fail2ban")
 	s.gossipBanToPeers(rb)
@@ -588,6 +599,13 @@ func (s *Server) onCrowdSecDecisions(added, deleted []edgecrowdsec.Decision) {
 		NodeName: s.cfg.Identity.NodeName,
 	}
 	for _, d := range added {
+		if s.threatEngine != nil && d.Scope == "Ip" && strings.EqualFold(d.Type, "ban") {
+			until := time.Time{}
+			if dur, err := time.ParseDuration(d.Duration); err == nil && dur > 0 {
+				until = time.Now().Add(dur)
+			}
+			s.threatEngine.NoteDecision(d.Value, behavior.SignalCrowdSec, 5, until)
+		}
 		payload.Added = append(payload.Added, edgews.CrowdSecDecision{
 			Value: d.Value, Scenario: d.Scenario, Origin: d.Origin,
 			Type: d.Type, Duration: d.Duration, Scope: d.Scope,
@@ -624,6 +642,7 @@ func (s *Server) reloadBanStore() {
 					Reason:    r.Reason,
 					Source:    r.Source,
 					ExpiresAt: r.ExpiresAt,
+					Signals:   r.Signals,
 				}
 				if s.autoBanWhitelisted(rb) {
 					continue
@@ -796,9 +815,11 @@ func (s *Server) onRuleFired(log edgere.ExecLog) {
 		Error:       log.Error,
 		FiredAt:     log.FiredAt.UTC().Format(time.RFC3339),
 	}
-	if msg, err := edgews.NewMessage(0, edgews.TypeRuleFired, payload); err == nil {
-		s.wsHub.BroadcastToAdmins(msg)
+	// Une notification vue par plusieurs membres d'un groupe ne remonte qu'une fois : l'exécutant du groupe la remonte.
+	if isNotifyFiring(payload) && s.forwardRuleFired(payload) {
+		return
 	}
+	s.reportRuleFired(payload)
 }
 
 // onRuleNotify est le callback EmitNotify du moteur de règles. Le déclenchement remonte déjà à l'Admin par
@@ -1589,23 +1610,29 @@ func (s *Server) applyEraseIPs(list []edgews.EraseEntry) {
 		if e.IP == "" {
 			continue
 		}
-		if s.logStore != nil {
-			n, err := s.logStore.EraseIP(e.IP)
-			if err != nil {
-				s.log.Warn("rgpd: effacement d'une IP dans les logs d'accès échoué", "err", err)
-			}
-			lines += n
+		l, b, err := s.eraseIP(e.IP)
+		if err != nil {
+			s.log.Warn("rgpd: effacement d'une IP échoué", "err", err)
 		}
-		if s.bansDB != nil {
-			canon := ipcrypt.CanonicalIP(e.IP)
-			b, err := s.bansDB.EraseIP(e.IP, canon)
-			if err != nil {
-				s.log.Warn("rgpd: effacement d'une IP dans l'historique des bans échoué", "err", err)
-			}
-			bans += b
-		}
+		lines += l
+		bans += b
 	}
+	s.persistEphorState()
 	if lines > 0 || bans > 0 {
 		s.log.Info("rgpd: IP effacées de la passerelle", "access_log_lines", lines, "ban_rows", bans)
 	}
+}
+
+// registerLogRoutes déclare les routes de la base de logs, appelées par l'Admin. Les tests de recherche montent les
+// mêmes routes : une route oubliée ici le serait aussi chez eux.
+func (s *Server) registerLogRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET "+logapi.PathSearch, s.handleLogSearch)
+	mux.HandleFunc("GET "+logapi.PathHistogram, s.handleLogHistogram)
+	mux.HandleFunc("GET "+logapi.PathFacets, s.handleLogFacets)
+	mux.HandleFunc("POST "+logapi.PathReveal, s.handleLogReveal)
+	mux.HandleFunc("POST "+logapi.PathTop, s.handleLogTop)
+	mux.HandleFunc("GET "+logapi.PathUniqueIPs, s.handleLogUniqueIPs)
+	mux.HandleFunc("POST "+logapi.PathEphorSim, s.handleEphorSimulate)
+	mux.HandleFunc("GET "+logapi.PathEphorReferences, s.handleEphorReferences)
+	mux.HandleFunc("POST "+logapi.PathErase, s.handleLogErase)
 }

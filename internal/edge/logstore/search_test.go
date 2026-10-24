@@ -70,6 +70,7 @@ func TestSearchFiltersLikeTheAdminOnes(t *testing.T) {
 		{"jusqu'à", Query{To: at("2026-10-21T10:03:00Z")}, 4},
 		{"combiné", Query{Domain: "a.example.com", Status: "4xx"}, 2},
 		{"aucun", Query{Domain: "absent.example.com"}, 0},
+		{"request_id exact", Query{RequestID: "req-1"}, 12},
 	}
 	for _, c := range cases {
 		if got := count(c.q); got != c.want {

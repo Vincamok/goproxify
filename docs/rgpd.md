@@ -8,10 +8,10 @@
 
 | Data | Component | Storage | Default retention |
 |---|---|---|---|
-| Client IP address | Edge (access log) | Local log database on the Edge (365 days) + forwarded to Admin SQLite (90 days) | 365 days on the Edge, 90 days on the Admin |
-| HTTP method, path, host, status, latency | Edge (access log) | Local log database on the Edge (365 days) + Admin SQLite (90 days) | 365 days on the Edge, 90 days on the Admin |
-| User-Agent header | Edge (access log) | Local log database on the Edge (365 days) + Admin SQLite (90 days) | 365 days on the Edge, 90 days on the Admin |
-| Referrer header | Edge (access log) | Local log database on the Edge (365 days) + Admin SQLite (90 days) | 365 days on the Edge, 90 days on the Admin |
+| Client IP address | Edge (access log) | Local log database on the Edge (365 days) ; the Admin keeps only the lines flagged by the WAF or Ephor (since Admin `0.175.0` it receives no ordinary access line), 90 days | 365 days on the Edge, 90 days on the Admin for flagged lines only |
+| HTTP method, path, host, status, latency | Edge (access log) | Local log database on the Edge (365 days) ; the Admin keeps only the lines flagged by the WAF or Ephor | 365 days on the Edge, 90 days on the Admin for flagged lines only |
+| User-Agent header | Edge (access log) | Local log database on the Edge (365 days) ; the Admin keeps only the lines flagged by the WAF or Ephor | 365 days on the Edge, 90 days on the Admin for flagged lines only |
+| Referrer header | Edge (access log) | Local log database on the Edge (365 days) ; the Admin keeps only the lines flagged by the WAF or Ephor | 365 days on the Edge, 90 days on the Admin for flagged lines only |
 | WAF rule matches (categories only, no payload) | Passerelle (access log) | Admin SQLite | 90 days |
 | Banned IP + ban reason + expiry, ban history | Passerelle / Admin | Admin SQLite (`security_bans`, `security_ban_history`, IP in clear) | History and expired bans: 365 days (`retention_ban_days`); an active ban is kept until it expires |
 | GeoIP cache of observed IPs (country, city, coordinates) | Admin | Admin SQLite (`geoip_cache`, IP in clear) | Same as access logs (`retention_access_days`) |
@@ -74,7 +74,11 @@ PUT /api/v1/logs/settings
 | `retention_system_days` | 90 | 90 days |
 | `retention_ban_days` | 365 | Legitimate interest — adjust to policy. Applies to the ban history and to expired bans (API only, no field in the UI yet) |
 
+These Admin settings only cover what the Admin keeps itself — the security events (lines flagged by the WAF or Ephor) and its own logs. Ordinary access lines live in each gateway's database, 365 days by default: since Admin `0.183.0` the settings modal sets the retention of the gateways (common value, plus an optional value per gateway; `edge_retention` in the API), each gateway applies it on its own at its next hourly purge, keeps it across a restart with the Admin off and reports what it applies. Lowering it deletes the oldest lines for good.
+
 Older entries are purged automatically every night: access and system logs, the ban history, bans expired for longer than `retention_ban_days`, and GeoIP cache entries older than `retention_access_days`. A ban that is still active (or permanent) is never purged.
+
+**Legal hold and full export (Edge `0.88.0`).** A legal procedure can require keeping data past the retention and handing it over. `goproxify edge logs hold add` freezes a date range on a gateway: the nightly purge skips every log file overlapping it until `hold release`. `goproxify edge logs export` writes the lines of a range (filterable by IP and domain) with the real IP decrypted by the gateway's own key, encrypted by a password, with a manifest signed by the gateway (SHA-256 of the data, operator, reason, gateway clock) and a local hash-chained audit trail; it works with the Admin off. A hold by IP or domain (`-ip`, `-domain`) keeps only the targeted lines, so other people's data still expires on schedule; the registry stores the IP of the person concerned, the audit trail only its hash. A hold does not block an explicit erasure order (Article 17), which also deletes the lines a hold archived: the operator decides which obligation applies, and the audit trail keeps the reason of each hold. Document the procedure in your register of processing — see [docs/cli.md](cli.md#goproxify-edge).
 
 ### IP pseudonymisation (recommandé pour RGPD strict)
 
@@ -126,7 +130,7 @@ Deleting a ban also lifts it on the gateways, like an unban, including bans a ga
 
 **On the gateways** (Admin `0.163.0`, Edge `0.73.0`): the Admin also sends an `erase_ips` order. Each gateway deletes the lines of that IP from its local log database — in clear or pseudonymised (matched by the IP fingerprint) — with `secure_delete` and a truncation of the write-ahead log so the erased value does not stay readable in the files, and deletes the IP from its local ban history. Its writes are not paused. A gateway that is offline when you erase receives the order when it reconnects: the Admin keeps it in `edge_erasure_queue`, **the IP encrypted with the GDPR key**, for 365 days (the longest a gateway keeps its access lines by default), then drops it.
 
-**Not covered by the erasure** (see [rgpd-conformite.md §4](rgpd-conformite.md#4-exercer-les-droits-des-personnes) for the full list): backups already taken, the in-memory state of the gateways' Fail2Ban and Ephor (gone at restart or expiry), the unban records of the gateways (`unbans`: they stop a lifted ban from being set again), and third-party services (CrowdSec, alert channels). Erasing the history of an IP also means a gateway that missed its unban can no longer be replayed it.
+**Not covered by the erasure** (see [rgpd-conformite.md §4](rgpd-conformite.md#4-exercer-les-droits-des-personnes) for the full list): backups already taken, the in-memory state of the gateways' Fail2Ban and Ephor (gone at restart or expiry; Ephor's encrypted local copies `threat-state.gpx` and `behavior-state.gpx` hold per-IP scores for minutes and a clean-history counter for 7 days, and an erasure order clears an IP from them at the next save), the unban records of the gateways (`unbans`: they stop a lifted ban from being set again), and third-party services (CrowdSec, alert channels). Erasing the history of an IP also means a gateway that missed its unban can no longer be replayed it.
 
 ### Right of access and portability (Articles 15 and 20)
 
@@ -266,6 +270,9 @@ These integrations are **opt-in** and configured by the operator. GoProxify send
 | ACME (Let's Encrypt) | Domain name only | On certificate issuance/renewal |
 | DNS providers (OVH, Cloudflare…) | Domain/token for DNS-01 challenge | On certificate issuance/renewal |
 | External auth providers (OIDC, SAML, LDAP) | Redirect URI, no credentials stored in GoProxify | On SSO flow |
+| SIEM export (syslog / HTTP, Admin `0.178.0`) | Log lines of the gateway's own database, the IP **as stored** (truncated under anonymisation or pseudonymisation; the encrypted real IP is never exported), user agent, path | Continuously, once a destination is configured |
+
+The SIEM keeps its own copy: an erasure by IP (Article 17) deletes the lines from the gateways and the Admin but **cannot reach the SIEM**. Erase them there with the SIEM's own tools, or choose anonymisation or pseudonymisation before exporting.
 
 ---
 

@@ -40,6 +40,7 @@ var secretTables = []string{
 	"user_backup_codes",
 	"user_trusted_devices",
 	"gdpr_keys",
+	"edge_erasure_queue", // effacements d'IP à rejouer aux passerelles absentes : une obligation, jamais à perdre (IP chiffrées par gdpr_keys)
 	"ech_keys",
 	"internal_ca",
 	"internal_ca_certs",

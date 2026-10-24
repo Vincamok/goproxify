@@ -18,7 +18,7 @@ Un enregistrement par finalité. Les durées sont les **défauts** d'une install
 | Personnes | Visiteurs des services publiés derrière la passerelle |
 | Données | Adresse IP, date, méthode, domaine, chemin, code de réponse, taille, durée, User-Agent, Referer, empreintes TLS (JA3/JA4), catégories WAF déclenchées, identifiant de requête. **Jamais** : corps de requête ou de réponse, cookies, en-têtes d'autorisation |
 | Destinataires | Comptes de l'Admin disposant du scope `logs:read`, dans la limite de leurs équipes. Aucun tiers |
-| Durée | 90 jours sur l'Admin (`retention_access_days`), 365 jours dans la base de logs de la passerelle (`engine.log_retention_days` d'`edge.json`, réglable par passerelle). Maximum recommandé par la CNIL : 13 mois |
+| Durée | 90 jours sur l'Admin (`retention_access_days`) pour les seules lignes signalées par le WAF ou Ephor — depuis Admin `0.175.0` l'Admin ne reçoit plus les accès ordinaires —, 365 jours dans la base de logs de la passerelle (réglable depuis la page Logs › réglages, valeur commune ou par passerelle, Admin `0.183.0` ; à défaut `engine.log_retention_days` d'`edge.json`). Maximum recommandé par la CNIL : 13 mois |
 | Protection des IP | Entières (défaut), anonymisées ou pseudonymisées (AES-GCM) : voir [rgpd.md](rgpd.md) |
 | Transferts hors UE | Aucun par défaut |
 | Mesures de sécurité | Voir §5 |
@@ -110,7 +110,7 @@ Une AIPD est exigée quand le traitement est « susceptible d'engendrer un risqu
 | Droit | Comment, avec GoProxify |
 |---|---|
 | Accès (Art. 15) et portabilité (Art. 20) | `goproxify logs subject-export --by-ip <ip> --reason "…" --output export.json` ou `--by-user <id>` (`POST /api/v1/logs/subject-export`). L'export rassemble les logs, bans, historique des bans, position GeoIP, entrées d'audit et, pour un compte, son profil et ses équipes (jamais le mot de passe). Il est audité sans l'IP en clair |
-| Effacement (Art. 17) | `goproxify logs delete --by-ip <ip> --reason "…"` : supprime les logs (pseudonymisés compris), les bans, l'historique des bans, l'entrée GeoIP, vide l'IP des entrées d'audit et efface les lignes de l'access log et l'historique de bans des **passerelles**, y compris celles hors ligne à ce moment (rejouée à leur reconnexion) |
+| Effacement (Art. 17) | `goproxify logs delete --by-ip <ip> --reason "…"` : supprime les logs (pseudonymisés compris), les bans, l'historique des bans, l'entrée GeoIP, vide l'IP des entrées d'audit et efface les lignes de l'access log et l'historique de bans des **passerelles**, y compris celles hors ligne à ce moment (rejouée à leur reconnexion). Chaque passerelle joignable répond avec les lignes qu'elle a supprimées (accès, logs système, lignes pseudonymisées) : la réponse de l'Admin est la preuve passerelle par passerelle, et les passerelles qui n'ont pas répondu y figurent en attente |
 | Effacement d'un compte | Supprimer le compte (page **Utilisateurs**) puis `goproxify logs delete --by-user <id>` pour ses logs. Le journal d'audit conserve les actions sous leur identifiant (obligation de traçabilité) |
 | Rectification (Art. 16) | Sans objet pour des logs techniques ; un compte se modifie dans **Utilisateurs** |
 | Opposition (Art. 21) | Appréciée au cas par cas : l'intérêt légitime de sécurité peut prévaloir. Si elle est acceptée : effacement, et liste blanche si l'IP ne doit plus être bannie |

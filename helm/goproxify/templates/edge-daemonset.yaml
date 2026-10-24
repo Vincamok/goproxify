@@ -58,13 +58,50 @@ spec:
           env:
             - name: TZ
               value: {{ .Values.global.timezone | default "Europe/Paris" | quote }}
+            {{- if .Values.security.edgeWithoutRootSecret }}
+            {{- if ne .Values.edge.kind "Deployment" }}
+            {{- fail "security.edgeWithoutRootSecret exige edge.kind=Deployment : la clé de la passerelle dépend de son nom, que le chart ne connaît d'avance que pour un Deployment (voir docs/deployment.md)" }}
+            {{- end }}
+            # Sans le secret racine : la clé du canal Admin → passerelle (dérivée du nom) et la clé des Agents.
+            - name: GPX_EDGE_CHANNEL_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "goproxify.fullname" . }}-secret
+                  key: edge-channel-key
+            - name: GPX_AGENT_PAIRING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "goproxify.fullname" . }}-secret
+                  key: agent-pairing-key
+            {{- if .Values.global.portalMasterKey }}
+            - name: GPX_PORTAL_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "goproxify.fullname" . }}-secret
+                  key: portal-master-key
+            {{- end }}
+            {{- if .Values.global.previousPairingSecret }}
+            # Rotation : les clés dérivées des secrets précédents, acceptées le temps de la bascule.
+            - name: GPX_EDGE_CHANNEL_KEY_PREVIOUS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "goproxify.fullname" . }}-secret
+                  key: previous-edge-channel-key
+            - name: GPX_AGENT_PAIRING_KEY_PREVIOUS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "goproxify.fullname" . }}-secret
+                  key: previous-agent-pairing-key
+            {{- end }}
+            {{- else }}
             - name: GPX_PAIRING_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ include "goproxify.fullname" . }}-secret
                   key: pairing-secret
+            {{- end }}
             # Nœuds nommés d'après le nœud Kubernetes à l'appairage comme ensuite : un Agent ne peut pas agir au nom d'un autre.
-            {{- if .Values.global.previousPairingSecret }}
+            {{- if and .Values.global.previousPairingSecret (not .Values.security.edgeWithoutRootSecret) }}
             # Rotation du secret : l'ancien ne sert qu'à relire les copies locales chiffrées (routes, certificats, plugins).
             - name: GPX_PAIRING_SECRET_PREVIOUS
               valueFrom:

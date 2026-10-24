@@ -4,6 +4,7 @@
 package api
 
 import (
+	"errors"
 	"net"
 	"net/http"
 	"sort"
@@ -189,22 +190,22 @@ func (h *PrismHandler) ipScan(w http.ResponseWriter, r *http.Request) {
 		rows.Close()
 	}
 
-	from, to := p.From.UTC().Format(time.RFC3339), p.To.UTC().Format(time.RFC3339)
-	h.DB.QueryRowContext(ctx, `
-		SELECT COUNT(*), COALESCE(SUM(CASE WHEN status>=400 THEN 1 ELSE 0 END),0), COALESCE(MIN(ts),''), COALESCE(MAX(ts),''), COALESCE(MAX(ip_truncated),0)
-		FROM logs WHERE ip = ? AND status > 0 AND ts >= ? AND ts <= ?`, ip, from, to).
-		Scan(&out.Requests, &out.Errors, &out.FirstSeen, &out.LastSeen, &out.IPTruncated) //nolint:errcheck
-	if rows, err := h.DB.QueryContext(ctx, `
-		SELECT path, COUNT(*) n, SUM(CASE WHEN status>=400 THEN 1 ELSE 0 END)
-		FROM logs WHERE ip = ? AND status > 0 AND ts >= ? AND ts <= ?
-		GROUP BY path ORDER BY n DESC LIMIT 5`, ip, from, to); err == nil {
-		for rows.Next() {
-			var ps pathStat
-			if rows.Scan(&ps.Path, &ps.Requests, &ps.Errors) == nil {
-				out.TopPaths = append(out.TopPaths, ps)
-			}
+	// L'activité de l'IP vient des bases de logs des passerelles ; sans passerelle il n'y en a pas.
+	p.IP = ip
+	if e := h.source(r, p); e != nil {
+		tot, found, _, err := e.Totals(ctx, p)
+		paths, _, perr := e.Top(ctx, p, nil, "path", 5, false)
+		if err != nil || perr != nil {
+			prismJSONErr(w, errors.Join(err, perr), http.StatusBadGateway)
+			return
 		}
-		rows.Close()
+		if found {
+			out.Requests, out.Errors = int(tot.Requests), int(tot.Errors)
+			out.FirstSeen, out.LastSeen, out.IPTruncated = tot.FirstSeen, tot.LastSeen, tot.Truncated
+		}
+		for _, it := range paths {
+			out.TopPaths = append(out.TopPaths, pathStat{Path: it.Value, Requests: int(it.Requests), Errors: int(it.Errors)})
+		}
 	}
 
 	switch {

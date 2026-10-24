@@ -8,13 +8,18 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
 	"github.com/vincamok/goproxify/internal/edge/logapi"
 	edgelog "github.com/vincamok/goproxify/internal/edge/logger"
 	"github.com/vincamok/goproxify/internal/edge/logstore"
+	"github.com/vincamok/goproxify/internal/ipcrypt"
 )
+
+// maxIPRanges borne les intervalles d'IP d'une requête (profondeur d'expression de SQLite).
+const maxIPRanges = 400
 
 const (
 	logSearchTimeout     = 8 * time.Second
@@ -75,7 +80,18 @@ func decodeLogCursor(c string) (map[logstore.Kind]logstore.Position, error) {
 func logQuery(p logapi.Params) (logstore.Query, error) {
 	q := logstore.Query{
 		Level: p.Level, Component: p.Component, Domain: p.Domain, IP: p.IP, Method: p.Method, Status: p.Status,
-		Path: p.Path, TLSJA3: p.TLSJA3, TLSJA4: p.TLSJA4, Search: p.Search, ExcludeInternal: p.ExcludeInternal,
+		Path: p.Path, TLSJA3: p.TLSJA3, TLSJA4: p.TLSJA4, Search: p.Search, RequestID: p.RequestID, ExcludeInternal: p.ExcludeInternal,
+		PathPrefix: p.PathPrefix, IPFrom: p.IPFrom, IPTo: p.IPTo, AttributableOnly: p.Attributable,
+	}
+	for _, r := range strings.Split(p.IPRanges, ",") {
+		if lo, hi, ok := strings.Cut(r, "|"); ok && lo != "" && hi != "" && len(q.IPRanges) < maxIPRanges {
+			q.IPRanges = append(q.IPRanges, [2]string{lo, hi})
+		}
+	}
+	for _, d := range strings.Split(p.Domains, ",") {
+		if d = strings.TrimSpace(d); d != "" {
+			q.Domains = append(q.Domains, d)
+		}
 	}
 	switch strings.ToLower(p.Kind) {
 	case "access":
@@ -102,6 +118,14 @@ func logQuery(p logapi.Params) (logstore.Query, error) {
 
 // withLogGate applique le plafond de recherches simultanées et le délai de la requête.
 func (s *Server) withLogGate(w http.ResponseWriter, r *http.Request, bulk bool, fn func(ctx context.Context)) {
+	timeout := logSearchTimeout
+	if bulk {
+		timeout = logBulkSearchTimeout
+	}
+	s.withLogGateFor(w, r, bulk, timeout, fn)
+}
+
+func (s *Server) withLogGateFor(w http.ResponseWriter, r *http.Request, bulk bool, timeout time.Duration, fn func(ctx context.Context)) {
 	if s.logStore == nil {
 		http.Error(w, "base de logs indisponible", http.StatusServiceUnavailable)
 		return
@@ -113,10 +137,6 @@ func (s *Server) withLogGate(w http.ResponseWriter, r *http.Request, bulk bool, 
 		return
 	}
 	defer release()
-	timeout := logSearchTimeout
-	if bulk {
-		timeout = logBulkSearchTimeout
-	}
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 	fn(ctx)
@@ -256,4 +276,48 @@ func (s *Server) handleLogReveal(w http.ResponseWriter, r *http.Request) {
 		s.log.Warn("rgpd: IP réelle révélée sur demande de l'Admin", "kind", req.Kind, "id", req.ID)
 		writeJSON(w, logapi.RevealResponse{IP: ip})
 	}
+}
+
+// eraseIP supprime d'une IP les lignes de la base de logs (accès et système, pseudonymisées comprises) et l'historique
+// des bans de la passerelle ; il rend les comptes.
+func (s *Server) eraseIP(ip string) (lines, bans int64, err error) {
+	if s.threatEngine != nil {
+		s.threatEngine.ForgetIP(ip)
+	}
+	if s.logStore != nil {
+		if lines, err = s.logStore.EraseIP(ip); err != nil {
+			return lines, 0, err
+		}
+	}
+	if s.bansDB != nil {
+		if bans, err = s.bansDB.EraseIP(ip, ipcrypt.CanonicalIP(ip)); err != nil {
+			return lines, bans, err
+		}
+	}
+	return lines, bans, nil
+}
+
+// handleLogErase : POST /internal/v1/logs/erase — efface une IP (droit à l'effacement RGPD) et rend ce qui a été
+// supprimé, pour que l'Admin puisse dire, passerelle par passerelle, que l'effacement a eu lieu. L'IP doit être une
+// adresse : une valeur quelconque (« [pseudonymisé] ») ne doit jamais effacer d'un coup toutes les lignes pseudonymisées.
+func (s *Server) handleLogErase(w http.ResponseWriter, r *http.Request) {
+	var req logapi.EraseRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "requête invalide", http.StatusBadRequest)
+		return
+	}
+	if _, err := netip.ParseAddr(req.IP); err != nil {
+		http.Error(w, "adresse IP invalide", http.StatusBadRequest)
+		return
+	}
+	lines, bans, err := s.eraseIP(req.IP)
+	s.persistEphorState()
+	if err != nil {
+		s.log.Warn("rgpd: effacement d'une IP échoué", "err", err)
+		http.Error(w, "effacement impossible", http.StatusInternalServerError)
+		return
+	}
+	s.log.Info("rgpd: IP effacée de la passerelle sur demande de l'Admin", "log_lines", lines, "ban_rows", bans)
+	writeJSON(w, logapi.EraseResponse{LogLines: lines, BanRows: bans})
 }

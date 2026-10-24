@@ -4,11 +4,11 @@
 package edge
 
 import (
-	"github.com/vincamok/goproxify/internal/edge/plugins"
 	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"github.com/vincamok/goproxify/internal/edge/plugins"
 	"io"
 	"log/slog"
 	"net"
@@ -20,10 +20,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/vincamok/goproxify/internal/asncompact"
 	"github.com/vincamok/goproxify/internal/config"
 	edgeagent "github.com/vincamok/goproxify/internal/edge/agent"
 	"github.com/vincamok/goproxify/internal/edge/bansdb"
-	"github.com/vincamok/goproxify/internal/edge/logstore"
 	edgecache "github.com/vincamok/goproxify/internal/edge/cache"
 	"github.com/vincamok/goproxify/internal/edge/cluster"
 	edgecrowdsec "github.com/vincamok/goproxify/internal/edge/crowdsec"
@@ -31,39 +31,45 @@ import (
 	edgef2b "github.com/vincamok/goproxify/internal/edge/fail2ban"
 	"github.com/vincamok/goproxify/internal/edge/geoip"
 	edgelog "github.com/vincamok/goproxify/internal/edge/logger"
+	"github.com/vincamok/goproxify/internal/edge/logstore"
 	"github.com/vincamok/goproxify/internal/edge/logthrottle"
 	"github.com/vincamok/goproxify/internal/edge/metrics"
 	"github.com/vincamok/goproxify/internal/edge/middleware"
 	"github.com/vincamok/goproxify/internal/edge/portal"
 	"github.com/vincamok/goproxify/internal/edge/proxy"
-	"github.com/vincamok/goproxify/internal/edge/proxyproto"
 	"github.com/vincamok/goproxify/internal/edge/proxypipeline"
+	"github.com/vincamok/goproxify/internal/edge/proxyproto"
 	"github.com/vincamok/goproxify/internal/edge/proxystore"
 	edgequic "github.com/vincamok/goproxify/internal/edge/quic"
 	"github.com/vincamok/goproxify/internal/edge/raft"
 	"github.com/vincamok/goproxify/internal/edge/router"
 	edgere "github.com/vincamok/goproxify/internal/edge/rulesengine"
+	"github.com/vincamok/goproxify/internal/edge/siem"
 	"github.com/vincamok/goproxify/internal/edge/threat"
 	edgetls "github.com/vincamok/goproxify/internal/edge/tls"
-	edgetokens "github.com/vincamok/goproxify/internal/edge/tokens"
 	"github.com/vincamok/goproxify/internal/edge/tlsfp"
+	edgetokens "github.com/vincamok/goproxify/internal/edge/tokens"
 	"github.com/vincamok/goproxify/internal/edge/tracing"
 	"github.com/vincamok/goproxify/internal/edge/tunnel"
 	"github.com/vincamok/goproxify/internal/edge/waf"
+	"github.com/vincamok/goproxify/internal/edge/waf/behavior"
 	edgews "github.com/vincamok/goproxify/internal/edge/ws"
 	"github.com/vincamok/goproxify/internal/nodeident"
+	"github.com/vincamok/goproxify/internal/pairing"
 )
 
 // Server est le Data Plane — reverse proxy HTTP/TLS/TCP/UDP.
 type Server struct {
-	logGate     *logSearchGate // plafond des recherches simultanées dans la base de logs
-	logGateOnce sync.Once
-	cfg       *config.EdgeConfig
-	log       *edgelog.DynamicLogger
-	accessLog *edgelog.AccessLogger
-	logStore  *logstore.Store // base de logs locale (ADR 0012) ; nil si elle n'a pas pu s'ouvrir
-	logStreams logStreams // envoi des logs de la base vers chaque Admin connecté
-	agentLogs  agentLogDedup // dernière ligne gardée par conteneur d'Agent
+	logGate      *logSearchGate // plafond des recherches simultanées dans la base de logs
+	logGateOnce  sync.Once
+	cfg          *config.EdgeConfig
+	log          *edgelog.DynamicLogger
+	accessLog    *edgelog.AccessLogger
+	logStore     *logstore.Store // base de logs locale (ADR 0012) ; nil si elle n'a pas pu s'ouvrir
+	siemExporter *siem.Manager   // exporteur SIEM (ADR 0012) ; nil sans base de logs
+	logStreams   logStreams      // envoi des logs de la base vers chaque Admin connecté
+	logLive      logLives        // vues Live ouvertes par chaque Admin (lignes envoyées à la demande)
+	agentLogs    agentLogDedup   // dernière ligne gardée par conteneur d'Agent
 
 	table           *router.Table
 	certStore       *edgetls.CertStore
@@ -97,26 +103,37 @@ type Server struct {
 	nodeStore  *edgeagent.NodeStore
 	tokenStore *edgetokens.Store
 
-	httpSrv    *http.Server
-	httpsSrv   *http.Server
-	intSrv     *http.Server // API interne :8000
-	quicSrv    *edgequic.QUICServer
-	wsHub      *edgews.Hub
-	portal     *portal.Service
-	portalRepl *portalReplicator // réplication du portail vers les pairs du groupe HA
-	agentRepl  agentReplicator   // réplication des HMAC d'Agents vers les pairs du groupe HA
+	httpSrv        *http.Server
+	httpsSrv       *http.Server
+	intSrv         *http.Server // API interne :8000
+	quicSrv        *edgequic.QUICServer
+	wsHub          *edgews.Hub
+	portal         *portal.Service
+	portalRepl     *portalReplicator             // réplication du portail vers les pairs du groupe HA
+	agentRepl      agentReplicator               // réplication des HMAC d'Agents vers les pairs du groupe HA
+	agentGen       agentGenerations              // dernière génération d'état complet acceptée par (Agent, source, scope)
+	agentStates    agentStateStore               // derniers états complets acceptés, pour les pairs du groupe HA
+	adminDocs      pushedJournal                 // derniers documents poussés par l'Admin, pour les pairs du groupe HA
+	groupCard      groupCardHolder               // fiche du groupe HA, déclarée par l'Admin
+	peerSeen       peerLiveness                  // dernier échange réussi avec chaque pair, pour choisir l'exécutant des actions uniques
+	ruleReports    ruleReports                   // déclenchements de notification déjà remontés à l'Admin
+	ruleReportHook func(edgews.RuleFiredPayload) // observe les déclenchements remontés (tests)
+	agentStatePush agentStatePusher
 
 	implicitSkeleton sync.Map // ID de route implicite → route telle que générée, sans surcouche
 
 	tracingShutdown func(context.Context) error
 	clusterGroup    *cluster.Group
 	wafEngine       *waf.Engine
+	behavior        *behavior.Store               // magasin comportemental commun à Ephor et au WAF (ADR 0011)
+	asnDB           atomic.Pointer[asncompact.DB] // base IP → ASN poussée par l'Admin (copie chiffrée locale)
+	asnAsm          asnAssembly
 
 	mu            sync.Mutex
 	tcpPorts      map[string]interface{ Stop() }
 	l4            l4State // rapprochement des écouteurs TCP/UDP avec la table (l4.go)
-	pushedTracing string // endpoint OTLP poussé par Admin (utilisé si cfg.Engine.TracingEndpoint est vide)
-	activeTracing string // endpoint OTLP réellement exporté (démarrage ou poussé par Admin)
+	pushedTracing string  // endpoint OTLP poussé par Admin (utilisé si cfg.Engine.TracingEndpoint est vide)
+	activeTracing string  // endpoint OTLP réellement exporté (démarrage ou poussé par Admin)
 
 	pushedMu sync.Mutex
 	pushed   pushedSettings // cumul des réglages poussés par l'Admin, persisté (settingsPath)
@@ -149,6 +166,11 @@ func New(cfg *config.EdgeConfig) (*Server, error) {
 	accessLog.SetDisabled(cfg.Engine.AccessLogDisabled)
 	metrics.SetRequestMetricsDisabled(cfg.Engine.MetricsDisabled)
 
+	if created, err := edgecache.EnsureNodeKey(); err != nil {
+		log.Logger().Warn("clé locale: génération impossible, la clé dérivée du secret d'appairage reste en service", "err", err)
+	} else if created {
+		log.Logger().Warn("clé locale générée dans le volume (" + edgecache.NodeKeyPath() + ") : à inclure dans les sauvegardes du volume ; GPX_NODE_KEY ou GPX_NODE_KEY_FILE la remplacent par une clé hors du disque")
+	}
 	secret := edgecache.ResolveSecret(cfg.ControlPlane.AuthToken)
 	cachePath := "/etc/goproxify/edge-cache.gpx"
 	if p := os.Getenv("GPX_EDGE_CACHE_PATH"); p != "" {
@@ -211,7 +233,9 @@ func New(cfg *config.EdgeConfig) (*Server, error) {
 	}
 	s.metrics = proxy.NewAgentMetricsStore()
 	s.peers = proxy.NewPeerRegistry()
+	s.behavior = behavior.NewStore(0)
 	s.wafEngine = waf.NewEngine(nil, log.Logger())
+	s.wafEngine.SetBehaviorStore(s.behavior)
 	s.wafEngine.SetBanCallback(waf.BanCallback(s.threatBanCallback()))
 	log.Logger().Info("waf: moteur prêt — activer par route (label goproxify.waf=detect|block ou snippet), coupable pour la passerelle (moteurs de sécurité)")
 	s.portal = portal.NewService(log.Logger())
@@ -247,7 +271,8 @@ func New(cfg *config.EdgeConfig) (*Server, error) {
 	}
 
 	// Hub WebSocket plan de contrôle — HMAC partagé via GPX_PAIRING_SECRET
-	s.wsHub = edgews.NewHub(os.Getenv("GPX_PAIRING_SECRET"), log.Logger())
+	s.wsHub = edgews.NewHub("", log.Logger())
+	s.wsHub.SetAdminKeys(pairing.EdgeAdminKeys)
 	s.wsHub.HMACStore().SetOnChange(s.scheduleAgentReplicaPush)
 	s.wsHub.SetEdgeEndpointsProvider(s.groupEdgeEndpoints)
 	s.wsHub.SetAdminMessageHandler(s.handleWSAdminMessage)
@@ -300,27 +325,12 @@ func New(cfg *config.EdgeConfig) (*Server, error) {
 	})
 	s.portal.SetAuthProviders(s.providerStore)
 
-	// Access logs + system logs → Admin (Prism / Logs). Avec la base de logs locale, l'Admin demande les lignes
-	// qui lui manquent à chaque connexion (TypeLogResume, voir logstream.go) : rien n'est perdu pendant une
-	// coupure. Sans elle, repli sur l'ancien envoi en direct, perdu si aucun Admin n'est connecté.
-	// Convention : status>0 = access HTTP ; status=0 = système (slog passerelle).
+	// Access logs + system logs → Admin (Prism / Logs) : la passerelle garde ses lignes dans sa base (logstore) et
+	// l'Admin demande celles qui lui manquent à chaque connexion (TypeLogResume, voir logstream.go) : rien n'est perdu
+	// pendant une coupure. Sans cette base la passerelle ne diffuse plus ses lignes (l'ancien envoi en direct, perdu
+	// si aucun Admin n'était connecté, a disparu). Convention : status>0 = access HTTP ; status=0 = système.
 	s.accessLog.SetNodeName(cfg.Identity.NodeName)
 	s.log.SetNodeName(cfg.Identity.NodeName)
-	if s.logStore == nil {
-		shipLogs := func(batch []edgelog.ShipEntry) {
-			payload := make([]edgews.LogEntryPayload, len(batch))
-			for i, e := range batch {
-				payload[i] = shipPayload(e)
-			}
-			msg, err := edgews.NewMessage(0, edgews.TypeAccessLog, payload)
-			if err != nil {
-				return
-			}
-			s.wsHub.BroadcastToAdmins(msg)
-		}
-		s.accessLog.SetForwarder(shipLogs)
-		s.log.SetForwarder(shipLogs)
-	}
 	s.wsHub.SetAgentPendingCallback(func(agentID, agentName, version string) {
 		s.log.Info("ws/agent: nouvel Agent en attente", "id", agentID, "name", agentName)
 		s.nodeStore.SetPending(agentID, agentName, version)
@@ -385,12 +395,18 @@ func (s *Server) Start(ctx context.Context) error {
 		go s.wafEngine.WatchCustomRulesFile(ctx, p)
 	}
 	s.loadWAFConfigFromDisk()
+	s.loadPushedJournalFromDisk()
+	s.loadGroupCardFromDisk()
 
 	// Ephor, sur sa dernière config connue, avant l'API interne : une config poussée par l'Admin
 	// ne peut pas arriver avant le moteur.
 	s.threatEngine = threat.New(s.log.Logger(), s.threatBanCallback())
 	s.threatEngine.SetPriorBansFunc(s.priorThreatBans)
+	s.threatEngine.SetBehaviorStore(s.behavior)
+	s.behavior.SetASNLookup(s.lookupASN)
+	s.loadASNFromDisk()
 	s.loadThreatConfigFromDisk()
+	s.loadThreatStateFromDisk()
 	s.threatEngine.Start(ctx)
 	s.loadPluginsFromDisk(ctx)
 
@@ -430,6 +446,9 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Heartbeat passerelle → Admin via WebSocket
 	go s.wsHeartbeatLoop(ctx)
+	go s.trafficLoop(ctx)
+	s.startSIEM(ctx)
+	go s.logInfoLoop(ctx)
 	go s.portalLiveLoop(ctx)
 
 	// Marquage offline des Agents inactifs
@@ -449,8 +468,8 @@ func (s *Server) Start(ctx context.Context) error {
 	s.scheduleL4Sync()
 	s.startQuotaSyncLoop(ctx)
 
-	// Restauration des profils comportementaux WAF depuis le snapshot disque.
-	s.wafEngine.LoadSnapshot("/etc/goproxify/waf-behavior.json")
+	// Restauration du magasin comportemental (notes, historique propre, références apprises) depuis la copie chiffrée locale.
+	s.loadBehaviorStateFromDisk()
 
 	// Moteur Fail2Ban — autonome, lit les access logs, bans locaux.
 	s.f2bEngine = edgef2b.New()
@@ -585,16 +604,18 @@ func (s *Server) Stop(ctx context.Context) {
 		s.rulesEngine.Stop()
 	}
 	s.logStreams.stopAll()
+	s.logLive.stopAll()
+	if s.siemExporter != nil {
+		s.siemExporter.Close()
+	}
 	if s.logStore != nil {
 		_ = s.logStore.Close()
 	}
 	if s.bansDB != nil {
 		_ = s.bansDB.Close()
 	}
-	// Sauvegarde des profils comportementaux WAF à l'arrêt.
-	if err := s.wafEngine.SaveSnapshot("/etc/goproxify/waf-behavior.json"); err != nil {
-		s.log.Warn("waf: sauvegarde snapshot échouée", "err", err)
-	}
+	s.saveThreatState()
+	s.saveBehaviorState()
 }
 
 // --- Chargement initial ---------------------------------------------------

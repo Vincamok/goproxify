@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/vincamok/goproxify/internal/pairing"
 )
 
 const (
@@ -59,6 +61,28 @@ func ValidateAdminHMAC(r *http.Request, secret string) error {
 		return fmt.Errorf("signature HMAC invalide")
 	}
 	return nil
+}
+
+// ValidateAdminHMACKeys accepte la signature si l'une des clés la valide (la clé dérivée de la passerelle, ou le secret
+// racine d'une installation qui n'a pas fini sa migration), et rend la clé qui l'a validée.
+func ValidateAdminHMACKeys(r *http.Request, keys []pairing.Key) (pairing.Key, error) {
+	var first error
+	for _, k := range keys {
+		if k.Value == "" {
+			continue
+		}
+		err := ValidateAdminHMAC(r, k.Value)
+		if err == nil {
+			return k, nil
+		}
+		if first == nil {
+			first = err
+		}
+	}
+	if first == nil {
+		first = fmt.Errorf("HMAC non configuré")
+	}
+	return pairing.Key{}, first
 }
 
 // ExtractJoinToken extrait le JOIN_TOKEN du header WS upgrade.

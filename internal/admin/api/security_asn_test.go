@@ -14,9 +14,13 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/vincamok/goproxify/internal/admin/api"
 	"github.com/vincamok/goproxify/internal/admin/asn"
+	"github.com/vincamok/goproxify/internal/admin/prismedge"
+	"github.com/vincamok/goproxify/internal/edge/logapi/logapitest"
+	"github.com/vincamok/goproxify/internal/edge/logstore"
 )
 
 const asnSample = "5.0.0.0\t5.0.1.255\t64500\tFR\tEXEMPLE-HEBERGEUR\n" +
@@ -207,15 +211,17 @@ func TestUnbanASNRemovesOnlyThatASN(t *testing.T) {
 
 func TestASNPreviewMeasuresTrafficAndWarns(t *testing.T) {
 	h, db, _, _ := asnHandler(t)
-	for _, q := range []string{
-		`INSERT INTO logs (ts, domain, ip, status, path) VALUES (strftime('%Y-%m-%dT%H:%M:%SZ','now'), 'a.fr', '5.0.0.9', 200, '/')`,
-		`INSERT INTO logs (ts, domain, ip, status, path) VALUES (strftime('%Y-%m-%dT%H:%M:%SZ','now'), 'a.fr', '5.0.1.4', 403, '/x')`,
-		`INSERT INTO logs (ts, domain, ip, status, path) VALUES (strftime('%Y-%m-%dT%H:%M:%SZ','now'), 'a.fr', '8.8.8.8', 200, '/')`,
-	} {
-		if _, err := db.Exec(q); err != nil {
-			t.Fatalf("insertion des logs de test : %v", err)
-		}
+	gw := logapitest.New(t, "gw-a")
+	if err := gw.Register(db); err != nil {
+		t.Fatal(err)
 	}
+	h.Edge = &prismedge.Source{DB: db}
+	now := time.Now().UTC()
+	gw.Add(
+		logstore.Entry{Ts: now, Domain: "a.fr", IP: "5.0.0.9", Status: 200, Path: "/"},
+		logstore.Entry{Ts: now, Domain: "a.fr", IP: "5.0.1.4", Status: 403, Path: "/x"},
+		logstore.Entry{Ts: now, Domain: "a.fr", IP: "8.8.8.8", Status: 200, Path: "/"},
+	)
 	code, res, _ := asnCall(h, http.MethodGet, "/api/v1/security/asn/preview?asn=AS64500", "", "198.51.100.9:1")
 	if code != http.StatusOK {
 		t.Fatalf("%d %v", code, res)

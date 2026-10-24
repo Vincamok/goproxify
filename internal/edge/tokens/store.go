@@ -229,6 +229,20 @@ func (s *Store) RevokeByRaw(rawToken string) error {
 	return err
 }
 
+// RevokeNamedExcept révoque les jetons actifs de ce nom, sauf celui dont la valeur en clair est keepRaw. Rend le nombre de
+// jetons révoqués. Sans keepRaw, rien n'est révoqué : on ne retire pas le dernier accès d'un appelant.
+func (s *Store) RevokeNamedExcept(name, keepRaw string) (int, error) {
+	if name == "" || keepRaw == "" {
+		return 0, fmt.Errorf("tokens: nom et jeton à garder requis")
+	}
+	res, err := s.db.Exec(`UPDATE tokens SET revoked=1 WHERE name=? AND revoked=0 AND token_hash != ?`, name, hash(keepRaw))
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 // HasActiveAgent retourne true si un agent non révoqué et non expiré portant ce nom existe.
 func (s *Store) HasActiveAgent(agentName string) bool {
 	var count int

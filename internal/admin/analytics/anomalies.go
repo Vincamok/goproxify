@@ -22,65 +22,6 @@ type BackendError struct {
 	AvgLatMs   float64 `json:"avg_lat_ms"`
 }
 
-// GetBackendErrors retourne les 20 proxys actifs les plus en erreur sur la période.
-func GetBackendErrors(ctx context.Context, db *sql.DB, p Params) ([]BackendError, error) {
-	// Placeholders JOIN : from, to, [node_name] — puis WHERE : [proxy]
-	args := []any{p.From.UTC().Format(time.RFC3339), p.To.UTC().Format(time.RFC3339)}
-	nodeJoin := ""
-	if p.NodeName != "" {
-		nodeJoin = " AND l.node_name = ?"
-		args = append(args, p.NodeName)
-	}
-	proxyFilter := ""
-	if c, a := domainCond("json_extract(p.config,'$.host')", p.Proxy); c != "" {
-		proxyFilter = " AND " + c
-		args = append(args, a...)
-	}
-	rows, err := db.QueryContext(ctx,
-		`SELECT
-		   p.name,
-		   json_extract(p.config,'$.host') AS domain,
-		   json_extract(p.config,'$.backend') AS backend_url,
-		   COUNT(l.id)                          AS total,
-		   SUM(CASE WHEN l.status>=400 THEN 1 ELSE 0 END) AS errors,
-		   ROUND(100.0*SUM(CASE WHEN l.status>=400 THEN 1 ELSE 0 END)/NULLIF(COUNT(l.id),0),1) AS error_rate,
-		   ROUND(AVG(l.latency_ms),0)            AS avg_lat_ms
-		 FROM proxies p
-		 LEFT JOIN logs l ON l.domain = json_extract(p.config,'$.host')
-		                 AND l.ts >= ?
-		                 AND l.ts <= ?
-		                 AND l.status > 0`+nodeJoin+`
-		 WHERE p.enabled=1`+proxyFilter+`
-		 GROUP BY p.id
-		 HAVING COUNT(l.id) > 0
-		 ORDER BY error_rate DESC, total DESC
-		 LIMIT 20`, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []BackendError{}
-	for rows.Next() {
-		var r BackendError
-		var backendURL, domain *string
-		var errRate sql.NullFloat64
-		if rows.Scan(&r.Name, &domain, &backendURL, &r.Total, &r.Errors, &errRate, &r.AvgLatMs) != nil {
-			continue
-		}
-		if domain != nil {
-			r.Domain = *domain
-		}
-		if backendURL != nil {
-			r.BackendURL = *backendURL
-		}
-		if errRate.Valid {
-			r.ErrorRate = errRate.Float64
-		}
-		out = append(out, r)
-	}
-	return out, nil
-}
-
 // Anomaly écart notable détecté sur la période. Le texte affiché est construit côté UI
 // (traduit) à partir de Kind et des valeurs.
 type Anomaly struct {
@@ -94,9 +35,27 @@ type Anomaly struct {
 	Banned   bool    `json:"banned,omitempty"`
 }
 
-// DetectAnomalies applique des règles simples sur la période (pas de modèle appris).
-// Résultat trié : critiques d'abord, puis par ordre de détection.
-func DetectAnomalies(ctx context.Context, db *sql.DB, p Params) []Anomaly {
+// GetBackendErrors retourne les 20 proxys actifs les plus en erreur sur la période, d'après les cumuls par minute.
+func GetBackendErrors(ctx context.Context, db *sql.DB, p Params) ([]BackendError, error) {
+	return aggBackendErrors(ctx, db, p)
+}
+
+// Remote fournit les règles qui portent sur les lignes d'accès (IP dominante, pays en erreur, sélection par IP ou par
+// chemin) : elles vivent dans les bases de logs des passerelles (ADR 0012). Une règle dont la source échoue est ignorée.
+type Remote interface {
+	Available(ctx context.Context, p Params) bool
+	TopAttributableIP(ctx context.Context, p Params) (IPEntry, bool, error)
+	GeoBreakdown(ctx context.Context, p Params) ([]GeoEntry, error)
+	// FilteredTimeline et FilteredTotals servent une sélection par IP ou par chemin, que les cumuls par minute ne portent pas.
+	FilteredTimeline(ctx context.Context, p Params, bucket string) ([]TimePoint, error)
+	FilteredTotals(ctx context.Context, p Params) (Totals, error)
+}
+
+// DetectAnomalies applique des règles simples sur la période (pas de modèle appris). Résultat trié : critiques
+// d'abord, puis par ordre de détection. remote est la source des règles qui portent sur des lignes ; nil (aucune
+// passerelle), elles ne sont pas évaluées.
+func DetectAnomalies(ctx context.Context, db *sql.DB, p Params, remote Remote) []Anomaly {
+	useRemote := remote != nil && remote.Available(ctx, p)
 	out := []Anomaly{}
 
 	// Pic d'erreurs : point de la courbe > moyenne + 2,5 écarts-types (au moins 10 erreurs).
@@ -104,7 +63,15 @@ func DetectAnomalies(ctx context.Context, db *sql.DB, p Params) []Anomaly {
 	if p.To.Sub(p.From) <= 6*time.Hour {
 		bucket = "minute"
 	}
-	if tl := GetTimeline(db, p, bucket); len(tl) >= 4 {
+	filtered := p.IP != "" || p.Path != ""
+	var tl []TimePoint
+	switch {
+	case !filtered:
+		tl = GetTimeline(db, p, bucket)
+	case useRemote:
+		tl, _ = remote.FilteredTimeline(ctx, p, bucket)
+	}
+	if len(tl) >= 4 {
 		var sum float64
 		for _, pt := range tl {
 			sum += float64(pt.Errors)
@@ -127,11 +94,24 @@ func DetectAnomalies(ctx context.Context, db *sql.DB, p Params) []Anomaly {
 		}
 	}
 
-	reqs, _, _, bots, _ := rawKPIs(db, p)
+	var totals Totals
+	switch {
+	case !filtered:
+		totals = GetTotals(db, p)
+	case useRemote:
+		totals, _ = remote.FilteredTotals(ctx, p)
+	}
+	reqs, bots := totals.Requests, totals.Bots
 
 	// IP dominante : ≥ 20 % des requêtes de la période (et au moins 50). Une IP tronquée ou
 	// pseudonymisée regroupe plusieurs clients : l'anomalie et son action Bannir ne la visent pas.
-	if ips := topIPs(db, p, 1, true); len(ips) == 1 && reqs > 0 {
+	var ips []IPEntry
+	if useRemote {
+		if ip, ok, err := remote.TopAttributableIP(ctx, p); err == nil && ok {
+			ips = []IPEntry{ip}
+		}
+	}
+	if len(ips) == 1 && reqs > 0 {
 		if share := float64(ips[0].Requests) / float64(reqs); share >= 0.2 && ips[0].Requests >= 50 {
 			out = append(out, Anomaly{Kind: "dominant_ip", Level: "warning", Subject: ips[0].IP,
 				Value: share * 100, Count: ips[0].Requests, Banned: activeBannedIPSet(db)[ips[0].IP]})
@@ -140,7 +120,11 @@ func DetectAnomalies(ctx context.Context, db *sql.DB, p Params) []Anomaly {
 
 	// Pays en erreur : ≥ 20 % d'erreurs sur au moins 50 requêtes (2 maximum).
 	n := 0
-	for _, g := range GetGeoBreakdown(db, p) {
+	var geo []GeoEntry
+	if useRemote {
+		geo, _ = remote.GeoBreakdown(ctx, p)
+	}
+	for _, g := range geo {
 		if g.Requests >= 50 && g.ErrorRate >= 20 && n < 2 {
 			out = append(out, Anomaly{Kind: "country_errors", Level: "warning", Subject: g.CountryCode,
 				Label: g.CountryName, Value: g.ErrorRate, Count: g.Requests})

@@ -275,6 +275,12 @@ func runEdge() {
 		return
 	}
 
+	// Commandes locales sur les logs : export signé, gel légal (ADR 0012), sans l'Admin
+	if sub == "logs" {
+		runEdgeLogs()
+		return
+	}
+
 	// Sous-commandes de gestion des tokens locaux
 	if sub == "token" {
 		runEdgeToken()

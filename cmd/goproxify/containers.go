@@ -37,7 +37,13 @@ func runContainers() {
 			if t, ok := c["tls"].(bool); ok && t {
 				tls = "oui"
 			}
-			edge, _ := c["edge_name"].(string)
+			edge, _ := c["edge_label"].(string)
+			if edge == "" {
+				edge, _ = c["edge_name"].(string)
+			}
+			if g, _ := c["group"].(string); g != "" {
+				edge = g
+			}
 			agent, _ := c["agent_name"].(string)
 			backends := ""
 			if b, ok := c["backends"].([]any); ok {
@@ -55,6 +61,13 @@ func runContainers() {
 			shadowed, _ := c["shadowed_by"].(string)
 			if shadowed == "" {
 				shadowed = "-"
+			}
+			if inactive, _ := c["inactive"].(bool); inactive {
+				state, _ := c["state"].(string)
+				backends = "inactif"
+				if state != "" {
+					backends += " (" + state + ")"
+				}
 			}
 			fmt.Printf("%-40s  %-10s  %-20s  %-20s  %-38s  %s\n", host, tls, edge, agent, shadowed, backends)
 		}
@@ -109,6 +122,7 @@ func runContainers() {
 				Backends   []string `json:"backends"`
 				Source     string   `json:"source"`
 				EdgeName   string   `json:"edge_name"`
+				EdgeLabel  string   `json:"edge_label"`
 				AgentName  string   `json:"agent_name"`
 				ShadowedBy string   `json:"shadowed_by"`
 			} `json:"container"`

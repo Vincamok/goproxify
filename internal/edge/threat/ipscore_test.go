@@ -4,6 +4,7 @@
 package threat
 
 import (
+	"github.com/vincamok/goproxify/internal/edge/router"
 	"io"
 	"log/slog"
 	"math"
@@ -21,7 +22,7 @@ func scoreEngine(t *testing.T, score IPScoreConfig) (*Engine, *time.Time, *[]ban
 	t.Helper()
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	var bans []banRec
-	e := New(slog.New(slog.NewTextHandler(io.Discard, nil)), func(ip, reason string, _ time.Time) {
+	e := New(slog.New(slog.NewTextHandler(io.Discard, nil)), func(ip, reason string, _ time.Time, _ []router.BanSignal) {
 		bans = append(bans, banRec{ip, reason})
 	})
 	e.counters.now = func() time.Time { return now }

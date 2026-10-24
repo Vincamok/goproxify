@@ -4,7 +4,6 @@
 package api
 
 import (
-	"database/sql"
 	"net/http"
 	"sort"
 	"time"
@@ -104,44 +103,9 @@ func computeNodeLive(n nodeLive, tc trafficCounts, window time.Duration) nodeLiv
 	return n
 }
 
-// trafficByNode agrège les access logs de la dernière fenêtre par nœud. INDEXED BY : sans statistiques
-// (jamais de ANALYZE), SQLite préfère parcourir tout idx_logs_analytics_node pour le GROUP BY — sur des
-// millions de lignes, plus d'une seconde à chaque sonde de 5 s.
-func trafficByNode(db *sql.DB, r *http.Request, since time.Time) (map[string]trafficCounts, error) {
-	rows, err := db.QueryContext(r.Context(),
-		`SELECT COALESCE(node_name,''), COUNT(*),
-		        COALESCE(SUM(CASE WHEN status IN (403,429) THEN 1 ELSE 0 END),0),
-		        COALESCE(SUM(CASE WHEN status >= 500 THEN 1 ELSE 0 END),0)
-		 FROM logs INDEXED BY idx_logs_access_ts_status WHERE status > 0 AND component <> 'admin' AND ts >= ?
-		 GROUP BY node_name`, since.UTC().Format(time.RFC3339Nano))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string]trafficCounts{}
-	for rows.Next() {
-		var name string
-		var tc trafficCounts
-		if err := rows.Scan(&name, &tc.total, &tc.blocked, &tc.errors); err != nil {
-			continue
-		}
-		out[name] = tc
-	}
-	return out, nil
-}
-
 // live répond à GET /api/v1/nodes/live : santé, débit et risque de chaque nœud (Passerelles + Agents).
 func (h *NodesHandler) live(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
-	traffic, err := trafficByNode(h.DB, r, now.Add(-liveWindow))
-	if err != nil {
-		if !isCtxErr(err) {
-			h.Log.Error("topology live: traffic", "err", err)
-		}
-		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
-		return
-	}
-
 	var nodes []nodeRow
 	if rows, err := h.DB.QueryContext(r.Context(), `SELECT `+nodeSelectCols+` FROM nodes WHERE role='edge' ORDER BY node_name`); err == nil {
 		defer rows.Close()
@@ -158,11 +122,24 @@ func (h *NodesHandler) live(w http.ResponseWriter, r *http.Request) {
 	for _, n := range nodes {
 		res.Nodes = append(res.Nodes, computeNodeLive(
 			nodeLive{NodeName: n.NodeName, Role: n.Role, Status: n.Status, CPUPCT: n.CPUPCT, MemPCT: n.MemPCT},
-			traffic[n.NodeName], liveWindow))
+			h.recentTraffic(n.NodeName), liveWindow))
 	}
 	sort.Slice(res.Nodes, func(i, j int) bool { return res.Nodes[i].NodeName < res.Nodes[j].NodeName })
 
 	_ = h.DB.QueryRowContext(r.Context(),
 		`SELECT COUNT(*) FROM security_bans WHERE expires_at IS NULL OR datetime(expires_at) > CURRENT_TIMESTAMP`).Scan(&res.BansActive)
 	jsonOK(w, res)
+}
+
+// recentTraffic rend le débit de la dernière minute d'un nœud tel que sa passerelle l'annonce (elle seule voit ses
+// accès) ; zéro si elle n'en annonce pas.
+func (h *NodesHandler) recentTraffic(node string) trafficCounts {
+	if h.Traffic == nil {
+		return trafficCounts{}
+	}
+	req, blocked, errs, ok := h.Traffic(node)
+	if !ok {
+		return trafficCounts{}
+	}
+	return trafficCounts{total: int(req), blocked: int(blocked), errors: int(errs)}
 }

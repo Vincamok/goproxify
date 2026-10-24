@@ -4,6 +4,7 @@
 package threat
 
 import (
+	"github.com/vincamok/goproxify/internal/edge/router"
 	"io"
 	"log/slog"
 	"net/http/httptest"
@@ -44,9 +45,9 @@ func TestErrorScorePoints(t *testing.T) {
 		want   float64
 	}{
 		{404, "/x", 3}, {403, "/x", 1}, {400, "/x", 0}, {418, "/x", 2}, // surcharges
-		{404, "/api/users", 1.5},  // ×0,5
-		{404, "/api/auth/x", 12},  // préfixe le plus long : ×4
-		{404, "/status", 0},       // route neutralisée
+		{404, "/api/users", 1.5}, // ×0,5
+		{404, "/api/auth/x", 12}, // préfixe le plus long : ×4
+		{404, "/status", 0},      // route neutralisée
 	}
 	for _, tc := range over {
 		if got := c.points(tc.status, tc.path); got != tc.want {
@@ -59,7 +60,7 @@ func errEngine(t *testing.T, errs ErrorScoreConfig, mode string) (*Engine, *time
 	t.Helper()
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	var bans []banRec
-	e := New(slog.New(slog.NewTextHandler(io.Discard, nil)), func(ip, reason string, _ time.Time) {
+	e := New(slog.New(slog.NewTextHandler(io.Discard, nil)), func(ip, reason string, _ time.Time, _ []router.BanSignal) {
 		bans = append(bans, banRec{ip, reason})
 	})
 	e.counters.now = func() time.Time { return now }
@@ -175,7 +176,7 @@ func TestErrorScoreWhitelistedPath(t *testing.T) {
 // Sans l'option, le compteur historique error_threshold reste seul en jeu.
 func TestErrorScoreOffKeepsLegacyCounter(t *testing.T) {
 	var bans []banRec
-	e := New(slog.New(slog.NewTextHandler(io.Discard, nil)), func(ip, reason string, _ time.Time) {
+	e := New(slog.New(slog.NewTextHandler(io.Discard, nil)), func(ip, reason string, _ time.Time, _ []router.BanSignal) {
 		bans = append(bans, banRec{ip, reason})
 	})
 	e.UpdateConfig(Config{Enabled: true, Mode: "block", ErrorThreshold: 5, IPScore: IPScoreConfig{Enabled: true}})

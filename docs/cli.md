@@ -49,6 +49,17 @@ goproxify edge cache refresh
 goproxify edge cache export [-output <fichier>]
 goproxify edge cache clear
 
+goproxify edge logs export -reason "<motif>" -from <date> -to <date> -output <base>
+    [-kind access|system] [-ip <ip>] [-domain <hôte>] [-format ndjson|csv]
+    [-password-file <fichier> | -no-encrypt] [-config <chemin>]
+goproxify edge logs verify -manifest <fichier> [-data <fichier>] [-password-file <fichier>]
+    [-pubkey <base64>] [-decrypt-to <fichier>]
+goproxify edge logs hold add -reason "<motif>" -from <date> -to <date> [-ip <ip>] [-domain <hôte>]
+goproxify edge logs hold list
+goproxify edge logs hold release -id <identifiant>
+goproxify edge logs key
+goproxify edge logs audit
+
 goproxify edge token create -name <nom> [-role admin|agent] [-ttl <durée>]
 goproxify edge token list
 goproxify edge token revoke <id>
@@ -60,6 +71,14 @@ La passerelle charge ce cache au démarrage si l'Admin est injoignable.
 **`edge token`** — tokens d'authentification **locaux** de la passerelle (API interne port 8000).
 Distinct de `goproxify token` qui parle à l'Admin.
 
+**`edge logs`** *(Edge `0.88.0`, [ADR 0012](adr/0012-logs-proprietaire-edge.md))* — export complet des logs d'une passerelle pour une procédure légale, **sans l'Admin** : la commande lit la base de la passerelle (ouverte en lecture seule : aucune purge, aucune écriture, passerelle en marche ou arrêtée) avec ses clés locales, donc le secret d'appairage doit être celui de la passerelle (`GPX_PAIRING_SECRET` ou `GPX_CONTROL_PLANE_AUTH_TOKEN`). Réservée à qui a accès au volume de la passerelle.
+
+- `export` écrit les lignes de la plage (`-from`, `-to` : date RFC 3339 ou `AAAA-MM-JJ`, la borne de fin couvrant la journée), filtrées par `-ip` (retrouve aussi les lignes pseudonymisées) et `-domain`, avec **l'IP réelle déchiffrée** par la clé locale. Le motif (`-reason`) est obligatoire. La sortie est chiffrée par un mot de passe d'au moins 12 caractères (`-password-file` ou `GPX_EXPORT_PASSWORD`, jamais en argument ; AES-256-GCM, clé dérivée par scrypt) ; `-no-encrypt` produit une sortie en clair, avec un avertissement. Deux fichiers : `<base>.ndjson[.gpxe]` (ou `.csv`) et `<base>.manifest.json`, que l'export n'écrase jamais. Le manifeste donne la passerelle, l'opérateur, le motif, la plage, le nombre de lignes, les empreintes SHA-256 du fichier remis et du contenu, l'horodatage de la passerelle (sa valeur de preuve dépend de son horloge : NTP) et la clé publique ; il est signé en Ed25519 par une clé dédiée de la passerelle (`log-sign-key.gpx`, créée à la première utilisation, reprise par la sauvegarde d'état). Il ne contient aucune IP : un filtre d'IP n'y figure que par son empreinte. En CSV, les champs de texte qui commencent par `=`, `+`, `-` ou `@` sont précédés d'une apostrophe (un tableur les lirait comme une formule) ; le NDJSON reste le format fidèle.
+- `verify` contrôle un export, **n'importe où** (aucune passerelle n'est ouverte) : la signature du manifeste, l'empreinte du fichier remis et, avec le mot de passe, celle du contenu déchiffré (écrit dans `-decrypt-to`). Sans `-pubkey`, la signature prouve que le manifeste est intact mais pas qui l'a signé : comparer la clé à celle relevée à la remise avec `edge logs key`.
+- `hold` pose un **gel légal** sur une plage de dates : sans filtre, aucun fichier de logs (accès ou système) qui la recoupe n'est purgé tant que le gel existe, le fichier entier étant gelé. Avec `-ip` (une IP en clair ou pseudonymisée, retrouvée par son empreinte) et/ou `-domain` *(Edge `0.89.0`)*, seules les lignes visées sont gardées : elles sont copiées tout de suite, et à la purge pour celles qui arrivent ensuite, dans une archive `logs/held/<id>/`, puis le fichier de période disparaît normalement avec les lignes des autres personnes ; ces lignes se lisent par `export` seulement, et un ordre d'effacement `logs delete` les supprime aussi. `hold release` supprime l'archive. L'audit local garde l'empreinte de l'IP, pas l'IP. Le registre est relu à chaque purge, la passerelle en marche en tient compte sans redémarrage ; un registre illisible suspend toute purge. `hold release` le lève, la rétention reprend à la prochaine purge. Un gel ne bloque pas un ordre d'effacement RGPD explicite (`logs delete`).
+- `audit` affiche le journal local des exports et des gels (`log-export-audit.jsonl`), chaque ligne portant l'empreinte de la précédente : une ligne modifiée ou retirée au milieu casse la chaîne, détectée à la lecture. Il ne contient aucune IP.
+- Groupe HA : chaque membre a sa base et sa clé ; on exporte sur chacun, chacun avec son manifeste.
+
 Variables d'environnement :
 
 | Variable | Défaut |
@@ -67,6 +86,9 @@ Variables d'environnement :
 | `GPX_EDGE_CACHE_PATH` | `/etc/goproxify/edge-cache.gpx` |
 | `GPX_EDGE_TOKENS_PATH` | `/etc/goproxify/edge-tokens.db` |
 | `GPX_CONTROL_PLANE_AUTH_TOKEN` | — (dérive la clé de déchiffrement du cache) |
+| `GPX_LOG_SIGN_KEY_PATH` | `/etc/goproxify/log-sign-key.gpx` (clé de signature des exports de logs) |
+| `GPX_LOG_EXPORT_AUDIT_PATH` | `/etc/goproxify/log-export-audit.jsonl` (journal local des exports et des gels) |
+| `GPX_EXPORT_PASSWORD` | — (mot de passe de l'export de logs ; préférer `-password-file`) |
 
 ### `goproxify agent`
 
@@ -281,9 +303,10 @@ Contenu et historique de `architecture.json` (fichier de vérité de l'architect
 goproxify architecture show [-version <nom>]
 goproxify architecture versions
 goproxify architecture restore -name <version>
+goproxify architecture recover [-edges nom1,nom2]
 ```
 
-`show` affiche l'architecture courante en JSON, ou une version conservée avec `-version` (sans la restaurer).
+`show` affiche l'architecture courante en JSON, ou une version conservée avec `-version` (sans la restaurer). `recover` reconstitue le fichier à partir des fiches de groupe que détiennent les passerelles appairées (toutes, ou celles de `-edges`) : groupes, membres et domaines absents du fichier sont ajoutés, le reste n'est pas modifié (`POST /api/v1/architecture/recover`). À utiliser sur un Admin neuf, démarré avec le même `GPX_PAIRING_SECRET` et l'adresse d'au moins une passerelle (aucune approbation à faire) ; les passerelles qui n'ont pas répondu sont listées, et la commande peut être rejouée.
 
 Exemple :
 
@@ -384,16 +407,18 @@ goproxify logs list
   [-search <texte>]
   [-from <RFC3339>]  [-to <RFC3339>]
   [-limit <n>]  [-page <n>]
+  [-source admin|edge]    [-node <passerelle>]    [-cursor <jeton>]
   [-admin-url …] [-token …]
 
 goproxify logs export
   [-format csv|json]
   [-output <fichier>]
   [-level …] [-domain …] [-ip …] [-from …] [-to …]
+  [-source admin|edge]    [-node <passerelle>]
   [-admin-url …] [-token …]
 
 goproxify logs reveal-ip
-  -entry-id <id>      ID de l'entrée pseudonymisée
+  -entry-id <id> | -entry-ref <passerelle:type:id>   ligne pseudonymisée (id local, ou référence d'une ligne de passerelle)
   -reason "<motif>"   Motif légal, obligatoire, inscrit au journal d'audit
   [-admin-url …] [-token …]
 
@@ -406,10 +431,19 @@ goproxify logs subject-export
   -by-ip <ip> | -by-user <user_id>
   [-reason "<motif>"] [-output <fichier>]
   [-admin-url …] [-token …]
+
+goproxify logs siem show
+goproxify logs siem set -file <fichier.json> | -stdin
+goproxify logs siem enable | disable
+goproxify logs siem status
+  [-admin-url …] [-token …]
 ```
 
+- `logs siem` (Admin `0.178.0`, Edge `0.87.0`, [ADR 0012](adr/0012-logs-proprietaire-edge.md)) pilote l'**exporteur SIEM** : chaque passerelle envoie ses logs à vos destinations (syslog RFC 5424 sur TCP ou TLS, HTTP NDJSON ou OTLP/HTTP JSON, Admin `0.179.0`) avec son propre curseur, au moins une fois, même Admin éteint. `show` affiche la configuration en JSON (les valeurs des en-têtes, des jetons, sont masquées) ; `set` l'enregistre depuis un fichier ou l'entrée standard, dans le même format : une valeur laissée masquée garde le jeton enregistré, une destination sans `id` en reçoit un ; `enable` / `disable` allument ou éteignent l'exporteur sans toucher aux destinations (une destination retirée ou éteinte perd son curseur) ; `status` affiche, par passerelle et par destination, l'état, les lignes livrées, le retard (âge de la plus ancienne ligne non livrée), `À RISQUE` quand le retard menace des lignes qui vont être purgées, et la dernière erreur. Rôle admin ; avec un token API, `logs:read` pour `show` et `status`, `logs:write` pour le reste. Un retard au-delà du seuil de la destination (`alert_after_minutes`, 60 par défaut) déclenche l'alerte `siem_export_lag`.
+
+- `-source edge` (Admin `0.169.0`, [ADR 0012](adr/0012-logs-proprietaire-edge.md)) lit les lignes dans la base de logs de **chaque passerelle** au lieu de la copie de l'Admin, et les fusionne du plus récent au plus ancien, avec les logs propres de l'Admin ; `-node` vise une seule passerelle. La liste signale sur la sortie d'erreur les passerelles injoignables (leurs lignes manquent) et une recherche arrêtée par son délai, et affiche le `-cursor` de la page suivante. `-limit` (500 au plus) devient la taille de page ; l'export fusionné va jusqu'à 100 000 lignes. La colonne `id` d'une ligne de passerelle est la référence à passer à `reveal-ip -entry-ref`.
 - `reveal-ip` affiche l'IP réelle d'une entrée pseudonymisée (RGPD) ; réservé au superadmin (scope `gdpr:reveal` avec un token API). Fonctionne aussi après la désactivation de la pseudonymisation, tant que l'entrée est conservée.
-- `delete` efface les logs d'une IP (entrées pseudonymisées comprises) ou d'un utilisateur (droit à l'effacement, Art. 17) et affiche le nombre d'entrées supprimées ; avec `-by-ip`, supprime aussi les bans de l'IP, leur historique et son entrée du cache GeoIP (et lève ses bans sur les passerelles) ; rôle admin, scope `logs:write` avec un token API. Le journal d'audit garde le motif et le nombre d'entrées, pas l'IP en clair.
+- `delete` efface les logs d'une IP (entrées pseudonymisées comprises) ou d'un utilisateur (droit à l'effacement, Art. 17) et affiche le nombre d'entrées supprimées ; avec `-by-ip`, supprime aussi les bans de l'IP, leur historique et son entrée du cache GeoIP (et lève ses bans sur les passerelles) ; il affiche aussi, par passerelle, ce qu'elle a effacé ou qu'elle est injoignable et recevra l'ordre à sa connexion (Admin `0.177.0`) ; rôle admin, scope `logs:write` avec un token API. Le journal d'audit garde le motif et le nombre d'entrées, pas l'IP en clair.
 - `subject-export` produit le fichier JSON du droit d'accès et de portabilité (RGPD Art. 15 et 20) : pour une IP, ses logs (pseudonymisés compris), bans, historique des bans, position GeoIP et entrées d'audit ; pour un compte, son profil (jamais le mot de passe), ses équipes, ses logs et ses entrées d'audit. Sans `-output`, le JSON va sur la sortie standard. L'IP voyage dans le corps de la requête ; l'audit garde le motif et les compteurs, pas l'IP. Rôle admin, scope `logs:write` avec un token API.
 
 Exemples :
@@ -417,10 +451,14 @@ Exemples :
 ```bash
 goproxify logs list -domain app.example.fr -status 5xx -limit 100
 goproxify logs list -ip 1.2.3.4 -from 2026-09-01T00:00:00Z
+goproxify logs list -source edge -node gw-paris -status 5xx -limit 200
 goproxify logs export -format json -output access.json
 goproxify logs reveal-ip --entry-id 4821 --reason "Réquisition judiciaire n° 2026/1234"
 goproxify logs delete --by-ip 203.0.113.42 --reason "Demande RGPD Art. 17"
 goproxify logs subject-export --by-ip 203.0.113.42 --reason "Demande RGPD Art. 15" --output export.json
+goproxify logs siem show > siem.json   # modifier siem.json (destinations, filtres), puis :
+goproxify logs siem set --file siem.json
+goproxify logs siem status
 ```
 
 ---
@@ -816,6 +854,8 @@ goproxify security engines [-admin-url …] [-token …]
 goproxify security threat get  [-edge <id>] [-admin-url …] [-token …]   # passerelle d'un groupe HA : config du groupe
 goproxify security threat set  [-edge <id>] -file <threat-config.json> [-admin-url …] [-token …]
 goproxify security threat simulate -file <threat-config.json> [-hours N] [-domain <d>] [-edge <id>] [-admin-url …] [-token …]   # dry-run : rejoue les logs, n'enregistre rien
+goproxify security threat suggest [-days N] [-edge <id>] [-admin-url …] [-token …]   # seuils proposés à partir des cumuls par minute (rien n'est appliqué)
+goproxify security threat references [-edge <id>] [-admin-url …] [-token …]   # ce que chaque passerelle a appris (débit normal par route et heure, base ASN)
 # -edge : pour une passerelle membre d'un groupe HA, la config lue/écrite est celle du groupe (poussée à tous les membres)
 
 # Interrupteur du WAF d'une passerelle (coupe ou rétablit le WAF de tous ses proxies, sans toucher à leurs réglages)
@@ -824,7 +864,7 @@ goproxify security waf-engine set -enabled <true|false> [-edge <id>] [-admin-url
 goproxify security waf-engine activity [-hours N] [-edge <id>] [-admin-url …] [-token …]   # requêtes signalées par le WAF : refusées/passées, règles et domaines les plus touchés (défaut 24 h, max 168)
 
 # Bans
-goproxify security bans list   [-edge <passerelle>] [-source <source>] [-active true|false] [-scope <passerelle|group:nom>] [-admin-url …] [-token …]   # -source : native, fail2ban, crowdsec, threat, plugin:<nom> (ex. plugin:coraza)
+goproxify security bans list   [-edge <passerelle>] [-source <source>] [-active true|false] [-scope <passerelle|group:nom>] [-admin-url …] [-token …]   # -source : native, fail2ban, crowdsec, threat, plugin:<nom> (ex. plugin:coraza) ; un ban d'Ephor ou du WAF est suivi d'une ligne « ↳ signal points (valeur) · … » qui l'explique
 goproxify security bans add    -ip <ip|cidr> [-reason <raison>] [-ttl <durée>] [-scope <passerelle|group:nom>] [-admin-url …] [-token …]
 goproxify security bans preview -ip <ip|cidr> [-hours N] [-json] [-admin-url …] [-token …]   # impact d'un ban avant de le créer
 goproxify security bans whitelist list|add|delete [-ip <ip|cidr>] [-comment <texte>] [-admin-url …] [-token …]   # liste blanche des bans
@@ -847,6 +887,10 @@ goproxify security cve sla set -file <sla.json> [-admin-url …] [-token …]
 **`security engines`** — liste les moteurs globaux et les champs de leur configuration (chemins pointés comme `ip_score.ban_threshold`, secrets repérés). `security threat set` valide le fichier avec ce manifeste : clé inconnue, mode hors `block|detect`, durée illisible ou négative, IP ou CIDR invalide, code d'erreur HTTP hors 400-599, source de liste qui n'est pas http(s) ⇒ erreur `400`, rien n'est enregistré.
 
 **`security threat`** — lit ou écrit la configuration du moteur Ephor (fail2ban, seuils, whitelist globale…). Le paramètre `-edge` cible une passerelle spécifique dans un cluster multi-passerelle.
+
+**`security threat suggest`** — seuils proposés à partir des cumuls par minute (`-days`, défaut 7 ; `-edge`) : débit normal par passerelle et limite globale proposée. N'applique rien. Voir `GET /api/v1/security/threat-config/suggestions`.
+
+**`security threat references`** — ce que chaque passerelle a appris pour la note commune d'Ephor (`-edge` pour une seule) : références de débit par route et par heure, base ASN, profils. Voir `GET /api/v1/security/threat-references`.
 
 **`security threat simulate`** — rejoue les access logs récents (`-hours`, défaut 1, max 24 ; `-domain` pour un seul domaine) contre la config candidate du fichier, surchargée sur la config actuelle, et affiche le résultat en JSON : requêtes bloquées, faux positifs probables (`legit_blocked`), IP et bans, actuel vs candidat. Ne modifie rien. Voir `POST /api/v1/security/threat-config/simulate`.
 
@@ -1005,7 +1049,9 @@ goproxify containers show <hôte|id> [-edge <passerelle>] [-format compose|porta
 goproxify containers orphans [-admin-url …] [-token …]
 ```
 
-`list` affiche pour chaque conteneur : le host, TLS, la passerelle source, l'Agent, le proxy qui le remplace (`REMPLACÉ PAR`, `-` s'il est servi par ses labels) et les backends.
+`list` affiche pour chaque conteneur : le host, TLS, la passerelle source (son nom affiché, ou son groupe HA), l'Agent, le proxy qui le remplace (`REMPLACÉ PAR`, `-` s'il est servi par ses labels) et les backends.
+
+Un conteneur arrêté, en pause ou qui redémarre reste listé : la colonne `BACKENDS` indique `inactif (<état>)` et il n'a ni proxy de remplacement ni conversion possible.
 
 `convert` crée un proxy modifiable à partir de la route issue des labels (`POST /api/v1/proxies/from-discovered`). Le proxy prend la place de la route des labels sur son hôte ; désactivé ou supprimé, il la lui rend. `-edge` n'est utile que si plusieurs passerelles annoncent la même route.
 
@@ -1135,7 +1181,13 @@ goproxify nodes list         [-role edge|agent]
 goproxify nodes live
 goproxify nodes accept       -id <pending-id>
 goproxify nodes reject       -id <pending-id>
+goproxify nodes revoke-stale-admin-tokens
+goproxify nodes rotate-token -id <passerelle>
 ```
+
+`rotate-token` renouvelle le jeton que l'Admin a pour une passerelle (identifiant ou nom), le lui pousse, lui fait révoquer l'ancien et redonne la liste des pairs aux autres passerelles (`POST /api/v1/nodes/:id/rotate-token`). L'Admin le fait déjà tout seul pour les membres restants d'un groupe quand l'un d'eux le quitte.
+
+`revoke-stale-admin-tokens` fait révoquer par chaque passerelle connectée les jetons qu'un ancien Admin lui avait poussés, en gardant celui de l'Admin courant (`POST /api/v1/nodes/revoke-stale-admin-tokens`). À lancer après le remplacement de l'Admin ou si l'ancien est compromis ; une passerelle hors ligne doit être resollicitée à son retour.
 
 ---
 

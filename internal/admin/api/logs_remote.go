@@ -19,10 +19,13 @@ import (
 	"time"
 
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
+	"github.com/vincamok/goproxify/internal/admin/analytics"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
 	"github.com/vincamok/goproxify/internal/admin/edgeproxy"
 	"github.com/vincamok/goproxify/internal/admin/logs"
+	"github.com/vincamok/goproxify/internal/admin/prismedge"
 	"github.com/vincamok/goproxify/internal/edge/logapi"
+	"github.com/vincamok/goproxify/internal/ipcrypt"
 )
 
 // Recherche dans les logs des passerelles (ADR 0012) : les lignes brutes vivent dans la base de chaque passerelle,
@@ -211,7 +214,7 @@ func mergeSearch(results []nodeResult, prev map[string]string, limit int) merged
 func remoteParams(p logs.SearchParams) logapi.Params {
 	return logapi.Params{
 		Level: p.Level, Component: p.Component, Domain: p.Domain, IP: p.IP, Method: p.Method, Status: p.Status,
-		Path: p.Path, TLSJA3: p.TLSJA3, TLSJA4: p.TLSJA4, Search: p.Search, DateFrom: p.DateFrom, DateTo: p.DateTo,
+		Path: p.Path, TLSJA3: p.TLSJA3, TLSJA4: p.TLSJA4, Search: p.Search, RequestID: p.RequestID, DateFrom: p.DateFrom, DateTo: p.DateTo,
 		Kind: p.Kind, ExcludeInternal: p.ExcludeInternal,
 	}
 }
@@ -243,6 +246,9 @@ func (h *LogsHandler) edgeClient(bulk bool) *edgeproxy.Client {
 
 // remoteTargets désigne les passerelles visées : toutes, ou celle de node_id / node_name.
 func (h *LogsHandler) remoteTargets(ctx context.Context, q url.Values) ([]edgeproxy.Target, error) {
+	if q.Get("component") == "admin" || q.Get("node_name") == localNodeID {
+		return nil, nil // le filtre ne vise que l'Admin
+	}
 	all, err := edgeproxy.ListTargets(ctx, h.DB)
 	if err != nil {
 		return nil, err
@@ -253,11 +259,44 @@ func (h *LogsHandler) remoteTargets(ctx context.Context, q url.Values) ([]edgepr
 	}
 	var out []edgeproxy.Target
 	for _, t := range all {
-		if (id != "" && t.ID == id) || (id == "" && name != "" && t.NodeName == name) {
+		if id != "" && t.ID == id {
+			out = append(out, t)
+		}
+	}
+	if len(out) > 0 {
+		return out, nil
+	}
+	// La liste des nœuds identifie une passerelle par son nom ou par l'identifiant de sa fiche, pas par celui de son
+	// jeton : à défaut de correspondance exacte, le nom (celui de node_name, sinon celui que porte node_id) désigne la cible.
+	for _, t := range all {
+		if (name != "" && t.NodeName == name) || (id != "" && t.NodeName == id) {
 			out = append(out, t)
 		}
 	}
 	return out, nil
+}
+
+// canonNodeID ramène un node_id reçu de l'interface (identifiant de fiche de nœud ou nom) à l'identifiant de jeton
+// que portent les lignes de logs de l'Admin ; inchangé s'il ne désigne aucune passerelle.
+func (h *LogsHandler) canonNodeID(ctx context.Context, p *logs.SearchParams) {
+	if p.NodeID == "" || h.DB == nil {
+		return
+	}
+	targets, err := edgeproxy.ListTargets(ctx, h.DB)
+	if err != nil {
+		return
+	}
+	for _, t := range targets {
+		if t.ID == p.NodeID {
+			return
+		}
+	}
+	for _, t := range targets {
+		if t.NodeName == p.NodeID || (p.NodeName != "" && t.NodeName == p.NodeName) {
+			p.NodeID = t.ID
+			return
+		}
+	}
 }
 
 // fanOut exécute fn pour chaque passerelle en parallèle, chacune avec son propre délai.
@@ -278,7 +317,7 @@ func fanOut[T any](ctx context.Context, targets []edgeproxy.Target, timeout time
 	return res, errs
 }
 
-func (h *LogsHandler) searchRemote(ctx context.Context, targets []edgeproxy.Target, base logapi.Params, prev map[string]string, limit int, bulk bool) mergedPage {
+func (h *LogsHandler) searchRemote(ctx context.Context, targets []edgeproxy.Target, base logapi.Params, local *logs.SearchParams, prev map[string]string, limit int, bulk bool) mergedPage {
 	timeout := remoteNodeTimeout
 	if bulk {
 		timeout = remoteBulkTimeout
@@ -289,9 +328,12 @@ func (h *LogsHandler) searchRemote(ctx context.Context, targets []edgeproxy.Targ
 		p.Cursor, p.Limit, p.Bulk = prev[t.ID], limit, bulk
 		return client.LogSearch(ctx, t, p)
 	})
-	results := make([]nodeResult, len(targets))
+	results := make([]nodeResult, len(targets), len(targets)+1)
 	for i, t := range targets {
 		results[i] = nodeResult{T: t, Resp: resp[i], Err: errs[i]}
+	}
+	if local != nil {
+		results = append(results, h.localPage(*local, prev[localNodeID], limit))
 	}
 	return mergeSearch(results, prev, limit)
 }
@@ -346,30 +388,52 @@ func remotePageSize(q url.Values) int {
 	return n
 }
 
-// listRemote : GET /api/v1/logs?source=edge — une page fusionnée des lignes de toutes les passerelles visées.
-func (h *LogsHandler) listRemote(w http.ResponseWriter, r *http.Request) {
-	p := parseLogsParams(r)
+// errRemoteBadRequest signale une requête invalide (date, jeton de page) : réponse 400.
+type errRemoteBadRequest string
+
+func (e errRemoteBadRequest) Error() string { return string(e) }
+
+// ListEdges rend une page fusionnée des lignes de toutes les passerelles visées par q (mêmes paramètres que
+// GET /api/v1/logs, plus node_id / node_name, cursor et page_size), avec les lignes propres de l'Admin. C'est la
+// logique de la route et celle de l'outil MCP.
+func (h *LogsHandler) ListEdges(ctx context.Context, q url.Values) (map[string]any, error) {
+	p := logsParamsFromValues(q)
 	if !validRemoteDates(p) {
-		http.Error(w, "date_from / date_to : RFC3339 requis", http.StatusBadRequest)
-		return
+		return nil, errRemoteBadRequest("date_from / date_to : RFC3339 requis")
 	}
-	prev, err := decodeRemoteCursor(r.URL.Query().Get("cursor"))
+	prev, err := decodeRemoteCursor(q.Get("cursor"))
 	if err != nil {
-		http.Error(w, "cursor invalide", http.StatusBadRequest)
-		return
+		return nil, errRemoteBadRequest("cursor invalide")
 	}
-	targets, err := h.remoteTargets(r.Context(), r.URL.Query())
+	targets, err := h.remoteTargets(ctx, q)
 	if err != nil {
-		logsJSONErr(w, err, http.StatusInternalServerError)
-		return
+		return nil, err
 	}
-	limit := remotePageSize(r.URL.Query())
-	page := h.searchRemote(r.Context(), targets, remoteParams(p), prev, limit, false)
+	limit := remotePageSize(q)
+	var local *logs.SearchParams
+	if lp, ok := h.localParams(p, q); ok {
+		local = &lp
+	}
+	page := h.searchRemote(ctx, targets, remoteParams(p), local, prev, limit, false)
 	h.attachRemoteCountries(page.Entries)
-	jsonOK(w, map[string]any{
+	return map[string]any{
 		"source": "edge", "entries": page.Entries, "has_more": page.HasMore, "cursor": page.Cursor,
 		"partial": page.Partial, "unreachable": nonNilUnreachable(page.Unreachable), "page_size": limit,
-	})
+	}, nil
+}
+
+// listRemote : GET /api/v1/logs?source=edge — une page fusionnée des lignes de toutes les passerelles visées.
+func (h *LogsHandler) listRemote(w http.ResponseWriter, r *http.Request) {
+	out, err := h.ListEdges(r.Context(), r.URL.Query())
+	var bad errRemoteBadRequest
+	switch {
+	case errors.As(err, &bad):
+		http.Error(w, bad.Error(), http.StatusBadRequest)
+	case err != nil:
+		logsJSONErr(w, err, http.StatusInternalServerError)
+	default:
+		jsonOK(w, out)
+	}
 }
 
 func nonNilUnreachable(u []unreachableNode) []unreachableNode {
@@ -412,6 +476,21 @@ func (h *LogsHandler) histogramRemote(w http.ResponseWriter, r *http.Request, p 
 			m.Total += pt.Total
 			m.Warn += pt.Warn
 			m.Error += pt.Error
+		}
+	}
+	// Les lignes propres de l'Admin : ses tranches sont déjà à son heure locale.
+	if lp, ok := h.localParams(p, r.URL.Query()); ok {
+		if local, err := h.Store.Histogram(lp, bucket); err == nil {
+			for _, pt := range local {
+				m := merged[pt.Bucket]
+				if m == nil {
+					m = &logs.HistPoint{Bucket: pt.Bucket}
+					merged[pt.Bucket] = m
+				}
+				m.Total += pt.Total
+				m.Warn += pt.Warn
+				m.Error += pt.Error
+			}
 		}
 	}
 	pts := make([]logs.HistPoint, 0, len(merged))
@@ -468,6 +547,38 @@ func (h *LogsHandler) facetsRemote(w http.ResponseWriter, r *http.Request, p log
 			counts["node_name"][t.NodeName] += resp[i].Total
 		}
 	}
+	// Les lignes propres de l'Admin : leurs facettes, et leur nombre (somme des niveaux) pour « node_name ».
+	if lp, ok := h.localParams(p, r.URL.Query()); ok {
+		local := forwarded
+		if len(local) == 0 || !slicesContains(local, "level") {
+			local = append(append([]string(nil), local...), "level")
+		}
+		if lf, err := h.Store.Facets(lp, local); err == nil {
+			for field, list := range lf {
+				if field == "node_name" || (field == "level" && !slicesContains(forwarded, "level")) {
+					continue
+				}
+				if counts[field] == nil {
+					counts[field] = map[string]int64{}
+				}
+				for _, c := range list {
+					counts[field][c.Value] += c.Count
+				}
+			}
+			if wantNode {
+				var total int64
+				for _, c := range lf["level"] {
+					total += c.Count
+				}
+				if total > 0 {
+					if counts["node_name"] == nil {
+						counts["node_name"] = map[string]int64{}
+					}
+					counts["node_name"][localNodeID] += total
+				}
+			}
+		}
+	}
 	facets := map[string]any{}
 	for field, m := range counts {
 		list := make([]logs.FacetCount, 0, len(m))
@@ -499,7 +610,11 @@ func (h *LogsHandler) exportRemote(w http.ResponseWriter, r *http.Request, p log
 		logsJSONErr(w, err, http.StatusInternalServerError)
 		return
 	}
-	page := h.searchRemote(r.Context(), targets, remoteParams(p), nil, remoteExportRows, true)
+	var local *logs.SearchParams
+	if lp, ok := h.localParams(p, r.URL.Query()); ok {
+		local = &lp
+	}
+	page := h.searchRemote(r.Context(), targets, remoteParams(p), local, nil, remoteExportRows, true)
 	ts := time.Now().Format("20060102-150405")
 	if format == "csv" {
 		w.Header().Set("Content-Type", "text/csv")
@@ -532,6 +647,9 @@ func (h *LogsHandler) revealRemote(ctx context.Context, ref string) (string, err
 	if err != nil {
 		return "", err
 	}
+	if nodeID == localNodeID {
+		return h.Store.RevealIP(id)
+	}
 	targets, err := edgeproxy.ListTargets(ctx, h.DB)
 	if err != nil {
 		return "", err
@@ -561,10 +679,10 @@ func (h *LogsHandler) revealEdgeLine(w http.ResponseWriter, r *http.Request, ref
 	ip, err := h.revealRemote(ctx, ref)
 	var he *edgeproxy.HTTPError
 	switch {
-	case errors.As(err, &he) && he.Status == http.StatusNotFound:
+	case errors.Is(err, logs.ErrEntryNotFound) || (errors.As(err, &he) && he.Status == http.StatusNotFound):
 		logsJSONErr(w, errors.New("ligne introuvable"), http.StatusNotFound)
 		return
-	case errors.As(err, &he) && he.Status == http.StatusUnprocessableEntity:
+	case errors.Is(err, logs.ErrNotPseudonymized) || (errors.As(err, &he) && he.Status == http.StatusUnprocessableEntity):
 		logsJSONErr(w, logs.ErrNotPseudonymized, http.StatusUnprocessableEntity)
 		return
 	case err != nil:
@@ -580,4 +698,161 @@ func (h *LogsHandler) revealEdgeLine(w http.ResponseWriter, r *http.Request, ref
 	jsonOK(w, map[string]any{
 		"entry_ref": ref, "ip": ip, "requested_by": actor, "reason": reason, "ts": time.Now().UTC().Format(time.RFC3339),
 	})
+}
+
+// localNodeID désigne l'Admin lui-même dans une fusion : son audit, les logs de son process et les requêtes de son
+// API ne sont que dans sa base, pas dans celle d'une passerelle.
+const localNodeID = "admin"
+
+// localParams dit si les lignes propres de l'Admin entrent dans la recherche, et avec quels filtres : seulement
+// celles de component=admin (la table contient aussi la copie des lignes des passerelles), et jamais quand une
+// passerelle précise est visée.
+func (h *LogsHandler) localParams(p logs.SearchParams, q url.Values) (logs.SearchParams, bool) {
+	if h.Store == nil || (p.Component != "" && p.Component != "admin") {
+		return p, false
+	}
+	if q.Get("node_id") != "" {
+		return p, false
+	}
+	if n := q.Get("node_name"); n != "" && n != localNodeID {
+		return p, false
+	}
+	p.Component, p.NodeID, p.NodeName = "admin", "", ""
+	return p, true
+}
+
+// localPage lit une page des lignes propres de l'Admin, sous la même forme qu'une page de passerelle : la fusion
+// et le jeton de page n'ont pas à distinguer les deux. La position d'une page est celle de la dernière ligne
+// retenue, comme pour une passerelle ; ici l'ordre est celui des identifiants de la base de l'Admin.
+func (h *LogsHandler) localPage(p logs.SearchParams, cursor string, limit int) nodeResult {
+	res := nodeResult{T: edgeproxy.Target{ID: localNodeID, NodeName: localNodeID}}
+	pos, err := logapi.DecodeCursor(cursor)
+	if err != nil {
+		res.Err = err
+		return res
+	}
+	var before int64
+	for _, ps := range pos {
+		if before == 0 || ps.ID < before {
+			before = ps.ID
+		}
+	}
+	p.BeforeID, p.Page, p.PageSize = before, 0, limit+1
+	entries, _, err := h.Store.Search(p)
+	if err != nil {
+		res.Err = err
+		return res
+	}
+	resp := &logapi.SearchResponse{Entries: make([]logapi.Entry, 0, len(entries))}
+	if len(entries) > limit {
+		resp.HasMore = true
+		entries = entries[:limit]
+	}
+	for _, e := range entries {
+		kind := "access"
+		if e.Status == 0 {
+			kind = "system"
+		}
+		resp.Entries = append(resp.Entries, logapi.Entry{
+			ID: e.ID, Kind: kind, Ts: e.Ts.UTC().Format(logapi.TsLayout), Level: e.Level, Component: e.Component,
+			Domain: e.Domain, Method: e.Method, Path: e.Path, Status: e.Status, IP: e.IP, LatencyMs: e.LatencyMs,
+			Bytes: e.Bytes, Message: e.Message, Referrer: e.Referrer, RequestID: e.RequestID, WAFMatches: e.WAFMatches,
+			ThreatSignal: e.ThreatSignal, TLSJA3: e.TLSJA3, TLSJA4: e.TLSJA4, IPTruncated: e.IPTruncated,
+		})
+	}
+	res.Resp = resp
+	return res
+}
+
+func slicesContains(list []string, v string) bool {
+	for _, s := range list {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
+// addGatewayLogs complète l'export RGPD d'une IP avec ses lignes dans la base de chaque passerelle (les lignes d'accès
+// ne sont plus que là, ADR 0012). Les lignes propres de l'Admin restent celles de sa base ; celles des passerelles que
+// sa copie contient encore sont remplacées par la lecture des passerelles. Une passerelle qui n'a pas répondu est
+// nommée dans l'export : il est incomplet.
+func (h *LogsHandler) addGatewayLogs(ctx context.Context, ip string, res *logs.IPExport) {
+	src := &prismedge.Source{DB: h.DB}
+	if !src.Available(ctx, analytics.Params{}) {
+		return
+	}
+	lines, capped, meta, err := src.NewestLines(ctx, logapi.Params{IP: ip}, "", logs.SubjectExportMaxLogs)
+	if err != nil {
+		if !errors.Is(err, prismedge.ErrUnsupported) {
+			for _, u := range meta.Unreachable {
+				res.GatewaysMissing = append(res.GatewaysMissing, u.NodeName)
+			}
+			if len(res.GatewaysMissing) == 0 {
+				res.GatewaysMissing = []string{err.Error()}
+			}
+		}
+		return
+	}
+	canon := ipcrypt.CanonicalIP(ip)
+	kept := res.Logs[:0]
+	for _, e := range res.Logs {
+		if e.Component == "admin" {
+			kept = append(kept, e)
+		}
+	}
+	for _, l := range lines {
+		ts, _ := time.Parse(time.RFC3339Nano, l.Ts)
+		e := logs.Entry{Ts: ts, Level: l.Level, Component: l.Component, NodeName: l.Node, Domain: l.Domain, Method: l.Method, Path: l.Path,
+			Status: l.Status, IP: l.IP, LatencyMs: l.LatencyMs, Bytes: l.Bytes, Message: l.Message, Referrer: l.Referrer,
+			RequestID: l.RequestID, WAFMatches: l.WAFMatches, ThreatSignal: l.ThreatSignal, TLSJA3: l.TLSJA3, TLSJA4: l.TLSJA4,
+			IPTruncated: l.IPTruncated}
+		if l.Pseudonymized {
+			e.IP = canon
+		}
+		kept = append(kept, e)
+	}
+	sort.SliceStable(kept, func(i, j int) bool { return kept[i].Ts.After(kept[j].Ts) })
+	res.Logs = kept
+	res.LogsTruncated = res.LogsTruncated || capped
+	for _, u := range meta.Unreachable {
+		res.GatewaysMissing = append(res.GatewaysMissing, u.NodeName)
+	}
+}
+
+// gatewayErasure dit ce qu'une passerelle a fait d'un ordre d'effacement. Status « erased » : elle a répondu avec ses
+// comptes, c'est la preuve ; « pending » : elle n'a pas répondu, l'ordre lui est rejoué à sa connexion (et garde 365 jours).
+type gatewayErasure struct {
+	NodeName string `json:"node_name"`
+	Status   string `json:"status"`
+	LogLines int64  `json:"log_lines"`
+	BanRows  int64  `json:"ban_rows"`
+	Error    string `json:"error,omitempty"`
+}
+
+// eraseOnGateways efface l'IP de chaque passerelle joignable et rend le résultat de chacune. Une passerelle qui ne
+// répond pas est « pending » : l'ordre mis en file (OnEraseIP) lui sera rejoué.
+func (h *LogsHandler) eraseOnGateways(ctx context.Context, ip string) []gatewayErasure {
+	if h.DB == nil {
+		return []gatewayErasure{}
+	}
+	targets, err := edgeproxy.ListTargets(ctx, h.DB)
+	if err != nil || len(targets) == 0 {
+		return []gatewayErasure{}
+	}
+	client := h.edgeClient(false)
+	results, errs := fanOut(ctx, targets, remoteNodeTimeout, func(ctx context.Context, t edgeproxy.Target) (*logapi.EraseResponse, error) {
+		return client.LogErase(ctx, t, ip)
+	})
+	out := make([]gatewayErasure, len(targets))
+	for i, t := range targets {
+		g := gatewayErasure{NodeName: t.NodeName, Status: "erased"}
+		if errs[i] != nil {
+			g.Status, g.Error = "pending", errs[i].Error()
+		} else {
+			g.LogLines, g.BanRows = results[i].LogLines, results[i].BanRows
+		}
+		out[i] = g
+	}
+	return out
 }

@@ -6,7 +6,6 @@ package analytics
 import (
 	"context"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -20,10 +19,10 @@ func TestGetSLO(t *testing.T) {
 	}
 	t.Cleanup(func() { d.Close() })
 	now := time.Now().UTC()
+	// Les cumuls par minute que les passerelles envoient : n requêtes de ce code à cette minute.
 	ins := func(at time.Time, status, n int) {
-		for i := 0; i < n; i++ {
-			d.Exec(`INSERT INTO logs (ts, domain, ip, status) VALUES (?,?,?,?)`, at.Format(time.RFC3339), "a.fr", "1.1.1.1", status)
-		}
+		d.Exec(`INSERT INTO logs_minute (minute, node_name, domain, status, requests) VALUES (?, 'edge-a', 'a.fr', ?, ?)
+			ON CONFLICT (minute, node_name, domain, status) DO UPDATE SET requests = requests + excluded.requests`, at.UTC().Format("2006-01-02T15:04"), status, n)
 	}
 	// 10 jours sains, puis la dernière heure à 5 % d'erreurs 5xx.
 	ins(now.AddDate(0, 0, -10), 200, 1000)
@@ -130,28 +129,3 @@ func TestSLOTargetPerNode(t *testing.T) {
 	}
 }
 
-// Le SLO compte 30 jours de logs à chaque affichage : la lecture de la table dépassait le délai
-// de 30 s de la passerelle devant l'Admin (502).
-func TestSLOCountUsesCoveringIndex(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { d.Close() })
-	w, args := where(Params{From: time.Now().AddDate(0, 0, -30), To: time.Now()})
-	rows, err := d.Query(`EXPLAIN QUERY PLAN SELECT COUNT(*), COALESCE(SUM(CASE WHEN status >= 500 THEN 1 ELSE 0 END),0) FROM logs `+w, args...)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	var plan string
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		rows.Scan(&id, &parent, &unused, &detail) //nolint:errcheck
-		plan += detail + "\n"
-	}
-	if !strings.Contains(plan, "COVERING INDEX idx_logs_access_ts_status") {
-		t.Fatalf("plan SLO sans index couvrant :\n%s", plan)
-	}
-}

@@ -328,6 +328,7 @@ async function renderPrismPage() {
 
   function prismBodyHtml(kpis, timeline, status) {
     return `
+      <div id="px-sources-note"></div>
       <div id="px-kpis">${kpisHtml(kpis)}</div>
       <div class="prism-hero">
         <div class="prism-panel prism-mapcard" id="prism-geo-panel" style="min-height:80px">${spin}</div>
@@ -356,7 +357,12 @@ async function renderPrismPage() {
     apiP('GET', '/prism/unique-ips?' + q, signal)
       .then(d => {
         const el = document.getElementById('prism-kpi-unique-ips');
-        if (el && d && d.unique_ips != null) el.textContent = fmtNum(d.unique_ips);
+        if (el && d && d.unique_ips != null) el.textContent = (d.estimated ? '≈ ' : '') + fmtNum(d.unique_ips);
+        const notes = [];
+        if (d && d.unreachable && d.unreachable.length) notes.push(t('prism.unreachable_note').replace('{nodes}', d.unreachable.map(u => u.node_name).join(', ')));
+        if (d && d.partial && !(d.unreachable && d.unreachable.length)) notes.push(t('prism.partial_note'));
+        if (d && d.estimated) notes.push(t('prism.estimated_note'));
+        upd('px-sources-note', notes.map(n => `<div class="prism-note" role="status">${esc(n)}</div>`).join(''));
       })
       .catch(() => {});
 

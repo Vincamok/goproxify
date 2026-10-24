@@ -35,6 +35,18 @@ func TestLivenessClaim(t *testing.T) {
 	}
 }
 
+func TestMarkReachableLiftsDownMark(t *testing.T) {
+	edgeLiveness = &liveness{downUntil: map[string]time.Time{}}
+	edgeLiveness.fail("e", time.Now())
+	if edgeLiveness.claim("e", time.Now()) {
+		t.Fatal("la passerelle est écartée après l'échec")
+	}
+	MarkReachable("e")
+	if !edgeLiveness.claim("e", time.Now()) {
+		t.Error("une passerelle dont le WebSocket est établi est de nouveau interrogée")
+	}
+}
+
 func TestDownEdgeIsSkippedForReadsOnly(t *testing.T) {
 	edgeLiveness = &liveness{downUntil: map[string]time.Time{}}
 

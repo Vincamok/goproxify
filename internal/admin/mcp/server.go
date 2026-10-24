@@ -27,6 +27,10 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/acme"
 	"github.com/vincamok/goproxify/internal/admin/alerting"
 	"github.com/vincamok/goproxify/internal/admin/api"
+	"github.com/vincamok/goproxify/internal/admin/analytics"
+	"github.com/vincamok/goproxify/internal/admin/logs"
+	"github.com/vincamok/goproxify/internal/admin/siemcfg"
+	"github.com/vincamok/goproxify/internal/admin/prismedge"
 	"github.com/vincamok/goproxify/internal/admin/archstore"
 	"github.com/vincamok/goproxify/internal/admin/asn"
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
@@ -92,6 +96,8 @@ type Handler struct {
 	ArchStore    *archstore.Store    // optionnel — architecture.json (outil get_architecture)
 	// ProxyMetrics (optionnel) — série de débit/erreurs/p95 par host relevée par l'Admin (outil get_proxy_metrics).
 	ProxyMetrics func(points int) (entries any, sampledAt any)
+	// SIEMStatus (optionnel) — état de l'exporteur SIEM rapporté par chaque passerelle (outil get_siem_status).
+	SIEMStatus func() []siemcfg.NodeStatus
 }
 
 // CertDeployerIface est implémenté par certdeploy.Deployer (évite l'import direct).
@@ -407,7 +413,15 @@ var tools = []map[string]any{
 			opt("request_id", "string", "Corrélation exacte par request_id (retourne tous les logs de la requête)"),
 			opt("tls_ja4", "string", "Filtrer par empreinte TLS JA4 du client (repérer un même outil ou botnet, quelle que soit son IP)"),
 			opt("tls_ja3", "string", "Filtrer par empreinte TLS JA3 (hash MD5) du client"),
+			opt("source", "string", "admin (défaut) : copie des logs gardée par l'Admin, 100 entrées max ; edge : base de logs de chaque passerelle, fusionnée par l'Admin avec ses propres logs (500 entrées par page, du plus récent au plus ancien). Une réponse edge porte entries, has_more, cursor, partial (délai d'une passerelle atteint, affiner le filtre) et unreachable (passerelles qui n'ont pas répondu : leurs lignes manquent)"),
+			opt("node", "string", "Avec source=edge : nom d'une seule passerelle"),
+			opt("cursor", "string", "Avec source=edge : jeton « cursor » de la page précédente, pour la page suivante"),
 		),
+	},
+	{
+		"name":        "get_siem_status",
+		"description": "Exporteur SIEM des passerelles : configuration (destinations syslog RFC 5424 TCP/TLS, HTTP NDJSON ou OTLP/HTTP JSON, jetons des en-têtes masqués) et état rapporté par chaque passerelle (livraisons, retard en secondes sur la plus ancienne ligne non livrée, erreur, at_risk = des lignes vont être purgées avant d'être livrées). Chaque passerelle exporte seule avec son propre curseur, même Admin éteint ; une passerelle muette depuis plus de 90 s est marquée stale. Un retard au-delà du seuil de la destination déclenche l'alerte siem_export_lag. Réservé aux administrateurs.",
+		"inputSchema": schema(),
 	},
 	// Équipes
 	{
@@ -654,7 +668,7 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 	case "get_discovered_container":
 		result, toolErr = h.toolGetDiscoveredContainer(r, p.Arguments)
 	case "list_orphan_proxies":
-		result, toolErr = (&api.DiscoveredContainersHandler{DB: h.DB, Log: h.Log}).Orphans(r.Context())
+		result, toolErr = (&api.DiscoveredContainersHandler{DB: h.DB, Log: h.Log, Groups: h.Groups}).Orphans(r.Context())
 	case "convert_discovered_container":
 		result, toolErr = h.toolConvertDiscoveredContainer(r, p.Arguments)
 	case "update_proxy":
@@ -706,6 +720,8 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 		ja3, _ := p.Arguments["tls_ja3"].(string)
 		ja4, _ := p.Arguments["tls_ja4"].(string)
 		result, toolErr = h.toolListLogsFiltered(r, domain, level, requestID, ja3, ja4)
+	case "get_siem_status":
+		result = h.toolSIEMStatus()
 	case "list_teams":
 		result, toolErr = h.toolListTeams(r)
 	case "get_audit_log":
@@ -842,6 +858,10 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 		result, toolErr = h.toolRemoveBanWhitelist(r, p.Arguments)
 	case "simulate_ephor_config":
 		result, toolErr = h.toolSimulateEphor(r, p.Arguments)
+	case "get_ephor_references":
+		result, toolErr = h.toolGetEphorReferences(r, p.Arguments)
+	case "suggest_ephor_thresholds":
+		result, toolErr = h.toolSuggestEphorThresholds(r, p.Arguments)
 	case "get_waf_activity":
 		result, toolErr = h.toolGetWAFActivity(r, p.Arguments)
 	case "get_topology_live":
@@ -996,12 +1016,13 @@ func (h *Handler) toolListProxies(r *http.Request) (any, error) {
 			"source": source,
 		})
 	}
-	dc := &api.DiscoveredContainersHandler{DB: h.DB, Log: h.Log}
+	dc := &api.DiscoveredContainersHandler{DB: h.DB, Log: h.Log, Groups: h.Groups}
 	for _, d := range dc.FetchFromEdges(r.Context()) {
 		out = append(out, map[string]any{
 			"id": d.ID, "name": d.Host, "enabled": true, "host": d.Host, "type": "http", "tls": d.TLS,
 			"source": d.Source, "read_only": true, "aliases": d.Aliases, "backends": d.Backends,
-			"edge": d.EdgeName, "agent": d.AgentName, "shadowed_by": d.ShadowedBy,
+			"edge": d.EdgeName, "edge_label": d.EdgeLabel, "group": d.Group, "agent": d.AgentName, "shadowed_by": d.ShadowedBy,
+			"inactive": d.Inactive, "state": d.State,
 		})
 	}
 	return out, nil
@@ -1096,7 +1117,7 @@ func (h *Handler) toolGetDiscoveredContainer(r *http.Request, args map[string]an
 	if id == "" {
 		return nil, fmt.Errorf("id requis")
 	}
-	dc := &api.DiscoveredContainersHandler{DB: h.DB, Log: h.Log}
+	dc := &api.DiscoveredContainersHandler{DB: h.DB, Log: h.Log, Groups: h.Groups}
 	c, err := dc.Find(r.Context(), id, edge)
 	if err != nil {
 		return nil, err
@@ -1127,7 +1148,7 @@ func (h *Handler) toolConvertDiscoveredContainer(r *http.Request, args map[strin
 	if id == "" {
 		return nil, fmt.Errorf("id requis")
 	}
-	c, err := (&api.DiscoveredContainersHandler{DB: h.DB, Log: h.Log}).ForConversion(r.Context(), id, edge)
+	c, err := (&api.DiscoveredContainersHandler{DB: h.DB, Log: h.Log, Groups: h.Groups}).ForConversion(r.Context(), id, edge)
 	if err != nil {
 		return nil, err
 	}
@@ -1459,34 +1480,6 @@ func (h *Handler) toolListAlerts(r *http.Request) (any, error) {
 	return out, nil
 }
 
-func (h *Handler) toolGetMetrics(r *http.Request, proxy string) (any, error) {
-	q := `SELECT
-	  COUNT(*) AS requests,
-	  SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END) AS errors,
-	  ROUND(100.0 * SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END) / MAX(COUNT(*),1), 2) AS error_rate,
-	  ROUND(AVG(latency_ms), 0) AS avg_latency_ms,
-	  COUNT(DISTINCT ip) AS unique_ips
-	FROM logs WHERE ts > ?`
-	// logs.ts est en RFC3339 : datetime('now', …) compare mal ('T' > ' ').
-	args := []any{time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339Nano)}
-	if proxy != "" {
-		q += ` AND domain = ?`
-		args = append(args, proxy)
-	}
-	row := h.DB.QueryRowContext(r.Context(), q, args...)
-	var reqs, errs int64
-	var errRate, avgLat float64
-	var ips int64
-	if err := row.Scan(&reqs, &errs, &errRate, &avgLat, &ips); err != nil {
-		return nil, err
-	}
-	return map[string]any{
-		"requests": reqs, "errors": errs, "error_rate": errRate,
-		"avg_latency_ms": avgLat, "unique_ips": ips,
-		"window": "24h",
-	}, nil
-}
-
 func (h *Handler) toolListBackups(r *http.Request) (any, error) {
 	rows, err := h.DB.QueryContext(r.Context(),
 		`SELECT id, name, size, created_at FROM backup_snapshots ORDER BY created_at DESC LIMIT 20`)
@@ -1786,7 +1779,7 @@ func (h *Handler) toolListSecurityBans(r *http.Request, args map[string]any) (an
 		where = " WHERE " + strings.Join(clauses, " AND ")
 	}
 	rows, err := h.DB.QueryContext(r.Context(),
-		`SELECT id, ip, domain, reason, source, edge_name, target_scope, expires_at, created_at FROM security_bans`+where+
+		`SELECT id, ip, domain, reason, source, edge_name, target_scope, expires_at, created_at, signals FROM security_bans`+where+
 			` ORDER BY created_at DESC LIMIT 200`, qargs...)
 	if err != nil {
 		return nil, err
@@ -1794,15 +1787,18 @@ func (h *Handler) toolListSecurityBans(r *http.Request, args map[string]any) (an
 	defer rows.Close()
 	var out []map[string]any
 	for rows.Next() {
-		var id, ip, domain, reason, source, edgeName, scope string
+		var id, ip, domain, reason, source, edgeName, scope, signals string
 		var exp sql.NullString
 		var createdAt string
-		if err := rows.Scan(&id, &ip, &domain, &reason, &source, &edgeName, &scope, &exp, &createdAt); err != nil {
+		if err := rows.Scan(&id, &ip, &domain, &reason, &source, &edgeName, &scope, &exp, &createdAt, &signals); err != nil {
 			continue
 		}
 		item := map[string]any{
 			"id": id, "ip": ip, "domain": domain, "reason": reason,
 			"source": source, "edge_name": edgeName, "target_scope": scope, "created_at": createdAt,
+		}
+		if why := security.DecodeBanSignals(signals); len(why) > 0 {
+			item["signals"] = why
 		}
 		if exp.Valid {
 			item["expires_at"] = exp.String
@@ -2464,4 +2460,84 @@ func (h *Handler) toolListAlertEvents(r *http.Request, args map[string]any) (any
 var advancedProxyOptions = map[string]bool{
 	"split": true, "maintenance": true, "signed_url": true, "graphql": true, "bandwidth": true,
 	"redact_json": true, "html_inject": true, "hedge": true, "static": true, "request_schema": true, "openapi": true, "grpc_transcode": true, "grpc_web": true, "rate_limit": true, "conditions": true,
+}
+
+// toolListLogsEdges : list_logs avec source=edge. Même logique que GET /api/v1/logs?source=edge (fusion des bases de
+// logs des passerelles et des lignes propres de l'Admin).
+func (h *Handler) toolListLogsEdges(r *http.Request, args map[string]any) (any, error) {
+	q := url.Values{"source": {"edge"}}
+	for arg, param := range map[string]string{
+		"domain": "domain", "level": "level", "request_id": "request_id", "tls_ja3": "tls_ja3", "tls_ja4": "tls_ja4",
+		"node": "node_name", "cursor": "cursor",
+	} {
+		if v, _ := args[arg].(string); v != "" {
+			q.Set(param, v)
+		}
+	}
+	lh := &api.LogsHandler{DB: h.DB, Store: logs.New(h.DB), Log: h.Log}
+	return lh.ListEdges(r.Context(), q)
+}
+
+// toolSIEMStatus : get_siem_status. Même contenu que GET /api/v1/logs/siem et /api/v1/logs/siem/status.
+func (h *Handler) toolSIEMStatus() any {
+	nodes := []siemcfg.NodeStatus{}
+	if h.SIEMStatus != nil {
+		nodes = h.SIEMStatus()
+	}
+	return map[string]any{"config": siemcfg.Mask(siemcfg.Load(h.DB)), "nodes": nodes}
+}
+
+// metricsFromAggregates : requêtes, erreurs et latence des 24 dernières heures lues dans les cumuls par minute que
+// calculent les passerelles (elles ne comptent que les requêtes HTTP, pas les lignes système). Les IP uniques
+// portent sur des lignes : elles viendront du regroupement par dimension des passerelles.
+func (h *Handler) metricsFromAggregates(r *http.Request, proxy string) (any, error) {
+	since := time.Now().Add(-24 * time.Hour)
+	q := `SELECT COALESCE(SUM(requests), 0),
+	             COALESCE(SUM(CASE WHEN status >= 400 THEN requests ELSE 0 END), 0),
+	             COALESCE(SUM(latency_ms_sum), 0)
+	      FROM logs_minute WHERE minute >= ?`
+	args := []any{logs.MinuteKey(since)}
+	if proxy != "" {
+		q += ` AND domain = ?`
+		args = append(args, proxy)
+	}
+	var reqs, errs, latSum int64
+	if err := h.DB.QueryRowContext(r.Context(), q, args...).Scan(&reqs, &errs, &latSum); err != nil {
+		return nil, err
+	}
+	errRate, avgLat := 0.0, 0.0
+	if reqs > 0 {
+		errRate = float64(int64(10000*float64(errs)/float64(reqs)+0.5)) / 100
+		avgLat = float64(int64(float64(latSum)/float64(reqs) + 0.5))
+	}
+	ips, estimated := h.uniqueIPs(r.Context(), proxy, since)
+	out := map[string]any{
+		"requests": reqs, "errors": errs, "error_rate": errRate,
+		"avg_latency_ms": avgLat, "unique_ips": ips,
+		"window": "24h",
+	}
+	if estimated {
+		out["unique_ips_estimated"] = true
+	}
+	return out, nil
+}
+
+
+func (h *Handler) toolGetMetrics(r *http.Request, proxy string) (any, error) {
+	return h.metricsFromAggregates(r, proxy)
+}
+
+// uniqueIPs compte les IP distinctes depuis since : l'union de celles des passerelles (estimée au-delà de quelques
+// milliers) ; sans passerelle, zéro.
+func (h *Handler) uniqueIPs(ctx context.Context, proxy string, since time.Time) (n int64, estimated bool) {
+	src := &prismedge.Source{DB: h.DB}
+	p := analytics.Params{Proxy: proxy, From: since, To: time.Now()}
+	if !src.Available(ctx, p) {
+		return 0, false
+	}
+	n, meta, err := src.UniqueIPs(ctx, p)
+	if err != nil {
+		return 0, false
+	}
+	return n, meta.Estimated
 }

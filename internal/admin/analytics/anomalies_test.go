@@ -5,45 +5,64 @@ package analytics
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/vincamok/goproxify/internal/admin/db"
-	"github.com/vincamok/goproxify/internal/admin/logs"
 )
 
-func TestDetectAnomalies(t *testing.T) {
+// fakeRemote est la source des règles qui portent sur des lignes : ce que les passerelles répondraient.
+type fakeRemote struct {
+	ip  IPEntry
+	geo []GeoEntry
+}
+
+func (f fakeRemote) Available(context.Context, Params) bool { return true }
+func (f fakeRemote) TopAttributableIP(context.Context, Params) (IPEntry, bool, error) {
+	return f.ip, f.ip.IP != "", nil
+}
+func (f fakeRemote) GeoBreakdown(context.Context, Params) ([]GeoEntry, error) { return f.geo, nil }
+func (f fakeRemote) FilteredTimeline(context.Context, Params, string) ([]TimePoint, error) {
+	return nil, nil
+}
+func (f fakeRemote) FilteredTotals(context.Context, Params) (Totals, error) { return Totals{}, nil }
+
+func anomalyDB(t *testing.T) *sql.DB {
+	t.Helper()
 	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { d.Close() })
+	return d
+}
 
+func TestDetectAnomalies(t *testing.T) {
+	d := anomalyDB(t)
 	now := time.Now().UTC()
-	ins := func(at time.Time, domain, ip string, status, n int) {
-		for i := 0; i < n; i++ {
-			if _, err := d.Exec(`INSERT INTO logs (ts, domain, ip, status, latency_ms) VALUES (?,?,?,?,10)`,
-				at.Format(time.RFC3339), domain, ip, status); err != nil {
-				t.Fatal(err)
-			}
+	ins := func(at time.Time, status, n int) {
+		if _, err := d.Exec(`INSERT INTO logs_minute (minute, node_name, domain, status, requests, latency_ms_sum) VALUES (?, 'edge-a', 'api.acme.fr', ?, ?, ?)
+			ON CONFLICT (minute, node_name, domain, status) DO UPDATE SET requests = requests + excluded.requests`,
+			at.Format("2006-01-02T15:04"), status, n, n*10); err != nil {
+			t.Fatal(err)
 		}
 	}
-	// 10 heures de trafic sain réparti sur des IPs variées, puis un pic d'erreurs 502 depuis une seule IP.
+	// 10 heures de trafic sain, puis un pic d'erreurs 502.
 	for h := 10; h >= 1; h-- {
 		at := now.Add(-time.Duration(h) * time.Hour)
-		for k := 0; k < 8; k++ {
-			ins(at, "api.acme.fr", "10.0.0."+string(rune('1'+k)), 200, 10)
-		}
-		ins(at, "api.acme.fr", "10.0.1.1", 500, 1)
+		ins(at, 200, 80)
+		ins(at, 500, 1)
 	}
-	ins(now.Add(-30*time.Minute), "api.acme.fr", "203.0.113.9", 502, 400)
+	ins(now.Add(-30*time.Minute), 502, 400)
 
 	d.Exec(`INSERT INTO proxies (id, name, config, enabled) VALUES ('p1','api','{"host":"api.acme.fr","backend":"http://api:8080"}',1)`)
-	d.Exec(`INSERT INTO geoip_cache (ip, country_code, country_name) VALUES ('203.0.113.9','CN','Chine')`)
+	remote := fakeRemote{ip: IPEntry{IP: "203.0.113.9", Requests: 400, Errors: 400},
+		geo: []GeoEntry{{CountryCode: "CN", CountryName: "Chine", Requests: 400, Errors: 400, ErrorRate: 100}, {CountryCode: "FR", CountryName: "France", Requests: 800, Errors: 10, ErrorRate: 1.25}}}
 
 	p := Params{From: now.Add(-12 * time.Hour), To: now}
-	got := DetectAnomalies(context.Background(), d, p)
+	got := DetectAnomalies(context.Background(), d, p, remote)
 
 	kinds := map[string]Anomaly{}
 	for _, a := range got {
@@ -64,59 +83,18 @@ func TestDetectAnomalies(t *testing.T) {
 		t.Errorf("les anomalies critiques doivent passer en premier : %+v", got)
 	}
 
+	// Sans passerelle, les règles qui portent sur des lignes ne sont pas évaluées ; les autres le sont.
+	for _, a := range DetectAnomalies(context.Background(), d, p, nil) {
+		if a.Kind == "dominant_ip" || a.Kind == "country_errors" {
+			t.Errorf("règle sur des lignes évaluée sans passerelle : %+v", a)
+		}
+	}
+
 	// Période calme : rien à signaler.
-	calm := DetectAnomalies(context.Background(), d, Params{From: now.Add(-11 * time.Hour), To: now.Add(-2 * time.Hour)})
+	calm := DetectAnomalies(context.Background(), d, Params{From: now.Add(-11 * time.Hour), To: now.Add(-2 * time.Hour)}, fakeRemote{})
 	for _, a := range calm {
 		if a.Kind == "error_spike" || a.Kind == "dominant_ip" {
 			t.Errorf("aucune anomalie attendue sur la période calme, obtenu %+v", a)
 		}
-	}
-}
-
-// Une IP tronquée par l'anonymisation regroupe tout un /24 : Prism la garde dans le top IPs mais la
-// marque, et l'anomalie « IP dominante » (action Bannir) vise la première IP attribuable.
-func TestTruncatedIPsMarkedAndNeverDominant(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { d.Close() })
-
-	at := time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339)
-	ins := func(ip string, truncated, n int) {
-		for i := 0; i < n; i++ {
-			if _, err := d.Exec(`INSERT INTO logs (ts, domain, ip, status, latency_ms, ip_truncated) VALUES (?,'api.acme.fr',?,200,10,?)`,
-				at, ip, truncated); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	ins("203.0.113.0", 1, 100)
-	ins("2a01:e0a:1::", 1, 70)
-	// Entrées pseudonymisées écrites avant Admin 0.71.1, sans marqueur.
-	ins(logs.PseudonymizedIP, 0, 95)
-	ins("198.51.100.7", 0, 90)
-	ins("198.51.100.8", 0, 10)
-
-	p := Params{From: time.Now().Add(-time.Hour), To: time.Now()}
-	marked := map[string]bool{}
-	for _, e := range GetTopIPs(d, p, 10) {
-		marked[e.IP] = e.IPTruncated
-	}
-	want := map[string]bool{"203.0.113.0": true, "2a01:e0a:1::": true, logs.PseudonymizedIP: false, "198.51.100.7": false, "198.51.100.8": false}
-	for ip, w := range want {
-		if got, ok := marked[ip]; !ok || got != w {
-			t.Errorf("GetTopIPs %s : présent=%v ip_truncated=%v, attendu présent, ip_truncated=%v", ip, ok, got, w)
-		}
-	}
-
-	var dominant []Anomaly
-	for _, a := range DetectAnomalies(context.Background(), d, p) {
-		if a.Kind == "dominant_ip" {
-			dominant = append(dominant, a)
-		}
-	}
-	if len(dominant) != 1 || dominant[0].Subject != "198.51.100.7" {
-		t.Fatalf("IP dominante = %+v, attendu 198.51.100.7 (IP tronquées et pseudonymisées écartées)", dominant)
 	}
 }

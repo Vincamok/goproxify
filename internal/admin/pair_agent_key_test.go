@@ -34,18 +34,27 @@ func TestPair_AgentKeyOpensAgentPairingOnly(t *testing.T) {
 		return rec.Code
 	}
 	key := pairing.AgentKey(root)
+	declareAutoAccept(t, db, "agent", "agent-a")
+	declareAutoAccept(t, db, "edge", "edge-b")
+	declareAutoAccept(t, db, "agent", "agent-legacy")
 
 	if c := pair("10.1.0.1:1", key, "agent", "agent-a"); c != http.StatusOK {
-		t.Fatalf("un Agent doit pouvoir s'appairer avec la clé dérivée : %d", c)
+		t.Fatalf("un Agent déclaré doit pouvoir s'appairer avec la clé dérivée : %d", c)
 	}
 	if c := pair("10.1.0.2:1", key, "edge", "edge-a"); c != http.StatusForbidden {
 		t.Fatalf("la clé d'Agent ne doit pas appairer une passerelle : %d", c)
 	}
 	if c := pair("10.1.0.3:1", root, "edge", "edge-b"); c != http.StatusOK {
-		t.Fatalf("une passerelle s'appaire avec le secret racine : %d", c)
+		t.Fatalf("une passerelle déclarée s'appaire avec le secret racine : %d", c)
 	}
 	if c := pair("10.1.0.4:1", root, "agent", "agent-legacy"); c != http.StatusOK {
-		t.Fatalf("un Agent non migré (secret racine) doit encore pouvoir s'appairer : %d", c)
+		t.Fatalf("un Agent déclaré non migré (secret racine) doit encore pouvoir s'appairer : %d", c)
+	}
+	if c := pair("10.1.0.5:1", key, "agent", "agent-inconnu"); c != http.StatusAccepted {
+		t.Fatalf("un Agent non déclaré attend l'approbation de l'opérateur : %d", c)
+	}
+	if c := pair("10.1.0.6:1", root, "edge", "edge-inconnue"); c != http.StatusAccepted {
+		t.Fatalf("une passerelle non déclarée attend l'approbation de l'opérateur : %d", c)
 	}
 }
 
@@ -69,6 +78,8 @@ func TestPair_AgentWithRootRefusedWhenConfigured(t *testing.T) {
 	if c := pair("10.2.0.1:1", root, "agent"); c != http.StatusForbidden {
 		t.Fatalf("un Agent ne doit plus pouvoir s'appairer avec la racine : %d", c)
 	}
+	declareAutoAccept(t, db, "agent", "n")
+	declareAutoAccept(t, db, "edge", "n")
 	if c := pair("10.2.0.2:1", pairing.AgentKey(root), "agent"); c != http.StatusOK {
 		t.Fatalf("la clé dérivée reste acceptée : %d", c)
 	}

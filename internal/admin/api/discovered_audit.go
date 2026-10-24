@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/vincamok/goproxify/internal/admin/edgeproxy"
 	"github.com/vincamok/goproxify/internal/admin/routesecrets"
@@ -208,7 +209,8 @@ func (h *DiscoveredContainersHandler) Orphans(ctx context.Context) ([]OrphanProx
 	items, answered := h.fetchAll(ctx)
 	present := map[[2]string]bool{}
 	for _, it := range items {
-		present[[2]string{it.EdgeName, it.ID}] = true
+		// Un conteneur arrêté n'a pas disparu : son proxy converti n'est pas orphelin.
+		present[[2]string{it.EdgeName, strings.TrimPrefix(it.ID, "inactive:")}] = true
 	}
 	out := []OrphanProxy{}
 	for _, env := range envs {

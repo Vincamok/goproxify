@@ -75,6 +75,89 @@ func BootstrapTicketAutoAccept(db *sql.DB, nodeName string) bool {
 	return false
 }
 
+// ConsumeBootstrapTicket fait servir un ticket une seule fois : le nom du nœud en sort de la liste que le ticket couvre
+// (le ticket disparaît quand elle est vide) et l'auto-acceptation que ce ticket avait posée sur le nœud déclaré tombe.
+// Une auto-acceptation posée par l'opérateur sur un nœud déclaré, sans ticket, reste en place.
+func ConsumeBootstrapTicket(db *sql.DB, nodeName string) {
+	name := strings.TrimSpace(nodeName)
+	if db == nil || name == "" {
+		return
+	}
+	rows, err := db.Query(`SELECT token, payload FROM bootstrap_tickets WHERE expires_at > ?`, sqltime.Format(time.Now()))
+	if err == nil {
+		type upd struct{ token, payload string }
+		var todo []upd
+		var drop []string
+		for rows.Next() {
+			var tok, raw string
+			if rows.Scan(&tok, &raw) != nil {
+				continue
+			}
+			var p map[string]any
+			if json.Unmarshal([]byte(raw), &p) != nil {
+				continue
+			}
+			names, _ := p["node_names"].([]any)
+			kept := make([]any, 0, len(names))
+			found := false
+			for _, n := range names {
+				if s, ok := n.(string); ok && strings.TrimSpace(s) == name {
+					found = true
+					continue
+				}
+				kept = append(kept, n)
+			}
+			if !found {
+				continue
+			}
+			if len(kept) == 0 {
+				drop = append(drop, tok)
+				continue
+			}
+			p["node_names"] = kept
+			if b, err := json.Marshal(p); err == nil {
+				todo = append(todo, upd{tok, string(b)})
+			}
+		}
+		rows.Close()
+		for _, u := range todo {
+			_, _ = db.Exec(`UPDATE bootstrap_tickets SET payload=? WHERE token=?`, u.payload, u.token)
+		}
+		for _, tok := range drop {
+			_, _ = db.Exec(`DELETE FROM bootstrap_tickets WHERE token=?`, tok)
+		}
+	}
+	// Le drapeau posé sur le nœud déclaré par LinkBootstrapToDeclared (bootstrap_token) tombe avec le ticket.
+	drows, err := db.Query(`SELECT id, config FROM declared_nodes WHERE name=?`, name)
+	if err != nil {
+		return
+	}
+	type cfgUpd struct{ id, cfg string }
+	var cfgs []cfgUpd
+	for drows.Next() {
+		var id, cfg string
+		if drows.Scan(&id, &cfg) != nil || cfg == "" {
+			continue
+		}
+		var m map[string]any
+		if json.Unmarshal([]byte(cfg), &m) != nil {
+			continue
+		}
+		if _, linked := m["bootstrap_token"]; !linked {
+			continue
+		}
+		delete(m, "bootstrap_token")
+		m["auto_accept"] = false
+		if b, err := json.Marshal(m); err == nil {
+			cfgs = append(cfgs, cfgUpd{id, string(b)})
+		}
+	}
+	drows.Close()
+	for _, c := range cfgs {
+		_, _ = db.Exec(`UPDATE declared_nodes SET config=? WHERE id=?`, c.cfg, c.id)
+	}
+}
+
 // LinkBootstrapToDeclared attache bootstrap_token + auto_accept aux declared_nodes
 // dont le nom figure dans names.
 func LinkBootstrapToDeclared(db *sql.DB, token string, names []string) {

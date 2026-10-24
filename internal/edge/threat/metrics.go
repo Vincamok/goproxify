@@ -30,6 +30,13 @@ var (
 		Help:      "Nombre de bans automatiques émis par Ephor.",
 	}, []string{"reason"})
 
+	threatShadowBansTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "gpx",
+		Subsystem: "threat",
+		Name:      "shadow_bans_total",
+		Help:      "Bans que la note commune d'Ephor aurait posés si ses signaux en detect étaient en block (ou en mode detect).",
+	})
+
 	threatGlobalRateLimitTotal = promauto.NewCounter(prometheus.CounterOpts{
 		Namespace: "gpx",
 		Subsystem: "threat",

@@ -57,23 +57,14 @@ func TestNodesLiveEndpoint(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO nodes (id, node_name, role, status, cpu_pct, mem_pct) VALUES ('c1','edge-a','edge','online',10,20), ('c2','edge-b','edge','online',10,20)`); err != nil {
 		t.Fatal(err)
 	}
-	ins := func(node string, at time.Time, status int, component string) {
-		if _, err := db.Exec(`INSERT INTO logs (ts, component, node_name, domain, method, path, status, ip) VALUES (?, ?, ?, 'a.test', 'GET', '/', ?, '1.2.3.4')`,
-			at.UTC().Format(time.RFC3339Nano), component, node, status); err != nil {
-			t.Fatal(err)
+	// Le débit de la dernière minute est celui que la passerelle annonce : 60 requêtes dont 20 refusées pour edge-a,
+	// rien pour edge-b.
+	h := &NodesHandler{DB: db, Log: slog.Default(), Traffic: func(node string) (int64, int64, int64, bool) {
+		if node == "edge-a" {
+			return 60, 20, 0, true
 		}
-	}
-	now := time.Now()
-	for i := 0; i < 40; i++ {
-		ins("edge-a", now.Add(-10*time.Second), 200, "edge")
-	}
-	for i := 0; i < 20; i++ {
-		ins("edge-a", now.Add(-5*time.Second), 403, "edge")
-	}
-	ins("edge-a", now.Add(-10*time.Minute), 500, "edge") // hors fenêtre
-	ins("edge-a", now.Add(-5*time.Second), 500, "admin") // logs de l'Admin lui-même exclus
-
-	h := &NodesHandler{DB: db, Log: slog.Default()}
+		return 0, 0, 0, false
+	}}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/nodes/live", nil))
 	if rec.Code != http.StatusOK {
@@ -99,31 +90,14 @@ func TestNodesLiveEndpoint(t *testing.T) {
 	}
 }
 
-func TestTrafficByNodeUsesAccessIndex(t *testing.T) {
-	db, err := admindb.Open(filepath.Join(t.TempDir(), "admin.db"))
-	if err != nil {
-		t.Fatal(err)
+// Un débit ancien (passerelle muette) n'est pas affiché comme actuel.
+func TestNodesLiveIgnoresMissingTraffic(t *testing.T) {
+	h := &NodesHandler{}
+	if tc := h.recentTraffic("edge-a"); tc.total != 0 {
+		t.Errorf("sans source, débit = %+v", tc)
 	}
-	defer db.Close()
-	now := time.Now().UTC()
-	for i, c := range []struct {
-		comp, node string
-		status     int
-		age        time.Duration
-	}{
-		{"edge", "e1", 200, time.Second}, {"edge", "e1", 403, 2 * time.Second},
-		{"edge", "e1", 200, 5 * time.Minute}, {"admin", "", 200, time.Second},
-	} {
-		if _, err := db.Exec(`INSERT INTO logs (ts, component, node_name, status) VALUES (?,?,?,?)`,
-			now.Add(-c.age).Format(time.RFC3339Nano), c.comp, c.node, c.status); err != nil {
-			t.Fatal(i, err)
-		}
-	}
-	got, err := trafficByNode(db, httptest.NewRequest(http.MethodGet, "/", nil), now.Add(-time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tc := got["e1"]; tc.total != 2 || tc.blocked != 1 || len(got) != 1 {
-		t.Errorf("trafficByNode = %+v, attendu e1 = 2 requêtes dont 1 refusée, sans le nœud admin ni la requête de 5 min", got)
+	h.Traffic = func(string) (int64, int64, int64, bool) { return 99, 9, 9, false }
+	if tc := h.recentTraffic("edge-a"); tc.total != 0 {
+		t.Errorf("annonce périmée prise en compte : %+v", tc)
 	}
 }

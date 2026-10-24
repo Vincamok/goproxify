@@ -168,6 +168,12 @@ func redactTables(tables map[string][]map[string]any) {
 				row["value"] = ""
 				continue
 			}
+			if isSIEMSetting(table, row) {
+				if v, ok := row["value"].(string); ok {
+					row["value"] = redactSIEMSetting(v)
+				}
+				continue
+			}
 			for col, v := range row {
 				row[col] = redactTableValue(table, col, v)
 			}
@@ -249,6 +255,13 @@ func applyTablesOrdered(db *sql.DB, tables map[string][]map[string]any, order []
 			}
 			if k, ok := row["key"].(string); ok && isSecretKey(k) && row["value"] == "" {
 				continue // secret rédigé : ne pas écraser la valeur en place
+			}
+			if isSIEMSetting(table, row) {
+				for i, c := range cols {
+					if v, ok := args[i].(string); ok && c == "value" {
+						args[i] = mergeSIEMSetting(db, v)
+					}
+				}
 			}
 			if len(cols) == 0 {
 				continue

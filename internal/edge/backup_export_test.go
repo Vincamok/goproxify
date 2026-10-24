@@ -130,3 +130,79 @@ func TestBackupExportReportsSkippedWithReasonAndStreamsValidJSON(t *testing.T) {
 		t.Fatal("dossier de travail non nettoyé")
 	}
 }
+
+// Le dossier des logs n'est pas sauvegardé, sauf les gels légaux : le registre et les archives des lignes qu'ils gardent.
+// Une restauration les remet ; elle refuse tout autre fichier du dossier des logs.
+func TestBackupKeepsOnlyTheLegalHoldsOfTheLogsFolder(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("GPX_EDGE_DATA_DIR", root)
+	for rel, content := range map[string]string{
+		"logs/access-2026-10-19.db": "gros",
+		"logs/system-2026-10.db":    "gros",
+		"logs/legal-holds.json":     `[{"id":"abc"}]`,
+		"log-ip-key.gpx":            "clé",
+		"log-sign-key.gpx":          "clé de signature",
+		"log-export-audit.jsonl":    "{}",
+		"siem-config.gpx":           "config",
+		"siem-state.gpx":            "curseurs",
+	} {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		os.MkdirAll(filepath.Dir(p), 0o700)
+		os.WriteFile(p, []byte(content), 0o600)
+	}
+	os.MkdirAll(filepath.Join(root, "logs", "held", "abc"), 0o700)
+	// Une archive est une base SQLite : elle est copiée par VACUUM INTO, il faut une vraie base.
+	arch := filepath.Join(root, "logs", "held", "abc", "access-2026-10-05.db")
+	db, err := sql.Open("sqlite", arch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Exec(`CREATE TABLE entries (id INTEGER PRIMARY KEY, ip TEXT)`)
+	db.Exec(`INSERT INTO entries VALUES (1, '203.0.113.9')`)
+	db.Close()
+
+	s := &Server{}
+	rec := httptest.NewRecorder()
+	s.handleBackupExport(rec, httptest.NewRequest(http.MethodGet, "/internal/v1/backup/export", nil))
+	var b backupBundle
+	if err := json.Unmarshal(rec.Body.Bytes(), &b); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"logs/legal-holds.json", "logs/held/abc/access-2026-10-05.db", "log-ip-key.gpx", "log-sign-key.gpx", "log-export-audit.jsonl", "siem-config.gpx", "siem-state.gpx"} {
+		if len(b.Files[want]) == 0 {
+			t.Errorf("%s absent de la sauvegarde : %v", want, keys(b.Files))
+		}
+	}
+	for _, not := range []string{"logs/access-2026-10-19.db", "logs/system-2026-10.db"} {
+		if _, ok := b.Files[not]; ok {
+			t.Errorf("%s ne devrait pas être sauvegardé", not)
+		}
+	}
+
+	root2 := t.TempDir()
+	t.Setenv("GPX_EDGE_DATA_DIR", root2)
+	b.Files["logs/access-2026-10-26.db"] = []byte("x")
+	b.Files["logs/held/../access.db"] = []byte("x")
+	body, _ := json.Marshal(b)
+	rec = httptest.NewRecorder()
+	s.handleBackupRestore(rec, httptest.NewRequest(http.MethodPost, "/internal/v1/backup/restore", bytes.NewReader(body)))
+	var res struct {
+		Rejected []string `json:"rejected"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Rejected) != 2 {
+		t.Errorf("rejetés = %v, attendu les deux fichiers de logs hors gel", res.Rejected)
+	}
+	for _, want := range []string{"logs/legal-holds.json", "logs/held/abc/access-2026-10-05.db", "siem-state.gpx"} {
+		if _, err := os.Stat(filepath.Join(root2, filepath.FromSlash(want))); err != nil {
+			t.Errorf("%s non restauré : %v", want, err)
+		}
+	}
+	for _, not := range []string{"logs/access-2026-10-26.db", "access.db"} {
+		if _, err := os.Stat(filepath.Join(root2, filepath.FromSlash(not))); err == nil {
+			t.Errorf("%s restauré alors qu'il devait être refusé", not)
+		}
+	}
+}

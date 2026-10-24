@@ -13,7 +13,6 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
-	"os"
 )
 
 const agentKeyLabel = "goproxify/agent-pairing/v1:"
@@ -40,10 +39,8 @@ func Equal(a, b string) bool {
 // AgentCredential est ce qu'un Agent présente : GPX_AGENT_PAIRING_KEY, ou à défaut GPX_PAIRING_SECRET (installations
 // qui n'ont pas encore migré : l'Agent détient alors le secret racine).
 func AgentCredential() (value string, legacyRoot bool) {
-	if k := os.Getenv("GPX_AGENT_PAIRING_KEY"); k != "" {
-		return k, false
-	}
-	return os.Getenv("GPX_PAIRING_SECRET"), true
+	creds, legacy := AgentCredentials()
+	return Current(creds), legacy
 }
 
 // AgentAccepts : valeurs que l'Agent accepte en Bearer de la part de l'Admin ou de sa passerelle. Celles-ci envoient
@@ -52,14 +49,20 @@ func AgentAccepts(credential string) []string {
 	return []string{credential, AgentKey(credential)}
 }
 
-// ServerAcceptsAgent indique si le secret présenté par un Agent est valide pour une passerelle ou un Admin qui
-// détient root. viaRoot est vrai quand l'Agent a présenté le secret racine lui-même.
-func ServerAcceptsAgent(root, presented string) (ok, viaRoot bool) {
-	if Equal(AgentKey(root), presented) {
-		return true, false
+const edgeChannelKeyLabel = "goproxify/edge-channel/v1:"
+
+// EdgeChannelKey dérive la clé du canal Admin → passerelle d'une passerelle précise : elle signe le WebSocket de l'Admin
+// et ne vaut que pour la passerelle dont elle porte l'identifiant (celui que l'Admin lui connaît, `dn_…`, pas son nom : il
+// survit à un renommage). Une passerelle qui la détient ne peut ni se faire passer pour l'Admin auprès d'une autre
+// passerelle, ni remonter au secret racine. Une ligne de shell suffit :
+// `printf %s "goproxify/edge-channel/v1:<identifiant>:$GPX_PAIRING_SECRET" | sha256sum`.
+func EdgeChannelKey(root, nodeID string) string {
+	if root == "" || nodeID == "" {
+		return ""
 	}
-	if os.Getenv("GPX_AGENT_PAIRING_ROOT") != "false" && Equal(root, presented) {
-		return true, true
-	}
-	return false, false
+	sum := sha256.Sum256([]byte(edgeChannelKeyLabel + nodeID + ":" + root))
+	return hex.EncodeToString(sum[:])
 }
+
+// EdgeAgentKey : la clé d'appairage des Agents courante que la passerelle leur envoie en Bearer ("" s'il n'y en a pas).
+func EdgeAgentKey() string { return Current(EdgeAgentKeys()) }

@@ -341,6 +341,18 @@ func (s *Server) handleAgentContainerStart(w http.ResponseWriter, r *http.Reques
 	if !s.agentMayActAs(w, r, p.AgentName) {
 		return
 	}
+	if status, msg := s.applyAgentRoute(&p); status != http.StatusNoContent {
+		http.Error(w, msg, status)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// applyAgentRoute enregistre dans la table la route (ou le backend, le canary, le shadow) qu'un Agent annonce. Rend le
+// code HTTP à répondre (204 si tout va bien) et son message : le POST d'un conteneur et l'état complet d'une source
+// passent par ici.
+func (s *Server) applyAgentRoute(in *agentContainerPayload) (int, string) {
+	p := *in
 	host, extraPath := labels.ParseHostEntry(p.Host)
 	p.Host = host
 	if extraPath != "" {
@@ -355,8 +367,7 @@ func (s *Server) handleAgentContainerStart(w http.ResponseWriter, r *http.Reques
 	}
 	p.Aliases = filterEmptyStrings(p.Aliases)
 	if p.Host == "" || len(p.Backends) == 0 {
-		http.Error(w, "host et backends requis", http.StatusBadRequest)
-		return
+		return http.StatusBadRequest, "host et backends requis"
 	}
 	// La sécurité issue des labels est validée avant tout changement : une route ne doit pas être
 	// enregistrée (ni une route existante modifiée) avec un filtre ou un WAF mal configuré.
@@ -373,8 +384,7 @@ func (s *Server) handleAgentContainerStart(w http.ResponseWriter, r *http.Reques
 	}
 	if errs := discoverySecurityErrors(&p, geoDB, knownPlugins); len(errs) > 0 {
 		s.log.Error("agent: sécurité des labels invalide, route refusée", "host", p.Host, "container", p.ContainerID, "agent", p.AgentName, "errors", strings.Join(errs, " ; "))
-		http.Error(w, "sécurité des labels invalide : "+strings.Join(errs, " ; "), http.StatusUnprocessableEntity)
-		return
+		return http.StatusUnprocessableEntity, "sécurité des labels invalide : " + strings.Join(errs, " ; ")
 	}
 	// Relay passerelle→Passerelle : après traitement local, propager aux passerelles déléguées qui couvrent ce host.
 	// context.Background() : r.Context() est annulé dès que le handler retourne.
@@ -479,8 +489,7 @@ func (s *Server) handleAgentContainerStart(w http.ResponseWriter, r *http.Reques
 		s.table.Upsert(rt)
 		metrics.Edge.RouteCount.Set(float64(s.table.Len()))
 		s.log.Info("agent: canary activé", "host", p.Host, "container", p.ContainerID, "weight", weight, "agent", p.AgentName)
-		w.WriteHeader(http.StatusNoContent)
-		return
+		return http.StatusNoContent, ""
 
 	case "shadow":
 		rt := existing
@@ -499,8 +508,7 @@ func (s *Server) handleAgentContainerStart(w http.ResponseWriter, r *http.Reques
 		s.table.Upsert(rt)
 		metrics.Edge.RouteCount.Set(float64(s.table.Len()))
 		s.log.Info("agent: shadow activé", "host", p.Host, "container", p.ContainerID, "agent", p.AgentName)
-		w.WriteHeader(http.StatusNoContent)
-		return
+		return http.StatusNoContent, ""
 	}
 
 	// role normal (défaut) : pool backends
@@ -534,8 +542,7 @@ func (s *Server) handleAgentContainerStart(w http.ResponseWriter, r *http.Reques
 		} else {
 			s.log.Info("agent: backend ajouté au pool", "host", p.Host, "container", p.ContainerID, "backends", len(merged), "agent", p.AgentName)
 		}
-		w.WriteHeader(http.StatusNoContent)
-		return
+		return http.StatusNoContent, ""
 	}
 	route := &router.Route{
 		ID:             routeID,
@@ -551,7 +558,7 @@ func (s *Server) handleAgentContainerStart(w http.ResponseWriter, r *http.Reques
 	s.table.Upsert(route)
 	metrics.Edge.RouteCount.Set(float64(s.table.Len()))
 	s.log.Info("agent: route label ajoutée", "host", p.Host, "container", p.ContainerID, "agent", p.AgentName)
-	w.WriteHeader(http.StatusNoContent)
+	return http.StatusNoContent, ""
 }
 
 func dockerHostRouteID(host string) string {
@@ -842,12 +849,21 @@ func isDockerDiscoveryRoute(r *router.Route) bool {
 	return strings.HasPrefix(r.ID, "docker:") || strings.HasPrefix(r.ID, "docker-host:")
 }
 
+func isWholeCompareID(id string) bool {
+	return strings.HasPrefix(id, "k8s:") || strings.Contains(id, "@")
+}
+
 func containerIDMatch(stored, incoming string) bool {
 	if stored == "" || incoming == "" {
 		return false
 	}
 	if stored == incoming {
 		return true
+	}
+	// Les identifiants Kubernetes (« k8s:ns/nom ») et d'annuaire (« empreinte@source ») ne sont pas hexadécimaux : deux
+	// services d'un même namespace partagent leurs 12 premiers caractères, et se comparent donc en entier.
+	if isWholeCompareID(stored) || isWholeCompareID(incoming) {
+		return false
 	}
 	short := incoming
 	if len(short) > 12 {
@@ -997,6 +1013,11 @@ func (s *Server) handleListAgentContainers(w http.ResponseWriter, r *http.Reques
 		ShadowedBy string `json:"shadowed_by,omitempty"`
 		// ProxyConfig : la route complète, prête à devenir un proxy configuré (conversion depuis l'Admin).
 		ProxyConfig json.RawMessage `json:"proxy_config,omitempty"`
+		// Inactive : un conteneur découvert qui ne tourne pas ; il n'a ni route ni backend. State : son état (exited,
+		// paused, restarting…).
+		Inactive bool   `json:"inactive,omitempty"`
+		State    string `json:"state,omitempty"`
+		Name     string `json:"name,omitempty"`
 	}
 	filterAgent := r.URL.Query().Get("agent")
 	all := s.table.All()
@@ -1059,6 +1080,35 @@ func (s *Server) handleListAgentContainers(w http.ResponseWriter, r *http.Reques
 			Config:       discoveryRouteConfig(rt),
 			ShadowedBy:   shadowedBy,
 			ProxyConfig:  discoveryProxyConfig(rt),
+		})
+	}
+	// Les conteneurs inactifs, sauf ceux dont l'hôte est déjà servi par un conteneur qui tourne : les anciens conteneurs
+	// arrêtés d'un déploiement précédent ne doivent pas encombrer la liste à côté de celui qui les remplace.
+	served := map[string]bool{}
+	for _, c := range result {
+		served[strings.ToLower(c.Host)] = true
+		for _, a := range c.Aliases {
+			served[strings.ToLower(a)] = true
+		}
+	}
+	listed := map[string]bool{}
+	for _, in := range s.agentStates.inactive(filterAgent) {
+		key := strings.ToLower(in.Host) + "|" + in.ContainerID
+		if served[strings.ToLower(in.Host)] || listed[key] {
+			continue
+		}
+		listed[key] = true
+		result = append(result, containerRoute{
+			ID:           "inactive:" + in.ID,
+			Host:         in.Host,
+			Aliases:      in.Aliases,
+			Backends:     []string{},
+			ContainerIDs: []string{in.ContainerID},
+			Source:       in.Source,
+			AgentName:    in.Agent,
+			Inactive:     true,
+			State:        in.State,
+			Name:         in.Name,
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -1233,36 +1283,16 @@ func (s *Server) handleAgentLogs(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	// Sans base locale : relais direct vers l'Admin, perdu si aucun n'est connecté.
-	payload := make([]edgews.LogEntryPayload, 0, len(batch.Entries))
-	for _, e := range batch.Entries {
-		ts := e.T
-		if ts.IsZero() {
-			ts = time.Now().UTC()
-		}
-		payload = append(payload, edgews.LogEntryPayload{
-			Ts:        ts.Format(time.RFC3339Nano),
-			Level:     "info",
-			Component: "agent",
-			NodeName:  s.cfg.Identity.NodeName,
-			Domain:    batch.ContainerName,
-			Message:   e.Line,
-		})
-	}
-	msg, err := edgews.NewMessage(0, edgews.TypeAgentLog, payload)
-	if err != nil {
-		http.Error(w, "erreur interne", http.StatusInternalServerError)
-		return
-	}
-	s.wsHub.BroadcastToAdmins(msg)
-	w.WriteHeader(http.StatusNoContent)
+	// Sans base locale la passerelle ne peut rien garder : l'Agent conserve son lot et réessaiera.
+	http.Error(w, "base de logs indisponible", http.StatusServiceUnavailable)
 }
 
 // handleEdgePair émet un token Agent local sans passer par l'Admin.
 // Protégé uniquement par GPX_PAIRING_SECRET (identique à Admin).
 // Permet aux Agents sur des hôtes distants de s'appairer avec leur passerelle locale.
 func (s *Server) handleEdgePair(w http.ResponseWriter, r *http.Request) {
-	configuredSecret := os.Getenv("GPX_PAIRING_SECRET")
+	roots := pairing.RootKeys()
+	agentKeys := pairing.EdgeAgentKeys()
 	var req struct {
 		Secret   string `json:"secret"`
 		NodeName string `json:"node_name"`
@@ -1272,7 +1302,7 @@ func (s *Server) handleEdgePair(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if configuredSecret == "" {
+	if len(agentKeys) == 0 {
 		http.Error(w, "pairing non configuré", http.StatusServiceUnavailable)
 		return
 	}
@@ -1280,13 +1310,16 @@ func (s *Server) handleEdgePair(w http.ResponseWriter, r *http.Request) {
 	if !pairAttempts.Guard(w, r, "edge-pair") {
 		return
 	}
-	ok, viaRoot := pairing.ServerAcceptsAgent(configuredSecret, req.Secret)
+	ok, viaRoot, previous := pairing.ServerAcceptsAgentKeys(agentKeys, roots, req.Secret)
 	if !ok {
 		pairAttempts.RecordFail(r, "edge-pair")
 		http.Error(w, "secret invalide", http.StatusForbidden)
 		return
 	}
 	pairAttempts.RecordSuccess(r, "edge-pair")
+	if previous {
+		s.log.Warn("edge: Agent appairé avec une clé précédente — rotation en cours, lui donner la clé courante puis retirer GPX_AGENT_PAIRING_KEY_PREVIOUS", "node", req.NodeName)
+	}
 	if viaRoot {
 		s.log.Warn("edge: Agent appairé avec le secret racine — lui donner GPX_AGENT_PAIRING_KEY, puis refuser la racine avec GPX_AGENT_PAIRING_ROOT=false", "node", req.NodeName)
 	}
@@ -1300,12 +1333,17 @@ func (s *Server) handleEdgePair(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "erreur interne", http.StatusInternalServerError)
 		return
 	}
-	// L'Agent a prouvé son identité via GPX_PAIRING_SECRET : pré-approuver pour que
-	// la prochaine connexion WS avec ce token soit acceptée sans intervention humaine.
-	if err := s.wsHub.ApproveAgent(nodeName); err != nil {
-		s.log.Warn("edge: pré-approbation WS échouée", "node", nodeName, "err", err)
+	// L'Agent a prouvé son identité par la clé d'appairage : par défaut on le pré-approuve, pour que sa prochaine
+	// connexion WS avec ce token soit acceptée sans intervention humaine. GPX_AGENT_PREAPPROVAL=manual le laisse en
+	// attente jusqu'à l'approbation d'un opérateur (ADR 0015, section 3).
+	if agentPreapproval() == "manual" {
+		s.log.Info("edge: appairage agent accepté, en attente d'approbation (GPX_AGENT_PREAPPROVAL=manual)", "node", nodeName)
+	} else {
+		if err := s.wsHub.ApproveAgent(nodeName); err != nil {
+			s.log.Warn("edge: pré-approbation WS échouée", "node", nodeName, "err", err)
+		}
+		s.log.Info("edge: appairage agent accepté", "node", nodeName)
 	}
-	s.log.Info("edge: appairage agent accepté", "node", nodeName)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]string{"token": token}) //nolint:errcheck
@@ -1315,7 +1353,19 @@ func (s *Server) handleEdgePair(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(s.nodeStore.All()) //nolint:errcheck
+	json.NewEncoder(w).Encode(s.ownedNodes()) //nolint:errcheck
+}
+
+// ownedNodes rend les Agents connus de cette passerelle, chacun avec la passerelle qui l'a vu en dernier : celle-ci quand
+// l'entrée vient d'un battement de cœur reçu ici.
+func (s *Server) ownedNodes() []edgeagent.NodeInfo {
+	all := s.nodeStore.All()
+	for i := range all {
+		if all[i].ConnectedVia == "" && s.cfg != nil {
+			all[i].ConnectedVia = s.cfg.Identity.NodeName
+		}
+	}
+	return all
 }
 
 func (s *Server) handleListNodeEvents(w http.ResponseWriter, r *http.Request) {
@@ -1426,6 +1476,11 @@ func (s *Server) handleAgentCommandRelay(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Un Agent que le groupe HA a vu sur un autre membre : ce membre tient sa connexion, c'est à lui de lui parler.
+	if s.forwardAgentCommand(w, r, name, body) {
+		return
+	}
+
 	n, ok := s.nodeStore.Get(name)
 	if !ok || n.Endpoint == "" {
 		http.Error(w, "agent introuvable ou endpoint inconnu", http.StatusNotFound)
@@ -1449,13 +1504,22 @@ func (s *Server) handleAgentCommandRelay(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(resp.StatusCode)
 }
 
+// agentPreapproval : « auto » (défaut) pré-approuve un Agent qui présente la clé d'appairage ; « manual » exige
+// l'approbation d'un opérateur.
+func agentPreapproval() string {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("GPX_AGENT_PREAPPROVAL")), "manual") {
+		return "manual"
+	}
+	return "auto"
+}
+
 // pairAttempts limite les essais de secret sur /internal/v1/pair.
 var pairAttempts = middleware.NewAuthFailLimiter()
 
 // setAgentInternalAuth pose le Bearer de l'API Agent :8001 : la clé d'appairage dérivée, jamais le secret racine (un
 // Agent compromis ou une adresse d'Agent falsifiée l'aurait reçu).
 func setAgentInternalAuth(req *http.Request) {
-	if key := pairing.AgentKey(os.Getenv("GPX_PAIRING_SECRET")); key != "" {
+	if key := pairing.EdgeAgentKey(); key != "" {
 		req.Header.Set("Authorization", "Bearer "+key)
 	}
 }

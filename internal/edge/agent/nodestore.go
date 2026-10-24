@@ -22,6 +22,9 @@ type NodeInfo struct {
 	ContainerRuntimes []string        `json:"container_runtimes,omitempty"`
 	LastSeenAt        time.Time       `json:"last_seen_at"`
 	AgentConfig       json.RawMessage `json:"agent_config,omitempty"` // config sanitisée (sans secrets)
+	// ConnectedVia est la passerelle du groupe HA qui a vu l'Agent en dernier. Vide : cette passerelle (l'entrée vient
+	// d'un battement de cœur reçu ici) ; renseigné par la réplication entre les membres d'un groupe.
+	ConnectedVia string `json:"connected_via,omitempty"`
 }
 
 // NodeEvent représente un événement de cycle de vie ou de scaling.
@@ -97,6 +100,36 @@ func (s *NodeStore) MarkOffline(threshold time.Duration) {
 		}
 	}
 	s.mu.Unlock()
+}
+
+// Merge adopte les entrées d'un pair du groupe HA plus récentes que les nôtres : l'Agent qui a basculé vers un autre
+// membre y est vu, et l'état « hors ligne » reste calculé ici d'après la date de dernière vue. Rend le nombre d'entrées
+// adoptées. Une entrée récente en attente ne masque pas un Agent en ligne plus récent, et inversement.
+func (s *NodeStore) Merge(remote []NodeInfo) int {
+	adopted := 0
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, r := range remote {
+		if r.NodeName == "" {
+			continue
+		}
+		cur, ok := s.nodes[r.NodeName]
+		if ok && !r.LastSeenAt.After(cur.LastSeenAt) {
+			continue
+		}
+		if ok {
+			if r.Endpoint == "" {
+				r.Endpoint = cur.Endpoint
+			}
+			if r.AgentConfig == nil {
+				r.AgentConfig = cur.AgentConfig
+			}
+		}
+		n := r
+		s.nodes[r.NodeName] = &n
+		adopted++
+	}
+	return adopted
 }
 
 // All retourne une copie de la liste des nœuds.

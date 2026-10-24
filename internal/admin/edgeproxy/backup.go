@@ -4,10 +4,13 @@
 package edgeproxy
 
 import (
-	"github.com/vincamok/goproxify/internal/ssrf"
 	"context"
+	"errors"
 	"net/http"
 	"time"
+
+	edgews "github.com/vincamok/goproxify/internal/edge/ws"
+	"github.com/vincamok/goproxify/internal/ssrf"
 )
 
 // BackupBundle : fichiers d'état d'une passerelle, chemin relatif → contenu.
@@ -27,6 +30,16 @@ type BackupResult struct {
 // NewBackupClient : client à délai long (l'état d'une passerelle peut peser plusieurs dizaines de Mo).
 func NewBackupClient() *Client {
 	return &Client{HTTP: ssrf.SelfHostedClient(10 * time.Minute)}
+}
+
+// GroupCard récupère la fiche du groupe HA de la passerelle. found=false : elle n'en détient pas (404).
+func (c *Client) GroupCard(ctx context.Context, t Target) (card edgews.GroupCard, found bool, err error) {
+	err = c.do(ctx, t, http.MethodGet, "/internal/v1/group-card", nil, &card)
+	var he *HTTPError
+	if errors.As(err, &he) && he.Status == http.StatusNotFound {
+		return card, false, nil
+	}
+	return card, err == nil, err
 }
 
 // BackupExport récupère l'état persisté de la passerelle.

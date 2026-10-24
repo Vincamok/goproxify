@@ -72,7 +72,7 @@ var (
 )
 
 // BanCallback est appelé par le moteur comportemental quand une IP doit être bannie.
-type BanCallback func(ip, reason string, expires time.Time)
+type BanCallback func(ip, reason string, expires time.Time, signals []router.BanSignal)
 
 // Engine est le moteur WAF.
 type Engine struct {
@@ -87,11 +87,9 @@ type Engine struct {
 	// WAF actif, les routes décident ensuite elles-mêmes.
 	disabled atomic.Bool
 
-	// behaviorStores : un store comportemental par host (isolation vhost).
-	// Alloué à la première utilisation via behaviorStoreFor().
-	behaviorMu     sync.Mutex
-	behaviorStores map[string]*behavior.Store // host → store
-	behaviorWindow time.Duration              // fenêtre commune (premier appel la fixe)
+	// behavior : le magasin comportemental de la passerelle, partagé avec Ephor (ADR 0011).
+	behaviorMu sync.Mutex
+	behavior   *behavior.Store
 }
 
 // SetEnabled active ou coupe le moteur pour toutes les routes de la passerelle, à chaud.
@@ -107,89 +105,31 @@ func (e *Engine) SetBanCallback(fn BanCallback) {
 	e.mu.Unlock()
 }
 
-// BehaviorStore retourne le store comportemental agrégé (tous hosts confondus).
-// Exposé pour la sync HA : on utilise un store synthétique "_all".
+// SetBehaviorStore branche le magasin comportemental de la passerelle, le même que celui d'Ephor.
+func (e *Engine) SetBehaviorStore(st *behavior.Store) {
+	e.behaviorMu.Lock()
+	e.behavior = st
+	e.behaviorMu.Unlock()
+}
+
+// BehaviorStore retourne le magasin comportemental de la passerelle (créé à la demande s'il n'a pas été branché).
 func (e *Engine) BehaviorStore() *behavior.Store {
-	return e.behaviorStoreForHost("_all", 60)
+	e.behaviorMu.Lock()
+	defer e.behaviorMu.Unlock()
+	if e.behavior == nil {
+		e.behavior = behavior.NewStore(0)
+	}
+	return e.behavior
 }
 
-// BehaviorProfiles retourne tous les profils IP actifs, tous hosts confondus.
+// BehaviorProfiles retourne tous les profils IP actifs.
 func (e *Engine) BehaviorProfiles() map[string]behavior.ProfileInfo {
-	e.behaviorMu.Lock()
-	stores := make([]*behavior.Store, 0, len(e.behaviorStores))
-	for _, s := range e.behaviorStores {
-		stores = append(stores, s)
-	}
-	e.behaviorMu.Unlock()
-
-	merged := make(map[string]behavior.ProfileInfo)
-	for _, s := range stores {
-		for ip, info := range s.Profiles() {
-			if info.Score > merged[ip].Score {
-				merged[ip] = info
-			}
-		}
-	}
-	return merged
+	return e.BehaviorStore().Profiles()
 }
 
-// DeleteBehaviorProfile supprime le profil comportemental d'une IP (tous hosts).
+// DeleteBehaviorProfile supprime le profil comportemental d'une IP.
 func (e *Engine) DeleteBehaviorProfile(ip string) {
-	e.behaviorMu.Lock()
-	stores := make([]*behavior.Store, 0, len(e.behaviorStores))
-	for _, s := range e.behaviorStores {
-		stores = append(stores, s)
-	}
-	e.behaviorMu.Unlock()
-	for _, s := range stores {
-		s.DeleteProfile(ip)
-	}
-}
-
-// SaveSnapshot sérialise les profils comportementaux vers path (JSON).
-func (e *Engine) SaveSnapshot(path string) error {
-	e.behaviorMu.Lock()
-	stores := make(map[string]*behavior.Store, len(e.behaviorStores))
-	for h, s := range e.behaviorStores {
-		stores[h] = s
-	}
-	e.behaviorMu.Unlock()
-
-	type hostSnap struct {
-		Host    string            `json:"host"`
-		Payload behavior.HAPayload `json:"payload"`
-	}
-	snaps := make([]hostSnap, 0, len(stores))
-	for h, s := range stores {
-		snaps = append(snaps, hostSnap{Host: h, Payload: s.Snapshot()})
-	}
-	data, err := json.Marshal(snaps)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0o600)
-}
-
-// LoadSnapshot restaure les profils depuis path (JSON). Ignore les erreurs de lecture.
-func (e *Engine) LoadSnapshot(path string) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return
-	}
-	type hostSnap struct {
-		Host    string            `json:"host"`
-		Payload behavior.HAPayload `json:"payload"`
-	}
-	var snaps []hostSnap
-	if err := json.Unmarshal(data, &snaps); err != nil {
-		e.log.Warn("waf: snapshot invalide, ignoré", "path", path, "err", err)
-		return
-	}
-	for _, hs := range snaps {
-		s := e.behaviorStoreForHost(hs.Host, 60)
-		s.RestoreSnapshot(hs.Payload)
-	}
-	e.log.Info("waf: snapshot comportemental restauré", "path", path, "hosts", len(snaps))
+	e.BehaviorStore().DeleteProfile(ip)
 }
 
 // NewEngine crée un moteur WAF avec les règles par défaut.
@@ -430,29 +370,6 @@ func (e *Engine) inspectResponse(body string, routeRules []Rule, excludeIDs []in
 	return matches
 }
 
-// behaviorStoreForHost retourne le store comportemental pour un host donné.
-// La fenêtre est fixée au premier appel et reste constante.
-func (e *Engine) behaviorStoreForHost(host string, windowSec int) *behavior.Store {
-	e.behaviorMu.Lock()
-	defer e.behaviorMu.Unlock()
-	if e.behaviorStores == nil {
-		e.behaviorStores = make(map[string]*behavior.Store)
-	}
-	s, ok := e.behaviorStores[host]
-	if !ok {
-		w := time.Duration(windowSec) * time.Second
-		if w <= 0 {
-			w = 60 * time.Second
-		}
-		if e.behaviorWindow == 0 {
-			e.behaviorWindow = w
-		}
-		s = behavior.NewStore(e.behaviorWindow)
-		e.behaviorStores[host] = s
-	}
-	return s
-}
-
 // Middleware retourne un handler HTTP WAF.
 func (e *Engine) Middleware(cfg *router.WAFConfig, next http.Handler) http.Handler {
 	maxBody := int64(DefaultMaxBodyBytes)
@@ -516,7 +433,7 @@ func (e *Engine) Middleware(cfg *router.WAFConfig, next http.Handler) http.Handl
 
 		// ── Étape 1 : vérification comportementale PRÉ-requête ────────────
 		if behaviorEnabled {
-			bStore := e.behaviorStoreForHost(host, behaviorWindowSec)
+			bStore := e.BehaviorStore()
 			preScore, _ := bStore.Score(ip)
 			effectiveThreshold := behaviorThreshold + bStore.TrustBonus(ip)
 			if preScore >= effectiveThreshold && block {
@@ -535,6 +452,7 @@ func (e *Engine) Middleware(cfg *router.WAFConfig, next http.Handler) http.Handl
 		for _, m := range matches {
 			wafScore += m.AnomalyScore
 		}
+		behavior.ObservationFrom(r.Context()).NoteWAFScore(wafScore)
 
 		triggered := false
 		if len(matches) > 0 {
@@ -647,15 +565,18 @@ func (e *Engine) Middleware(cfg *router.WAFConfig, next http.Handler) http.Handl
 // postRecord enregistre un événement dans le store comportemental après la requête.
 // Si le nouveau score dépasse le seuil, appelle banFn (ban immédiat pour les suivantes).
 func (e *Engine) postRecord(host, ip string, r *http.Request, wafScore, status, windowSec, threshold int, block bool) {
-	bStore := e.behaviorStoreForHost(host, windowSec)
-	bScore, bSignals := bStore.Record(ip, behavior.Event{
-		At:       time.Now(),
-		WafScore: wafScore,
-		Status:   status,
-		Method:   r.Method,
-		Path:     r.URL.Path,
-		UA:       r.UserAgent(),
-	})
+	bStore := e.BehaviorStore()
+	ev := behavior.EventFromRequest(r, status, wafScore, host)
+	ev.At = time.Now()
+	bScore, all := bStore.Record(ip, ev)
+	behavior.ObservationFrom(r.Context()).MarkRecorded()
+	// Les signaux nés avec l'ADR 0011 ne comptent pas dans le score du WAF : ils sont affichés et tracés par Ephor.
+	var bSignals []behavior.Signal
+	for _, sig := range all {
+		if !sig.Detect {
+			bSignals = append(bSignals, sig)
+		}
+	}
 	if len(bSignals) == 0 {
 		return
 	}
@@ -672,7 +593,11 @@ func (e *Engine) postRecord(host, ip string, r *http.Request, wafScore, status, 
 		e.mu.RUnlock()
 		if banFn != nil {
 			expires := time.Now().Add(24 * time.Hour)
-			banFn(ip, "waf: comportement suspect", expires)
+			signals := make([]router.BanSignal, len(bSignals))
+			for i, sig := range bSignals {
+				signals[i] = router.BanSignal{Name: sig.Name, Points: float64(sig.Score)}
+			}
+			banFn(ip, "waf: comportement suspect", expires, signals)
 		}
 	}
 }

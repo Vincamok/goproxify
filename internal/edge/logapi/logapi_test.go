@@ -14,7 +14,7 @@ func TestParamsSurviveAnEncodeDecodeRoundTrip(t *testing.T) {
 	in := Params{
 		Level: "warn", Component: "edge", Domain: "a.example.com", IP: "203.0.113.4", Method: "GET", Status: "4xx",
 		Path: "/x", TLSJA3: "abc", TLSJA4: "t13", Search: "scan", DateFrom: "2026-10-21T10:00:00Z",
-		DateTo: "2026-10-21T11:00:00Z", Kind: "access", ExcludeInternal: true, Cursor: "c", Limit: 50, Bulk: true,
+		DateTo: "2026-10-21T11:00:00Z", Kind: "access", ExcludeInternal: true, Cursor: "c", Limit: 50, Bulk: true, RequestID: "req-9",
 		TZOffsetMin: 120, Bucket: "hour", Fields: "level,domain",
 	}
 	if got := ParamsFromValues(in.Values()); got != in {

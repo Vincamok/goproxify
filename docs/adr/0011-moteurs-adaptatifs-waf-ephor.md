@@ -1,6 +1,6 @@
 # ADR 0011 — WAF et Ephor : des moteurs qui apprennent
 
-**Statut :** proposé · **Date :** 2026-10-18
+**Statut :** accepté, mis en œuvre (Admin 0.194.0, Edge 0.108.0) · **Date :** 2026-10-18
 **Nom :** Ephor est le nouveau nom de Sentinel (renommé pour éviter la confusion avec Microsoft Sentinel). Les clés techniques restent `threat` : source de ban, préfixe de motif (`threat: …`), paquet `internal/edge/threat`, `threat-config`, métriques `gpx_threat_*`.
 **S'appuie sur :** ADR-0006 (autonomie des composants), ADR-0007 (moteurs de sécurité globaux), ADR-0010 (agrégats par minute) · **Complète :** ADR-0008 (les plugins ne remplacent pas les moteurs internes)
 
@@ -38,14 +38,14 @@ Faire évoluer WAF et Ephor par des **signaux de comportement et des valeurs de 
 
 ### 1. Prérequis : l'état survit à un redémarrage, et un ban explique ses signaux
 
-- **Persistance** : les compteurs de score d'Ephor rejoignent le snapshot chiffré de la passerelle (comme le profil comportemental du WAF), restaurés au démarrage sans l'Admin (ADR 0006).
-- **Explicabilité** : chaque ban garde la liste des signaux qui l'ont causé, avec leurs points (nom, points, valeur observée). Visible dans le Journal, la page Bans, la trace d'une IP et l'API.
+- **Persistance** *(livré, Edge 0.106.0)* : les scores cumulés d'Ephor et ses fenêtres d'erreurs 4xx et de déclenchements `rate` rejoignent une copie chiffrée de la passerelle (`threat-state.gpx`, écrite toutes les 5 minutes et à l'arrêt), restaurée au démarrage sans l'Admin (ADR 0006). Les entrées étant datées, une copie ancienne se périme d'elle-même ; les jetons du limiteur de débit ne sont pas conservés (ils se remplissent en secondes). Écart avec la formulation initiale : le profil comportemental du WAF est encore un fichier JSON en clair (`waf-behavior.json`), à chiffrer avec l'étape 2.
+- **Explicabilité** *(livré, Admin 0.193.0 / Edge 0.107.0)* : chaque ban d'Ephor ou du WAF garde la liste des signaux qui l'ont causé, avec leurs points et la valeur observée (nom, points, valeur). Sur un score cumulé, le score de l'IP garde le détail par signal (décru comme lui, leur somme vaut le score) : le ban explique donc aussi les requêtes précédentes. Elle voyage avec le ban : base locale de la passerelle, pairs HA, Admin (`security_bans`, `security_ban_history`), puis les autres passerelles. Visible sur la page Bans, la page Ephor, la trace d'une IP, l'API, la CLI et le MCP. Le Journal d'accès n'affiche que le signal principal, comme avant. Pour le WAF, seuls les signaux de la requête qui franchit le seuil sont listés (le score cumulé du profil n'est pas ventilé : étape 2).
 
 ### 2. Une note de risque commune par IP
 
-Le magasin comportemental du WAF devient celui de la passerelle : il est alimenté par Ephor **et** par le WAF, sans activation par route, et chaque moteur y verse ses signaux (WAF : règles déclenchées ; Ephor : listes, débit, erreurs ; Fail2Ban et CrowdSec : décisions comme entrées). Le ban reste posé par Ephor (callback existant), sur une seule note, avec l'ensemble des signaux dans l'explication. La synchronisation HA du profil est conservée (fusion par maximum).
+*(livré, Admin 0.194.0 / Edge 0.108.0)* Le magasin comportemental du WAF devient celui de la passerelle : il est alimenté par Ephor **et** par le WAF, sans activation par route, et chaque moteur y verse ses signaux (WAF : règles déclenchées ; Ephor : chaque requête ; Fail2Ban et CrowdSec : décisions comme entrées, en `detect`). Le ban reste posé par Ephor (callback existant), sur une seule note — *score cumulé d'Ephor + signaux de comportement en `block`*, contre un seuil relevé du bonus de confiance —, avec l'ensemble des signaux dans l'explication. Une requête n'est versée qu'une fois : le WAF note son score dans une observation qui suit la requête, et Ephor ne reverse pas ce que le WAF a enregistré. `behavior_enabled` ne décide plus que du blocage par le WAF sur la route ; la fenêtre est unique (60 s). La synchronisation HA du profil est conservée, par maximum — et enfin effective : l'ancien magasin d'échange (`_all`) n'était alimenté par personne. L'état est copié chiffré (`behavior-state.gpx`) à la place du JSON en clair.
 
-### 3. Nouveaux signaux de comportement (chacun en `detect` d'abord)
+### 3. Nouveaux signaux de comportement (chacun en `detect` d'abord) *(livré, Admin 0.194.0 / Edge 0.108.0)*
 
 | Signal | Idée |
 |---|---|
@@ -57,7 +57,7 @@ Le magasin comportemental du WAF devient celui de la passerelle : il est aliment
 
 `asn_aggregate` demande la base ASN sur la passerelle (elle n'est aujourd'hui que côté Admin) : poussée par l'Admin, copie chiffrée locale (ADR 0006).
 
-### 4. Références apprises
+### 4. Références apprises *(livré, Admin 0.194.0 / Edge 0.108.0)*
 
 - **Débit normal par route** (moyenne glissante par heure de la semaine, ou plus simple au départ : par heure), comparé au débit courant ; l'écart devient un signal, `rate_limit` reste un plafond dur.
 - **Confiance accrue** pour les IP à longue histoire propre (généralisation du bonus de confiance du WAF).
@@ -81,13 +81,19 @@ Le magasin comportemental du WAF devient celui de la passerelle : il est aliment
 
 - Le WAF et Ephor cessent d'être deux mondes parallèles : un ban dit quels signaux, de quels moteurs, l'ont causé.
 - Les listes restent (ce sont des signaux à part entière, rapides et fiables) mais cessent d'être le principal axe d'évolution.
-- Le magasin comportemental passe de « option d'une route » à « état de la passerelle » : consommation de mémoire permanente, à dimensionner (plafonds configurables).
+- Le magasin comportemental passe de « option d'une route » à « état de la passerelle » : consommation de mémoire permanente, à dimensionner. Plafonds livrés en constantes (128 événements compacts par IP, 50 000 profils, 20 000 /24, 5 000 ASN ; ≈ 4 µs et 4 allocations par requête mesurés) ; les rendre configurables reste à faire si la mesure l'exige.
 - L'étape 4 introduit un état dépendant du temps : les tests rejouent des séries temporelles (les compteurs d'Ephor ont déjà une horloge injectable pour la simulation).
 
-## Questions ouvertes
+## Décisions sur les questions ouvertes, et écarts avec la décision initiale
 
-1. **Où vit la table UA ↔ JA4** : livrée dans le binaire et versionnée, ou poussée par l'Admin ? (Elle reste une liste ; l'objectif est qu'elle soit courte et stable.)
-2. **Fenêtre d'apprentissage** : durée minimale avant qu'une référence compte (24 h ? 7 jours pour la saisonnalité hebdomadaire ?).
-3. **Taille de la base ASN sur la passerelle** et fréquence de mise à jour.
-4. **Note commune et mode `detect` d'Ephor** : en `detect`, la note est calculée et affichée mais ne bannit pas ; faut-il aussi une note « fantôme » en simulation pour comparer avant/après ?
-5. **Granularité de la note commune dans un groupe HA** : fusion par maximum (comme le profil du WAF) ou somme ?
+1. **Table UA ↔ JA4** : livrée dans le binaire et versionnée (`TLSTableVersion`), volontairement courte — seule la famille `chromium` (pile BoringSSL, empreinte des suites de chiffrement `8daaf6152771`) y est, parce que c'est la seule dont la stabilité est connue ; une famille absente n'est jamais évaluée (ni signal, ni faux positif) ; les navigateurs d'Apple sont exclus (pile du système). Complétable par l'administrateur (`behavior.tls_families`), jamais poussée par l'Admin.
+2. **Fenêtre d'apprentissage** : une référence est par heure du jour (UTC), pas par heure de la semaine ; elle compte à partir de 30 minutes observées pour l'heure et de 24 h d'ancienneté de la route (`behavior.reference_min_age`). Avant, le signal est marqué *froid* et ne compte jamais. La saisonnalité hebdomadaire n'est pas modélisée.
+3. **Base ASN sur la passerelle** : forme compacte (plages et numéros, sans noms ni pays) ≈ 3 Mo compressée, ≈ 10 Mo en mémoire, envoyée en morceaux de 512 Kio, **annoncée** par l'Admin à la connexion d'une passerelle et à chaque mise à jour, **réclamée** par la passerelle qui n'a pas la version. Elle n'est pas répliquée entre membres d'un groupe HA (chacun la tient de l'Admin) : écart avec ADR 0006, accepté parce que son absence n'éteint qu'`asn_aggregate`.
+4. **Note fantôme** : oui. En `detect` (global ou par signal), la note est calculée et le ban qu'elle aurait posé est journalisé et compté (`gpx_threat_shadow_bans_total`). La simulation sur logs rejoue la note commune (sans `asn_aggregate`).
+5. **Granularité dans un groupe HA** : **maximum**. Une somme gonflerait les notes quand deux passerelles s'échangent les leurs ; le maximum est idempotent. La note d'un pair entre comme signal `ha_peer`, jusqu'à l'expiration de l'entrée.
+
+Écarts avec la décision initiale :
+
+- **Vie privée** : l'ADR veut que les profils par IP ne vivent que le temps de leur fenêtre. Le bonus de confiance (« longue histoire propre ») suppose de garder plus longtemps un compteur par IP : **7 jours**, chiffré, effacé avec l'IP par l'ordre d'effacement RGPD. C'est la seule donnée par IP qui dépasse la fenêtre.
+- **Références** : le débit appris est *par IP*, route par route (le 90ᵉ centile des IP sans signal), et non le débit total de la route : seul le premier permet de dire qu'*une IP* s'écarte. Les agrégats par minute de l'ADR 0010 (sans IP) ne servent qu'à proposer une limite globale.
+- **`goproxify.waf.behavior.window`** n'est plus pris en compte : le magasin est unique.

@@ -14,7 +14,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vincamok/goproxify/internal/admin/analytics"
+	"github.com/vincamok/goproxify/internal/admin/prismedge"
 	"github.com/vincamok/goproxify/internal/admin/security"
+	"github.com/vincamok/goproxify/internal/edge/router"
 	"github.com/vincamok/goproxify/internal/sqltime"
 )
 
@@ -28,13 +31,15 @@ const (
 // TraceStep est une étape du parcours d'une cible : un épisode d'activité, un ban, un déban,
 // une détection ou un événement système.
 type TraceStep struct {
-	Kind        string               `json:"kind"` // activity | ban | unban | threat | system
-	Ts          time.Time            `json:"ts"`
-	End         *time.Time           `json:"end,omitempty"`
-	IP          string               `json:"ip,omitempty"`
-	Domain      string               `json:"domain,omitempty"`
-	Source      string               `json:"source,omitempty"`
-	Reason      string               `json:"reason,omitempty"`
+	Kind   string     `json:"kind"` // activity | ban | unban | threat | system
+	Ts     time.Time  `json:"ts"`
+	End    *time.Time `json:"end,omitempty"`
+	IP     string     `json:"ip,omitempty"`
+	Domain string     `json:"domain,omitempty"`
+	Source string     `json:"source,omitempty"`
+	Reason string     `json:"reason,omitempty"`
+	// Signals : pourquoi un ban automatique a été posé (signal, points, valeur observée).
+	Signals     []router.BanSignal   `json:"signals,omitempty"`
 	Occurrences int                  `json:"occurrences,omitempty"`
 	Burst       *security.TraceBurst `json:"burst,omitempty"`
 }
@@ -46,12 +51,13 @@ type traceDay struct {
 }
 
 type traceBan struct {
-	ID        string `json:"id"`
-	IP        string `json:"ip"`
-	Domain    string `json:"domain"`
-	Reason    string `json:"reason"`
-	Source    string `json:"source"`
-	ExpiresAt string `json:"expires_at,omitempty"`
+	ID        string             `json:"id"`
+	IP        string             `json:"ip"`
+	Domain    string             `json:"domain"`
+	Reason    string             `json:"reason"`
+	Source    string             `json:"source"`
+	ExpiresAt string             `json:"expires_at,omitempty"`
+	Signals   []router.BanSignal `json:"signals,omitempty"`
 }
 
 type traceProfile struct {
@@ -127,7 +133,7 @@ func (h *SecurityHandler) ipTrace(w http.ResponseWriter, r *http.Request) {
 		secJSONErr(w, err, asnStatus(err))
 		return
 	}
-	res, err := TraceIP(r.Context(), h.DB, qy)
+	res, err := TraceIP(r.Context(), h.DB, h.Edge, qy)
 	if err != nil {
 		secJSONErr(w, err, http.StatusInternalServerError)
 		return
@@ -139,7 +145,7 @@ func (h *SecurityHandler) ipTrace(w http.ResponseWriter, r *http.Request) {
 // (regroupées en épisodes), détections WAF/Ephor, bans et débans, présence dans un profil IP.
 // Les requêtes ne remontent pas plus loin que la rétention des logs d'accès ; les bans et menaces
 // ont leur propre rétention.
-func TraceIP(ctx context.Context, db *sql.DB, qy TraceQuery) (map[string]any, error) {
+func TraceIP(ctx context.Context, db *sql.DB, edge *prismedge.Source, qy TraceQuery) (map[string]any, error) {
 	target, from, to, limit, offset := qy.Target, qy.From, qy.To, qy.Limit, qy.Offset
 	var steps []TraceStep
 	sum := struct {
@@ -163,6 +169,9 @@ func TraceIP(ctx context.Context, db *sql.DB, qy TraceQuery) (map[string]any, er
 		ActiveBans   []traceBan            `json:"active_bans"`
 		Profiles     []traceProfile        `json:"profiles"`
 		ScanLimited  bool                  `json:"scan_limited"`
+		// Partial et Unreachable : des passerelles n'ont pas répondu ou pas fini, leurs lignes manquent.
+		Partial     bool                    `json:"partial,omitempty"`
+		Unreachable []prismedge.Unreachable `json:"unreachable,omitempty"`
 	}{Statuses: map[string]int{}, ActiveBans: []traceBan{}, Profiles: []traceProfile{}}
 	seen := func(t time.Time) {
 		if sum.FirstSeen == nil || t.Before(*sum.FirstSeen) {
@@ -176,60 +185,26 @@ func TraceIP(ctx context.Context, db *sql.DB, qy TraceQuery) (map[string]any, er
 	}
 
 	// ── Requêtes d'accès, regroupées en épisodes ──────────────────────────────
-	query := `SELECT ts, ip, domain, method, path, status, node_name, COALESCE(waf_matches,''),
-	                 COALESCE(threat_signal,''), component, level, message
-	          FROM logs WHERE ts >= ? AND ts <= ?`
-	args := []any{from.Format(time.RFC3339), to.Format(time.RFC3339Nano)}
-	if qy.Node != "" {
-		query += ` AND node_name = ?`
-		args = append(args, qy.Node)
-	}
-	// Sans stats, SQLite préfère idx_logs_ts (il évite le tri) et lit toute la période : on impose
-	// idx_logs_ip_ts dès que la colonne ip est bornée.
-	ipIndexed := strings.Replace(query, "FROM logs", "FROM logs INDEXED BY idx_logs_ip_ts", 1)
-	if qy.matcher.scanAll {
-		// ASN non bornable : pas de borne sur la colonne ip, la sélection se fait en mémoire.
-	} else if bounds := qy.matcher.sqlBounds; len(bounds) > 0 {
-		terms := make([]string, len(bounds))
-		for i, b := range bounds {
-			terms[i] = `(ip >= ? AND ip < ?)`
-			args = append(args, b[0], b[1])
-		}
-		query = ipIndexed + ` AND (` + strings.Join(terms, ` OR `) + `)`
-	} else if target.IsSingleIP() {
-		query += ` AND ip = ?`
-		args = append(args, target.Addr().String())
-	} else if lo, hi, ok := security.TraceIPRange(target); ok {
-		query = ipIndexed + ` AND ip >= ? AND ip < ?`
-		args = append(args, lo, hi)
-	}
-	rows, err := db.QueryContext(ctx, query+` ORDER BY ts ASC`, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
+	// Les lignes viennent des bases de logs des passerelles (ADR 0012).
 	var bb security.BurstBuilder
 	ipHits := map[string]int{}
 	domains, paths, waf, sig := map[string]int{}, map[string]int{}, map[string]int{}, map[string]int{}
 	days := map[string]*traceDay{}
 	scanned, systemSteps := 0, 0
-	for rows.Next() {
-		var ts, ip, domain, method, path, node, wafJSON, signal, component, level, message string
-		var status int
-		if rows.Scan(&ts, &ip, &domain, &method, &path, &status, &node, &wafJSON, &signal, &component, &level, &message) != nil {
-			continue
-		}
+	// visit traite une ligne ; faux arrête la lecture (limite atteinte).
+	visit := func(l traceLine) bool {
+		ts, ip, domain, method, path, node, signal, component, level, message := l.Ts, l.IP, l.Domain, l.Method, l.Path, l.Node, l.Signal, l.Component, l.Level, l.Message
+		status, matches := l.Status, l.Matches
 		if !qy.matcher.matchIP(target, ip) {
-			continue
+			return true
 		}
 		if scanned++; scanned > traceMaxScan {
 			sum.ScanLimited = true
-			break
+			return false
 		}
 		t, err := time.Parse(time.RFC3339Nano, ts)
 		if err != nil {
-			continue
+			return true
 		}
 		t = t.UTC()
 		seen(t)
@@ -240,11 +215,7 @@ func TraceIP(ctx context.Context, db *sql.DB, qy TraceQuery) (map[string]any, er
 			if systemSteps++; systemSteps <= traceMaxSystem {
 				steps = append(steps, TraceStep{Kind: "system", Ts: t, IP: ip, Domain: domain, Source: component, Reason: level + " · " + message})
 			}
-			continue
-		}
-		var matches []string
-		if wafJSON != "" {
-			json.Unmarshal([]byte(wafJSON), &matches) //nolint:errcheck
+			return true
 		}
 		req := security.TraceRequest{Ts: t, IP: ip, Domain: domain, Method: method, Path: path, Status: status, Node: node, WAFMatches: matches, ThreatSignal: signal}
 		bb.Add(req)
@@ -276,8 +247,22 @@ func TraceIP(ctx context.Context, db *sql.DB, qy TraceQuery) (map[string]any, er
 		if blocked {
 			d.Blocked++
 		}
+		return true
 	}
-	rows.Close()
+
+	if edge != nil && edge.Available(ctx, analytics.Params{NodeName: qy.Node}) {
+		lines, capped, meta, err := readTraceLinesFromEdges(ctx, edge, qy, from, to)
+		if err != nil {
+			return nil, err
+		}
+		sum.ScanLimited = sum.ScanLimited || capped
+		sum.Partial, sum.Unreachable = meta.Partial, meta.Unreachable
+		for _, l := range lines {
+			if !visit(l) {
+				break
+			}
+		}
+	}
 	bb.Done()
 	sum.Episodes = len(bb.Bursts)
 	for _, b := range bb.Bursts {
@@ -287,13 +272,13 @@ func TraceIP(ctx context.Context, db *sql.DB, qy TraceQuery) (map[string]any, er
 
 	// ── Bans et débans ────────────────────────────────────────────────────────
 	if hr, err := db.QueryContext(ctx,
-		`SELECT ip, domain, action, reason, source, created_at FROM security_ban_history
+		`SELECT ip, domain, action, reason, source, created_at, signals FROM security_ban_history
 		 WHERE created_at >= ? AND created_at <= ? ORDER BY created_at ASC`,
 		sqltime.Format(from), sqltime.Format(to)); err == nil {
 		defer hr.Close()
 		for hr.Next() {
-			var ip, domain, action, reason, source, ts string
-			if hr.Scan(&ip, &domain, &action, &reason, &source, &ts) != nil || !qy.matcher.overlap(target, ip) {
+			var ip, domain, action, reason, source, ts, signals string
+			if hr.Scan(&ip, &domain, &action, &reason, &source, &ts, &signals) != nil || !qy.matcher.overlap(target, ip) {
 				continue
 			}
 			t, err := sqltime.Parse(ts)
@@ -308,7 +293,8 @@ func TraceIP(ctx context.Context, db *sql.DB, qy TraceQuery) (map[string]any, er
 				sum.Bans++
 			}
 			seen(t)
-			steps = append(steps, TraceStep{Kind: kind, Ts: t.UTC(), IP: ip, Domain: domain, Source: source, Reason: reason})
+			steps = append(steps, TraceStep{Kind: kind, Ts: t.UTC(), IP: ip, Domain: domain, Source: source, Reason: reason,
+				Signals: security.DecodeBanSignals(signals)})
 		}
 	}
 
@@ -339,12 +325,14 @@ func TraceIP(ctx context.Context, db *sql.DB, qy TraceQuery) (map[string]any, er
 
 	// ── État actuel : bans en cours et profils IP qui contiennent la cible ───────
 	if br, err := db.QueryContext(ctx,
-		`SELECT id, ip, domain, reason, source, COALESCE(expires_at,'') FROM security_bans
+		`SELECT id, ip, domain, reason, source, COALESCE(expires_at,''), signals FROM security_bans
 		 WHERE expires_at IS NULL OR expires_at = '' OR datetime(expires_at) > CURRENT_TIMESTAMP`); err == nil {
 		defer br.Close()
 		for br.Next() {
 			var b traceBan
-			if br.Scan(&b.ID, &b.IP, &b.Domain, &b.Reason, &b.Source, &b.ExpiresAt) == nil && qy.matcher.overlap(target, b.IP) {
+			var signals string
+			if br.Scan(&b.ID, &b.IP, &b.Domain, &b.Reason, &b.Source, &b.ExpiresAt, &signals) == nil && qy.matcher.overlap(target, b.IP) {
+				b.Signals = security.DecodeBanSignals(signals)
 				sum.ActiveBans = append(sum.ActiveBans, b)
 			}
 		}
@@ -480,4 +468,3 @@ func parseTraceBound(s string, def time.Time, endOfDay bool) (time.Time, error) 
 	}
 	return t.UTC(), nil
 }
-

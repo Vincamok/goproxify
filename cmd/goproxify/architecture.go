@@ -73,8 +73,40 @@ func runArchitecture() {
 		}
 		fmt.Printf("architecture.json restauré depuis %s (l'état précédent est conservé).\n", name)
 
+	case "recover":
+		args := parseFlags(os.Args[3:])
+		client, err := newAdminClient(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+			os.Exit(1)
+		}
+		body := map[string]any{}
+		if edges := flagValue(args, "-edges", ""); edges != "" {
+			body["edges"] = strings.Split(edges, ",")
+		}
+		var out struct {
+			Cards       int      `json:"cards"`
+			Unreachable []string `json:"unreachable"`
+			Added       struct {
+				Groups  []string `json:"groups"`
+				Nodes   int      `json:"nodes"`
+				Joined  int      `json:"joined"`
+				Domains int      `json:"domains"`
+				Skipped int      `json:"skipped"`
+			} `json:"added"`
+		}
+		if _, err := client.DoJSON("POST", "/api/v1/architecture/recover", body, &out, 200); err != nil {
+			fmt.Fprintf(os.Stderr, "architecture recover : %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("%d fiche(s) de groupe lue(s) : groupes %s — %d passerelle(s) ajoutée(s), %d rattachée(s) à leur groupe, %d domaine(s) ajouté(s), %d déjà connu(s).\n",
+			out.Cards, strings.Join(out.Added.Groups, ", "), out.Added.Nodes, out.Added.Joined, out.Added.Domains, out.Added.Skipped)
+		for _, u := range out.Unreachable {
+			fmt.Fprintf(os.Stderr, "  injoignable : %s\n", u)
+		}
+
 	default:
-		fmt.Fprintln(os.Stderr, "usage: goproxify architecture show [-version <nom>] | versions | restore -name <version>")
+		fmt.Fprintln(os.Stderr, "usage: goproxify architecture show [-version <nom>] | versions | restore -name <version> | recover [-edges nom1,nom2]")
 		os.Exit(1)
 	}
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/vincamok/goproxify/internal/admin/alerting"
 	"github.com/vincamok/goproxify/internal/admin/analytics"
+	"github.com/vincamok/goproxify/internal/admin/logs"
 )
 
 // Config paramètre les seuils de surveillance.
@@ -64,10 +65,22 @@ func (m *Monitor) scan() {
 	}
 }
 
-// logsSince est la borne basse d'une fenêtre sur logs.ts, qui est en RFC3339 :
-// datetime('now', …) compare mal ('T' > ' ', toute la journée UTC passerait).
-func logsSince(d time.Duration) string {
-	return time.Now().Add(-d).UTC().Format(time.RFC3339Nano)
+// accessRows rend, par domaine, le total, les erreurs et la latence moyenne de la fenêtre, lus dans les cumuls par
+// minute que calculent les passerelles (la fenêtre commence à la minute qui contient son début).
+func (m *Monitor) accessRows(ctx context.Context, since time.Duration) (*sql.Rows, error) {
+	return m.db.QueryContext(ctx,
+		`SELECT domain, SUM(requests) AS total,
+		        SUM(CASE WHEN status >= 400 THEN requests ELSE 0 END) AS errors,
+		        1.0 * SUM(latency_ms_sum) / SUM(requests) AS avg_lat
+		 FROM logs_minute
+		 WHERE minute >= ? AND domain != ''
+		 GROUP BY domain
+		 HAVING total >= 10`, logs.MinuteKey(time.Now().Add(-since)))
+}
+
+// activeNodes rend les passerelles qui ont eu du trafic dans la fenêtre.
+func (m *Monitor) activeNodes(ctx context.Context, since time.Duration) (*sql.Rows, error) {
+	return m.db.QueryContext(ctx, `SELECT DISTINCT node_name FROM logs_minute WHERE minute >= ? AND node_name != ''`, logs.MinuteKey(time.Now().Add(-since)))
 }
 
 // accessEvents retourne les alertes taux d'erreur / latence des domaines sur la fenêtre d'observation.
@@ -76,15 +89,7 @@ func (m *Monitor) accessEvents(ctx context.Context) []alerting.Event {
 	if window <= 0 {
 		window = 300
 	}
-	rows, err := m.db.QueryContext(ctx,
-		`SELECT domain,
-		        COUNT(*) AS total,
-		        SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END) AS errors,
-		        AVG(latency_ms) AS avg_lat
-		 FROM logs
-		 WHERE ts > ? AND status > 0 AND domain != ''
-		 GROUP BY domain
-		 HAVING total >= 10`, logsSince(time.Duration(window)*time.Second))
+	rows, err := m.accessRows(ctx, time.Duration(window)*time.Second)
 	if err != nil {
 		return nil
 	}
@@ -141,7 +146,7 @@ func (m *Monitor) sloEvents(ctx context.Context) []alerting.Event {
 		return nil
 	}
 	scopes := []string{""}
-	if rows, err := m.db.QueryContext(ctx, `SELECT DISTINCT node_name FROM logs WHERE ts > ? AND status > 0 AND node_name != ''`, logsSince(6*time.Hour)); err == nil {
+	if rows, err := m.activeNodes(ctx, 6*time.Hour); err == nil {
 		for rows.Next() {
 			var n string
 			if rows.Scan(&n) == nil {

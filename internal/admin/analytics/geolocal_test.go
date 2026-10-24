@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/vincamok/goproxify/internal/admin/db"
 )
@@ -25,13 +24,8 @@ func TestGeoResolverLocalDB(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { d.Close() })
-	ts := time.Now().UTC().Format(time.RFC3339)
-	for _, ip := range []string{"81.2.69.142", "8.8.8.8", "10.1.2.3", "203.0.113.5"} {
-		d.Exec(`INSERT INTO logs (ts, domain, ip, status) VALUES (?,?,?,?)`, ts, "a.fr", ip, 200)
-	}
-
 	g := &GeoResolver{DB: d, MMDBPath: path}
-	g.resolve(context.Background()) // aucun accès réseau : la base locale est utilisée
+	g.Ensure(context.Background(), []string{"81.2.69.142", "8.8.8.8", "10.1.2.3", "203.0.113.5"}) // aucun accès réseau : la base locale est utilisée
 
 	type row struct {
 		cc, city string

@@ -250,8 +250,12 @@ func (e *ECS) List(ctx context.Context) ([]Instance, error) {
 			return nil, err
 		}
 		for _, t := range out.Tasks {
-			if t.LastStatus != "RUNNING" || strings.EqualFold(t.HealthStatus, "UNHEALTHY") {
-				continue
+			inactive := ""
+			switch {
+			case t.LastStatus != "RUNNING":
+				inactive = strings.ToLower(t.LastStatus)
+			case strings.EqualFold(t.HealthStatus, "UNHEALTHY"):
+				inactive = "unhealthy"
 			}
 			def, ok := defs[t.TaskDefinitionArn]
 			if !ok {
@@ -265,6 +269,7 @@ func (e *ECS) List(ctx context.Context) ([]Instance, error) {
 				defs[t.TaskDefinitionArn] = def
 			}
 			if inst, ok := e.instance(t, def); ok {
+				inst.Inactive = inactive
 				res = append(res, inst)
 			}
 		}

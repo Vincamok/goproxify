@@ -43,10 +43,6 @@ type GeoResolver struct {
 
 	mu     sync.Mutex
 	reader *maxminddb.Reader
-
-	// scannedID : les logs jusqu'à cet id ont tous une entrée de cache. Sans cette borne, chaque minute
-	// relisait les millions de lignes de logs (24 s, 23 Mo/s de disque) pour constater qu'il n'y avait rien à résoudre.
-	scannedID int64
 }
 
 type ipAPIResult struct {
@@ -141,10 +137,12 @@ func (g *GeoResolver) lookup(ctx context.Context, ips []string) ([]ipAPIResult, 
 	return g.lookupBatch(ctx, ips)
 }
 
-// Start lance la résolution en arrière-plan toutes les 60 secondes.
+// Start complète en arrière-plan, toutes les 60 secondes, la position des entrées du cache qui n'en ont pas encore. Les
+// IP nouvelles ne sont plus découvertes dans des lignes d'accès (l'Admin n'en reçoit plus) : elles sont résolues à la
+// demande (Ensure) quand une liste ou la carte les affiche.
 func (g *GeoResolver) Start(ctx context.Context) {
 	go func() {
-		g.resolve(ctx)
+		g.backfillPositions(ctx)
 		t := time.NewTicker(60 * time.Second)
 		defer t.Stop()
 		for {
@@ -152,7 +150,7 @@ func (g *GeoResolver) Start(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				g.resolve(ctx)
+				g.backfillPositions(ctx)
 			}
 		}
 	}()
@@ -311,146 +309,6 @@ func (g *GeoResolver) backfillPositions(ctx context.Context) {
 	}
 }
 
-func (g *GeoResolver) resolve(ctx context.Context) {
-	var maxID int64
-	if err := g.DB.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM logs`).Scan(&maxID); err != nil {
-		g.log().Warn("geoip: lecture du dernier log échouée", "err", err)
-		return
-	}
-	limit := g.batchLimit()
-	rows, err := g.DB.QueryContext(ctx,
-		`SELECT DISTINCT ip FROM logs
-		 WHERE id > ? AND id <= ? AND ip != '' AND status > 0
-		   AND ip NOT IN (SELECT ip FROM geoip_cache)
-		 LIMIT ?`, g.scannedID, maxID, limit)
-	if err != nil {
-		g.log().Warn("geoip: lecture IPs échouée", "err", err)
-		return
-	}
-
-	// Clé cache = IP telle que stockée dans logs (pour JOIN exact).
-	// queryIP = forme normalisée envoyée à l'API.
-	type pending struct {
-		logIP   string
-		queryIP string
-	}
-	var toResolve []pending
-	queryToLog := map[string][]string{} // queryIP → log IPs
-	seenRows := 0
-
-	for rows.Next() {
-		seenRows++
-		var raw string
-		if rows.Scan(&raw) != nil || raw == "" {
-			continue
-		}
-		queryIP := normalizeIP(raw)
-		if queryIP == "" || isPrivate(queryIP) {
-			// Ne pas re-tenter : privée, loopback, Docker, invalide.
-			g.cacheEntry(raw, "LO", "Local / Private")
-			continue
-		}
-		toResolve = append(toResolve, pending{logIP: raw, queryIP: queryIP})
-		queryToLog[queryIP] = append(queryToLog[queryIP], raw)
-	}
-	rows.Close()
-
-	// Moins de lignes que la limite : la plage est épuisée, la prochaine passe repart de maxID.
-	exhausted := seenRows < limit
-
-	if len(toResolve) == 0 {
-		if exhausted {
-			g.scannedID = maxID
-		}
-		g.backfillPositions(ctx)
-		return
-	}
-
-	seen := make(map[string]struct{}, len(queryToLog))
-	queries := make([]string, 0, len(queryToLog))
-	for _, p := range toResolve {
-		if _, ok := seen[p.queryIP]; ok {
-			continue
-		}
-		seen[p.queryIP] = struct{}{}
-		queries = append(queries, p.queryIP)
-	}
-
-	// Ne pas cacher en cas d'échec réseau : on réessaiera au prochain tick.
-	results, err := g.lookup(ctx, queries)
-	if errors.Is(err, ErrExternalLookupDisabled) {
-		return
-	}
-	if err != nil {
-		g.log().Warn("geoip: appel ip-api.com échoué (réessai au prochain cycle)", "err", err, "n", len(queries))
-		return
-	}
-
-	cached := 0
-	for _, r := range results {
-		logIPs := queryToLog[r.Query]
-		if len(logIPs) == 0 {
-			// API peut renvoyer une forme canonique différente.
-			logIPs = queryToLog[normalizeIP(r.Query)]
-		}
-		if len(logIPs) == 0 {
-			g.cacheResult(r.Query, r)
-			cached++
-			continue
-		}
-		for _, logIP := range logIPs {
-			g.cacheResult(logIP, r)
-			cached++
-		}
-	}
-	if exhausted {
-		g.scannedID = maxID
-	}
-	g.log().Debug("geoip: cache mis à jour", "resolved", cached, "queried", len(queries))
-}
-
-// GetGeoBreakdown retourne la répartition du trafic par pays,
-// incluant le taux d'erreurs et le nombre d'IPs bannies actives.
-func GetGeoBreakdown(db *sql.DB, p Params) []GeoEntry {
-	w, args := where(p)
-	rows, err := db.Query(fmt.Sprintf(
-		`SELECT COALESCE(g.country_code,'?') as cc,
-		        COALESCE(g.country_name,'Unknown') as cn,
-		        COUNT(*) as n,
-		        SUM(CASE WHEN l.status >= 400 THEN 1 ELSE 0 END) as errors
-		 FROM logs l
-		 LEFT JOIN geoip_cache g ON g.ip = l.ip
-		 %s GROUP BY cc, cn ORDER BY n DESC LIMIT 50`, w), args...)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-
-	var out []GeoEntry
-	var total int64
-	for rows.Next() {
-		var e GeoEntry
-		_ = rows.Scan(&e.CountryCode, &e.CountryName, &e.Requests, &e.Errors)
-		if e.Requests > 0 {
-			e.ErrorRate = float64(e.Errors) / float64(e.Requests) * 100
-		}
-		total += e.Requests
-		out = append(out, e)
-	}
-	for i := range out {
-		if total > 0 {
-			out[i].Pct = float64(out[i].Requests) / float64(total) * 100
-		}
-	}
-
-	// Bans actifs par pays (query séparée, sans filtre temporel)
-	bansPerCC := geoBannedIPs(db)
-	for i := range out {
-		out[i].BannedIPs = bansPerCC[out[i].CountryCode]
-	}
-	return out
-}
-
 // LiveIPEvent représente un événement IP récent pour la vue live de la carte.
 type LiveIPEvent struct {
 	IP          string `json:"ip"`
@@ -479,111 +337,6 @@ type GeoPoint struct {
 	ErrorRate   float64 `json:"error_rate"`
 	IPs         int64   `json:"ips"`
 	BannedIPs   int64   `json:"banned_ips"`
-}
-
-// GetGeoPoints retourne le trafic agrégé par ville (les plus actives d'abord).
-// Les IPs pas encore localisées (lat/lon absents ou 0/0) sont ignorées.
-func GetGeoPoints(db *sql.DB, p Params, limit int) []GeoPoint {
-	if limit <= 0 || limit > 1000 {
-		limit = 300
-	}
-	w, args := where(p)
-	rows, err := db.Query(fmt.Sprintf(
-		`SELECT g.city, g.region, g.country_code, g.country_name,
-		        AVG(g.lat), AVG(g.lon),
-		        COUNT(*) AS n,
-		        SUM(CASE WHEN l.status >= 400 THEN 1 ELSE 0 END),
-		        COUNT(DISTINCT l.ip),
-		        COUNT(DISTINCT CASE WHEN l.ip IN (
-		            SELECT ip FROM security_bans WHERE expires_at IS NULL OR datetime(expires_at) > CURRENT_TIMESTAMP
-		        ) THEN l.ip END)
-		 FROM (SELECT ip, status FROM logs %s) l
-		 JOIN geoip_cache g ON g.ip = l.ip
-		 WHERE g.lat IS NOT NULL AND (g.lat != 0 OR g.lon != 0)
-		 GROUP BY g.country_code, g.region, g.city
-		 ORDER BY n DESC LIMIT ?`, w), append(args, limit)...)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-
-	out := []GeoPoint{}
-	for rows.Next() {
-		var pt GeoPoint
-		if rows.Scan(&pt.City, &pt.Region, &pt.CountryCode, &pt.CountryName, &pt.Lat, &pt.Lon,
-			&pt.Requests, &pt.Errors, &pt.IPs, &pt.BannedIPs) != nil {
-			continue
-		}
-		if pt.Requests > 0 {
-			pt.ErrorRate = float64(pt.Errors) / float64(pt.Requests) * 100
-		}
-		out = append(out, pt)
-	}
-	return out
-}
-
-// GetLiveIPs retourne les événements IP récents pour la vue live de la carte.
-// since : timestamp ISO8601 depuis lequel récupérer ; limit : max 200.
-func GetLiveIPs(db *sql.DB, since time.Time, proxy, nodeName string, limit int) []LiveIPEvent {
-	if limit <= 0 || limit > 200 {
-		limit = 100
-	}
-	sinceStr := since.UTC().Format(time.RFC3339)
-
-	var conds []string
-	var args []any
-	conds = append(conds, "l.ts >= ?")
-	args = append(args, sinceStr)
-	conds = append(conds, "l.status > 0")
-	if c, a := domainCond("l.domain", proxy); c != "" {
-		conds = append(conds, c)
-		args = append(args, a...)
-	}
-	if nodeName != "" {
-		conds = append(conds, "l.node_name = ?")
-		args = append(args, nodeName)
-	}
-
-	w := "WHERE " + strings.Join(conds, " AND ")
-
-	// Charge les IPs bannies actives pour annoter kind=banned
-	bannedIPs := activeBannedIPSet(db)
-
-	rows, err := db.Query(fmt.Sprintf(
-		`SELECT l.ip,
-		        COALESCE(g.country_code,'?') AS cc,
-		        COALESCE(g.country_name,'Unknown') AS cn,
-		        l.status,
-		        l.domain,
-		        l.ts,
-		        COALESCE(g.city,''),
-		        COALESCE(g.lat,0),
-		        COALESCE(g.lon,0)
-		 FROM logs l
-		 LEFT JOIN geoip_cache g ON g.ip = l.ip
-		 %s
-		 ORDER BY l.ts DESC
-		 LIMIT ?`, w), append(args, limit)...)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-
-	var out []LiveIPEvent
-	for rows.Next() {
-		var ev LiveIPEvent
-		_ = rows.Scan(&ev.IP, &ev.CountryCode, &ev.CountryName, &ev.Status, &ev.Domain, &ev.Ts, &ev.City, &ev.Lat, &ev.Lon)
-		switch {
-		case bannedIPs[ev.IP]:
-			ev.Kind = "banned"
-		case ev.Status >= 400:
-			ev.Kind = "error"
-		default:
-			ev.Kind = "visit"
-		}
-		out = append(out, ev)
-	}
-	return out
 }
 
 // activeBannedIPSet retourne l'ensemble des IPs actives dans security_bans.
@@ -624,4 +377,69 @@ func geoBannedIPs(db *sql.DB) map[string]int64 {
 		m[cc] = n
 	}
 	return m
+}
+
+// Ensure géolocalise les IP de la liste qui n'ont pas encore d'entrée dans le cache, sans attendre le passage de
+// fond : les lignes de logs n'arrivent plus à l'Admin, ce sont les listes qu'il affiche qui disent quelles IP
+// résoudre (ADR 0012). Au plus batchLimit adresses par appel ; les autres viendront aux appels suivants.
+func (g *GeoResolver) Ensure(ctx context.Context, ips []string) {
+	const chunk = 500
+	var missing []string
+	for start := 0; start < len(ips); start += chunk {
+		part := ips[start:min(start+chunk, len(ips))]
+		args := make([]any, len(part))
+		for i, ip := range part {
+			args[i] = ip
+		}
+		rows, err := g.DB.QueryContext(ctx, `SELECT ip FROM geoip_cache WHERE ip IN (?`+strings.Repeat(",?", len(part)-1)+`)`, args...)
+		if err != nil {
+			return
+		}
+		known := map[string]bool{}
+		for rows.Next() {
+			var ip string
+			if rows.Scan(&ip) == nil {
+				known[ip] = true
+			}
+		}
+		rows.Close()
+		for _, ip := range part {
+			if ip != "" && !known[ip] {
+				missing = append(missing, ip)
+			}
+		}
+	}
+	limit := g.batchLimit()
+	queryToLog := map[string][]string{}
+	var queries []string
+	for _, raw := range missing {
+		q := normalizeIP(raw)
+		if q == "" || isPrivate(q) {
+			g.cacheEntry(raw, "LO", "Local / Private")
+			continue
+		}
+		if _, seen := queryToLog[q]; !seen {
+			if len(queries) >= limit {
+				continue
+			}
+			queries = append(queries, q)
+		}
+		queryToLog[q] = append(queryToLog[q], raw)
+	}
+	if len(queries) == 0 {
+		return
+	}
+	results, err := g.lookup(ctx, queries)
+	if err != nil {
+		return
+	}
+	for _, r := range results {
+		logIPs := queryToLog[r.Query]
+		if len(logIPs) == 0 {
+			logIPs = queryToLog[normalizeIP(r.Query)]
+		}
+		for _, ip := range logIPs {
+			g.cacheResult(ip, r)
+		}
+	}
 }

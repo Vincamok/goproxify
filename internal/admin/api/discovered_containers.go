@@ -23,6 +23,8 @@ import (
 type DiscoveredContainersHandler struct {
 	DB  *sql.DB
 	Log *slog.Logger
+	// Groups donne le groupe HA d'une passerelle ; nil : aucune passerelle n'est groupée.
+	Groups GroupResolver
 }
 
 type DiscoveredContainer struct {
@@ -34,6 +36,10 @@ type DiscoveredContainer struct {
 	TLS          bool           `json:"tls"`
 	Source       string         `json:"source"`
 	EdgeName     string         `json:"edge_name"`
+	// EdgeLabel : nom affiché de la passerelle ; le nom de connexion EdgeName peut être resté celui d'une ancienne installation.
+	EdgeLabel string `json:"edge_label"`
+	// Group : groupe HA de la passerelle, dont les membres servent les mêmes routes.
+	Group        string         `json:"group,omitempty"`
 	AgentName    string         `json:"agent_name,omitempty"`
 	Config       map[string]any `json:"config,omitempty"`
 	// ShadowedBy : ID du proxy configuré qui sert l'hôte à la place de la route des labels.
@@ -42,6 +48,11 @@ type DiscoveredContainer struct {
 	Missing []string `json:"missing,omitempty"`
 	// ProxyConfig : route complète pour la conversion en proxy ; n'est jamais renvoyée par GET /discovered-containers.
 	ProxyConfig json.RawMessage `json:"proxy_config,omitempty"`
+	// Inactive : le conteneur existe sans tourner (arrêté, en pause, qui redémarre) ; il n'a ni route ni backend et ne
+	// peut pas être converti en proxy. State est son état, Name le nom du conteneur.
+	Inactive bool   `json:"inactive,omitempty"`
+	State    string `json:"state,omitempty"`
+	Name     string `json:"name,omitempty"`
 }
 
 func (h *DiscoveredContainersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -102,10 +113,21 @@ func (h *DiscoveredContainersHandler) Find(ctx context.Context, id, edge string)
 	switch {
 	case len(matches) == 0:
 		return nil, ErrContainerNotFound
-	case len(matches) > 1:
+	case len(matches) > 1 && !sameGroup(matches):
 		return nil, ErrContainerEdgeRequired
 	}
 	return &matches[0], nil
+}
+
+// sameGroup indique si toutes les routes viennent de membres d'un même groupe HA : c'est alors une seule route,
+// annoncée par chacun d'eux.
+func sameGroup(items []DiscoveredContainer) bool {
+	for _, c := range items {
+		if c.Group == "" || c.Group != items[0].Group {
+			return false
+		}
+	}
+	return true
 }
 
 // ForConversion est Find pour une route que rien ne remplace encore.
@@ -143,19 +165,22 @@ func (h *DiscoveredContainersHandler) FetchFromEdges(ctx context.Context) []Disc
 // donc rien ne permet d'y déclarer un conteneur disparu.
 func (h *DiscoveredContainersHandler) fetchAll(ctx context.Context) ([]DiscoveredContainer, map[string]bool) {
 	rows, err := h.DB.QueryContext(ctx,
-		`SELECT node_name, node_endpoint, token FROM tokens
-		 WHERE role='edge' AND revoked=0 AND node_endpoint != ''
-		   AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)`)
+		`SELECT t.node_name,
+		        COALESCE((SELECT NULLIF(n.display_name,'') FROM nodes n WHERE n.role='edge' AND n.node_name=t.node_name LIMIT 1), t.node_name),
+		        t.node_endpoint, t.token
+		 FROM tokens t
+		 WHERE t.role='edge' AND t.revoked=0 AND t.node_endpoint != ''
+		   AND (t.expires_at IS NULL OR t.expires_at > CURRENT_TIMESTAMP)`)
 	if err != nil {
 		return []DiscoveredContainer{}, map[string]bool{}
 	}
 	defer rows.Close()
 
-	type edgeInfo struct{ name, endpoint, token string }
+	type edgeInfo struct{ name, label, endpoint, token string }
 	var edges []edgeInfo
 	for rows.Next() {
 		var c edgeInfo
-		if rows.Scan(&c.name, &c.endpoint, &c.token) == nil && c.endpoint != "" {
+		if rows.Scan(&c.name, &c.label, &c.endpoint, &c.token) == nil && c.endpoint != "" {
 			c.token = auth.PlainNodeToken(c.token)
 			edges = append(edges, c)
 		}
@@ -168,11 +193,17 @@ func (h *DiscoveredContainersHandler) fetchAll(ctx context.Context) ([]Discovere
 
 	for _, c := range edges {
 		wg.Add(1)
-		go func(name, ep, tok string) {
+		go func(name, label, ep, tok string) {
 			defer wg.Done()
 			items, ok := h.fetchContainersFromEdge(ctx, ep, tok)
+			group := ""
+			if h.Groups != nil {
+				group = h.Groups.GroupOf(name)
+			}
 			for i := range items {
 				items[i].EdgeName = name
+				items[i].EdgeLabel = label
+				items[i].Group = group
 			}
 			mu.Lock()
 			result = append(result, items...)
@@ -180,7 +211,7 @@ func (h *DiscoveredContainersHandler) fetchAll(ctx context.Context) ([]Discovere
 				answered[name] = true
 			}
 			mu.Unlock()
-		}(c.name, c.endpoint, c.token)
+		}(c.name, c.label, c.endpoint, c.token)
 	}
 	wg.Wait()
 	return result, answered

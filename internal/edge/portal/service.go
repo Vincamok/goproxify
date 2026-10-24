@@ -326,7 +326,7 @@ func resolveMasterKey() string {
 	if k := os.Getenv("GPX_PORTAL_MASTER_KEY"); k != "" {
 		return k
 	}
-	return edgecache.ResolveSecret("")
+	return edgecache.LegacySecret("")
 }
 
 // SetStoreChangeHook enregistre le rappel déclenché par une modification locale réplicable du magasin

@@ -44,7 +44,7 @@ func infraTools() []map[string]any {
 		},
 		{
 			"name":        "get_architecture",
-			"description": "Architecture déclarée (architecture.json, référentiel de la topologie) : nœuds passerelle/Agent avec leur hôte, région et capacités (HA, TLS, Docker, Portainer…), plus les domaines. Sans argument : l'architecture courante ; avec `version` : une version conservée (voir `goproxify architecture versions`).",
+			"description": "Architecture déclarée (architecture.json, référentiel de la topologie) : nœuds passerelle/Agent avec leur hôte, région et capacités (HA, TLS, Docker, Portainer…), plus les domaines et, par groupe HA, la version de sa fiche (`groups`). Sans argument : l'architecture courante ; avec `version` : une version conservée (voir `goproxify architecture versions`).",
 			"inputSchema": schema(
 				opt("version", "string", "Nom d'une version conservée (architecture-….json) ; vide = version courante"),
 			),

@@ -11,6 +11,10 @@ import (
 	"errors"
 	"net/url"
 	"strconv"
+
+	"github.com/vincamok/goproxify/internal/edge/threat"
+	"github.com/vincamok/goproxify/internal/edge/waf/behavior"
+	"github.com/vincamok/goproxify/internal/ipsketch"
 )
 
 // Chemins de l'API interne de la passerelle.
@@ -19,6 +23,12 @@ const (
 	PathHistogram = "/internal/v1/logs/histogram"
 	PathFacets    = "/internal/v1/logs/facets"
 	PathReveal    = "/internal/v1/logs/reveal"
+	// PathTop : regroupement par champ (POST, filtres en paramètres, demande en JSON).
+	PathTop = "/internal/v1/logs/top"
+	// PathErase : effacement d'une IP des logs et de l'historique des bans de la passerelle (POST), avec les comptes.
+	PathErase = "/internal/v1/logs/erase"
+	// PathUniqueIPs : résumé des IP distinctes de la période (GET).
+	PathUniqueIPs = "/internal/v1/logs/unique-ips"
 )
 
 // Plafonds d'une recherche : une page normale tient dans 500 lignes ; un export en réclame jusqu'à 100 000.
@@ -31,7 +41,14 @@ const (
 // Params sont les filtres d'une recherche, les mêmes que ceux de GET /api/v1/logs de l'Admin.
 type Params struct {
 	Level, Component, Domain, IP, Method, Status, Path string
-	TLSJA3, TLSJA4, Search                             string
+	TLSJA3, TLSJA4, Search, RequestID                  string
+	// Domains : plusieurs domaines séparés par des virgules (sélection multiple de Prism) ; PathPrefix : chemins qui
+	// commencent par cette valeur (Path cherche à l'intérieur).
+	Domains, PathPrefix string
+	// IPFrom, IPTo : bornes de la colonne ip comme texte ([IPFrom, IPTo[), IPRanges : plusieurs intervalles « de|à » séparés par des virgules.
+	IPFrom, IPTo, IPRanges string
+	// Attributable : uniquement les lignes dont l'IP n'est pas tronquée.
+	Attributable bool
 	// DateFrom et DateTo : bornes RFC3339.
 	DateFrom, DateTo string
 	// Kind : "access", "system" ou vide (les deux).
@@ -67,6 +84,15 @@ func (p Params) Values() url.Values {
 	set("tls_ja3", p.TLSJA3)
 	set("tls_ja4", p.TLSJA4)
 	set("search", p.Search)
+	set("request_id", p.RequestID)
+	set("domains", p.Domains)
+	set("path_prefix", p.PathPrefix)
+	set("ip_from", p.IPFrom)
+	set("ip_to", p.IPTo)
+	set("ip_ranges", p.IPRanges)
+	if p.Attributable {
+		v.Set("attributable", "1")
+	}
 	set("date_from", p.DateFrom)
 	set("date_to", p.DateTo)
 	set("kind", p.Kind)
@@ -95,10 +121,10 @@ func ParamsFromValues(v url.Values) Params {
 	return Params{
 		Level: v.Get("level"), Component: v.Get("component"), Domain: v.Get("domain"), IP: v.Get("ip"),
 		Method: v.Get("method"), Status: v.Get("status"), Path: v.Get("path"), TLSJA3: v.Get("tls_ja3"),
-		TLSJA4: v.Get("tls_ja4"), Search: v.Get("search"), DateFrom: v.Get("date_from"), DateTo: v.Get("date_to"),
+		TLSJA4: v.Get("tls_ja4"), Search: v.Get("search"), RequestID: v.Get("request_id"), DateFrom: v.Get("date_from"), DateTo: v.Get("date_to"),
 		Kind: v.Get("kind"), ExcludeInternal: v.Get("exclude_internal") == "1" || v.Get("exclude_internal") == "true",
 		Cursor: v.Get("cursor"), Limit: limit, Bulk: v.Get("bulk") == "1", TZOffsetMin: tz, Bucket: v.Get("bucket"),
-		Fields: v.Get("fields"),
+		Fields: v.Get("fields"), Domains: v.Get("domains"), PathPrefix: v.Get("path_prefix"), IPFrom: v.Get("ip_from"), IPTo: v.Get("ip_to"), IPRanges: v.Get("ip_ranges"), Attributable: v.Get("attributable") == "1",
 	}
 }
 
@@ -164,6 +190,61 @@ type HistogramResponse struct {
 	Partial bool        `json:"partial"`
 }
 
+// TopRequest demande un regroupement (ADR 0012, P1). Mode : « best » (les K meilleures valeurs), « above » (toutes
+// celles vues au moins Min fois) ou « exact » (les comptes des Values). WithIPs, en mode « exact », joint à chaque
+// valeur le résumé de ses IP attribuables.
+type TopRequest struct {
+	Dim     string   `json:"dim"`
+	Mode    string   `json:"mode"`
+	K       int      `json:"k,omitempty"`
+	Min     int64    `json:"min,omitempty"`
+	Values  []string `json:"values,omitempty"`
+	WithIPs bool     `json:"with_ips,omitempty"`
+}
+
+// TopItem additionne les accès d'une valeur ; tous ses compteurs s'additionnent d'une passerelle à l'autre.
+type TopItem struct {
+	Value      string            `json:"value"`
+	Requests   int64             `json:"requests"`
+	Errors     int64             `json:"errors"`
+	Bytes      int64             `json:"bytes"`
+	LatencySum int64             `json:"latency_sum"`
+	Flagged    int64             `json:"flagged,omitempty"`
+	Blocked    int64             `json:"blocked,omitempty"`
+	Ok         int64             `json:"ok,omitempty"`
+	Bots       int64             `json:"bots,omitempty"`
+	FirstSeen  string            `json:"first_seen,omitempty"`
+	LastSeen   string            `json:"last_seen,omitempty"`
+	Truncated  bool              `json:"ip_truncated,omitempty"`
+	JA3        string            `json:"ja3,omitempty"`
+	IPs        *ipsketch.Summary `json:"ips,omitempty"`
+}
+
+// TopResponse : Complete dit qu'en mode « best » la passerelle a rendu toutes ses valeurs (elle en avait moins que K).
+type TopResponse struct {
+	Items    []TopItem `json:"items"`
+	Complete bool      `json:"complete"`
+	Partial  bool      `json:"partial"`
+}
+
+// UniqueIPsResponse : l'ensemble des IP vues, exact s'il est petit, estimé sinon (voir ipsketch).
+type UniqueIPsResponse struct {
+	IPs     ipsketch.Summary `json:"ips"`
+	Partial bool             `json:"partial"`
+}
+
+// EraseRequest demande l'effacement d'une IP (droit à l'effacement RGPD).
+type EraseRequest struct {
+	IP string `json:"ip"`
+}
+
+// EraseResponse dit ce que la passerelle a supprimé : lignes de logs (accès et système, pseudonymisées comprises) et
+// lignes de l'historique des bans. Elle est la preuve de l'effacement pour cette passerelle.
+type EraseResponse struct {
+	LogLines int64 `json:"log_lines"`
+	BanRows  int64 `json:"ban_rows"`
+}
+
 // RevealRequest demande l'IP réelle d'une ligne pseudonymisée.
 type RevealRequest struct {
 	Kind string `json:"kind"`
@@ -226,3 +307,48 @@ func DecodeCursor(c string) (map[string]Pos, error) {
 	}
 	return m, nil
 }
+
+// PathEphorReferences : ce que la passerelle a appris pour la note commune d'Ephor (GET).
+const PathEphorReferences = "/internal/v1/ephor/references"
+
+// EphorReferencesResponse décrit l'état appris de la passerelle : les références de débit par route et par heure (valeur,
+// date, volume observé), le nombre de profils en cours, la base ASN et la table d'empreintes TLS.
+type EphorReferencesResponse struct {
+	References []behavior.RefInfo `json:"references"`
+	Profiles   int                `json:"profiles"`
+	ASN        ASNStatus          `json:"asn"`
+	TLSTable   string             `json:"tls_table"`
+}
+
+// ASNStatus : la base IP → ASN dont dispose la passerelle (version vide = aucune).
+type ASNStatus struct {
+	Version  string `json:"version,omitempty"`
+	V4Ranges int    `json:"v4_ranges,omitempty"`
+	V6Ranges int    `json:"v6_ranges,omitempty"`
+}
+
+// PathEphorSim : simulation d'une configuration Ephor sur le trafic récent de la passerelle (POST).
+const PathEphorSim = "/internal/v1/ephor/simulate"
+
+// EphorSimRequest : les deux configurations à comparer (JSON de threat.Config), la fenêtre et un domaine facultatif.
+// La passerelle rejoue ses propres accès, comme elle les traite en production.
+type EphorSimRequest struct {
+	Current   json.RawMessage `json:"current"`
+	Candidate json.RawMessage `json:"candidate"`
+	Hours     int             `json:"hours"`
+	Domain    string          `json:"domain,omitempty"`
+}
+
+// EphorSimResponse : le rapport de chaque configuration. Skipped compte les accès dont l'IP est tronquée ou illisible,
+// Truncated dit que la passerelle a plus d'accès que SimMaxEvents sur la fenêtre (les plus récents sont rejoués).
+type EphorSimResponse struct {
+	Current   threat.SimReport `json:"current"`
+	Candidate threat.SimReport `json:"candidate"`
+	Events    int              `json:"events"`
+	Skipped   int              `json:"skipped"`
+	Truncated bool             `json:"truncated"`
+	Partial   bool             `json:"partial"`
+}
+
+// SimMaxEvents borne les accès rejoués par une passerelle.
+const SimMaxEvents = 200_000

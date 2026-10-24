@@ -59,6 +59,19 @@ spec:
                   key: pairing-secret
             - name: GPX_AGENT_PAIRING_ROOT
               value: {{ .Values.security.agentPairingWithRootSecret | default false | quote }}
+            {{- if .Values.security.edgeWithoutRootSecret }}
+            # Les passerelles n'ont que leur clé dérivée : l'Admin ne leur présente jamais le secret racine.
+            - name: GPX_EDGE_CHANNEL_ROOT_FALLBACK
+              value: "false"
+            {{- end }}
+            {{- if .Values.global.previousPairingSecret }}
+            # Rotation du secret : l'Admin signe avec le nouveau secret, puis avec les précédents devant une passerelle pas encore à jour.
+            - name: GPX_PAIRING_SECRET_PREVIOUS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "goproxify.fullname" . }}-secret
+                  key: previous-pairing-secret
+            {{- end }}
             {{- if .Values.admin.config.jwtSecret }}
             - name: GPX_SECURITY_JWT_SECRET
               valueFrom:

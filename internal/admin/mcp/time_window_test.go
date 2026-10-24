@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/vincamok/goproxify/internal/admin/logs"
 )
 
 func TestSecurityToolsIgnoreBansExpiredAMinuteAgo(t *testing.T) {
@@ -37,19 +39,39 @@ func TestSecurityToolsIgnoreBansExpiredAMinuteAgo(t *testing.T) {
 
 func TestGetMetricsCoversTheLast24HoursOnly(t *testing.T) {
 	h := setupMCPDB(t)
+	// Les cumuls par minute que les passerelles envoient : 3 requêtes il y a une heure, 5 il y a 25 heures.
 	for at, n := range map[time.Time]int{time.Now().Add(-time.Hour): 3, time.Now().Add(-25 * time.Hour): 5} {
-		for i := 0; i < n; i++ {
-			if _, err := h.DB.Exec(`INSERT INTO logs (ts, domain, status, ip) VALUES (?, 'a.example', 200, '203.0.113.31')`,
-				at.UTC().Format(time.RFC3339Nano)); err != nil {
-				t.Fatal(err)
-			}
+		if _, err := h.DB.Exec(`INSERT INTO logs_minute (minute, domain, node_name, status, requests, latency_ms_sum) VALUES (?, 'a.example', 'gw-a', 200, ?, ?)`,
+			logs.MinuteKey(at), n, 30*n); err != nil {
+			t.Fatal(err)
 		}
 	}
 	res, err := h.toolGetMetrics(httptest.NewRequest(http.MethodPost, "/mcp", nil), "a.example")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := res.(map[string]any)["requests"]; n != int64(3) {
-		t.Errorf("get_metrics : %v requêtes, attendu 3 (celles d'il y a 25 h sont hors fenêtre)", n)
+	m := res.(map[string]any)
+	if m["requests"] != int64(3) || m["avg_latency_ms"] != 30.0 || m["unique_ips"] != int64(0) {
+		t.Errorf("get_metrics = %v, attendu 3 requêtes (celles d'il y a 25 h sont hors fenêtre), 30 ms, aucune IP sans passerelle", m)
+	}
+}
+
+// Les erreurs et le taux d'erreur viennent des cumuls.
+func TestGetMetricsComputesErrorsFromTheAggregates(t *testing.T) {
+	h := setupMCPDB(t)
+	at := logs.MinuteKey(time.Now().Add(-2 * time.Hour))
+	for status, n := range map[int]int{200: 15, 502: 5} {
+		if _, err := h.DB.Exec(`INSERT INTO logs_minute (minute, domain, node_name, status, requests, latency_ms_sum) VALUES (?, 'a.example', 'gw-a', ?, ?, ?)`,
+			at, status, n, 30*n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err := h.toolGetMetrics(httptest.NewRequest(http.MethodPost, "/mcp", nil), "a.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := res.(map[string]any)
+	if m["requests"] != int64(20) || m["errors"] != int64(5) || m["error_rate"] != 25.0 {
+		t.Errorf("get_metrics = %v, attendu 20 requêtes dont 5 erreurs (25 %%)", m)
 	}
 }

@@ -36,7 +36,7 @@ Chaque outil exige un scope, le même que sa route REST équivalente. Les outils
 | `domains:write` | `create_domain`, `renew_domain`, `rotate_cert` |
 | `certs:read` | `list_certs`, `get_cert_status`, `list_cert_deploy_targets`, `list_cert_deploy_types`, `list_internal_cas` †, `list_internal_certs` †, `get_ech_status` †, `list_dns_providers` †, `list_dns_provider_types` † |
 | `certs:write` | `obtain_cert`, `import_cert`, `trigger_cert_deploy`, `create_internal_ca` †, `issue_internal_cert` †, `revoke_internal_cert` † |
-| `logs:read` | `list_logs`, `get_prism_anomalies`, `get_prism_geo`, `get_prism_tls_fingerprints`, `get_prism_slo`, `simulate_ephor_config` †, `trace_ip` †, `preview_security_ban` †, `preview_asn_ban` † |
+| `logs:read` | `list_logs`, `get_siem_status` †, `get_prism_anomalies`, `get_prism_geo`, `get_prism_tls_fingerprints`, `get_prism_slo`, `simulate_ephor_config` †, `get_ephor_references` †, `suggest_ephor_thresholds` †, `trace_ip` †, `preview_security_ban` †, `preview_asn_ban` † |
 | `audit:read` | `get_audit_log`, `list_ip_profiles`, `get_security_overview` †, `list_security_bans` †, `list_security_engine_types` †, `get_waf_activity` †, `list_plugins` †, `lookup_asn` †, `list_ban_whitelist` †, `list_security_threats` †, `list_security_cves` †, `list_auth_providers` †, `list_auth_provider_types` †, `list_flows` †, `get_flow` †, `list_flow_versions` †, `list_flow_runs` †, `get_flow_run` †, `get_automation_catalog` †, `list_flow_templates` †, `list_silences` †, `export_automation` † |
 | `security:write` | `create_ip_profile`, `delete_ip_profile`, `create_security_ban` †, `delete_security_ban` †, `ban_ip` †, `unban_ip` †, `add_ban_whitelist` †, `remove_ban_whitelist` †, `import_security_bans` †, `ban_asn` †, `unban_asn` †, `create_auth_provider` †, `delete_auth_provider` †, `create_flow` †, `update_flow` †, `set_flow_enabled` †, `delete_flow` †, `run_flow` †, `simulate_flow` †, `restore_flow_version` †, `detach_flow` †, `update_flow_params` †, `decide_flow_run` †, `cancel_flow_run` †, `replay_flow_run` †, `install_flow_template` †, `create_silence` †, `delete_silence` †, `import_automation` † |
 | `portal:read` / `portal:write` | outils Access (`*_portal_*`, `push_portal`) † — voir [GoProxify Access](#goproxify-access-portail) |
@@ -109,7 +109,7 @@ claude mcp add goproxify \
 
 ### `list_proxies`
 
-Liste toutes les routes proxy : celles gérées depuis l'Admin (`source: "managed"`), les proxies implicites générés par GoProxify — portail Access, délégations — dont seule la surcouche est modifiable (`source: "implicit"`) et celles découvertes par les labels des conteneurs (`source: "docker"`, `"k8s"`…, `read_only: true`, avec `aliases`, `backends`, `edge`, `agent` et `shadowed_by`, l'ID du proxy configuré qui sert l'hôte à la place de la route des labels).
+Liste toutes les routes proxy : celles gérées depuis l'Admin (`source: "managed"`), les proxies implicites générés par GoProxify — portail Access, délégations — dont seule la surcouche est modifiable (`source: "implicit"`) et celles découvertes par les labels des conteneurs (`source: "docker"`, `"k8s"`…, `read_only: true`, avec `aliases`, `backends`, `edge`, `agent`, `inactive` / `state` (conteneur arrêté, en pause ou qui redémarre : sans route ni backend, non convertible) et `shadowed_by`, l'ID du proxy configuré qui sert l'hôte à la place de la route des labels).
 
 **Paramètres :** aucun
 
@@ -157,7 +157,7 @@ Donne les labels qui reproduisent un proxy : de quoi le déclarer sur un contene
 
 ### `get_discovered_container`
 
-Détail d'une route découverte par les labels d'un conteneur : config servie par la passerelle (secrets masqués), labels qui la reproduisent, bilan de sécurité (score, contrôles, manques parmi TLS / WAF / rate limit) et **labels corrigés** avec le modèle de sécurité appliqué (un snippet de l'Admin du bon type s'il existe, sinon WAF en blocage et 100 req/s). Même contenu que `GET /api/v1/discovered-containers/detail`.
+Détail d'une route découverte par les labels d'un conteneur : config servie par la passerelle (secrets masqués), labels qui la reproduisent, bilan de sécurité (score, contrôles, manques parmi TLS / WAF / rate limit) et **labels corrigés** avec le modèle de sécurité appliqué (un snippet de l'Admin du bon type s'il existe, sinon WAF en blocage et 100 req/s). Même contenu que `GET /api/v1/discovered-containers/detail`. `list_proxies` ajoute `edge_label` et `group` aux routes découvertes ; `edge` n'est plus requis quand tous les membres qui annoncent la route sont du même groupe HA.
 
 | Paramètre | Type   | Requis | Description |
 |-----------|--------|--------|-------------|
@@ -379,7 +379,7 @@ Liste les règles d'alerting avec leurs déclencheurs et canaux de notification.
 
 ### `get_metrics`
 
-Retourne les KPIs de trafic des dernières 24 heures.
+Retourne les KPIs de trafic des dernières 24 heures. Les requêtes, erreurs et latence viennent des cumuls par minute ; les IP uniques sont l'union des IP de chaque passerelle (`unique_ips_estimated: true` quand le nombre dépasse 2 000 et n'est plus qu'une estimation à environ 1 %).
 
 | Paramètre | Type   | Requis | Description                                             |
 |-----------|--------|--------|---------------------------------------------------------|
@@ -580,6 +580,11 @@ Retourne les 100 derniers logs d'accès, filtrables par domaine, niveau, `reques
 | `request_id` | string | —      | Corrélation exacte : retourne tous les logs portant cet identifiant|
 | `tls_ja4`    | string | —      | Filtrer par empreinte TLS JA4 : retrouver un même outil ou botnet quelle que soit son IP |
 | `tls_ja3`    | string | —      | Filtrer par empreinte TLS JA3 (MD5)                                |
+| `source`     | string | —      | `admin` (défaut) : copie des logs gardée par l'Admin, 100 entrées max ; `edge` : base de logs de chaque passerelle, fusionnée par l'Admin avec ses propres logs, 500 entrées par page, du plus récent au plus ancien (Admin `0.169.0`) |
+| `node`       | string | —      | Avec `source=edge` : nom d'une seule passerelle                      |
+| `cursor`     | string | —      | Avec `source=edge` : jeton `cursor` de la page précédente, pour la page suivante |
+
+Avec `source=edge`, la réponse est un objet `{entries, has_more, cursor, partial, unreachable, page_size}` au lieu d'un tableau : `partial` signale qu'une passerelle a atteint son délai (affiner le filtre), `unreachable` liste les passerelles qui n'ont pas répondu (leurs lignes manquent). Chaque entrée porte `node_name` et `node_id`.
 
 **Réponse exemple :**
 ```json
@@ -603,6 +608,14 @@ Retourne les 100 derniers logs d'accès, filtrables par domaine, niveau, `reques
 Le champ `request_id` est présent quand le proxy cible a l'option **Injection request_id** activée. Utilisez-le comme filtre pour récupérer l'ensemble des entrées (Admin + Passerelle) d'une même requête HTTP.
 
 Depuis Admin `0.71.2`, `ip_truncated: true` signale une IP tronquée par la passerelle (anonymisation ou pseudonymisation RGPD : `x.x.x.0`, préfixe /48 `2a01:e0a:1::`). Cette valeur regroupe plusieurs clients : `ban_ip` dessus ne bannirait personne (IPv4) ou pas le bon client (IPv6). Le champ est absent pour une IP complète.
+
+---
+
+### `get_siem_status`
+
+*(Admin `0.178.0`, Edge `0.87.0`, [ADR 0012](adr/0012-logs-proprietaire-edge.md) ; scope `logs:read`, rôle admin)* Exporteur SIEM des passerelles : la configuration et l'état rapporté par chaque passerelle. Aucun paramètre.
+
+Réponse : `{config, nodes}`. `config` est la configuration enregistrée (`enabled`, `destinations` syslog RFC 5424 sur TCP/TLS, HTTP NDJSON ou OTLP/HTTP JSON, filtres par type, niveau et « sécurité seulement »), dont les valeurs d'en-têtes (jetons) sont masquées. `nodes` liste, par passerelle (`node_name`, `reported_at`, `stale` si elle est muette depuis 90 s), chaque destination avec son `state` (`starting`, `ok`, `retrying`, `stopped`), `delivered`, `lag_sec` (âge de la plus ancienne ligne non livrée), `at_risk` (le retard menace des lignes qui vont être purgées avant livraison), `last_error`. Chaque passerelle exporte seule, avec son propre curseur, même Admin éteint ; un retard au-delà du seuil de la destination déclenche l'alerte `siem_export_lag`. La configuration se modifie par `PUT /api/v1/logs/siem` ou `goproxify logs siem set`, pas par MCP.
 
 ---
 
@@ -665,7 +678,7 @@ Liste les bans IP (Fail2Ban, CrowdSec, Ephor, plugins de détection comme Coraza
 | `active_only`  | boolean | —      | Uniquement les bans non expirés                  |
 | `edge`         | string  | —      | Passerelle (nom du nœud ou id du token) : ses bans et les bans globaux |
 
-Chaque ban renvoyé porte `edge_name` (passerelle d'origine, vide = ban global).
+Chaque ban renvoyé porte `edge_name` (passerelle d'origine, vide = ban global). Un ban automatique d'Ephor ou du WAF porte aussi `signals` : la liste des signaux qui l'ont causé, chacun avec `name`, `points` et `value` (ce qui l'a déclenché : chemin, User-Agent, empreinte…), dont la somme explique la décision. Absent des autres sources. `trace_ip` les renvoie aussi, sur les bans en cours et sur les étapes de ban.
 
 **Scope :** `audit:read` + rôle admin
 
@@ -688,6 +701,8 @@ Crée un ban IP natif (**permanent** si `expires_at` omis) et pousse les bans au
 ---
 
 ### `preview_security_ban`
+
+*(Admin `0.172.0`)* Trafic lu dans les bases de logs des passerelles : chiffres exacts, avertissement si une passerelle est injoignable.
 
 Aperçu de l'impact d'un ban IP ou CIDR **avant de le créer**, sans rien modifier : trafic récent de la cible (requêtes bloquées, requêtes réussies qui seraient coupées, adresses distinctes, pays), bans actifs et profils IP qui la recoupent, et avertissements (plage privée, profil allow, déjà couverte, auto-verrouillage). La cible est normalisée comme à la création ; une plage plus large que `/16` (IPv4) ou `/32` (IPv6) est refusée. Même réponse que `GET /api/v1/security/bans/preview`.
 
@@ -733,6 +748,8 @@ Cherche un système autonome (ASN) par numéro (`AS16276`), par adresse IP (l'AS
 ---
 
 ### `preview_asn_ban`
+
+*(Admin `0.172.0`)* Trafic de l'ASN lu dans les bases de logs des passerelles : chiffres exacts, avertissement si une passerelle est injoignable.
 
 Aperçu de l'impact d'un ban d'ASN, sans rien modifier : plages bannies, ignorées ou rejetées, trafic récent de l'ASN (dont les requêtes réussies qui seraient coupées) et avertissements (l'ASN contient l'appelant, plages trop larges, aucune requête récente).
 
@@ -1126,7 +1143,7 @@ SLO de disponibilité (réponses non-5xx) sur une fenêtre glissante : disponibi
 
 ### `get_prism_geo`
 
-Trafic par pays (requêtes, erreurs, taux d'erreur, IPs bannies) ou par ville (position approximative issue de la géolocalisation IP). Scope : `logs:read`.
+Trafic par pays (requêtes, erreurs, taux d'erreur, IPs bannies) ou par ville (position approximative issue de la géolocalisation IP). Calculé à partir des bases de logs des passerelles (Admin `0.171.0`) ; une passerelle injoignable n'y figure pas. Scope : `logs:read`.
 
 | Paramètre | Type   | Requis | Description                                                        |
 |-----------|--------|--------|--------------------------------------------------------------------|
@@ -1140,7 +1157,7 @@ Trafic par pays (requêtes, erreurs, taux d'erreur, IPs bannies) ou par ville (p
 
 ### `get_prism_tls_fingerprints`
 
-Empreintes TLS (JA4, avec le JA3 associé) les plus actives sur la période : requêtes, erreurs, requêtes signalées par le WAF ou Ephor, IP distinctes. Un JA4 très signalé et partagé par beaucoup d'IP est la signature d'un scanner ou d'un botnet, à ajouter à `custom_lists.tls_fingerprints` d'Ephor. Uniquement le trafic TLS terminé par une passerelle (ni HTTP clair ni HTTP/3). Scope : `logs:read`.
+Empreintes TLS (JA4, avec le JA3 associé) les plus actives sur la période : requêtes, erreurs, requêtes signalées par le WAF ou Ephor, IP distinctes. Un JA4 très signalé et partagé par beaucoup d'IP est la signature d'un scanner ou d'un botnet, à ajouter à `custom_lists.tls_fingerprints` d'Ephor. Uniquement le trafic TLS terminé par une passerelle (ni HTTP clair ni HTTP/3). Scope : `logs:read`. Classement exact fusionné depuis les bases de logs des passerelles (Admin `0.171.0`).
 
 | Paramètre | Type   | Requis | Description                                                        |
 |-----------|--------|--------|--------------------------------------------------------------------|
@@ -1151,7 +1168,34 @@ Empreintes TLS (JA4, avec le JA3 associé) les plus actives sur la période : re
 
 ---
 
+### `get_ephor_references`
+
+Ce que chaque passerelle a appris pour la note commune d'Ephor (ADR 0011) : références de débit par IP, route par route et heure par heure (médiane, seuil, minutes observées, fiable ou en apprentissage), base ASN et table d'empreintes TLS, nombre de profils en cours.
+
+| Paramètre | Type | Requis | Description |
+|-----------|------|--------|-------------|
+| `edge` | string | — | Passerelle (nom du nœud ou id du token) ; défaut : toutes |
+
+**Scope :** `logs:read` + rôle admin
+
+---
+
+### `suggest_ephor_thresholds`
+
+Propose des seuils Ephor à partir des cumuls par minute (sans IP) : par passerelle, débit normal (médiane, p99, p99,9, max, part d'erreurs) et limite globale proposée (quatre fois le p99,9, arrondie). Ne modifie rien.
+
+| Paramètre | Type | Requis | Description |
+|-----------|------|--------|-------------|
+| `days` | number | — | Fenêtre lue en jours (défaut 7, max 90) |
+| `edge` | string | — | Passerelle dont la configuration (ou celle de son groupe HA) sert de base |
+
+**Scope :** `logs:read` + rôle admin
+
+---
+
 ### `simulate_ephor_config`
+
+*(Admin `0.173.0`)* La simulation tourne sur les passerelles : chacune rejoue son propre trafic, agents utilisateur compris, et l'Admin additionne les rapports.
 
 Dry-run Ephor : rejoue les access logs récents contre une config candidate et la compare à la config actuelle, **sans rien modifier**. Permet de répondre à « si j'applique cette règle, combien de requêtes légitimes auraient été bloquées dans la dernière heure ? » avant de faire `PUT /security/threat-config`. Scope : `logs:read` + rôle admin (la route REST équivalente est réservée aux admins).
 
@@ -1172,6 +1216,8 @@ Réponse : `current` et `candidate` (`events`, `blocked`, `blocked_by_ban`, `leg
 ---
 
 ### `trace_ip`
+
+*(Admin `0.172.0`)* Lit les bases de logs des passerelles (jusqu'à 400 000 lignes, `scan_limited` au-delà) ; `summary.unreachable` nomme celles qui manquent.
 
 Parcours complet d'une IP ou d'un CIDR sur une longue période : requêtes d'accès regroupées en épisodes (domaines, chemins, statuts, catégories WAF, signaux Ephor), détections CrowdSec/Ephor, bans et débans, bans en cours et profils IP qui contiennent la cible. Répond à « que fait cette IP depuis des semaines ? ».
 
@@ -1198,7 +1244,7 @@ Scopes PAT : `nodes:read` (lecture) / `nodes:write` (écriture). Alignés sur `/
 
 ### `get_architecture`
 
-Architecture déclarée (`architecture.json`, référentiel de la topologie) : nœuds passerelle / Agent avec leur hôte (`config.host`), région et capacités (HA, TLS, Docker, Portainer…), plus les domaines. Scope : `nodes:read` + rôle admin (comme `GET /api/v1/architecture`).
+Architecture déclarée (`architecture.json`, référentiel de la topologie) : nœuds passerelle / Agent avec leur hôte (`config.host`), région et capacités (HA, TLS, Docker, Portainer…), plus les domaines et, pour chaque groupe HA, la version de sa fiche (`groups`). Scope : `nodes:read` + rôle admin (comme `GET /api/v1/architecture`). La reconstitution de l'architecture à partir des fiches (`goproxify architecture recover`) reste une opération volontaire de l'opérateur, hors MCP.
 
 | Paramètre | Type   | Requis | Description |
 |-----------|--------|--------|-------------|

@@ -9,6 +9,9 @@ import (
 	"time"
 
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
+	"github.com/vincamok/goproxify/internal/admin/prismedge"
+	"github.com/vincamok/goproxify/internal/edge/logapi/logapitest"
+	"github.com/vincamok/goproxify/internal/edge/logstore"
 )
 
 // L'interface masque Bannir pour une IP tronquée par l'anonymisation : top IPs et analyse d'IP
@@ -19,13 +22,15 @@ func TestPrismFlagsTruncatedIPs(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	at := time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339)
-	for ip, truncated := range map[string]int{"203.0.113.0": 1, "198.51.100.7": 0} {
-		if _, err := db.Exec(`INSERT INTO logs (ts, domain, ip, status, ip_truncated) VALUES (?, 'api.acme.fr', ?, 403, ?)`, at, ip, truncated); err != nil {
-			t.Fatal(err)
-		}
+	gw := logapitest.New(t, "gw-a")
+	if err := gw.Register(db); err != nil {
+		t.Fatal(err)
 	}
-	h := &PrismHandler{DB: db}
+	at := time.Now().UTC().Add(-10 * time.Minute)
+	for ip, truncated := range map[string]bool{"203.0.113.0": true, "198.51.100.7": false} {
+		gw.Add(logstore.Entry{Ts: at, Domain: "api.acme.fr", IP: ip, Status: 403, IPTruncated: truncated})
+	}
+	h := &PrismHandler{DB: db, Edge: &prismedge.Source{DB: db}}
 	get := func(path string, v any) {
 		t.Helper()
 		rec := httptest.NewRecorder()

@@ -20,6 +20,7 @@ const historyEncPrefix = "GPXHIS1:"
 var historyTables = []string{
 	"audit_log",
 	"logs",
+	"edge_log_cursors",
 	"node_events",
 	"alert_events",
 	"security_bans",
@@ -37,6 +38,12 @@ var historyTables = []string{
 
 // historyRowCap borne le nombre de lignes (les plus récentes) exportées par table.
 var historyRowCap = map[string]int{"logs": 100000}
+
+// historyWhere restreint une table d'historique. Les positions des flux de lignes (accès, système) suivent les lignes
+// sauvegardées : restaurées ensemble, la passerelle reprend après la dernière ligne que l'Admin a, sans doublon.
+// Celles des cumuls et des compteurs par IP ne sont pas sauvegardées : ces données ne le sont pas non plus (les
+// passerelles les gardent et les renvoient depuis le début, ce qui remplace la valeur de chaque minute).
+var historyWhere = map[string]string{"edge_log_cursors": "stream IN ('access', 'system')"}
 
 const defaultHistoryRowCap = 500000
 
@@ -63,7 +70,11 @@ func AttachHistory(db *sql.DB, b *Backup) error {
 			hb.Tables[table] = rows
 		}
 		var total int
-		if db.QueryRow(`SELECT COUNT(*) FROM `+table).Scan(&total) == nil && total > len(rows) {
+		count := `SELECT COUNT(*) FROM ` + table
+		if where, ok := historyWhere[table]; ok {
+			count += ` WHERE ` + where
+		}
+		if db.QueryRow(count).Scan(&total) == nil && total > len(rows) {
 			hb.Truncated[table] = total - len(rows)
 		}
 	}
@@ -120,7 +131,11 @@ func restoreHistory(db *sql.DB, b *Backup) (int, error) {
 
 // exportRawTableLimited lit les `limit` dernières lignes (par rowid) d'une table, sans rédaction.
 func exportRawTableLimited(db *sql.DB, table string, limit int) []map[string]any {
-	rows, err := db.Query(fmt.Sprintf(`SELECT * FROM %s ORDER BY rowid DESC LIMIT %d`, table, limit))
+	query := fmt.Sprintf(`SELECT * FROM %s ORDER BY rowid DESC LIMIT %d`, table, limit)
+	if where, ok := historyWhere[table]; ok { // table WITHOUT ROWID : pas de tri par rowid
+		query = fmt.Sprintf(`SELECT * FROM %s WHERE %s LIMIT %d`, table, where, limit)
+	}
+	rows, err := db.Query(query)
 	if err != nil {
 		return nil // table absente sur une base ancienne
 	}

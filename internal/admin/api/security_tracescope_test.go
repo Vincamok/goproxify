@@ -12,6 +12,9 @@ import (
 
 	"github.com/vincamok/goproxify/internal/admin/api"
 	"github.com/vincamok/goproxify/internal/admin/asn"
+	"github.com/vincamok/goproxify/internal/admin/prismedge"
+	"github.com/vincamok/goproxify/internal/edge/logapi/logapitest"
+	"github.com/vincamok/goproxify/internal/edge/logstore"
 )
 
 func traceGet(t *testing.T, h http.Handler, query string) (int, map[string]any) {
@@ -30,11 +33,14 @@ func summaryNum(res map[string]any, key string) float64 {
 
 func TestTraceScopeFollowsASN(t *testing.T) {
 	h, db, _, _ := asnHandler(t)
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	gw := logapitest.New(t, "gw-a")
+	if err := gw.Register(db); err != nil {
+		t.Fatal(err)
+	}
+	h.Edge = &prismedge.Source{DB: db}
+	now := time.Now().UTC()
 	for _, ip := range []string{"5.0.0.9", "5.0.1.200", "5.0.8.50", "8.8.8.8"} {
-		if _, err := db.Exec(`INSERT INTO logs (ts, ip, domain, method, path, status) VALUES (?, ?, 'a.test', 'GET', '/', 200)`, now, ip); err != nil {
-			t.Fatal(err)
-		}
+		gw.Add(logstore.Entry{Ts: now, IP: ip, Domain: "a.test", Method: "GET", Path: "/", Status: 200})
 	}
 	// Deux bans chez le même opérateur : l'un dans la plage de l'adresse (5.0.0.0/24), l'autre ailleurs (5.0.8.0/25).
 	for id, ip := range map[string]string{"dans": "5.0.0.0/24", "ailleurs": "5.0.8.0/25"} {

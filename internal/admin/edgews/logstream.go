@@ -72,6 +72,17 @@ func (g *LogStreamIngestor) Handle(nodeID, nodeName string, p edgeWS.LogStreamPa
 		g.Log.Warn("edgews: lecture de la position d'un flux de logs", "edge", nodeID, "stream", p.Stream, "err", err)
 		return true
 	}
+	if p.Reset {
+		// Seulement si la passerelle parle bien de la position que l'Admin a : un message retardé ne doit pas la ramener.
+		if p.After == cursor && cursor > 0 {
+			g.Log.Warn("edgews: la base de logs de la passerelle a été remplacée, le flux repart du début", "edge", nodeName, "stream", p.Stream, "position", cursor)
+			if err := g.Store.ResetStreamCursor(nodeID, p.Stream); err != nil {
+				g.Log.Warn("edgews: remise à zéro d'une position de flux", "edge", nodeName, "stream", p.Stream, "err", err)
+				return true
+			}
+		}
+		return false
+	}
 	if p.After > cursor {
 		g.Log.Warn("edgews: lot de logs hors séquence, reprise demandée", "edge", nodeName, "stream", p.Stream, "position", cursor, "lot_apres", p.After)
 		return true
@@ -89,7 +100,9 @@ func (g *LogStreamIngestor) Handle(nodeID, nodeName string, p edgeWS.LogStreamPa
 		fresh = append(fresh, LogEntryFromPayload(item))
 		last = max(last, item.Seq)
 	}
-	if len(fresh) == 0 {
+	// Through : la passerelle a écarté des lignes jusque-là (accès non signalés) ; le curseur les saute.
+	last = max(last, p.Through)
+	if len(fresh) == 0 && last <= cursor {
 		return false
 	}
 	if err := g.Store.WriteStream(nodeID, p.Stream, fresh, last); err != nil {
@@ -235,3 +248,4 @@ func (m *Manager) handleIPStream(e *edgeEntry, raw json.RawMessage) {
 		m.scheduleResume(e)
 	}
 }
+

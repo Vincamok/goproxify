@@ -20,6 +20,7 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/crowdsec"
 	"github.com/vincamok/goproxify/internal/admin/asn"
 	"github.com/vincamok/goproxify/internal/admin/fail2ban"
+	"github.com/vincamok/goproxify/internal/admin/prismedge"
 	"github.com/vincamok/goproxify/internal/admin/security"
 	"github.com/vincamok/goproxify/internal/admin/vulnscan"
 	"github.com/vincamok/goproxify/internal/edge/router"
@@ -30,6 +31,8 @@ import (
 // SecurityHandler expose le dashboard sécurité.
 type SecurityHandler struct {
 	DB       *sql.DB
+	// Edge (optionnel) : trafic récent lu dans les bases de logs des passerelles (aperçus de ban et d'ASN).
+	Edge *prismedge.Source
 	Log      *slog.Logger
 	Store    *security.Store
 	Fail2Ban *fail2ban.Engine
@@ -48,6 +51,8 @@ type SecurityHandler struct {
 	OnUnbanMany func(ips []string)
 	// ASN est la base des systèmes autonomes (nil = fonctions ASN indisponibles).
 	ASN *asn.Store
+	// OnASNChange annonce aux passerelles la nouvelle version de la base ASN après sa mise à jour.
+	OnASNChange func()
 	// OnWhitelistChange pousse aux passerelles les profils IP (la liste blanche des bans en est un)
 	// après un ajout ou un retrait.
 	OnWhitelistChange func()
@@ -150,12 +155,16 @@ func (h *SecurityHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPut && sub == "crowdsec":
 		h.putCrowdSecConfig(w, r)
 	// Moteur de détection automatique (threat engine)
+	case r.Method == http.MethodGet && sub == "threat-config" && id == "suggestions":
+		h.suggestThreatThresholds(w, r)
 	case r.Method == http.MethodGet && sub == "threat-config":
 		h.getThreatConfig(w, r)
 	case r.Method == http.MethodPut && sub == "threat-config":
 		h.putThreatConfig(w, r)
 	case r.Method == http.MethodPost && sub == "threat-config" && id == "simulate":
 		h.simulateThreat(w, r)
+	case r.Method == http.MethodGet && sub == "threat-references":
+		h.getThreatReferences(w, r)
 	// Interrupteur du WAF (moteur de sécurité, par passerelle ou groupe HA)
 	case r.Method == http.MethodGet && sub == "waf-config":
 		h.getWAFConfig(w, r)
@@ -278,7 +287,7 @@ func (h *SecurityHandler) listBans(w http.ResponseWriter, r *http.Request) {
 		where = " WHERE " + strings.Join(clauses, " AND ")
 	}
 	rows, err := h.DB.QueryContext(r.Context(),
-		`SELECT id, ip, domain, reason, source, edge_name, target_scope, asn, expires_at, strftime('%Y-%m-%dT%H:%M:%SZ', created_at) FROM security_bans`+where+` ORDER BY created_at DESC`,
+		`SELECT id, ip, domain, reason, source, edge_name, target_scope, asn, expires_at, strftime('%Y-%m-%dT%H:%M:%SZ', created_at), signals FROM security_bans`+where+` ORDER BY created_at DESC`,
 		args...)
 	if err != nil {
 		secJSONErr(w, err, http.StatusInternalServerError)
@@ -290,8 +299,8 @@ func (h *SecurityHandler) listBans(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var b security.Ban
 		var exp sql.NullString
-		var createdAt string
-		if err := rows.Scan(&b.ID, &b.IP, &b.Domain, &b.Reason, &b.Source, &b.EdgeName, &b.TargetScope, &b.ASN, &exp, &createdAt); err != nil {
+		var createdAt, signals string
+		if err := rows.Scan(&b.ID, &b.IP, &b.Domain, &b.Reason, &b.Source, &b.EdgeName, &b.TargetScope, &b.ASN, &exp, &createdAt, &signals); err != nil {
 			if h.Log != nil {
 				h.Log.Warn("security bans: scan", "err", err)
 			}
@@ -302,6 +311,7 @@ func (h *SecurityHandler) listBans(w http.ResponseWriter, r *http.Request) {
 			b.ExpiresAt = &s
 		}
 		b.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		b.Signals = security.DecodeBanSignals(signals)
 		item := banListItem{Ban: b}
 		if p, err := security.ParseTraceTarget(b.IP); err == nil {
 			_, item.Exempt = security.WhitelistCovering(whitelist, p)

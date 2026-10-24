@@ -279,7 +279,7 @@ func decodeEphor(raw []byte) error {
 			return fmt.Errorf("custom_lists.tls_fingerprints : %q invalide", f)
 		}
 	}
-	return nil
+	return c.Behavior.Validate()
 }
 
 // reflectFields dérive les champs d'un manifeste des étiquettes JSON d'une structure de configuration :

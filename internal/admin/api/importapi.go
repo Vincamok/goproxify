@@ -55,11 +55,44 @@ func (h *ImportHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ImportBackupMaxBytes borne le fichier de sauvegarde envoyé à l'aperçu et à l'import. Un snapshot avec les états de
+// passerelles et les secrets pèse facilement une centaine de Mo (docs/sauvegardes.md) ; l'ancienne borne de 32 Mio
+// faisait échouer l'import d'une ancienne infrastructure par un reset de connexion. Variable pour les tests.
+var ImportBackupMaxBytes int64 = 512 << 20
+
+// importBackupWindow est le temps laissé à l'envoi et au traitement d'une sauvegarde : au-delà des 30 s du serveur, qui
+// coupaient la connexion d'un fichier de plus de quelques dizaines de Mo sur un lien lent, ou d'une restauration longue.
+const importBackupWindow = 15 * time.Minute
+
+// extendDeadlines prolonge les délais de lecture et d'écriture de cette requête seulement.
+func extendDeadlines(w http.ResponseWriter) {
+	rc := http.NewResponseController(w)
+	d := time.Now().Add(importBackupWindow)
+	_ = rc.SetReadDeadline(d) // sans effet si un intermédiaire n'expose pas le contrôleur : les délais du serveur restent
+	_ = rc.SetWriteDeadline(d)
+}
+
+// readBackupBody lit le corps ; trop gros, il répond 413 avec la limite et le dit, au lieu de laisser la connexion se
+// fermer sur un envoi inachevé (le navigateur affichait alors ERR_CONNECTION_RESET).
+func readBackupBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, ImportBackupMaxBytes))
+	if err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			importJSONErr(w, fmt.Errorf("sauvegarde trop volumineuse (%d Mio au plus)", ImportBackupMaxBytes>>20), http.StatusRequestEntityTooLarge)
+		} else {
+			importJSONErr(w, err, http.StatusBadRequest)
+		}
+		return nil, false
+	}
+	return data, true
+}
+
 // backupPreview parse le JSON de sauvegarde et retourne le résumé (sans écrire en DB).
 func (h *ImportHandler) backupPreview(w http.ResponseWriter, r *http.Request) {
-	data, err := io.ReadAll(io.LimitReader(r.Body, 32<<20)) // 32 MB max
-	if err != nil {
-		importJSONErr(w, err, http.StatusBadRequest)
+	extendDeadlines(w)
+	data, ok := readBackupBody(w, r)
+	if !ok {
 		return
 	}
 	_, sum, err := importer.SummarizeBackup(data)
@@ -76,7 +109,13 @@ func (h *ImportHandler) backupApply(w http.ResponseWriter, r *http.Request) {
 		Data      json.RawMessage         `json:"data"`
 		Selection importer.ImportSelection `json:"selection"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<20)).Decode(&body); err != nil {
+	extendDeadlines(w)
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, ImportBackupMaxBytes)).Decode(&body); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			importJSONErr(w, fmt.Errorf("sauvegarde trop volumineuse (%d Mio au plus)", ImportBackupMaxBytes>>20), http.StatusRequestEntityTooLarge)
+			return
+		}
 		importJSONErr(w, err, http.StatusBadRequest)
 		return
 	}

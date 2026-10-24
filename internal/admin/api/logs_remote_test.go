@@ -1,11 +1,16 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net/url"
+	"path/filepath"
 	"testing"
 
+	admindb "github.com/vincamok/goproxify/internal/admin/db"
 	"github.com/vincamok/goproxify/internal/admin/edgeproxy"
+	"github.com/vincamok/goproxify/internal/admin/logs"
 	"github.com/vincamok/goproxify/internal/edge/logapi"
 )
 
@@ -114,5 +119,37 @@ func TestRemoteCursorRejectsGarbage(t *testing.T) {
 	}
 	if m, err := decodeRemoteCursor(""); err != nil || len(m) != 0 {
 		t.Errorf("jeton vide = %v, %v", m, err)
+	}
+}
+
+// La page Logs d'une passerelle envoie l'identifiant de sa fiche de nœud (son nom), pas celui de son jeton.
+func TestRemoteTargetsAcceptNodeRecordIDAndName(t *testing.T) {
+	db, err := admindb.Open(filepath.Join(t.TempDir(), "admin.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, e := range [][2]string{{"tok-a", "edge-a"}, {"tok-b", "edge-b"}} {
+		if _, err := db.Exec(`INSERT INTO tokens (id, token, role, node_name, node_endpoint) VALUES (?, ?, 'edge', ?, ?)`,
+			e[0], "tok-secret-"+e[0], e[1], "http://"+e[1]+":9000"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := &LogsHandler{DB: db}
+	for name, q := range map[string]url.Values{
+		"identifiant de jeton":  {"node_id": {"tok-b"}, "node_name": {"edge-b"}},
+		"fiche = nom du nœud":   {"node_id": {"edge-b"}, "node_name": {"edge-b"}},
+		"fiche à hex aléatoire": {"node_id": {"9f3c1a7e5d2b4c68"}, "node_name": {"edge-b"}},
+		"nom seul":              {"node_name": {"edge-b"}},
+	} {
+		got, err := h.remoteTargets(context.Background(), q)
+		if err != nil || len(got) != 1 || got[0].ID != "tok-b" {
+			t.Errorf("%s : cibles = %+v, err = %v ; attendu la seule passerelle tok-b", name, got, err)
+		}
+	}
+	p := logs.SearchParams{NodeID: "edge-b", NodeName: "edge-b"}
+	h.canonNodeID(context.Background(), &p)
+	if p.NodeID != "tok-b" {
+		t.Errorf("NodeID canonique = %q, attendu tok-b", p.NodeID)
 	}
 }

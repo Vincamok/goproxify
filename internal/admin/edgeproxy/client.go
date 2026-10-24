@@ -70,6 +70,11 @@ func NewClient() *Client {
 	return &Client{HTTP: ssrf.SelfHostedClient(15 * time.Second)}
 }
 
+// NewClientTimeout : client dont le délai couvre les appels les plus longs (classements de logs).
+func NewClientTimeout(d time.Duration) *Client {
+	return &Client{HTTP: ssrf.SelfHostedClient(d)}
+}
+
 type listResponse struct {
 	Production []*proxystore.Envelope `json:"production"`
 	Revisions  []*proxystore.Envelope `json:"revisions"`

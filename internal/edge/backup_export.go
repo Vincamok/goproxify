@@ -25,6 +25,14 @@ import (
 // (téléchargeables ou purement runtime).
 var backupSkipDirs = map[string]bool{"geoip": true, "logs": true, "threat-lists": true, "restore-tmp": true}
 
+// logsKept : le dossier des logs est exclu de la sauvegarde pour sa taille (ADR 0012 : la base se reconstitue côté Admin
+// pour ce qui l'intéresse, et les exports légaux se font avant), sauf les gels légaux : le registre et les archives
+// des lignes qu'ils gardent. Sans eux, une restauration lèverait les gels en silence et ces lignes seraient perdues.
+func logsKept(rel string) bool {
+	rel = filepath.ToSlash(rel)
+	return rel == "logs/legal-holds.json" || strings.HasPrefix(rel, "logs/held/")
+}
+
 // backupTmpPrefix : dossier de travail des copies SQLite, créé dans le volume de données (inscriptible
 // même quand le système de fichiers du conteneur est en lecture seule) et jamais exporté.
 const backupTmpPrefix = ".gpx-backup-"
@@ -82,16 +90,20 @@ func planBackup(root string) (entries []backupEntry, skipped []string, cleanup f
 		if rerr != nil || rel == "." {
 			return nil
 		}
+		slash := filepath.ToSlash(rel)
 		if d.IsDir() {
-			if backupSkipDirs[rel] || strings.HasPrefix(d.Name(), backupTmpPrefix) {
+			if slash == "logs" || slash == "logs/held" || strings.HasPrefix(slash, "logs/held/") {
+				return nil // on y descend : seuls les gels légaux y sont repris, voir logsKept
+			}
+			if backupSkipDirs[rel] || strings.HasPrefix(d.Name(), backupTmpPrefix) || strings.HasPrefix(slash, "logs/") {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if backupSkipFile(d.Name()) {
+		if backupSkipFile(d.Name()) || (strings.HasPrefix(slash, "logs/") && !logsKept(slash)) {
 			return nil
 		}
-		rel = filepath.ToSlash(rel)
+		rel = slash
 		info, ierr := d.Info()
 		if ierr != nil {
 			skipped = append(skipped, rel+" (illisible : "+ierr.Error()+")")
@@ -165,7 +177,10 @@ func safeRestorePath(root, rel string) (string, bool) {
 		return "", false
 	}
 	first := strings.SplitN(filepath.ToSlash(clean), "/", 2)[0]
-	if backupSkipDirs[first] || strings.HasPrefix(first, backupTmpPrefix) || backupSkipFile(filepath.Base(clean)) {
+	if first == "logs" && !logsKept(clean) {
+		return "", false
+	}
+	if (backupSkipDirs[first] && first != "logs") || strings.HasPrefix(first, backupTmpPrefix) || backupSkipFile(filepath.Base(clean)) {
 		return "", false
 	}
 	return filepath.Join(root, clean), true

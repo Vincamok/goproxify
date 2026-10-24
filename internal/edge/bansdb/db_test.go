@@ -6,6 +6,8 @@ package bansdb
 import (
 	"testing"
 	"time"
+
+	"github.com/vincamok/goproxify/internal/edge/router"
 )
 
 func TestUnbanOnlyLiftsBansPostedBeforeIt(t *testing.T) {
@@ -219,5 +221,36 @@ func TestEraseIPRemovesBansAndHistoryButKeepsTheUnban(t *testing.T) {
 	}
 	if un, _ := d.Unbans(); len(un) != 1 {
 		t.Fatalf("le déban doit rester : %v", un)
+	}
+}
+
+func TestBanSignalsRoundTrip(t *testing.T) {
+	d, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	signals := []router.BanSignal{{Name: "path", Points: 6, Value: "/wp-login.php"}, {Name: "error4xx", Points: 2.5}}
+	if err := d.UpsertRuntimeBan(&router.RuntimeBan{ID: "threat-1", IP: "203.0.113.5", Source: "threat", Signals: signals}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.UpsertBan("native-1", "203.0.113.6", "", "", "native", nil); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := d.ActiveBans()
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("%v %+v", err, rows)
+	}
+	for _, r := range rows {
+		switch r.ID {
+		case "threat-1":
+			if len(r.Signals) != 2 || r.Signals[0] != signals[0] || r.Signals[1] != signals[1] {
+				t.Fatalf("signaux relus : %+v", r.Signals)
+			}
+		case "native-1":
+			if len(r.Signals) != 0 {
+				t.Fatalf("un ban manuel n'a pas de signaux : %+v", r.Signals)
+			}
+		}
 	}
 }

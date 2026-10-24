@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/vincamok/goproxify/internal/asncompact"
 )
 
 const sample = "1.0.0.0\t1.0.0.255\t13335\tUS\tCLOUDFLARENET\n" +
@@ -231,5 +233,38 @@ func TestFindAndOverlaps(t *testing.T) {
 		if got := e.Overlaps(netip.MustParsePrefix(p)); got != want {
 			t.Errorf("Overlaps(%s) = %v, attendu %v", p, got, want)
 		}
+	}
+}
+
+// La base compacte poussée aux passerelles répond comme l'index complet, sans noms ni pays.
+func TestCompactGivesTheSameAnswersAsTheIndex(t *testing.T) {
+	idx := mustIndex(t)
+	data, version, err := idx.Compact()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := asncompact.Decode(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if db.Version() != version {
+		t.Fatalf("version %q / %q", db.Version(), version)
+	}
+	for _, ip := range []string{"1.0.0.9", "5.0.1.200", "5.0.8.100", "5.0.8.200", "9.3.3.3", "8.8.8.8", "1.0.2.2", "2001:db8::7"} {
+		a := netip.MustParseAddr(ip)
+		var want uint32
+		if e, ok := idx.ByIP(a); ok {
+			want = e.ASN
+		}
+		if got := db.Lookup(a); got != want {
+			t.Errorf("%s : base compacte AS%d, index complet AS%d", ip, got, want)
+		}
+	}
+}
+
+func TestStoreCompactDoesNotDownload(t *testing.T) {
+	s := NewStore(filepath.Join(t.TempDir(), "ip2asn.tsv.gz"), "http://127.0.0.1:1/never", nil)
+	if _, _, ok := s.Compact(context.Background()); ok {
+		t.Fatal("une base non installée n'est pas poussée : la passerelle ne doit pas déclencher un téléchargement")
 	}
 }

@@ -96,6 +96,7 @@ func TestPairing_SecretBruteForceIsLockedOut(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
+	declareAutoAccept(t, db, "edge", "edge-x")
 	s := &Server{db: db, log: slog.New(slog.NewTextHandler(io.Discard, nil)), loginLimit: newLoginLimiter()}
 
 	pair := func(remote, xff, secret string) int {

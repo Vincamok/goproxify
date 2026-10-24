@@ -4,6 +4,7 @@
 package threat
 
 import (
+	"github.com/vincamok/goproxify/internal/edge/router"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -20,7 +21,7 @@ func withFP(fp *tlsfp.Fingerprint) *http.Request {
 
 func TestCheckTLSFingerprint(t *testing.T) {
 	var banned []string
-	e := New(slog.Default(), func(ip, reason string, _ time.Time) { banned = append(banned, ip+" "+reason) })
+	e := New(slog.Default(), func(ip, reason string, _ time.Time, _ []router.BanSignal) { banned = append(banned, ip+" "+reason) })
 	e.UpdateConfig(Config{
 		Enabled: true,
 		Mode:    "block",
@@ -54,7 +55,7 @@ func TestCheckTLSFingerprint(t *testing.T) {
 
 func TestCheckTLSFingerprintDetectModeDoesNotBan(t *testing.T) {
 	banned := 0
-	e := New(slog.Default(), func(string, string, time.Time) { banned++ })
+	e := New(slog.Default(), func(string, string, time.Time, []router.BanSignal) { banned++ })
 	e.UpdateConfig(Config{Enabled: true, Mode: "detect", CustomLists: CustomListsConfig{TLSFingerprints: []string{"abc"}}})
 	blocked, reason := e.Check(withFP(&tlsfp.Fingerprint{JA3Hash: "abc"}), "1.1.1.1")
 	if blocked || reason != "threat: tls_fp" || banned != 0 {

@@ -9,6 +9,14 @@ import (
 	"time"
 )
 
+// BanSignal est un signal qui a contribué à un ban automatique : son nom (`path`, `rate`, `error4xx`…), les points qu'il
+// a apportés et la valeur observée. La somme des points explique la décision (ADR 0011).
+type BanSignal struct {
+	Name   string  `json:"name"`
+	Points float64 `json:"points"`
+	Value  string  `json:"value,omitempty"`
+}
+
 // RuntimeBan est un bannissement IP actif poussé depuis Admin.
 type RuntimeBan struct {
 	ID        string     `json:"id"`
@@ -18,6 +26,8 @@ type RuntimeBan struct {
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	// Scope : passerelles visées par un ban de l'Admin (nom de la passerelle ou "group:<nom>") ; vide = toutes.
 	Scope string `json:"scope,omitempty"`
+	// Signals : pourquoi un moteur automatique (Ephor, WAF) a banni l'IP ; vide pour les autres sources.
+	Signals []BanSignal `json:"signals,omitempty"`
 
 	ip   net.IP
 	ipnet *net.IPNet

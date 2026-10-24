@@ -8,12 +8,15 @@ package bansdb
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/vincamok/goproxify/internal/edge/router"
 )
 
 const (
@@ -101,6 +104,7 @@ func migrate(db *sql.DB) error {
 	}
 	// Colonne ajoutée après coup : l'erreur « duplicate column » sur une base à jour est attendue.
 	_, _ = db.Exec(`ALTER TABLE bans ADD COLUMN scope TEXT NOT NULL DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE bans ADD COLUMN signals TEXT NOT NULL DEFAULT ''`)
 	return nil
 }
 
@@ -114,15 +118,30 @@ func (d *DB) UpsertBan(id, ip, domain, reason, source string, expiresAt *time.Ti
 // UpsertScopedBan insère ou remplace un ban actif ; scope (nom de passerelle ou "group:<nom>") est conservé
 // pour ne pas le transmettre aux pairs qu'il ne vise pas.
 func (d *DB) UpsertScopedBan(id, ip, domain, reason, source, scope string, expiresAt *time.Time) error {
+	return d.upsert(id, ip, domain, reason, source, scope, nil, expiresAt)
+}
+
+// UpsertRuntimeBan insère ou remplace un ban actif avec les signaux qui l'expliquent (Ephor, WAF).
+func (d *DB) UpsertRuntimeBan(b *router.RuntimeBan) error {
+	return d.upsert(b.ID, b.IP, "", b.Reason, b.Source, b.Scope, b.Signals, b.ExpiresAt)
+}
+
+func (d *DB) upsert(id, ip, domain, reason, source, scope string, signals []router.BanSignal, expiresAt *time.Time) error {
 	var exp *string
 	if expiresAt != nil && !expiresAt.IsZero() {
 		s := expiresAt.UTC().Format(time.RFC3339)
 		exp = &s
 	}
+	var sig string
+	if len(signals) > 0 {
+		if raw, err := json.Marshal(signals); err == nil {
+			sig = string(raw)
+		}
+	}
 	_, err := d.db.Exec(
-		`INSERT OR REPLACE INTO bans (id, ip, domain, reason, source, scope, expires_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		id, ip, domain, reason, source, scope, exp,
+		`INSERT OR REPLACE INTO bans (id, ip, domain, reason, source, scope, signals, expires_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, ip, domain, reason, source, scope, sig, exp,
 	)
 	return err
 }
@@ -142,7 +161,7 @@ func (d *DB) DeleteBansBySource(source string) error {
 // ActiveBans retourne tous les bans non expirés.
 func (d *DB) ActiveBans() ([]BanRow, error) {
 	rows, err := d.db.Query(
-		`SELECT id, ip, domain, reason, source, expires_at, created_at, scope
+		`SELECT id, ip, domain, reason, source, expires_at, created_at, scope, signals
 		 FROM bans WHERE expires_at IS NULL OR expires_at > ?
 		 ORDER BY created_at DESC`,
 		nowExpiry(),
@@ -226,16 +245,20 @@ type BanRow struct {
 	ExpiresAt *time.Time
 	CreatedAt time.Time
 	Scope     string
+	Signals   []router.BanSignal
 }
 
 func scanBanRows(rows *sql.Rows) ([]BanRow, error) {
 	var out []BanRow
 	for rows.Next() {
 		var r BanRow
-		var exp, created string
+		var exp, created, signals string
 		var expNull sql.NullString
-		if err := rows.Scan(&r.ID, &r.IP, &r.Domain, &r.Reason, &r.Source, &expNull, &created, &r.Scope); err != nil {
+		if err := rows.Scan(&r.ID, &r.IP, &r.Domain, &r.Reason, &r.Source, &expNull, &created, &r.Scope, &signals); err != nil {
 			return nil, err
+		}
+		if signals != "" {
+			_ = json.Unmarshal([]byte(signals), &r.Signals)
 		}
 		if expNull.Valid {
 			exp = expNull.String

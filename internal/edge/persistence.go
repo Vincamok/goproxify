@@ -22,6 +22,7 @@ import (
 	edgere "github.com/vincamok/goproxify/internal/edge/rulesengine"
 	"github.com/vincamok/goproxify/internal/edge/threat"
 	"github.com/vincamok/goproxify/internal/edge/waf"
+	"github.com/vincamok/goproxify/internal/edge/waf/behavior"
 	"github.com/vincamok/goproxify/internal/edge/tunnel"
 	edgews "github.com/vincamok/goproxify/internal/edge/ws"
 )
@@ -69,7 +70,9 @@ func (s *Server) applyBans(list []*router.RuntimeBan) {
 			if src == "" {
 				src = "admin"
 			}
-			if err := s.bansDB.UpsertScopedBan(b.ID, b.IP, "", b.Reason, src, b.Scope, b.ExpiresAt); err != nil {
+			rb := *b
+			rb.Source = src
+			if err := s.bansDB.UpsertRuntimeBan(&rb); err != nil {
 				s.log.Warn("edge: persistance ban admin DB échouée", "err", err)
 			}
 		}
@@ -122,6 +125,80 @@ func (s *Server) loadThreatConfigFromDisk() {
 	s.threatEngine.UpdateConfig(cfg)
 	s.refreshEphorWhitelists()
 	s.log.Info(threat.Name+": config chargée depuis le disque", "enabled", cfg.Enabled)
+}
+
+// threatStatePath est la copie locale chiffrée des scores et fenêtres d'erreurs d'Ephor.
+func threatStatePath() string {
+	if p := os.Getenv("GPX_THREAT_STATE_PATH"); p != "" {
+		return p
+	}
+	return "/etc/goproxify/threat-state.gpx"
+}
+
+// loadThreatStateFromDisk restaure les scores d'Ephor au démarrage, sans l'Admin : un redémarrage ne remet plus à zéro
+// les IP en cours de suspicion.
+func (s *Server) loadThreatStateFromDisk() {
+	var st threat.State
+	ok, err := s.cache.LoadFile(threatStatePath(), &st)
+	if err != nil {
+		s.log.Warn(threat.Name+": état local illisible — compteurs repartis de zéro", "err", err)
+		return
+	}
+	if !ok {
+		return
+	}
+	s.threatEngine.RestoreState(st)
+	s.log.Info(threat.Name+": compteurs restaurés depuis le disque", "scores", len(st.Scores), "erreurs", len(st.Errors), "rate", len(st.RateTriggers))
+}
+
+// behaviorStatePath est la copie locale chiffrée du magasin comportemental (notes, historique propre, références apprises).
+func behaviorStatePath() string {
+	if p := os.Getenv("GPX_BEHAVIOR_STATE_PATH"); p != "" {
+		return p
+	}
+	return "/etc/goproxify/behavior-state.gpx"
+}
+
+func (s *Server) loadBehaviorStateFromDisk() {
+	if s.behavior == nil {
+		return
+	}
+	var st behavior.State
+	ok, err := s.cache.LoadFile(behaviorStatePath(), &st)
+	if err != nil {
+		s.log.Warn(threat.Name+": état comportemental local illisible — il repart de zéro", "err", err)
+		return
+	}
+	if !ok {
+		return
+	}
+	s.behavior.ImportState(st)
+	s.log.Info(threat.Name+": état comportemental restauré", "notes", len(st.Profiles.Entries), "historiques", len(st.Trust), "routes", len(st.Refs))
+}
+
+func (s *Server) saveBehaviorState() {
+	if s.behavior == nil {
+		return
+	}
+	if err := s.cache.SaveFile(behaviorStatePath(), s.behavior.ExportState()); err != nil {
+		s.log.Warn(threat.Name+": sauvegarde de l'état comportemental échouée", "err", err)
+	}
+}
+
+// persistEphorState réécrit les copies locales d'Ephor sans attendre le prochain tour de sauvegarde : après un ordre
+// d'effacement, un redémarrage dans l'intervalle ne doit pas ramener le score ni l'historique de l'IP effacée.
+func (s *Server) persistEphorState() {
+	s.saveThreatState()
+	s.saveBehaviorState()
+}
+
+func (s *Server) saveThreatState() {
+	if s.threatEngine == nil {
+		return
+	}
+	if err := s.cache.SaveFile(threatStatePath(), s.threatEngine.SnapshotState()); err != nil {
+		s.log.Warn(threat.Name+": sauvegarde de l'état échouée", "err", err)
+	}
 }
 
 // wafConfigPath est la copie locale chiffrée de l'interrupteur du WAF poussé par l'Admin.
@@ -509,9 +586,8 @@ func (s *Server) autosaveLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			s.saveCacheNow()
-			if err := s.wafEngine.SaveSnapshot("/etc/goproxify/waf-behavior.json"); err != nil {
-				s.log.Warn("waf: autosave snapshot échoué", "err", err)
-			}
+			s.saveThreatState()
+			s.saveBehaviorState()
 		}
 	}
 }
@@ -646,4 +722,40 @@ func (s *Server) ocspLoop(ctx context.Context) {
 		}
 	}
 	st.Run(ctx)
+}
+
+// trafficWindow est la fenêtre du débit récent envoyé à l'Admin ; trafficEvery, son rythme (celui de la sonde de la
+// carte de topologie).
+const (
+	trafficWindow = 60 * time.Second
+	trafficEvery  = 5 * time.Second
+)
+
+// trafficLoop envoie à l'Admin le débit de la dernière minute : la carte de topologie ne peut plus le tirer des lignes
+// d'accès, que l'Admin ne reçoit plus.
+func (s *Server) trafficLoop(ctx context.Context) {
+	if s.logStore == nil {
+		return
+	}
+	ticker := time.NewTicker(trafficEvery)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			qctx, cancel := context.WithTimeout(ctx, trafficEvery)
+			total, blocked, errs, err := s.logStore.RecentCounts(qctx, time.Now().Add(-trafficWindow))
+			cancel()
+			if err != nil {
+				continue
+			}
+			msg, err := edgews.NewMessage(0, edgews.TypeEdgeTraffic, edgews.EdgeTrafficPayload{
+				NodeName: s.cfg.Identity.NodeName, WindowSec: int(trafficWindow.Seconds()), Requests: total, Blocked: blocked, Errors: errs,
+			})
+			if err == nil {
+				s.wsHub.BroadcastToAdmins(msg)
+			}
+		}
+	}
 }

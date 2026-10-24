@@ -202,16 +202,9 @@ func (s *Server) handleRejectProxyRevision(w http.ResponseWriter, r *http.Reques
 
 func (s *Server) handleDeleteFileProxy(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if err := s.proxyStore.DeleteProdByID(id); err != nil && !errors.Is(err, proxystore.ErrNotFound) {
+	if err := s.removeFileProxy(id, time.Now().UTC()); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
-	}
-	if isImplicitRoute(id) {
-		// Supprimer la surcouche rend la route à son générateur ; la route elle-même disparaît avec son réglage d'origine.
-		s.refreshImplicitRoute(id)
-	} else {
-		s.table.Delete(id)
-		s.invalidateRouteCache(id)
 	}
 	metrics.Edge.RouteCount.Set(float64(s.table.Len()))
 	s.saveCache()

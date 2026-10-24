@@ -268,6 +268,9 @@ func buildFromDB(ctx context.Context, db *sql.DB) (*Architecture, error) {
 	return &Architecture{SchemaVersion: schemaVersion, Nodes: nodes, Domains: domains}, nil
 }
 
+// DomainsFromDB liste les domaines tels que la base les tient.
+func DomainsFromDB(ctx context.Context, db *sql.DB) ([]DomainEntry, error) { return loadDomains(ctx, db) }
+
 func loadDomains(ctx context.Context, db *sql.DB) ([]DomainEntry, error) {
 	drows, err := db.QueryContext(ctx,
 		`SELECT id, domain, edge_id, dns_provider, COALESCE(dns_credentials,'{}'),

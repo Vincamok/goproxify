@@ -4,9 +4,11 @@
 package mcp
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,5 +68,63 @@ func TestListLogsFiltersByTLSFingerprint(t *testing.T) {
 	entries := out.([]map[string]any)
 	if len(entries) != 2 || entries[0]["tls_ja4"] != "t13d1516h2_a_b" || entries[0]["tls_ja3"] != "ja3x" {
 		t.Fatalf("filtre JA4 : %v", entries)
+	}
+}
+
+// list_logs source=edge interroge les passerelles avec les mêmes filtres, rend la page fusionnée et dit ce qui manque.
+func TestListLogsFromTheGateways(t *testing.T) {
+	var query string
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"entries":[{"id":7,"kind":"access","ts":"2026-10-21T10:00:09.000000Z","level":"warn","component":"edge",` +
+			`"domain":"a.test","method":"GET","path":"/x","status":403,"ip":"203.0.113.0","ip_truncated":true,"request_id":"req-1"}],` +
+			`"next":"c","has_more":true,"partial":false}`))
+	}))
+	defer gw.Close()
+	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "boom", 500) }))
+	defer down.Close()
+
+	db, err := admindb.Open(filepath.Join(t.TempDir(), "admin.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for id, row := range map[string][2]string{"id-a": {"gw-a", gw.URL}, "id-b": {"gw-b", down.URL}} {
+		if _, err := db.Exec(`INSERT INTO tokens (id, token, role, node_name, node_endpoint) VALUES (?, ?, 'edge', ?, ?)`, id, "tok-"+id, row[0], row[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	h := &Handler{DB: db}
+	out, err := h.toolListLogsEdges(httptest.NewRequest(http.MethodPost, "/mcp", nil), map[string]any{
+		"source": "edge", "domain": "a.test", "request_id": "req-1", "level": "warn",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"domain=a.test", "request_id=req-1", "level=warn"} {
+		if !strings.Contains(query, want) {
+			t.Errorf("la passerelle doit recevoir %q : %q", want, query)
+		}
+	}
+	res := out.(map[string]any)
+	b, _ := json.Marshal(res)
+	for _, want := range []string{`"source":"edge"`, `"node_name":"gw-a"`, `"ip_truncated":true`, `"gw-b"`, `"unreachable"`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("la réponse doit contenir %s : %s", want, b)
+		}
+	}
+	if res["has_more"] != true || res["cursor"] == "" {
+		t.Errorf("has_more=%v cursor=%q : une page suivante doit être proposée", res["has_more"], res["cursor"])
+	}
+}
+
+func TestListLogsToolDeclaresTheGatewaySource(t *testing.T) {
+	b, _ := json.Marshal(tools)
+	for _, want := range []string{`"source"`, `"cursor"`, `"node"`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("le schéma de list_logs doit déclarer %s", want)
+		}
 	}
 }

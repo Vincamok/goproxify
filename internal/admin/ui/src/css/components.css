@@ -1788,6 +1788,7 @@ textarea.input { resize: vertical; min-height: 80px; }
 /* ── Prism : centre de commande ───────────────────────────────────────── */
 .prism-filters{position:sticky;top:0;z-index:20;box-shadow:0 4px 14px rgba(0,0,0,.05)}
 .prism-muted{color:var(--text3);font-size:12px;margin:0}
+.prism-note{margin:0 0 10px;padding:8px 12px;border-radius:8px;font-size:12px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.4);color:var(--text)}
 .prism-kpi{position:relative;overflow:hidden}
 .prism-spark{position:absolute;right:0;bottom:0;width:55%;height:38px;pointer-events:none}
 .prism-hero{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:16px;margin-bottom:16px}

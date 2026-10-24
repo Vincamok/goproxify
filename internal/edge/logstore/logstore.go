@@ -113,6 +113,8 @@ type Options struct {
 	// OnError reçoit les échecs d'écriture, au plus un par minute.
 	OnError func(error)
 	Now     func() time.Time
+	// ReadOnly : ouvre pour lire seulement (export local), sans goroutine d'écriture ni purge.
+	ReadOnly bool
 }
 
 type item struct {
@@ -136,6 +138,7 @@ type Store struct {
 	closed  atomic.Bool
 	dropped atomic.Uint64
 
+	retMu   sync.RWMutex // protège opts.Retention, que SetRetention change
 	mu      sync.Mutex
 	handles map[string]*handle
 	shut    bool // Close a fermé les fichiers : plus aucun n'est rouvert
@@ -193,6 +196,12 @@ func Open(opts Options) (*Store, error) {
 	if len(opts.IPKey) == ipcrypt.KeySize {
 		s.key = opts.IPKey
 	}
+	if opts.ReadOnly {
+		// Ni écriture, ni purge, ni cumuls : une commande locale peut lire la base d'une passerelle en marche sans
+		// appliquer une rétention qui serait celle de sa propre configuration.
+		close(s.done)
+		return s, nil
+	}
 	s.scanMinuteMax()
 	go s.run()
 	return s, nil
@@ -200,7 +209,7 @@ func Open(opts Options) (*Store, error) {
 
 // Add met une ligne en file d'écriture sans bloquer. false : la ligne est perdue (file pleine, base fermée).
 func (s *Store) Add(kind Kind, e Entry) bool {
-	if s.closed.Load() {
+	if s.closed.Load() || s.opts.ReadOnly {
 		return false
 	}
 	select {
@@ -518,8 +527,10 @@ func (s *Store) files(kind Kind) []periodFile {
 	return out
 }
 
+// AUTOINCREMENT : un identifiant n'est jamais réattribué après une suppression (effacement RGPD d'une ligne de queue,
+// purge) ; sans cela un consommateur dont le curseur a dépassé la ligne supprimée sauterait la ligne qui la remplace.
 const schema = `CREATE TABLE IF NOT EXISTS entries (
-	id           INTEGER PRIMARY KEY,
+	id           INTEGER PRIMARY KEY AUTOINCREMENT,
 	ts           TEXT NOT NULL,
 	level        TEXT NOT NULL DEFAULT '',
 	component    TEXT NOT NULL DEFAULT '',
@@ -619,18 +630,62 @@ const selectCols = `id, ts, level, component, domain, method, path, status, byte
 // ReadAfter retourne jusqu'à limit lignes d'identifiant supérieur à after, dans l'ordre : le curseur d'un
 // consommateur (rejeu vers l'Admin, SIEM). after = 0 : depuis le début.
 func (s *Store) ReadAfter(kind Kind, after int64, limit int) ([]Row, error) {
-	return s.readAfter(kind, after, limit, false)
+	rows, _, err := s.readAfter(kind, after, limit, false, false)
+	return rows, err
+}
+
+// LastID rend le dernier identifiant attribué pour un type de logs (0 : aucune ligne n'a jamais été écrite). C'est le
+// compteur d'AUTOINCREMENT du dernier fichier qui en a écrit, donc il ne recule pas quand des lignes sont supprimées :
+// un consommateur dont le curseur le dépasse a été servi par une autre base que celle-ci (remplacée ou restaurée).
+// Un fichier créé avant l'AUTOINCREMENT n'a pas même la table sqlite_sequence : MAX(id) le remplace, sinon sa fin
+// passerait pour 0.
+func (s *Store) LastID(kind Kind) int64 {
+	files := s.files(kind)
+	for i := len(files) - 1; i >= 0; i-- {
+		f := files[i]
+		db, err := s.open(kind, f.start)
+		if err != nil {
+			continue
+		}
+		var local, counter int64
+		if err := db.QueryRow(`SELECT COALESCE(MAX(id), 0) FROM entries`).Scan(&local); err != nil {
+			continue
+		}
+		if db.QueryRow(`SELECT seq FROM sqlite_sequence WHERE name = 'entries'`).Scan(&counter) == nil {
+			local = max(local, counter)
+		}
+		if local == 0 {
+			continue
+		}
+		return f.index<<idShift | local
+	}
+	return 0
+}
+
+// ReadSecurityAfter lit comme ReadAfterRevealed mais ne rend que les événements de sécurité (accès signalés par le
+// WAF ou Ephor). through est la position jusqu'où l'on a regardé : la dernière ligne rendue si le lot est plein,
+// sinon la fin de la base au début de la lecture. Le consommateur y avance son curseur, ce qui lui évite de relire
+// les lignes ordinaires qu'on a écartées.
+func (s *Store) ReadSecurityAfter(kind Kind, after int64, limit int) (rows []Row, through int64, err error) {
+	return s.readAfter(kind, after, limit, true, true)
 }
 
 // ReadAfterRevealed lit comme ReadAfter et déchiffre l'IP réelle des lignes pseudonymisées dans Entry.RealIP :
 // pour le flux vers l'Admin, qui la chiffre encore de son côté tant qu'il garde les accès.
 func (s *Store) ReadAfterRevealed(kind Kind, after int64, limit int) ([]Row, error) {
-	return s.readAfter(kind, after, limit, true)
+	rows, _, err := s.readAfter(kind, after, limit, true, false)
+	return rows, err
 }
 
-func (s *Store) readAfter(kind Kind, after int64, limit int, reveal bool) ([]Row, error) {
+func (s *Store) readAfter(kind Kind, after int64, limit int, reveal, securityOnly bool) ([]Row, int64, error) {
 	if limit <= 0 {
-		return nil, nil
+		return nil, after, nil
+	}
+	// En mode sécurité, la lecture s'arrête à la fin de la base telle qu'elle était au début : through peut alors
+	// dire sans risque que tout ce qui précède a été examiné, même si des lignes arrivent pendant la lecture.
+	var upTo int64
+	if securityOnly {
+		upTo = s.LastID(kind)
 	}
 	startIdx, localAfter := after>>idShift, after&idMask
 	var out []Row
@@ -638,23 +693,34 @@ func (s *Store) readAfter(kind Kind, after int64, limit int, reveal bool) ([]Row
 		if f.index < startIdx {
 			continue
 		}
+		if securityOnly && f.index > upTo>>idShift {
+			break
+		}
 		la := int64(0)
 		if f.index == startIdx {
 			la = localAfter
 		}
 		db, err := s.open(kind, f.start)
 		if err != nil {
-			return out, err
+			return out, after, err
 		}
-		rows, err := db.Query(`SELECT `+selectCols+` FROM entries WHERE id > ? ORDER BY id LIMIT ?`, la, limit-len(out))
+		query, args := `SELECT `+selectCols+` FROM entries WHERE id > ?`, []any{la}
+		if securityOnly {
+			if f.index == upTo>>idShift {
+				query += ` AND id <= ?`
+				args = append(args, upTo&idMask)
+			}
+			query += ` AND (waf_matches != '' OR threat_signal != '')`
+		}
+		rows, err := db.Query(query+` ORDER BY id LIMIT ?`, append(args, limit-len(out))...)
 		if err != nil {
-			return out, err
+			return out, after, err
 		}
 		for rows.Next() {
 			r, enc, err := scanRow(rows, f.index)
 			if err != nil {
 				rows.Close()
-				return out, err
+				return out, after, err
 			}
 			if reveal && enc != "" && s.key != nil {
 				if ip, err := ipcrypt.Decrypt(s.key, enc); err == nil {
@@ -666,13 +732,22 @@ func (s *Store) readAfter(kind Kind, after int64, limit int, reveal bool) ([]Row
 		err = rows.Err()
 		rows.Close()
 		if err != nil {
-			return out, err
+			return out, after, err
 		}
 		if len(out) >= limit {
 			break
 		}
 	}
-	return out, nil
+	through := after
+	switch {
+	case len(out) >= limit:
+		through = out[len(out)-1].ID
+	case securityOnly && upTo > after:
+		through = upTo
+	case len(out) > 0:
+		through = out[len(out)-1].ID
+	}
+	return out, through, nil
 }
 
 func scanRow(rows *sql.Rows, index int64) (Row, string, error) {
@@ -726,8 +801,8 @@ func (s *Store) RevealIP(kind Kind, id int64) (string, error) {
 
 // --- Effacement et rétention ----------------------------------------------------------------------------
 
-// EraseIP supprime des accès les lignes d'une IP, qu'elle soit en clair ou pseudonymisée (droit à l'effacement
-// RGPD), et retourne leur nombre. Le contenu supprimé est effacé des pages (secure_delete) et du journal WAL.
+// EraseIP supprime des accès et des logs système les lignes d'une IP, qu'elle soit en clair ou pseudonymisée (droit
+// à l'effacement RGPD), et retourne leur nombre. Le contenu supprimé est effacé des pages (secure_delete) et du journal WAL.
 func (s *Store) EraseIP(ip string) (int64, error) {
 	canon := ipcrypt.CanonicalIP(ip)
 	if canon == "" {
@@ -738,8 +813,11 @@ func (s *Store) EraseIP(ip string) (int64, error) {
 		mac = ipcrypt.IPIndex(s.key, canon)
 	}
 	var total int64
-	for _, f := range s.files(KindAccess) {
-		db, err := s.open(KindAccess, f.start)
+	var files []periodFile
+	files = append(files, s.files(KindAccess)...)
+	files = append(files, s.files(KindSystem)...)
+	for _, f := range files {
+		db, err := s.open(f.kind, f.start)
 		if err != nil {
 			return total, err
 		}
@@ -758,16 +836,44 @@ func (s *Store) EraseIP(ip string) (int64, error) {
 			_, _ = db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
 		}
 	}
-	return total, nil
+	// Un ordre d'effacement vaut aussi pour les lignes qu'un gel filtré a gardées.
+	n, err := s.eraseHeld(canon, mac)
+	return total + n, err
 }
 
 // Purge applique la rétention : un fichier dont la période est finie depuis plus que la durée est supprimé ;
 // dans le fichier à cheval sur la limite, les lignes plus anciennes sont supprimées une à une.
 func (s *Store) Purge(now time.Time) {
 	s.pruneIPErrors(now)
+	holds, err := s.Holds()
+	if err != nil {
+		// Un registre de gels illisible ne doit jamais valoir « aucun gel » : rien n'est purgé tant qu'il l'est.
+		s.report(err)
+		return
+	}
 	for _, kind := range []Kind{KindAccess, KindSystem} {
-		cutoff := now.Add(-s.opts.Retention[kind])
+		cutoff := now.Add(-s.Retention(kind))
 		for _, f := range s.files(kind) {
+			if frozen(holds, kind, f.start) {
+				continue
+			}
+			// Un fichier qui va être supprimé ou entamé : les lignes qu'un gel filtré vise sont d'abord gardées. Si la copie
+			// échoue, le fichier reste : mieux vaut garder trop que perdre ce qu'une procédure réclame.
+			if end := kind.periodEnd(f.start); !end.After(cutoff) || f.start.Before(cutoff) {
+				kept := true
+				for _, h := range holds {
+					if h.filtered() {
+						if err := s.preserveFile(h, kind, f.start); err != nil {
+							s.report(err)
+							kept = false
+							break
+						}
+					}
+				}
+				if !kept {
+					continue
+				}
+			}
 			switch end := kind.periodEnd(f.start); {
 			case !end.After(cutoff):
 				s.removeFile(f.path)
@@ -802,4 +908,41 @@ func (s *Store) removeFile(path string) {
 			s.report(err)
 		}
 	}
+}
+
+// Retention rend la durée de conservation d'un type de logs.
+func (s *Store) Retention(kind Kind) time.Duration {
+	s.retMu.RLock()
+	defer s.retMu.RUnlock()
+	return s.opts.Retention[kind]
+}
+
+// SetRetention change la durée de conservation d'un type de logs ; la prochaine purge (toutes les heures) l'applique.
+// Une durée nulle ou négative est ignorée.
+func (s *Store) SetRetention(kind Kind, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	s.retMu.Lock()
+	defer s.retMu.Unlock()
+	s.opts.Retention[kind] = d
+}
+
+// PositionAt rend la position juste avant la première ligne d'un type dont la date est t ou plus : un consommateur
+// qui y part lit tout ce qui date de t ou après. 0 : depuis le début. À la fin de la base (rien d'aussi récent),
+// la dernière position.
+func (s *Store) PositionAt(kind Kind, t time.Time) int64 {
+	cut := t.UTC().Format(tsLayout)
+	for _, f := range s.files(kind) {
+		db, err := s.open(kind, f.start)
+		if err != nil {
+			continue
+		}
+		var first sql.NullInt64
+		if db.QueryRow(`SELECT MIN(id) FROM entries WHERE ts >= ?`, cut).Scan(&first) != nil || !first.Valid {
+			continue
+		}
+		return f.index<<idShift | (first.Int64 - 1)
+	}
+	return s.LastID(kind)
 }

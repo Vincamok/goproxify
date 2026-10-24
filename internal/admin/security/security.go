@@ -29,6 +29,8 @@ type Ban struct {
 	ASN uint32 `json:"asn,omitempty"`
 	ExpiresAt   *string   `json:"expires_at"`
 	CreatedAt   time.Time `json:"created_at"`
+	// Signals : pourquoi Ephor ou le WAF a banni l'IP (signal, points, valeur observée) ; vide pour les autres sources.
+	Signals []router.BanSignal `json:"signals,omitempty"`
 }
 
 // NormalizeBanExpiry valide une expiration RFC3339 reçue d'un client et la ramène en UTC à la

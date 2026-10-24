@@ -157,3 +157,28 @@ func TestOrphansIgnoreSilentEdges(t *testing.T) {
 		t.Fatalf("seul « gone » est orphelin (son conteneur n'est plus annoncé par une passerelle qui répond), obtenu %+v", got)
 	}
 }
+
+// Un conteneur arrêté n'a pas disparu : le proxy converti depuis lui n'est pas orphelin, et le conteneur inactif ne se
+// convertit pas (il n'a pas de config de proxy).
+func TestOrphansIgnoreInactiveContainers(t *testing.T) {
+	cfg, _ := json.Marshal(router.Route{ID: "stopped", Host: "stopped.example.fr", Origin: &router.RouteOrigin{ID: "portainer:1:aaaaaaaaaaaa:stopped.example.fr", Edge: "edge-1"}})
+	proxies := []*proxystore.Envelope{{ID: "stopped", Host: "stopped.example.fr", Enabled: true, Config: cfg}}
+	inactive := `[{"id":"inactive:portainer:1:aaaaaaaaaaaa:stopped.example.fr","host":"stopped.example.fr","backends":[],"source":"portainer","agent_name":"ag","inactive":true,"state":"exited"}]`
+	edge := fakeDiscoveryEdge(t, inactive, proxies)
+	h := discoveryHandler(t, map[string]string{"edge-1": edge.URL})
+
+	got, err := h.Orphans(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("un conteneur arrêté ne rend pas son proxy orphelin : %+v", got)
+	}
+	items := h.FetchFromEdges(context.Background())
+	if len(items) != 1 || !items[0].Inactive || items[0].State != "exited" {
+		t.Fatalf("le conteneur inactif est listé avec son état : %+v", items)
+	}
+	if _, err := h.Find(context.Background(), "stopped.example.fr", ""); err != ErrContainerNotFound {
+		t.Fatalf("un conteneur inactif ne se convertit pas : %v", err)
+	}
+}

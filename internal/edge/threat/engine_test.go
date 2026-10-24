@@ -5,6 +5,7 @@ package threat
 
 import (
 	"fmt"
+	"github.com/vincamok/goproxify/internal/edge/router"
 	"log/slog"
 	"net/http/httptest"
 	"testing"
@@ -152,7 +153,7 @@ func TestScoreThreshold(t *testing.T) {
 
 func TestRecordStatusDetectMode(t *testing.T) {
 	var banned bool
-	e := New(slog.Default(), func(ip, reason string, expires time.Time) {
+	e := New(slog.Default(), func(ip, reason string, expires time.Time, _ []router.BanSignal) {
 		banned = true
 	})
 	e.UpdateConfig(Config{

@@ -7,6 +7,7 @@ package threat
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"math"
 	"net"
@@ -14,10 +15,13 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	edgelog "github.com/vincamok/goproxify/internal/edge/logger"
 	"github.com/vincamok/goproxify/internal/edge/logthrottle"
+	"github.com/vincamok/goproxify/internal/edge/router"
 	"github.com/vincamok/goproxify/internal/edge/tlsfp"
+	"github.com/vincamok/goproxify/internal/edge/waf/behavior"
 )
 
 // Name est l'identifiant affiché dans les logs pour ce moteur.
@@ -35,13 +39,42 @@ func SignalFromContext(ctx context.Context) string {
 }
 
 // BanCallback est appelé quand le moteur détecte une menace et doit bannir une IP.
-// Le caller (server.go) ajoute le ban au BanStore et le notifie à Admin.
-type BanCallback func(ip, reason string, expires time.Time)
+// Le caller (server.go) ajoute le ban au BanStore et le notifie à Admin. signals dit pourquoi : chaque signal avec ses
+// points et la valeur observée, de sorte que leur somme explique la décision (ADR 0011).
+type BanCallback func(ip, reason string, expires time.Time, signals []router.BanSignal)
 
 // signal représente un critère déclenché avec son score.
 type signal struct {
 	reason string
 	score  int
+	value  string // ce qui a déclenché le signal (chemin, User-Agent, empreinte…), borné
+}
+
+// maxSignalValue borne la valeur affichée d'un signal : elle vient de la requête, donc de l'attaquant.
+const maxSignalValue = 120
+
+// clipValue borne une valeur observée et en retire les caractères de contrôle.
+func clipValue(v string) string {
+	r := make([]rune, 0, len(v))
+	for _, c := range v {
+		if len(r) == maxSignalValue {
+			r = append(r, '…')
+			break
+		}
+		if unicode.IsControl(c) {
+			c = '?'
+		}
+		r = append(r, c)
+	}
+	return string(r)
+}
+
+func banSignals(signals []signal) []router.BanSignal {
+	out := make([]router.BanSignal, len(signals))
+	for i, s := range signals {
+		out[i] = router.BanSignal{Name: s.reason, Points: float64(s.score), Value: s.value}
+	}
+	return out
 }
 
 // scoreForReason retourne le score par défaut selon la raison.
@@ -102,8 +135,9 @@ type Engine struct {
 
 	globalBkt *globalBucket // limiteur global DDoS (nil = désactivé)
 
-	banFn BanCallback
-	sim   bool // rejeu hors production : ni métriques Prometheus ni effets de bord
+	banFn    BanCallback
+	sim      bool            // rejeu hors production : ni métriques Prometheus ni effets de bord
+	behavior *behavior.Store // magasin comportemental de la passerelle, commun avec le WAF (nil en simulation)
 
 	priorBans func(ip string, since time.Time) int // bans Ephor précédents d'une IP (bans graduels)
 
@@ -164,7 +198,9 @@ func (e *Engine) UpdateConfig(cfg Config) {
 	if cfg.Tarpit.Enabled && (e.tarpitSlots == nil || cap(e.tarpitSlots) != cfg.Tarpit.slots()) {
 		e.tarpitSlots = make(chan struct{}, cfg.Tarpit.slots())
 	}
+	st := e.behavior
 	e.mu.Unlock()
+	e.applyBehaviorConfig(st, cfg)
 
 	if cfg.Enabled {
 		e.lists.loadFromDisk(cfg.Lists)
@@ -232,31 +268,44 @@ func (e *Engine) Check(r *http.Request, ip string) (blocked bool, reason string)
 	var signals []signal
 
 	if cfg.Lists.IPEnabled && e.lists.MatchIP(ip) {
-		signals = append(signals, signal{"ip", scoreForReason("ip")})
+		signals = append(signals, signal{"ip", scoreForReason("ip"), ip})
 	}
 	if custom != nil && custom.matchIP(ip) {
-		signals = append(signals, signal{"custom_ip", scoreForReason("custom_ip")})
+		signals = append(signals, signal{"custom_ip", scoreForReason("custom_ip"), ip})
 	}
 	if custom != nil && custom.matchTLS(tlsfp.FromContext(r.Context())) {
-		signals = append(signals, signal{"tls_fp", scoreForReason("tls_fp")})
+		signals = append(signals, signal{"tls_fp", scoreForReason("tls_fp"), tlsValue(tlsfp.FromContext(r.Context()))})
 	}
 	if cfg.Lists.UAEnabled && ua != "" && e.lists.MatchUA(ua) {
-		signals = append(signals, signal{"ua", scoreForReason("ua")})
+		signals = append(signals, signal{"ua", scoreForReason("ua"), clipValue(ua)})
 	}
 	if custom != nil && ua != "" && custom.matchUA(ua) {
-		signals = append(signals, signal{"custom_ua", scoreForReason("custom_ua")})
+		signals = append(signals, signal{"custom_ua", scoreForReason("custom_ua"), clipValue(ua)})
 	}
 	if cfg.Lists.PathEnabled && e.lists.MatchPath(path) {
-		signals = append(signals, signal{"path", scoreForReason("path")})
+		signals = append(signals, signal{"path", scoreForReason("path"), clipValue(path)})
 	}
 	if custom != nil && custom.matchPath(path) {
-		signals = append(signals, signal{"custom_path", scoreForReason("custom_path")})
+		signals = append(signals, signal{"custom_path", scoreForReason("custom_path"), clipValue(path)})
 	}
 	if cfg.RateLimit > 0 && e.counters.rateExceeded(ip, cfg.RateLimit, cfg.RateWindow.Duration) {
-		signals = append(signals, signal{"rate", scoreForReason("rate")})
+		signals = append(signals, signal{"rate", scoreForReason("rate"), fmt.Sprintf("> %g req/s", cfg.RateLimit)})
 	}
 
+	isDetect := strings.EqualFold(cfg.Mode, "detect")
 	if len(signals) == 0 {
+		// Aucun signal de liste ni de débit sur cette requête, mais la note commune peut avoir franchi le seuil sur les seuls
+		// signaux de comportement (un scanner qui ne touche que des chemins valides).
+		if cfg.IPScore.Enabled && e.banFn != nil && e.hasBehavior() {
+			if why := e.decideNote(ip, e.counters.currentScore(ip), false, isDetect, cfg); why != nil {
+				e.clearNote(ip)
+				e.log.Warn("ephor: ban sur note commune", "ip", ip, "signaux", len(why))
+				e.inc(threatBansTotal, "behavior")
+				e.inc(threatChecksTotal, "block")
+				e.banFn(ip, "threat: score cumulé", e.banExpiry(ip, cfg), why)
+				return true, "threat: score cumulé"
+			}
+		}
 		e.inc(threatChecksTotal, "allow")
 		return false, ""
 	}
@@ -274,7 +323,6 @@ func (e *Engine) Check(r *http.Request, ip string) (blocked bool, reason string)
 
 	triggered := cfg.ScoreThreshold <= 0 || total >= cfg.ScoreThreshold
 
-	isDetect := strings.EqualFold(cfg.Mode, "detect")
 	action := "block"
 	if isDetect || !triggered {
 		action = "detect"
@@ -301,13 +349,13 @@ func (e *Engine) Check(r *http.Request, ip string) (blocked bool, reason string)
 
 	if triggered && !isDetect {
 		if cfg.IPScore.Enabled {
-			e.scoreBan(ip, topReason, total, cfg)
+			e.scoreBan(ip, topReason, banSignals(signals), cfg)
 		} else if topReason != "rate" {
 			// Signal non-rate (path, ip, ua, custom_*) : bannir immédiatement.
 			if e.banFn != nil {
 				expires := e.banExpiry(ip, cfg)
 				e.inc(threatBansTotal, topReason)
-				e.banFn(ip, "threat: "+topReason, expires)
+				e.banFn(ip, "threat: "+topReason, expires, banSignals(signals))
 			}
 		} else {
 			// Signal rate : ban conditionnel après N déclenchements.
@@ -317,6 +365,23 @@ func (e *Engine) Check(r *http.Request, ip string) (blocked bool, reason string)
 	}
 	// detect ou score insuffisant : signale sans bloquer
 	return false, "threat: " + topReason
+}
+
+func (e *Engine) hasBehavior() bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.behavior != nil
+}
+
+// tlsValue : l'empreinte à afficher, JA4 de préférence (plus lisible que le MD5 du JA3).
+func tlsValue(fp *tlsfp.Fingerprint) string {
+	if fp == nil {
+		return ""
+	}
+	if fp.JA4 != "" {
+		return "JA4 " + fp.JA4
+	}
+	return "JA3 " + fp.JA3Hash
 }
 
 // SetPriorBansFunc fournit le nombre de bans Ephor déjà posés sur une IP depuis `since` (hors
@@ -368,17 +433,18 @@ func escalatedDuration(base time.Duration, prior int, c EscalationConfig) time.D
 
 // scoreBan ajoute les points de la requête au score de l'IP et la bannit quand le score cumulé
 // atteint le seuil. Une IP des listes de menaces est bannie tout de suite, sans attendre.
-func (e *Engine) scoreBan(ip, topReason string, points int, cfg Config) {
+func (e *Engine) scoreBan(ip, topReason string, signals []router.BanSignal, cfg Config) {
 	if e.banFn == nil {
 		return
 	}
-	acc := e.counters.addScore(ip, float64(points), cfg.IPScore.HalfLife.Duration)
+	acc := e.counters.addScore(ip, cfg.IPScore.HalfLife.Duration, signals...)
 	immediate := topReason == "ip" || topReason == "custom_ip"
-	if !immediate && acc < cfg.IPScore.BanThreshold {
+	why := e.decideNote(ip, acc, immediate, false, cfg)
+	if why == nil {
 		e.log.Info("ephor: score cumulé", "ip", ip, "score", acc, "ban_threshold", cfg.IPScore.BanThreshold)
 		return
 	}
-	e.counters.resetScore(ip)
+	e.clearNote(ip)
 	expires := e.banExpiry(ip, cfg)
 	reason := "threat: score cumulé"
 	label := "score"
@@ -388,7 +454,19 @@ func (e *Engine) scoreBan(ip, topReason string, points int, cfg Config) {
 		e.log.Warn("ephor: ban sur score cumulé", "ip", ip, "score", acc, "ban_threshold", cfg.IPScore.BanThreshold)
 	}
 	e.inc(threatBansTotal, label)
-	e.banFn(ip, reason, expires)
+	e.banFn(ip, reason, expires, why)
+}
+
+// clearNote remet à zéro la note d'une IP qui vient d'être bannie : son score cumulé et sa fenêtre de comportement, sinon chaque
+// requête qui précède l'application du ban en poserait un nouveau. La confiance acquise reste.
+func (e *Engine) clearNote(ip string) {
+	e.counters.resetScore(ip)
+	e.mu.RLock()
+	st := e.behavior
+	e.mu.RUnlock()
+	if st != nil {
+		st.DeleteProfile(ip)
+	}
 }
 
 // IPScore retourne le score cumulé actuel d'une IP (décroissance appliquée) ; 0 si inconnue.
@@ -419,7 +497,11 @@ func (e *Engine) maybeRateBan(ip, topReason string, cfg Config) {
 	e.log.Warn("ephor: ban automatique rate", "ip", ip, "threshold", threshold, "window", window)
 	e.inc(threatSignalsTotal, "rate_ban")
 	e.inc(threatBansTotal, "rate")
-	e.banFn(ip, "threat: rate excessif", expires)
+	e.banFn(ip, "threat: rate excessif", expires, []router.BanSignal{{
+		Name:   "rate",
+		Points: float64(threshold * scoreForReason("rate")),
+		Value:  fmt.Sprintf("%d dépassements de %g req/s en %s", threshold, cfg.RateLimit, window),
+	}})
 }
 
 // RecordStatus alimente les compteurs 4xx sans connaître le chemin (pas de pondération par route).
@@ -457,7 +539,11 @@ func (e *Engine) RecordResponse(ip, path string, status int) {
 		if !isDetect && e.banFn != nil {
 			expires := e.banExpiry(ip, cfg)
 			e.inc(threatBansTotal, "error4xx")
-			e.banFn(ip, "threat: erreurs 4xx répétées", expires)
+			e.banFn(ip, "threat: erreurs 4xx répétées", expires, []router.BanSignal{{
+				Name:   "error4xx",
+				Points: float64(cfg.ErrorThreshold),
+				Value:  fmt.Sprintf("%d erreurs 4xx en %s", cfg.ErrorThreshold, cfg.ErrorWindow.Duration),
+			}})
 		}
 		e.counters.resetErrors(ip)
 	}
@@ -472,17 +558,19 @@ func (e *Engine) recordErrorScore(ip, path string, status int, cfg Config, wl *w
 	if points <= 0 {
 		return
 	}
-	acc := e.counters.addScore(ip, points, cfg.IPScore.HalfLife.Duration)
-	if acc < cfg.IPScore.BanThreshold {
+	acc := e.counters.addScore(ip, cfg.IPScore.HalfLife.Duration,
+		router.BanSignal{Name: "error4xx", Points: points, Value: clipValue(fmt.Sprintf("%d %s", status, path))})
+	why := e.decideNote(ip, acc, false, false, cfg)
+	if why == nil {
 		return
 	}
-	e.counters.resetScore(ip)
+	e.clearNote(ip)
 	isDetect := strings.EqualFold(cfg.Mode, "detect")
 	e.log.Warn("ephor: ban sur erreurs 4xx pondérées", "ip", ip, "status", status, "score", acc, "detect", isDetect)
 	e.inc(threatSignalsTotal, "error4xx")
 	if !isDetect && e.banFn != nil {
 		e.inc(threatBansTotal, "error4xx")
-		e.banFn(ip, "threat: erreurs 4xx répétées", e.banExpiry(ip, cfg))
+		e.banFn(ip, "threat: erreurs 4xx répétées", e.banExpiry(ip, cfg), why)
 	}
 }
 
@@ -497,6 +585,12 @@ func (e *Engine) WhitelistedIP(ip string) bool {
 // ResetIP remet à zéro les compteurs d'une IP débannie depuis l'Admin.
 func (e *Engine) ResetIP(ip string) {
 	e.counters.reset(ip)
+	e.mu.RLock()
+	st := e.behavior
+	e.mu.RUnlock()
+	if st != nil {
+		st.DeleteProfile(ip)
+	}
 }
 
 // WithSignal enrichit le contexte de la requête avec la raison du signal Ephor et la signale à l'access log.

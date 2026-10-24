@@ -39,6 +39,9 @@ func (sw *statusWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// Unwrap laisse http.ResponseController atteindre le vrai écrivain (délais par requête).
+func (sw *statusWriter) Unwrap() http.ResponseWriter { return sw.ResponseWriter }
+
 func (sw *statusWriter) Flush() {
 	if f, ok := sw.ResponseWriter.(http.Flusher); ok {
 		f.Flush()

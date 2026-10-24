@@ -12,8 +12,18 @@ import (
 // edgeRetry est le délai pendant lequel une passerelle qui n'a pas répondu n'est plus interrogée en lecture.
 const edgeRetry = 30 * time.Second
 
+// EdgeRetry est edgeRetry pour ceux qui réessaient une lecture : une nouvelle tentative plus rapprochée que ce délai
+// retombe forcément sur ErrEdgeDown.
+const EdgeRetry = edgeRetry
+
 // ErrEdgeDown est renvoyée à la place d'une lecture vers une passerelle qui vient de ne pas répondre.
 var ErrEdgeDown = errors.New("passerelle injoignable, nouvel essai différé")
+
+// MarkReachable lève la mise à l'écart d'une passerelle dont la connexion WebSocket vient de s'établir : sans cela,
+// une lecture qui a échoué pendant son démarrage la garde écartée edgeRetry de plus alors qu'elle répond déjà.
+func MarkReachable(endpoint string) {
+	edgeLiveness.ok(endpoint)
+}
 
 // liveness retient les passerelles injoignables. Les lectures (liste des proxies, tableau de bord, MCP…)
 // parcourent toutes les passerelles l'une après l'autre : une passerelle en attente, qui ne répond pas, leur

@@ -60,3 +60,33 @@ func TestClientPublishRoundTrip(t *testing.T) {
 		t.Fatalf("%+v", env)
 	}
 }
+
+func TestClientGroupCard(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /internal/v1/group-card", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer t" {
+			http.Error(w, "no", http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"group": "ha-1", "version": 4, "members": []map[string]string{{"id": "n1", "name": "frontal"}}})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	c := NewClient()
+	c.HTTP = srv.Client()
+
+	card, found, err := c.GroupCard(context.Background(), Target{Endpoint: srv.URL, Token: "t"})
+	if err != nil || !found || card.Group != "ha-1" || card.Version != 4 || len(card.Members) != 1 {
+		t.Fatalf("fiche : %+v found=%v err=%v", card, found, err)
+	}
+	if _, _, err := c.GroupCard(context.Background(), Target{Endpoint: srv.URL, Token: "mauvais"}); err == nil {
+		t.Fatal("un refus d'authentification est une erreur")
+	}
+
+	empty := httptest.NewServer(http.NotFoundHandler())
+	defer empty.Close()
+	c.HTTP = empty.Client()
+	if _, found, err := c.GroupCard(context.Background(), Target{Endpoint: empty.URL, Token: "t"}); err != nil || found {
+		t.Fatalf("404 = pas de fiche, pas une erreur : found=%v err=%v", found, err)
+	}
+}

@@ -7,8 +7,11 @@ import (
 	"hash/fnv"
 	"math"
 	"net/netip"
+	"sort"
 	"sync"
 	"time"
+
+	"github.com/vincamok/goproxify/internal/edge/router"
 )
 
 const (
@@ -132,9 +135,9 @@ func (s *counterStore) reset(ip string) {
 	sh.mu.Unlock()
 }
 
-// addScore ajoute des points au score de l'IP après avoir fait décroître l'ancien (demi-vie
+// addScore ajoute les points des signaux au score de l'IP après avoir fait décroître l'ancien (demi-vie
 // halfLife) et retourne le nouveau score.
-func (s *counterStore) addScore(ip string, points float64, halfLife time.Duration) float64 {
+func (s *counterStore) addScore(ip string, halfLife time.Duration, parts ...router.BanSignal) float64 {
 	now := s.now()
 	key := counterKey(ip)
 	sh := s.shard(key)
@@ -148,7 +151,20 @@ func (s *counterStore) addScore(ip string, points float64, halfLife time.Duratio
 		se = &scoreEntry{}
 		sh.score[key] = se
 	}
-	return se.add(points, halfLife, now)
+	return se.add(parts, halfLife, now)
+}
+
+// scoreBreakdown retourne, du plus lourd au plus léger, ce qui compose le score actuel de l'IP : leur somme est le score.
+func (s *counterStore) scoreBreakdown(ip string) []router.BanSignal {
+	now := s.now()
+	key := counterKey(ip)
+	sh := s.shard(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	if se, ok := sh.score[key]; ok {
+		return se.breakdown(now)
+	}
+	return nil
 }
 
 func (s *counterStore) resetScore(ip string) {
@@ -258,7 +274,17 @@ type scoreEntry struct {
 	score    float64
 	at       time.Time
 	halfLife time.Duration
+	// parts : le score par signal, décru avec lui (leur somme vaut score) ; value garde la dernière valeur observée.
+	parts map[string]*scorePart
 }
+
+type scorePart struct {
+	points float64
+	value  string
+}
+
+// maxScoreParts borne le détail d'un score ; les signaux au-delà sont regroupés sous « other ».
+const maxScoreParts = 16
 
 // value retourne le score à l'instant now (décroissance exponentielle).
 func (e *scoreEntry) value(now time.Time) float64 {
@@ -272,12 +298,61 @@ func (e *scoreEntry) value(now time.Time) float64 {
 	return e.score * math.Exp2(-float64(dt)/float64(e.halfLife))
 }
 
-func (e *scoreEntry) add(points float64, halfLife time.Duration, now time.Time) float64 {
-	e.score = e.value(now) + points
+func (e *scoreEntry) add(parts []router.BanSignal, halfLife time.Duration, now time.Time) float64 {
+	cur := e.value(now)
+	if e.score > 0 && cur != e.score {
+		f := cur / e.score
+		for _, p := range e.parts {
+			p.points *= f
+		}
+	}
+	e.score = cur
+	if e.parts == nil {
+		e.parts = make(map[string]*scorePart, len(parts))
+	}
+	for _, in := range parts {
+		name := in.Name
+		if _, ok := e.parts[name]; !ok && len(e.parts) >= maxScoreParts {
+			name = "other"
+		}
+		p := e.parts[name]
+		if p == nil {
+			p = &scorePart{}
+			e.parts[name] = p
+		}
+		p.points += in.Points
+		if in.Value != "" {
+			p.value = in.Value
+		}
+		e.score += in.Points
+	}
 	e.at = now
 	e.halfLife = halfLife
 	return e.score
 }
+
+func (e *scoreEntry) breakdown(now time.Time) []router.BanSignal {
+	if len(e.parts) == 0 {
+		return nil
+	}
+	f := 1.0
+	if e.score > 0 {
+		f = e.value(now) / e.score
+	}
+	out := make([]router.BanSignal, 0, len(e.parts))
+	for name, p := range e.parts {
+		out = append(out, router.BanSignal{Name: name, Points: round1(p.points * f), Value: p.value})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Points != out[j].Points {
+			return out[i].Points > out[j].Points
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+func round1(v float64) float64 { return math.Round(v*10) / 10 }
 
 // ── Token bucket pour le rate ─────────────────────────────────────────────────
 

@@ -613,7 +613,7 @@
   <div class="sec-body rv">
     <div class="caps">
       <div class="cap"><h3 data-t="k1t">Routing and certificates</h3><p data-t="k1">One address, one site. Automatic ACME certificates, 28 DNS providers, domain delegation between gateways, load balancing and health checks.</p></div>
-      <div class="cap"><h3 data-t="k2t">Security</h3><p data-t="k2">WAF (13 OWASP CRS-4 rule sets), Ephor (behavioural bans, anti-DDoS), CrowdSec, GeoIP filtering, rate limiting, SSO, sandboxed WASM plugins (Coraza).</p></div>
+      <div class="cap"><h3 data-t="k2t">Security</h3><p data-t="k2">WAF (13 OWASP CRS-4 rule sets), Ephor (behavioural bans that learn the normal traffic and explain every ban, anti-DDoS), CrowdSec, GeoIP filtering, rate limiting, SSO, sandboxed WASM plugins (Coraza).</p></div>
       <div class="cap"><h3 data-t="k3t">High availability</h3><p data-t="k3">A second gateway takes over, failing applications are bypassed, group members sync without the Admin.</p></div>
       <div class="cap"><h3 data-t="k4t">Discovery</h3><p data-t="k4">Docker containers, Kubernetes services, Consul, Nomad, etcd or Amazon ECS instances: routes follow what starts and stops.</p></div>
       <div class="cap"><h3 data-t="k5t">Observability</h3><p data-t="k5">Live traffic, readable access logs, Prism analytics (countries, anomalies, top clients) and 10 alert channels.</p></div>
@@ -1043,6 +1043,18 @@ agent:
           <h3 class="inst-step" data-i18n="install.ent.s1">1. Admin + Gateway 1</h3>
           <p class="inst-step-body" data-i18n="install.ent.s1.body">On the first machine, follow the Home lab method (Script or Docker Compose): it starts the Admin and the first Edge.</p>
 
+          <p style="font-size:0.85rem;color:var(--text-muted);margin:4px 0 0;line-height:1.6" data-i18n="install.ent.formats">For steps 2 and 3, pick a method for each machine — they can differ from one machine to the next.</p>
+        </div>
+
+        <div class="tabs-nav">
+          <button class="tab-btn active" data-tab="ent-docker" data-i18n="install.tab.docker">Docker Compose</button>
+          <button class="tab-btn" data-tab="ent-portainer" data-i18n="install.tab.portainer">Portainer</button>
+          <button class="tab-btn" data-tab="ent-helm" data-i18n="install.tab.helm">Helm Kubernetes</button>
+          <button class="tab-btn" data-tab="ent-binary" data-i18n="install.tab.binary">Binary</button>
+        </div>
+
+        <div class="tab-panel active" id="tab-ent-docker">
+        <div style="padding:20px 24px 8px">
           <h3 class="inst-step" data-i18n="install.ent.s2">2. Second Edge</h3>
           <p class="inst-step-body" data-i18n="install.ent.s2.body">On a second machine, run an Edge with its own node name, then register it in the Admin (Infrastructure → Edit architecture): it goes from declared to online.</p>
           <div class="file-block">
@@ -1096,8 +1108,140 @@ volumes:
 volumes:
   agent_data:</pre>
           </div>
-          <p style="font-size:0.85rem;color:var(--text-muted);margin:4px 0 8px;line-height:1.6" data-i18n="install.ent.tip">Tip: the architecture assistant in the Admin generates these steps, with a QR code, for each machine.</p>
         </div>
+        </div>
+
+        <div class="tab-panel" id="tab-ent-portainer">
+        <div style="padding:20px 24px 8px">
+          <p style="font-size:0.9rem;color:var(--text-muted);margin-bottom:16px;line-height:1.6" data-i18n="install.ent.portainer">On each machine, in the Portainer environment of that machine: Stacks → Add stack → Web editor. Paste the stack, replace the values between &lt; &gt;, then deploy.</p>
+
+          <h3 class="inst-step" data-i18n="install.ent.s2">2. Second Edge</h3>
+          <div class="file-block">
+            <div class="file-block-header">
+              <span class="file-block-name">stack — edge 2</span>
+              <button type="button" class="file-block-copy" data-i18n="copy" onclick="copyFileBlock('fb-ent-pt-edge')">Copy</button>
+            </div>
+            <pre id="fb-ent-pt-edge">services:
+  goproxify-edge:
+    image: ghcr.io/vincamok/goproxify/edge:preview
+    container_name: goproxify-edge
+    restart: unless-stopped
+    command: ["edge"]
+    environment:
+      - TZ=Europe/Paris
+      - GPX_PAIRING_SECRET=<span class="v">&lt;same as the Admin&gt;</span>
+      - GPX_IDENTITY_EDGE_NODE_NAME=<span class="v">edge-2</span>
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+      - "8000:8000"
+    volumes:
+      - edge2_data:/etc/goproxify
+
+volumes:
+  edge2_data:</pre>
+          </div>
+
+          <h3 class="inst-step" data-i18n="install.ent.s3">3. One Agent per host</h3>
+          <div class="file-block">
+            <div class="file-block-header">
+              <span class="file-block-name">stack — agent</span>
+              <button type="button" class="file-block-copy" data-i18n="copy" onclick="copyFileBlock('fb-ent-pt-agent')">Copy</button>
+            </div>
+            <pre id="fb-ent-pt-agent">services:
+  goproxify-agent:
+    image: ghcr.io/vincamok/goproxify/agent:preview
+    container_name: goproxify-agent
+    restart: unless-stopped
+    command: ["agent"]
+    environment:
+      - TZ=Europe/Paris
+      - GPX_PAIRING_SECRET=<span class="v">&lt;same as the Admin&gt;</span>
+      - GPX_CONTROL_PLANE_EDGE_ENDPOINT=http://<span class="v">&lt;edge-ip&gt;</span>:8000
+      - GPX_CONTROL_PLANE_ADMIN_ENDPOINT=http://<span class="v">&lt;admin-ip&gt;</span>:9443
+      - GPX_IDENTITY_AGENT_NODE_NAME=<span class="v">agent-host-1</span>
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - agent_data:/etc/goproxify
+
+volumes:
+  agent_data:</pre>
+          </div>
+        </div>
+        </div>
+
+        <div class="tab-panel" id="tab-ent-helm">
+        <div style="padding:20px 24px 8px">
+          <p style="font-size:0.9rem;color:var(--text-muted);margin-bottom:16px;line-height:1.6" data-i18n="install.ent.helm">A Kubernetes cluster is a second Edge plus its Agents: same chart, with the Admin disabled (it stays on machine 1). One Edge and one Agent run on each node; the Agent talks to the Edge of its own node. Then register the Edge in the Admin as in step 2 (Infrastructure → Edit architecture), using the node address and port 8000.</p>
+          <div class="file-block">
+            <div class="file-block-header">
+              <span class="file-block-name">values-edge2.yaml</span>
+              <button type="button" class="file-block-copy" data-i18n="copy" onclick="copyFileBlock('fb-ent-helm-values')">Copy</button>
+            </div>
+            <pre id="fb-ent-helm-values">global:
+  pairingSecret: <span class="v">"&lt;same as the Admin&gt;"</span>
+  timezone: Europe/Paris
+
+admin:
+  enabled: false
+
+edge:
+  image:
+    tag: "preview"
+
+agent:
+  image:
+    tag: "preview"
+  config:
+    <span class="c"># none: Kubernetes discovery only · docker / podman: also mounts the node's runtime socket</span>
+    runtime: none</pre>
+          </div>
+          <div class="code-block" style="margin-bottom:0">
+            <div class="code-block-header">
+              <span class="code-block-name">shell</span>
+              <button type="button" class="file-block-copy" data-i18n="copy" onclick="copyCodeBlock('cb-ent-helm')">Copy</button>
+            </div>
+            <div class="code-block-body" id="cb-ent-helm">
+              <div><span class="comment"># On the second cluster (chart cloned as in the Home lab Helm method)</span></div>
+              <div><span class="prompt">$ </span><span class="cmd">helm upgrade --install goproxify ./helm/goproxify \</span></div>
+              <div><span class="cmd">  -n goproxify --create-namespace \</span></div>
+              <div><span class="cmd">  -f values-edge2.yaml</span></div>
+            </div>
+          </div>
+        </div>
+        </div>
+
+        <div class="tab-panel" id="tab-ent-binary">
+        <div style="padding:20px 24px">
+          <p style="font-size:0.9rem;color:var(--text-muted);margin-bottom:16px;line-height:1.6" data-i18n="install.ent.binary">Build the binary once on each machine, then start the role of that machine.</p>
+          <div class="code-block" style="margin-bottom:0">
+            <div class="code-block-header">
+              <span class="code-block-name">shell</span>
+              <button type="button" class="file-block-copy" data-i18n="copy" onclick="copyCodeBlock('cb-ent-binary')">Copy</button>
+            </div>
+            <div class="code-block-body" id="cb-ent-binary">
+              <div><span class="comment"># Build from source (Go 1.25+) — on every machine</span></div>
+              <div><span class="prompt">$ </span><span class="cmd">git clone -b public/main https://github.com/Vincamok/goproxify.git &amp;&amp; cd goproxify</span></div>
+              <div><span class="prompt">$ </span><span class="cmd">go build -o goproxify ./cmd/goproxify</span></div>
+              <div>&nbsp;</div>
+              <div><span class="comment"># 2. Second machine — Edge 2</span></div>
+              <div><span class="prompt">$ </span><span class="cmd">GPX_PAIRING_SECRET=<span class="v">&lt;same as the Admin&gt;</span> \</span></div>
+              <div><span class="cmd">  GPX_IDENTITY_EDGE_NODE_NAME=<span class="v">edge-2</span> \</span></div>
+              <div><span class="cmd">  ./goproxify edge</span></div>
+              <div>&nbsp;</div>
+              <div><span class="comment"># 3. Each internal host — Agent (unique node name)</span></div>
+              <div><span class="prompt">$ </span><span class="cmd">GPX_PAIRING_SECRET=<span class="v">&lt;same as the Admin&gt;</span> \</span></div>
+              <div><span class="cmd">  GPX_CONTROL_PLANE_EDGE_ENDPOINT=http://<span class="v">&lt;edge-ip&gt;</span>:8000 \</span></div>
+              <div><span class="cmd">  GPX_CONTROL_PLANE_ADMIN_ENDPOINT=http://<span class="v">&lt;admin-ip&gt;</span>:9443 \</span></div>
+              <div><span class="cmd">  GPX_IDENTITY_AGENT_NODE_NAME=<span class="v">agent-host-1</span> \</span></div>
+              <div><span class="cmd">  ./goproxify agent</span></div>
+            </div>
+          </div>
+        </div>
+        </div>
+
+        <p style="font-size:0.85rem;color:var(--text-muted);margin:0;padding:12px 24px 20px;line-height:1.6" data-i18n="install.ent.tip">Tip: the architecture assistant in the Admin generates these steps, with a QR code, for each machine.</p>
       </div>
     </div>
 
@@ -1289,6 +1433,10 @@ volumes:
       'install.ent.s3': '3. Un Agent par hôte',
       'install.ent.s3.body': 'Sur chaque hôte interne, lancez un Agent qui pointe vers une passerelle. Donnez à chaque Agent un nom de nœud unique, puis approuvez-le dans l’Admin (menu Agents).',
       'install.ent.tip': 'Astuce : l’assistant d’architecture de l’Admin génère ces étapes, avec un QR code, pour chaque machine.',
+      'install.ent.formats': 'Pour les étapes 2 et 3, choisissez une méthode pour chaque machine — elles peuvent différer d’une machine à l’autre.',
+      'install.ent.portainer': 'Sur chaque machine, dans l’environnement Portainer de cette machine : Stacks → Add stack → Web editor. Collez la stack, remplacez les valeurs entre < >, puis déployez.',
+      'install.ent.helm': 'Un cluster Kubernetes est une seconde passerelle avec ses Agents : même chart, Admin désactivé (il reste sur la machine 1). Une passerelle et un Agent tournent sur chaque nœud ; l’Agent parle à la passerelle de son propre nœud. Enregistrez ensuite la passerelle dans l’Admin comme à l’étape 2 (Infrastructure → Modifier l’architecture), avec l’adresse du nœud et le port 8000.',
+      'install.ent.binary': 'Compilez le binaire une fois sur chaque machine, puis lancez le rôle de cette machine.',
       'sec.alerting': "10 canaux d'alerte",
       'sec.alerting.sub': "Chaque règle d'alerte peut notifier plusieurs équipes sur plusieurs canaux à la fois. Modèle inspiré d'Alertmanager.",
       'sec.stack': 'Stack technique',
@@ -1368,6 +1516,10 @@ volumes:
       'install.ent.s3': '3. Un Agent por host',
       'install.ent.s3.body': 'En cada host interno, lanza un Agent que apunte a un Edge. Da a cada Agent un nombre de nodo único y apruébalo en el Admin (menú Agents).',
       'install.ent.tip': 'Consejo: el asistente de arquitectura del Admin genera estos pasos, con un QR, para cada máquina.',
+      'install.ent.formats': 'Para los pasos 2 y 3, elige un método para cada máquina: pueden diferir de una máquina a otra.',
+      'install.ent.portainer': 'En cada máquina, en el entorno Portainer de esa máquina: Stacks → Add stack → Web editor. Pega el stack, sustituye los valores entre < > y despliega.',
+      'install.ent.helm': 'Un clúster de Kubernetes es un segundo Edge con sus Agents: el mismo chart, con el Admin desactivado (se queda en la máquina 1). En cada nodo corren un Edge y un Agent; el Agent habla con el Edge de su propio nodo. Después registra el Edge en el Admin como en el paso 2 (Infraestructura → Editar la arquitectura), con la dirección del nodo y el puerto 8000.',
+      'install.ent.binary': 'Compila el binario una vez en cada máquina y lanza después el rol de esa máquina.',
       'sec.alerting': '10 canales de alerta',
       'sec.alerting.sub': 'Cada regla de alerta puede notificar a varios equipos en varios canales a la vez. Modelo inspirado en Alertmanager.',
       'sec.stack': 'Stack técnico',
@@ -1447,6 +1599,10 @@ volumes:
       'install.ent.s3': '3. Ein Agent pro Host',
       'install.ent.s3.body': 'Auf jedem internen Host einen Agent starten, der auf einen Edge zeigt. Jedem Agent einen eindeutigen Node-Namen geben und im Admin freigeben (Menü Agents).',
       'install.ent.tip': 'Tipp: Der Architektur-Assistent im Admin erzeugt diese Schritte samt QR-Code für jede Maschine.',
+      'install.ent.formats': 'Für die Schritte 2 und 3 wählen Sie pro Maschine eine Methode — sie dürfen sich von Maschine zu Maschine unterscheiden.',
+      'install.ent.portainer': 'Auf jeder Maschine, in der Portainer-Umgebung dieser Maschine: Stacks → Add stack → Web editor. Stack einfügen, die Werte zwischen < > ersetzen und deployen.',
+      'install.ent.helm': 'Ein Kubernetes-Cluster ist ein zweiter Edge samt Agents: dasselbe Chart, Admin deaktiviert (er bleibt auf Maschine 1). Auf jedem Node laufen ein Edge und ein Agent; der Agent spricht mit dem Edge seines eigenen Nodes. Registrieren Sie den Edge danach wie in Schritt 2 im Admin (Infrastruktur → Architektur bearbeiten), mit der Node-Adresse und Port 8000.',
+      'install.ent.binary': 'Das Binary einmal auf jeder Maschine bauen und dann die Rolle dieser Maschine starten.',
       'sec.alerting': '10 Alert-Kanäle',
       'sec.alerting.sub': 'Jede Alert-Regel kann mehrere Teams auf mehreren Kanälen gleichzeitig benachrichtigen. Alertmanager-inspiriertes Modell.',
       'sec.stack': 'Tech-Stack',
@@ -1677,7 +1833,7 @@ volumes:
     'k1t': ['Routage et certificats', 'Enrutamiento y certificados', 'Routing und Zertifikate'],
     'k1': ['Une adresse, un site. Certificats ACME automatiques, 28 fournisseurs DNS, délégation de domaine entre passerelles, équilibrage de charge et vérification de santé.', 'Una dirección, un sitio. Certificados ACME automáticos, 28 proveedores DNS, delegación de dominio entre pasarelas, balanceo de carga y comprobaciones de salud.', 'Eine Adresse, eine Website. Automatische ACME-Zertifikate, 28 DNS-Anbieter, Domain-Delegation zwischen Gateways, Lastverteilung und Health-Checks.'],
     'k2t': ['Sécurité', 'Seguridad', 'Sicherheit'],
-    'k2': ['WAF (13 jeux de règles OWASP CRS-4), Ephor (bannissement comportemental, anti-DDoS), CrowdSec, filtrage GeoIP, limitation de débit, SSO, plugins WASM isolés (Coraza).', 'WAF (13 conjuntos de reglas OWASP CRS-4), Ephor (bloqueos por comportamiento, anti-DDoS), CrowdSec, filtrado GeoIP, límite de tasa, SSO, plugins WASM aislados (Coraza).', 'WAF (13 OWASP-CRS-4-Regelsätze), Ephor (Verhaltenssperren, Anti-DDoS), CrowdSec, GeoIP-Filter, Ratenbegrenzung, SSO, isolierte WASM-Plugins (Coraza).'],
+    'k2': ['WAF (13 jeux de règles OWASP CRS-4), Ephor (bannissement comportemental qui apprend le trafic normal et explique chaque ban, anti-DDoS), CrowdSec, filtrage GeoIP, limitation de débit, SSO, plugins WASM isolés (Coraza).', 'WAF (13 conjuntos de reglas OWASP CRS-4), Ephor (bloqueos por comportamiento que aprenden el tráfico normal y explican cada bloqueo, anti-DDoS), CrowdSec, filtrado GeoIP, límite de tasa, SSO, plugins WASM aislados (Coraza).', 'WAF (13 OWASP-CRS-4-Regelsätze), Ephor (Verhaltenssperren, die den normalen Verkehr lernen und jede Sperre begründen, Anti-DDoS), CrowdSec, GeoIP-Filter, Ratenbegrenzung, SSO, isolierte WASM-Plugins (Coraza).'],
     'k3t': ['Haute disponibilité', 'Alta disponibilidad', 'Hochverfügbarkeit'],
     'k3': ['Une seconde passerelle prend le relais, les applications défaillantes sont contournées, les membres du groupe se synchronisent sans l’Admin.', 'Una segunda pasarela toma el relevo, las aplicaciones defectuosas se esquivan y los miembros del grupo se sincronizan sin el Admin.', 'Ein zweites Gateway übernimmt, defekte Anwendungen werden umgangen und die Gruppenmitglieder synchronisieren sich ohne den Admin.'],
     'k4t': ['Découverte', 'Descubrimiento', 'Erkennung'],
@@ -1949,11 +2105,11 @@ volumes:
 
 
   /* Onglets d'installation */
-  var tabBtns = document.querySelectorAll('.tabs-nav > .tab-btn');
-  tabBtns.forEach(function (btn) {
+  document.querySelectorAll('.tabs-nav > .tab-btn').forEach(function (btn) {
     btn.addEventListener('click', function () {
-      tabBtns.forEach(function (b) { b.classList.remove('active'); });
-      document.querySelectorAll('.tab-panel').forEach(function (p) { p.classList.remove('active'); });
+      var wrap = btn.closest('.install-wrapper');
+      wrap.querySelectorAll('.tabs-nav > .tab-btn').forEach(function (b) { b.classList.remove('active'); });
+      wrap.querySelectorAll(':scope > .tab-panel').forEach(function (p) { p.classList.remove('active'); });
       btn.classList.add('active');
       var panel = document.getElementById('tab-' + btn.dataset.tab);
       if (panel) panel.classList.add('active');

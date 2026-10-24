@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/vincamok/goproxify/internal/agent/docker"
+	"github.com/vincamok/goproxify/internal/agent/statepub"
 	"github.com/vincamok/goproxify/internal/config"
 )
 
@@ -53,6 +54,13 @@ type Discovery struct {
 	// hostByKey mappe "namespace/name" → host courant pour permettre la suppression.
 	mu        sync.Mutex
 	hostByKey map[string]string
+	// idle : les Services (« namespace/nom ») dont l'objet Endpoints existe sans aucune adresse prête, d'après le dernier
+	// état complet. Ils n'ont pas de route ; la passerelle les affiche comme inactifs.
+	idle map[string]bool
+	state     *statepub.Publisher // état complet de la source ; nil = routes une à une et watch sans liste
+
+	stateOK    atomic.Bool // la passerelle a pris le dernier état complet : un événement en provoque un nouveau
+	stateTimer *time.Timer // regroupe les événements rapprochés en un seul état complet
 }
 
 // New crée une Discovery K8s. Retourne une erreur si la configuration est invalide.
@@ -137,12 +145,38 @@ type k8sServiceList struct {
 	Items []k8sService `json:"items"`
 }
 
+// k8sListMeta : la version de la liste, d'où un watch reprend sans rien manquer ni rien rejouer.
+type k8sListMeta struct {
+	ResourceVersion string `json:"resourceVersion"`
+}
+
+type k8sServiceItems struct {
+	Metadata k8sListMeta  `json:"metadata"`
+	Items    []k8sService `json:"items"`
+}
+
+type k8sIngressItems struct {
+	Metadata k8sListMeta  `json:"metadata"`
+	Items    []k8sIngress `json:"items"`
+}
+
 type k8sService struct {
 	Metadata k8sMeta `json:"metadata"`
 	Spec     struct {
 		ClusterIP string    `json:"clusterIP"`
 		Ports     []k8sPort `json:"ports"`
 	} `json:"spec"`
+}
+
+// k8sEndpointsItems : les objets Endpoints des Services annotés. Kubernetes leur recopie les labels du Service, le même
+// sélecteur les trouve.
+type k8sEndpointsItems struct {
+	Items []struct {
+		Metadata k8sMeta `json:"metadata"`
+		Subsets  []struct {
+			Addresses []json.RawMessage `json:"addresses"`
+		} `json:"subsets"`
+	} `json:"items"`
 }
 
 type k8sPort struct {
@@ -210,9 +244,13 @@ func (d *Discovery) watchAll(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// L'état complet part d'abord : la passerelle retire ce que les watches n'ont pas vu disparaître. Les watches
+	// reprennent alors de la version de la liste ; sans état envoyé ils rejouent l'existant, comme avant.
+	svcRV, ingRV := d.snapshot(ctx)
 	errCh := make(chan error, 2)
-	go func() { errCh <- d.watchServices(ctx) }()
-	go func() { errCh <- d.watchIngresses(ctx) }()
+	go func() { errCh <- d.watchServices(ctx, svcRV) }()
+	go func() { errCh <- d.watchIngresses(ctx, ingRV) }()
+	go d.watchEndpoints(ctx)
 
 	// La première erreur annule l'autre goroutine via cancel(). Une demande de réannonce relance
 	// les deux watches : sans resourceVersion, l'API Kubernetes renvoie d'abord l'état courant sous
@@ -233,6 +271,13 @@ func (d *Discovery) Resync(context.Context) {
 	case d.resync <- struct{}{}:
 	default: // une demande est déjà en attente
 	}
+}
+
+// SetStatePublisher active l'envoi de l'état complet avant chaque démarrage des watches.
+func (d *Discovery) SetStatePublisher(p *statepub.Publisher) {
+	d.mu.Lock()
+	d.state = p
+	d.mu.Unlock()
 }
 
 // SetEndpointFunc fait suivre à la découverte la passerelle courante de l'Agent (bascule HA) au lieu
@@ -256,15 +301,8 @@ func (d *Discovery) endpoint() string {
 }
 
 // watchServices utilise le watch API K8s pour maintenir la liste à jour.
-func (d *Discovery) watchServices(ctx context.Context) error {
-	ns := d.cfg.Kubernetes.Namespace
-	path := "/api/v1/services?watch=1&labelSelector=" +
-		labelSelectorEscape(d.labelPrefix+"enabled=true")
-	if ns != "" {
-		path = "/api/v1/namespaces/" + ns + "/services?watch=1&labelSelector=" +
-			labelSelectorEscape(d.labelPrefix+"enabled=true")
-	}
-	return d.watchStream(ctx, path, func(ev k8sWatchEvent) {
+func (d *Discovery) watchServices(ctx context.Context, resourceVersion string) error {
+	return d.watchStream(ctx, d.servicesPath(watchQuery(resourceVersion)), func(ev k8sWatchEvent) {
 		var svc k8sService
 		if err := json.Unmarshal(ev.Object, &svc); err != nil {
 			return
@@ -275,19 +313,31 @@ func (d *Discovery) watchServices(ctx context.Context) error {
 		case "DELETED":
 			d.deleteByKey(ctx, svcKey(svc.Metadata))
 		}
+		d.scheduleState(ctx)
 	})
 }
 
-// watchIngresses surveille les Ingress annotés goproxify.enabled=true.
-func (d *Discovery) watchIngresses(ctx context.Context) error {
-	ns := d.cfg.Kubernetes.Namespace
-	path := "/apis/networking.k8s.io/v1/ingresses?watch=1&labelSelector=" +
-		labelSelectorEscape(d.labelPrefix+"enabled=true")
-	if ns != "" {
-		path = "/apis/networking.k8s.io/v1/namespaces/" + ns + "/ingresses?watch=1&labelSelector=" +
-			labelSelectorEscape(d.labelPrefix+"enabled=true")
+// watchEndpoints renvoie l'état complet quand les adresses prêtes d'un Service annoté changent : un pod qui démarre ou
+// s'arrête ne modifie pas le Service, donc aucun de ses événements ne le dirait. Sans le droit de lire les Endpoints, ou
+// sur une erreur, il réessaie plus tard sans gêner les watches des Services et des Ingress.
+func (d *Discovery) watchEndpoints(ctx context.Context) {
+	for ctx.Err() == nil {
+		err := d.watchStream(ctx, d.endpointsPath(watchQuery("")), func(k8sWatchEvent) { d.scheduleState(ctx) })
+		if ctx.Err() != nil {
+			return
+		}
+		d.log.Debug("k8s discovery: watch des Endpoints interrompu", "err", err)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(60 * time.Second):
+		}
 	}
-	return d.watchStream(ctx, path, func(ev k8sWatchEvent) {
+}
+
+// watchIngresses surveille les Ingress annotés goproxify.enabled=true.
+func (d *Discovery) watchIngresses(ctx context.Context, resourceVersion string) error {
+	return d.watchStream(ctx, d.ingressesPath(watchQuery(resourceVersion)), func(ev k8sWatchEvent) {
 		var ing k8sIngress
 		if err := json.Unmarshal(ev.Object, &ing); err != nil {
 			return
@@ -298,6 +348,7 @@ func (d *Discovery) watchIngresses(ctx context.Context) error {
 		case "DELETED":
 			d.deleteByKey(ctx, ingKey(ing.Metadata))
 		}
+		d.scheduleState(ctx)
 	})
 }
 
@@ -335,8 +386,30 @@ func (d *Discovery) watchStream(ctx context.Context, path string, fn func(k8sWat
 	}
 }
 
+// k8sRoute est ce qu'une ressource Kubernetes demande à la passerelle : une route.
+type k8sRoute struct {
+	key     string
+	ann     map[string]string
+	host    string
+	backend string
+	tls     bool
+}
+
 // upsertService traduit un Service K8s en route proxy et la pousse à la passerelle.
 func (d *Discovery) upsertService(ctx context.Context, svc k8sService) {
+	d.mu.Lock()
+	idle := d.idle[svcKey(svc.Metadata)]
+	d.mu.Unlock()
+	if idle {
+		return
+	}
+	if r, ok := d.serviceRoute(svc); ok {
+		d.pushRoute(ctx, r.key, r.ann, r.host, r.backend, r.tls)
+	}
+}
+
+// serviceRoute traduit un Service en route ; faux s'il n'en demande pas (pas d'hôte).
+func (d *Discovery) serviceRoute(svc k8sService) (k8sRoute, bool) {
 	ann := svc.Metadata.Annotations
 	if ann == nil {
 		ann = map[string]string{}
@@ -348,7 +421,7 @@ func (d *Discovery) upsertService(ctx context.Context, svc k8sService) {
 		host = ann[p+"domain"]
 	}
 	if host == "" {
-		return
+		return k8sRoute{}, false
 	}
 
 	backendPort := 80
@@ -363,11 +436,19 @@ func (d *Discovery) upsertService(ctx context.Context, svc k8sService) {
 		backendURL = ann[p+"backend"]
 	}
 
-	d.pushRoute(ctx, svcKey(svc.Metadata), ann, host, backendURL, ann[p+"tls"] == "true")
+	return k8sRoute{key: svcKey(svc.Metadata), ann: ann, host: host, backend: backendURL, tls: ann[p+"tls"] == "true"}, true
 }
 
 // upsertIngress traduit un Ingress K8s en routes proxy et les pousse à la passerelle.
 func (d *Discovery) upsertIngress(ctx context.Context, ing k8sIngress) {
+	for _, r := range d.ingressRoutes(ing) {
+		d.pushRoute(ctx, r.key, r.ann, r.host, r.backend, r.tls)
+	}
+}
+
+// ingressRoutes traduit un Ingress en routes, une par règle d'hôte.
+func (d *Discovery) ingressRoutes(ing k8sIngress) []k8sRoute {
+	var out []k8sRoute
 	ann := ing.Metadata.Annotations
 	if ann == nil {
 		ann = map[string]string{}
@@ -415,8 +496,9 @@ func (d *Discovery) upsertIngress(ctx context.Context, ing k8sIngress) {
 			continue
 		}
 
-		d.pushRoute(ctx, ingKey(ing.Metadata)+":"+host, ann, host, backendURL, tls)
+		out = append(out, k8sRoute{key: ingKey(ing.Metadata) + ":" + host, ann: ann, host: host, backend: backendURL, tls: tls})
 	}
+	return out
 }
 
 // routePayload construit le payload Agent→Passerelle d'une route. Les annotations suivent exactement la
@@ -533,6 +615,181 @@ func (d *Discovery) deleteByKey(ctx context.Context, key string) {
 		return
 	}
 	d.log.Info("k8s discovery: route supprimée", "host", host)
+}
+
+// servicesPath et ingressesPath : le chemin de la liste (query vide) ou du watch, avec le même sélecteur et le même
+// namespace.
+func (d *Discovery) servicesPath(query string) string {
+	base := "/api/v1/services"
+	if ns := d.cfg.Kubernetes.Namespace; ns != "" {
+		base = "/api/v1/namespaces/" + ns + "/services"
+	}
+	return base + "?" + query + "labelSelector=" + labelSelectorEscape(d.labelPrefix+"enabled=true")
+}
+
+func (d *Discovery) endpointsPath(query string) string {
+	base := "/api/v1/endpoints"
+	if ns := d.cfg.Kubernetes.Namespace; ns != "" {
+		base = "/api/v1/namespaces/" + ns + "/endpoints"
+	}
+	return base + "?" + query + "labelSelector=" + labelSelectorEscape(d.labelPrefix+"enabled=true")
+}
+
+func (d *Discovery) ingressesPath(query string) string {
+	base := "/apis/networking.k8s.io/v1/ingresses"
+	if ns := d.cfg.Kubernetes.Namespace; ns != "" {
+		base = "/apis/networking.k8s.io/v1/namespaces/" + ns + "/ingresses"
+	}
+	return base + "?" + query + "labelSelector=" + labelSelectorEscape(d.labelPrefix+"enabled=true")
+}
+
+func watchQuery(resourceVersion string) string {
+	if resourceVersion == "" {
+		return "watch=1&"
+	}
+	return "watch=1&resourceVersion=" + url.QueryEscape(resourceVersion) + "&"
+}
+
+func (d *Discovery) getJSON(ctx context.Context, path string, into any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.apiServer+path, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+d.k8sToken)
+	resp, err := d.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("k8s liste %s: %d %s", path, resp.StatusCode, b)
+	}
+	return json.NewDecoder(resp.Body).Decode(into)
+}
+
+// snapshot liste les Services et les Ingress annotés, envoie l'état complet à la passerelle et rend les versions d'où
+// démarrer les watches. Vides : l'état n'est pas parti (pas de publication d'état, liste en échec, passerelle ancienne
+// ou en échec) et les watches rejouent l'existant. Il faut les deux listes : un état partiel retirerait les routes de
+// la ressource qu'on n'a pas pu lire.
+func (d *Discovery) snapshot(ctx context.Context) (svcRV, ingRV string) {
+	d.mu.Lock()
+	pub := d.state
+	d.mu.Unlock()
+	if pub == nil {
+		return "", ""
+	}
+	var svcs k8sServiceItems
+	if err := d.getJSON(ctx, d.servicesPath(""), &svcs); err != nil {
+		d.log.Warn("k8s discovery: liste des Services", "err", err)
+		return "", ""
+	}
+	var ings k8sIngressItems
+	if err := d.getJSON(ctx, d.ingressesPath(""), &ings); err != nil {
+		d.log.Warn("k8s discovery: liste des Ingress", "err", err)
+		return "", ""
+	}
+
+	idle := d.idleServices(ctx)
+
+	var wanted []k8sRoute
+	for _, svc := range svcs.Items {
+		if r, ok := d.serviceRoute(svc); ok {
+			wanted = append(wanted, r)
+		}
+	}
+	for _, ing := range ings.Items {
+		wanted = append(wanted, d.ingressRoutes(ing)...)
+	}
+	routes := make([]map[string]any, 0, len(wanted))
+	var inactive []map[string]any
+	hosts := make(map[string]string, len(wanted))
+	for _, r := range wanted {
+		payload, spec := d.routePayload(r.key, r.ann, r.host, r.backend, r.tls)
+		if payload == nil {
+			d.log.Warn("k8s discovery: hôte invalide, route ignorée", "host", r.host, "key", r.key)
+			continue
+		}
+		if idle[r.key] {
+			inactive = append(inactive, map[string]any{
+				"id": "k8s:" + r.key, "host": spec.Host, "aliases": spec.Aliases,
+				"container_id": "k8s:" + r.key, "name": r.key, "state": "no-endpoints",
+			})
+			continue
+		}
+		routes = append(routes, payload)
+		hosts[r.key] = spec.Host
+	}
+
+	res, err := pub.PutState(ctx, d.endpoint(), d.token(), "k8s", "", routes, inactive)
+	switch res {
+	case statepub.Sent:
+		d.mu.Lock()
+		d.idle = idle
+		d.hostByKey = hosts
+		for _, h := range hosts {
+			delete(d.pendingDel, "docker-host:"+h) // la route est de nouveau voulue
+		}
+		d.mu.Unlock()
+		d.stateOK.Store(true)
+		d.log.Info("k8s discovery: état complet envoyé", "routes", len(routes), "inactifs", len(inactive))
+		return svcs.Metadata.ResourceVersion, ings.Metadata.ResourceVersion
+	case statepub.Failed:
+		d.dirty.Store(true)
+		d.log.Warn("k8s discovery: état complet non envoyé", "err", err)
+	}
+	d.stateOK.Store(false)
+	return "", ""
+}
+
+// idleServices rend les Services dont l'objet Endpoints n'a aucune adresse prête (« namespace/nom »). Un Service sans
+// objet Endpoints (ExternalName) ou une liste impossible à lire (droit absent, erreur) ne rend personne inactif : ne pas
+// savoir n'est pas être arrêté.
+func (d *Discovery) idleServices(ctx context.Context) map[string]bool {
+	var eps k8sEndpointsItems
+	if err := d.getJSON(ctx, d.endpointsPath(""), &eps); err != nil {
+		d.log.Debug("k8s discovery: liste des Endpoints impossible, aucun Service n'est donné inactif", "err", err)
+		return nil
+	}
+	idle := map[string]bool{}
+	for _, ep := range eps.Items {
+		ready := false
+		for _, s := range ep.Subsets {
+			if len(s.Addresses) > 0 {
+				ready = true
+				break
+			}
+		}
+		if !ready {
+			idle[svcKey(ep.Metadata)] = true
+		}
+	}
+	return idle
+}
+
+// stateAfterEventDelay regroupe les événements rapprochés (un déploiement) en un seul état complet.
+const stateAfterEventDelay = 3 * time.Second
+
+// scheduleState renvoie l'état complet peu après un événement : la passerelle qui reçoit directement l'Agent a déjà la
+// route par le POST ou le DELETE, c'est cet état qui atteint les autres membres du groupe HA. Sans effet tant que la
+// passerelle n'a pas pris d'état complet. Les watches ne sont pas relancés.
+func (d *Discovery) scheduleState(ctx context.Context) {
+	if !d.stateOK.Load() {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.stateTimer != nil {
+		return
+	}
+	d.stateTimer = time.AfterFunc(stateAfterEventDelay, func() {
+		d.mu.Lock()
+		d.stateTimer = nil
+		d.mu.Unlock()
+		if ctx.Err() == nil {
+			d.snapshot(ctx)
+		}
+	})
 }
 
 func svcKey(m k8sMeta) string {

@@ -4,12 +4,17 @@
 package threat
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"sort"
 	"time"
+
+	"github.com/vincamok/goproxify/internal/edge/router"
+	"github.com/vincamok/goproxify/internal/edge/tlsfp"
+	"github.com/vincamok/goproxify/internal/edge/waf/behavior"
 )
 
 // SimEvent est une requête historique à rejouer (issue des access logs).
@@ -18,7 +23,10 @@ type SimEvent struct {
 	IP     string
 	UA     string // vide si inconnu : les règles UA ne sont alors pas évaluées
 	Path   string
-	Status int // statut réellement renvoyé à l'époque
+	Status int    // statut réellement renvoyé à l'époque
+	Method string // GET par défaut
+	TLS    string // empreinte JA4, vide si inconnue : ua_tls_mismatch n'est alors pas évalué
+	Route  string // hôte de la route qui a servi la requête : sans lui, pas de référence apprise
 }
 
 // SimBan est un ban qui aurait été posé pendant le rejeu.
@@ -74,12 +82,17 @@ func Simulate(cfg Config, events []SimEvent) SimReport {
 	report := SimReport{ByReason: map[string]int{}, Bans: []SimBan{}, TopIPs: []SimIPStat{}}
 	banned := map[string]time.Time{}
 
-	e := New(slog.New(slog.NewTextHandler(io.Discard, nil)), func(ip, reason string, expires time.Time) {
+	e := New(slog.New(slog.NewTextHandler(io.Discard, nil)), func(ip, reason string, expires time.Time, _ []router.BanSignal) {
 		report.Bans = append(report.Bans, SimBan{IP: ip, Reason: reason, At: cur})
 		banned[ip] = expires
 	})
 	e.sim = true
 	e.counters.now = func() time.Time { return cur }
+	// Le même magasin comportemental qu'en production, sur l'horloge des événements : la simulation mesure les faux positifs
+	// de la note commune avant qu'un signal passe en `block`. Pas de base ASN ici : asn_aggregate n'est pas rejoué.
+	store := behavior.NewReplayStore(0)
+	store.SetClock(func() time.Time { return cur })
+	e.SetBehaviorStore(store)
 	// Bans graduels : les bans posés pendant le rejeu tiennent lieu d'historique.
 	e.SetPriorBansFunc(func(ip string, since time.Time) int {
 		n := 0
@@ -125,15 +138,24 @@ func Simulate(cfg Config, events []SimEvent) SimReport {
 			}
 			delete(banned, ev.IP)
 		}
-		req := &http.Request{Header: http.Header{}, URL: &url.URL{Path: ev.Path}}
+		req := &http.Request{Method: ev.Method, Header: http.Header{}, URL: &url.URL{Path: ev.Path}}
+		if req.Method == "" {
+			req.Method = http.MethodGet
+		}
 		if ev.UA != "" {
 			req.Header.Set("User-Agent", ev.UA)
+		}
+		if ev.TLS != "" {
+			req = req.WithContext(tlsfp.WithContext(context.Background(), &tlsfp.Fingerprint{JA4: ev.TLS}))
+		}
+		if looksLikePage(ev) {
+			req.Header.Set("Accept", "text/html")
 		}
 		if blocked, reason := e.Check(req, ev.IP); blocked {
 			block(ev, reason)
 			continue
 		}
-		e.RecordResponse(ev.IP, ev.Path, ev.Status)
+		e.Observe(req, ev.IP, ev.Route, ev.Status)
 	}
 
 	report.BlockedIPs = len(stats)
@@ -150,6 +172,15 @@ func Simulate(cfg Config, events []SimEvent) SimReport {
 		report.TopIPs = report.TopIPs[:simTopIPs]
 	}
 	return report
+}
+
+// looksLikePage : les logs d'accès n'ont pas l'en-tête Accept ; une lecture réussie d'un chemin sans extension d'image, de style
+// ou de script est tenue pour une page.
+func looksLikePage(ev SimEvent) bool {
+	if ev.Status != http.StatusOK || (ev.Method != "" && ev.Method != http.MethodGet) {
+		return false
+	}
+	return !behavior.IsAssetPath(ev.Path)
 }
 
 func contains(s []string, v string) bool {
