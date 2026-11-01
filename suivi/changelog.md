@@ -9,6 +9,15 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ### Ajouté
 
+- **Page d'accueil : « Trois rôles, un seul binaire » explique la sécurité et les pannes (Landing 0.9.0)** : sous le tableau des composants, deux séries de six cartes (français, anglais, espagnol, allemand). **Pourquoi les séparer est sûr** : clés propres à chaque rôle (le secret racine reste chez l'Admin), canal Admin → passerelle signé en HMAC-SHA256 et révocable par nœud, jeton d'enrôlement des Agents à usage unique (24 h) puis HMAC renouvelé chaque heure, chiffrement au repos par une clé propre à la machine, rotation sans interruption, éviction d'un membre d'un groupe HA. **Quand un rôle est en panne ou perdu** : Admin injoignable (ce qui continue, ce qui est suspendu : configuration, approbation d'un Agent, émission de certificat, ajout ou remplacement d'une passerelle), passerelle ou Agent arrêté, Admin perdu et reconstruit par le launcher, resynchronisation automatique au retour, logs rejoués depuis un curseur. Un renvoi vers la section Autonomie ferme le bloc.
+- **La sécurité réseau est bornée au périmètre de l'accès (Admin 0.252.0)** : [ADR 0022](../docs/adr/0022-modele-de-droits-niveaux-et-perimetres.md), livraison 4, septième partie. Elle exigeait un accès sans critère ; un accès à périmètre (groupe de passerelles, par nom ou attributs, ou proxys couverts) l'ouvre maintenant sur ses passerelles.
+  - **Listes** : bannissements, menaces et CVE ne montrent que les lignes dont la passerelle ou la portée (`target_scope`, nom de passerelle ou `group:<nom>`) est visible.
+  - **Actions** : bannir exige une portée visible ; débannir, modifier un ban et changer le statut d'une CVE se jugent sur la portée de l'objet (`403` hors périmètre).
+  - **Restent aux accès sans critère** : les bans globaux, la liste blanche, les ASN, l'import, le traçage d'IP, l'analyse de CVE et toutes les vues agrégées.
+  - Vérifié par un test de bout en bout du filtre (passerelle, groupe, ban global, CVE d'un autre groupe, vues globales, surface, accès sans critère).
+
+### Ajouté
+
 - **Page d'accueil : la commande qui lance le constructeur du launcher (Landing 0.8.2)** : la section Launcher affiche un bloc `shell · design` copiable (`docker run --rm -p 8080:8080 -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/vincamok/goproxify/launcher:preview`), jusque-là seulement mentionnée en texte. Elle ouvre la page de conception sur `http://<hôte>:8080/design`, protégée par le code d'accès affiché dans la sortie.
 - **La topologie est bornée aux groupes de passerelles que le compte voit (Admin 0.251.0)** : [ADR 0022](../docs/adr/0022-modele-de-droits-niveaux-et-perimetres.md), livraison 4, sixième partie. Jusqu'ici tout membre d'une équipe lisait toute la topologie.
   - **Groupes visibles** (`rbac.NodeScope`) : ceux que désigne son accès à l'infrastructure (`infra:read` avec un critère de groupe, par nom ou par `environment`, `region`, `tags`) et ceux qui servent les proxys, conteneurs, logs ou métriques qu'il peut lire — il voit où tourne ce qu'il gère. Une passerelle isolée est un groupe d'un membre ; un Agent suit sa passerelle.

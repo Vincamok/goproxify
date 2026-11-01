@@ -883,8 +883,8 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/api/v1/logs/siem", adminOnly(logsH))
 	mux.Handle("/api/v1/logs/siem/status", adminOnly(logsH))
 	mux.Handle("/api/v1/security/engine-types", adminOnly(api.EngineTypesHandler{}))
-	mux.Handle("/api/v1/security", gatedAll(securityPermission, securityH))
-	mux.Handle("/api/v1/security/", gatedAll(securityPermission, securityH))
+	mux.Handle("/api/v1/security", gatedAll(securityPermission, api.ScopeSecurity(s.db, securityPermission)(securityH)))
+	mux.Handle("/api/v1/security/", gatedAll(securityPermission, api.ScopeSecurity(s.db, securityPermission)(securityH)))
 	mux.Handle("/api/v1/automation/", gatedAll(automationPermission, automationH))
 	mux.Handle("GET /api/v1/edges/waf-status", memberReads(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rows, err := s.db.QueryContext(r.Context(),

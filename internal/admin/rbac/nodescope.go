@@ -113,3 +113,33 @@ func (n NodeScope) GroupNamed(name string) bool {
 	attrs := n.source.Store.GroupAttributesOf(name)
 	return n.infra.Allows(Resource{Groups: []GroupRef{{Name: name, Environment: attrs.Environment, Region: attrs.Region, Tags: attrs.Tags}}})
 }
+
+// NodeScopeForPermission résout les groupes visibles sous une permission donnée (sécurité réseau…) : ceux que son
+// périmètre désigne par nom ou attributs, et ceux qui servent les proxys que ce même périmètre couvre.
+func NodeScopeForPermission(ctx context.Context, c *Caller, permission string) NodeScope {
+	if c == nil || c.IsAdmin() {
+		return NodeScope{all: true}
+	}
+	f := c.Filter(permission)
+	if f.All() {
+		return NodeScope{all: true}
+	}
+	defaultGroups.mu.Lock()
+	source := defaultGroups.source
+	defaultGroups.mu.Unlock()
+	ns := NodeScope{groups: map[string]bool{}, infra: f, source: source}
+	groups := currentGroups()
+	if groups == nil || f.None() {
+		return ns
+	}
+	routes := currentRoutes(ctx)
+	for i := range routes {
+		if !f.AllowsRoute(&routes[i], groups) {
+			continue
+		}
+		for _, g := range groups.GroupsServing(&routes[i]) {
+			ns.groups[g.Name] = true
+		}
+	}
+	return ns
+}
