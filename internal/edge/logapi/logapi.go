@@ -485,3 +485,25 @@ type SeasonalResponse struct {
 // TLSReputationResponse : la réputation des empreintes TLS d'une passerelle et les empreintes qu'elle propose pour
 // custom_lists.tls_fingerprints (ADR 0020, étape 4.c). Rien n'y est bloqué : l'Admin affiche, l'administrateur accepte.
 type TLSReputationResponse = threat.TLSReputation
+
+// PathEphorCalibrate : calibrage des valeurs de départ de l'ADR 0020 sur le trafic récent de la passerelle (POST).
+const PathEphorCalibrate = "/internal/v1/ephor/calibrate"
+
+// EphorCalibrateRequest : la fenêtre rejouée, un domaine facultatif et les heures d'observation d'un créneau saisonnier (celles de la
+// configuration d'Ephor, 2 par défaut).
+type EphorCalibrateRequest struct {
+	Hours    int     `json:"hours"`
+	Domain   string  `json:"domain,omitempty"`
+	MinHours float64 `json:"min_hours,omitempty"`
+	// EnumWindowSeconds : fenêtre de l'énumération (600 par défaut).
+	EnumWindowSeconds int `json:"enum_window_seconds,omitempty"`
+}
+
+// EphorCalibrateResponse : le rapport de calibrage d'une passerelle. Truncated dit qu'elle a plus d'accès que SimMaxEvents sur la fenêtre
+// (les plus récents sont rejoués), Skipped compte les accès dont l'IP est tronquée ou illisible.
+type EphorCalibrateResponse struct {
+	Report    threat.CalibrationReport `json:"report"`
+	Skipped   int                      `json:"skipped"`
+	Truncated bool                     `json:"truncated"`
+	Partial   bool                     `json:"partial"`
+}

@@ -1319,6 +1319,28 @@ La configuration se règle par `PUT /api/v1/security/threat-config` (clé `seaso
 - **`POST …/run`** : lance une analyse en arrière-plan, `202`. `409` si la surveillance est désactivée, `429` si une analyse tourne ou si la dernière à la demande date de moins de cinq minutes.
 - **`POST …/accept`** : corps `{ "domain", "check", "key" }`, reconnaît un constat ouvert ou de référence. `204`, `404` si aucun ne correspond.
 
+### `POST /api/v1/security/threat-config/calibrate`
+
+*(Admin `0.241.0`, Edge `0.147.0` ; [ADR 0020](adr/0020-reference-saisonniere-seuils-et-visibilite-amont.md), question 4)* Calibre sur le trafic réel de chaque passerelle les valeurs de départ de la référence saisonnière, de l'énumération et de la réputation des empreintes TLS ([Calibrer les valeurs de départ sur votre trafic](security.md#calibrer-les-valeurs-de-départ-sur-votre-trafic)). Corps facultatif `{ "hours": 168, "domain": "" }` (fenêtre de 1 à 168 h, 168 par défaut ; un domaine pour ne rejouer que lui), paramètre `edge` pour n'interroger qu'une passerelle. Les heures d'observation d'un créneau (`seasonal.min_hours`) et la fenêtre de l'énumération (`enumeration.window`) sont reprises de la configuration d'Ephor de la portée. **Ne modifie rien.** Scope `logs:read`.
+
+```json
+{ "window_hours": 168, "domain": "", "gateways": [ {
+    "node_id": "…", "node_name": "paris", "skipped": 0, "truncated": false,
+    "report": {
+      "events": 184213, "from": "…", "to": "…",
+      "seasonal": { "warm_routes": 3, "routes": 4, "budget": 3,
+        "candidates": [ { "floor_rps": 5, "fast_factor": 5, "slow_sigmas": 3, "warnings": 9, "probables": 1, "alert_minutes": 41 }, … ],
+        "recommended": { "floor_rps": 20, "fast_factor": 10, "slow_sigmas": 4, "warnings": 2, "probables": 0, "alert_minutes": 6 },
+        "events": [ { "route": "app.example.fr", "kind": "start", "level": "warning", "at": "…", "rps": 87.2, "expected": 11.4 } ],
+        "note": "…" },
+      "enumeration": { "budget": 3, "candidates": [ { "floor": 10, "flagged": 14 }, … ], "recommended": { "floor": 50, "flagged": 2 },
+        "hits": [ { "ip": "203.0.113.9", "route": "api.example.fr", "template": "/api/users/{int}", "distinct": 312 } ], "note": "…" },
+      "tls": { "browser_fingerprints": 6, "other_fingerprints": 41, "shared_by_ips": { "5": 9, "10": 5, "20": 3, "50": 1, "100": 0 },
+        "top": [ { "ja4": "t13d…", "ips": 63, "requests": 412, "error_share": 0.91 } ], "note": "…" } } } ] }
+```
+
+`seasonal.recommended` est absent quand aucune route n'a un créneau assez observé (`warm_routes` à 0) ou quand même le réglage le moins sensible aurait alerté plus que le budget ; `seasonal.events` liste alors ce que ce réglage aurait signalé. `truncated` : la passerelle a plus de 200 000 accès sur la fenêtre, les plus récents sont rejoués.
+
 ### `GET /api/v1/security/inventory`
 
 *(Admin `0.208.0`, Edge `0.122.0`, Agent `0.19.0` ; empreinte des réponses : Admin `0.209.0`, Edge `0.123.0`)* Applications que chaque passerelle reconnaît derrière ses proxies, d'après l'image du conteneur annoncée par l'Agent (proxys créés par labels) et d'après ce que les réponses du backend annoncent, lu avant `hide_server` (tous les proxys). Paramètres facultatifs : `route` (identifiant ou hôte d'un proxy), `edge` (une seule passerelle). Réponse : `{ "gateways": [{ "node_id", "node_name", "entries": [ … ] }], "unreachable": […] }`. Chaque entrée : `route`, `host`, `backend`, `container`, `source` (`image` : image du conteneur ; `headers` : en-tête `Server`, `X-Powered-By`, `X-Generator`… ; `html` : `<meta name="generator">`), `evidence` (la référence d'image, l'en-tête ou la balise lue), `note` (désaccord entre l'image et les réponses du backend), et, quand l'image est dans la table des produits connus, `product`, `cpe` (`vendor:product` NVD, absent si le produit est connu sans identifiant sûr : « non couvert »), `version` (absente si l'étiquette n'est pas une version : `latest`, condensat…), `partial` (la version n'a que deux composantes). Une entrée sans `product` est une image non reconnue. Une seule entrée par (backend, produit) : celle qui porte une version l'emporte, l'image à égalité. Chaque entrée porte `coverage` *(Admin `0.210.0`)* : `covered` (CPE et version : cherché dans NVD), `no_version`, `no_cpe` (produit reconnu sans identifiant sûr) ou `unknown` (absent de la table ; un logiciel versionné d'un en-tête est consigné sans `product`). La réponse porte aussi `coverage` : `{ total, covered, partial, no_version, no_cpe, unknown, gaps: [{ reason, name, evidence, entries, hosts }] }`, les `gaps` regroupant ce qui n'est pas cherché par raison et par nom, le plus fréquent d'abord ; les surcharges de CPE sont déjà appliquées. Scope `audit:read`, rôle admin. C'est ce que lit le scanner de vulnérabilités.

@@ -12,6 +12,7 @@ import (
 
 	"github.com/vincamok/goproxify/internal/edge/logapi"
 	"github.com/vincamok/goproxify/internal/edge/logstore"
+	"github.com/vincamok/goproxify/internal/edge/surface"
 	"github.com/vincamok/goproxify/internal/edge/threat"
 	"github.com/vincamok/goproxify/internal/edge/waf/behavior"
 )
@@ -89,4 +90,28 @@ func (s *Server) simEvents(ctx context.Context, since time.Time, domain string) 
 		}
 		q.After = page.Next
 	}
+}
+
+// handleEphorCalibrate : POST /internal/v1/ephor/calibrate — rejoue les accès récents de la passerelle avec une grille de réglages des
+// valeurs de départ de l'ADR 0020 (référence saisonnière, énumération, empreintes TLS) et rend ce que chacun aurait signalé.
+func (s *Server) handleEphorCalibrate(w http.ResponseWriter, r *http.Request) {
+	var req logapi.EphorCalibrateRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Hours <= 0 || req.Hours > 24*7 || req.MinHours < 0 || req.MinHours > 168 {
+		http.Error(w, "requête invalide", http.StatusBadRequest)
+		return
+	}
+	s.withLogGateFor(w, r, true, ephorSimTimeout, func(ctx context.Context) {
+		events, skipped, truncated, partial, err := s.simEvents(ctx, time.Now().Add(-time.Duration(req.Hours)*time.Hour), req.Domain)
+		if err != nil {
+			s.log.Warn("ephor: lecture des accès pour le calibrage échouée", "err", err)
+			http.Error(w, "calibrage impossible", http.StatusInternalServerError)
+			return
+		}
+		rep := threat.Calibrate(events, threat.CalibrateOptions{
+			MinHours: req.MinHours, WindowHours: float64(req.Hours), EnumShape: surface.EnumShape,
+			EnumWindow: time.Duration(req.EnumWindowSeconds) * time.Second,
+		})
+		writeJSON(w, logapi.EphorCalibrateResponse{Report: rep, Skipped: skipped, Truncated: truncated, Partial: partial})
+	})
 }

@@ -98,3 +98,12 @@ func (c *Client) LogErase(ctx context.Context, t Target, ip string) (*logapi.Era
 	}
 	return &out, nil
 }
+
+// EphorCalibrate demande à la passerelle de calibrer les valeurs de départ de l'ADR 0020 sur ses accès récents.
+func (c *Client) EphorCalibrate(ctx context.Context, t Target, req logapi.EphorCalibrateRequest) (*logapi.EphorCalibrateResponse, error) {
+	var out logapi.EphorCalibrateResponse
+	if err := c.do(ctx, t, http.MethodPost, logapi.PathEphorCalibrate, req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}

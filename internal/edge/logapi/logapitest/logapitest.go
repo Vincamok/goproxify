@@ -47,6 +47,8 @@ type Gateway struct {
 	Rejections logapi.RejectionsResponse
 	// Seasonal : ce que la passerelle répond à GET /internal/v1/seasonal.
 	Seasonal logapi.SeasonalResponse
+	// LastCalibrate : la dernière demande de calibrage reçue.
+	LastCalibrate logapi.EphorCalibrateRequest
 	// TLSReputation : ce que la passerelle répond à GET /internal/v1/tls/reputation.
 	TLSReputation logapi.TLSReputationResponse
 }
@@ -64,6 +66,7 @@ func New(t testing.TB, name string) *Gateway {
 	mux.HandleFunc("GET "+logapi.PathUniqueIPs, g.uniqueIPs)
 	mux.HandleFunc("GET "+logapi.PathSearch, g.search)
 	mux.HandleFunc("POST "+logapi.PathEphorSim, g.simulate)
+	mux.HandleFunc("POST "+logapi.PathEphorCalibrate, g.calibrate)
 	mux.HandleFunc("GET "+logapi.PathEphorReferences, func(w http.ResponseWriter, _ *http.Request) { write(w, g.References) })
 	mux.HandleFunc("GET "+logapi.PathSurface, func(w http.ResponseWriter, _ *http.Request) { write(w, g.Surface) })
 	mux.HandleFunc("GET "+logapi.PathSurfaceReport, func(w http.ResponseWriter, r *http.Request) {
@@ -272,4 +275,33 @@ func (g *Gateway) simulate(w http.ResponseWriter, r *http.Request) {
 		q.After = page.Next
 	}
 	write(w, logapi.EphorSimResponse{Current: threat.Simulate(current, events), Candidate: threat.Simulate(candidate, events), Events: len(events), Skipped: skipped})
+}
+
+func (g *Gateway) calibrate(w http.ResponseWriter, r *http.Request) {
+	var req logapi.EphorCalibrateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	g.LastCalibrate = req
+	q := logstore.Query{Kinds: []logstore.Kind{logstore.KindAccess}, Domain: req.Domain, From: time.Now().Add(-time.Duration(req.Hours) * time.Hour), Limit: 20000}
+	var events []threat.SimEvent
+	for {
+		page, err := g.Store.Search(r.Context(), q)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		for _, row := range page.Rows {
+			if row.Status <= 0 {
+				continue
+			}
+			events = append(events, threat.SimEvent{Time: row.Ts, IP: row.IP, Path: row.Path, Status: row.Status, Route: row.Domain, TLS: row.TLSJA4})
+		}
+		if !page.HasMore {
+			break
+		}
+		q.After = page.Next
+	}
+	write(w, logapi.EphorCalibrateResponse{Report: threat.Calibrate(events, threat.CalibrateOptions{MinHours: req.MinHours, WindowHours: float64(req.Hours)})})
 }

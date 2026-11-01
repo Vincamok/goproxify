@@ -878,6 +878,8 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 		result, toolErr = h.toolGetAppInventory(r, p.Arguments)
 	case "get_entry_rejections":
 		result, toolErr = h.toolGetEntryRejections(r, p.Arguments)
+	case "calibrate_ephor":
+		result, toolErr = h.toolCalibrateEphor(r, p.Arguments)
 	case "get_domain_watch":
 		result, toolErr = h.toolGetDomainWatch(r, p.Arguments)
 	case "get_tls_reputation":

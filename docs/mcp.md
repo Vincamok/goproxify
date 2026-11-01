@@ -36,7 +36,7 @@ Chaque outil exige un scope, le même que sa route REST équivalente. Les outils
 | `domains:write` | `create_domain`, `renew_domain`, `rotate_cert` |
 | `certs:read` | `list_certs`, `get_cert_status`, `list_cert_deploy_targets`, `list_cert_deploy_types`, `list_internal_cas` †, `list_internal_certs` †, `get_ech_status` †, `list_dns_providers` †, `list_dns_provider_types` † |
 | `certs:write` | `obtain_cert`, `import_cert`, `trigger_cert_deploy`, `create_internal_ca` †, `issue_internal_cert` †, `revoke_internal_cert` † |
-| `logs:read` | `list_logs`, `get_siem_status` †, `get_prism_anomalies`, `get_prism_geo`, `get_prism_tls_fingerprints`, `get_prism_slo`, `simulate_ephor_config` †, `get_ephor_references` †, `suggest_ephor_thresholds` †, `trace_ip` †, `preview_security_ban` †, `preview_asn_ban` † |
+| `logs:read` | `list_logs`, `get_siem_status` †, `get_prism_anomalies`, `get_prism_geo`, `get_prism_tls_fingerprints`, `get_prism_slo`, `simulate_ephor_config` †, `calibrate_ephor` †, `get_ephor_references` †, `suggest_ephor_thresholds` †, `trace_ip` †, `preview_security_ban` †, `preview_asn_ban` † |
 | `audit:read` | `get_audit_log`, `list_ip_profiles`, `get_security_overview` †, `list_security_bans` †, `list_security_engine_types` †, `get_waf_activity` †, `list_plugins` †, `lookup_asn` †, `list_ban_whitelist` †, `list_security_threats` †, `list_security_cves` †, `get_proxy_surface` †, `get_app_inventory` †, `get_entry_rejections` †, `get_traffic_reference` †, `get_tls_reputation` †, `get_domain_watch` †, `get_proxy_surface_proposals` †, `get_proxy_surface_openapi` †, `get_proxy_surface_suggestions` †, `list_auth_providers` †, `list_auth_provider_types` †, `list_flows` †, `get_flow` †, `list_flow_versions` †, `list_flow_runs` †, `get_flow_run` †, `get_automation_catalog` †, `list_flow_templates` †, `list_silences` †, `export_automation` † |
 | `security:write` | `create_ip_profile`, `delete_ip_profile`, `reset_proxy_surface` †, `enforce_proxy_surface` †, `accept_proxy_surface_suggestions` †, `relax_proxy_surface` †, `create_security_ban` †, `delete_security_ban` †, `ban_ip` †, `unban_ip` †, `add_ban_whitelist` †, `remove_ban_whitelist` †, `import_security_bans` †, `ban_asn` †, `unban_asn` †, `create_auth_provider` †, `delete_auth_provider` †, `create_flow` †, `update_flow` †, `set_flow_enabled` †, `delete_flow` †, `run_flow` †, `simulate_flow` †, `restore_flow_version` †, `detach_flow` †, `update_flow_params` †, `decide_flow_run` †, `cancel_flow_run` †, `replay_flow_run` †, `install_flow_template` †, `create_silence` †, `delete_silence` †, `import_automation` † |
 | `portal:read` / `portal:write` | outils Access (`*_portal_*`, `push_portal`) † — voir [GoProxify Access](#goproxify-access-portail) |
@@ -1118,6 +1118,18 @@ Trié par `last_seen_at` décroissant. Chaque résultat inclut `edge_name` (Pass
 | Paramètre | Type | Requis | Description |
 |-----------|------|--------|-------------|
 | `edge` | string | | ID du jeton ou nom de la passerelle (défaut : toutes) |
+
+---
+
+### `calibrate_ephor`
+
+*(Admin `0.241.0`, Edge `0.147.0`)* Calibre sur le trafic réel de chaque passerelle les valeurs de départ de l'ADR 0020 ([ADR 0020](adr/0020-reference-saisonniere-seuils-et-visibilite-amont.md), question 4) : référence saisonnière, détection d'énumération, réputation des empreintes TLS. Chaque passerelle rejoue ses accès récents avec une grille de réglages, dit ce que chacun aurait signalé, propose le plus sensible qui n'aurait pas dépassé un petit budget d'alertes et liste ce que ce réglage aurait signalé, pour juger si ce sont de vrais pics. La période est supposée ordinaire. Ne modifie rien. Voir [Calibrer les valeurs de départ sur votre trafic](security.md#calibrer-les-valeurs-de-départ-sur-votre-trafic).
+
+| Paramètre | Type | Requis | Description |
+|-----------|------|--------|-------------|
+| `hours` | number | — | Fenêtre rejouée (défaut `168`, max `168`) |
+| `domain` | string | — | Limiter le rejeu à un domaine |
+| `edge` | string | — | ID du jeton ou nom de la passerelle (défaut : toutes) |
 
 ---
 

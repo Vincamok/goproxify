@@ -198,6 +198,8 @@ func (h *SecurityHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.getInventory(w, r)
 	case r.Method == http.MethodGet && sub == "rejections":
 		h.getRejections(w, r)
+	case r.Method == http.MethodPost && sub == "threat-config" && id == "calibrate":
+		h.calibrateThreat(w, r)
 	case r.Method == http.MethodGet && sub == "domain-watch":
 		h.getDomainWatch(w, r)
 	case r.Method == http.MethodPut && sub == "domain-watch":

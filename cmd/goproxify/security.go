@@ -61,6 +61,7 @@ Sous-commandes :
 goproxify security threat get  [-edge <id>] [-admin-url …] [-token …]
 goproxify security threat set  [-edge <id>] -file <config.json> [-admin-url …] [-token …]
 goproxify security threat simulate -file <config.json> [-hours N] [-domain <d>] [-edge <id>]
+goproxify security threat calibrate [-hours N] [-domain <d>] [-edge <id>]   # calibre sur le trafic réel les valeurs de départ de la référence saisonnière, de l'énumération et des empreintes TLS
 goproxify security threat suggest [-days N] [-edge <id>]   # seuils proposés à partir des cumuls par minute (rien n'est appliqué)
 goproxify security threat references [-edge <id>]   # ce que chaque passerelle a appris : débit normal par route et par heure, base ASN
 
@@ -347,6 +348,27 @@ func runSecurityThreat() {
 		var res json.RawMessage
 		if _, err := client.DoJSON("POST", path, body, &res); err != nil {
 			fmt.Fprintf(os.Stderr, "threat simulate : %v\n", err)
+			os.Exit(1)
+		}
+		out, _ := json.MarshalIndent(res, "", "  ")
+		fmt.Println(string(out))
+
+	case "calibrate":
+		args := parseFlags(os.Args[4:])
+		hours, _ := strconv.Atoi(flagValue(args, "-hours", "168"))
+		client, err := newAdminClient(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+			os.Exit(1)
+		}
+		path := "/api/v1/security/threat-config/calibrate"
+		if edgeID := flagValue(args, "-edge", ""); edgeID != "" {
+			path += "?edge=" + url.QueryEscape(edgeID)
+		}
+		body := map[string]any{"hours": hours, "domain": flagValue(args, "-domain", "")}
+		var res json.RawMessage
+		if _, err := client.DoJSON("POST", path, body, &res); err != nil {
+			fmt.Fprintf(os.Stderr, "threat calibrate : %v\n", err)
 			os.Exit(1)
 		}
 		out, _ := json.MarshalIndent(res, "", "  ")

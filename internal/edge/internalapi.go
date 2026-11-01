@@ -1608,6 +1608,7 @@ func (s *Server) registerLogRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+logapi.PathTop, s.handleLogTop)
 	mux.HandleFunc("GET "+logapi.PathUniqueIPs, s.handleLogUniqueIPs)
 	mux.HandleFunc("POST "+logapi.PathEphorSim, s.handleEphorSimulate)
+	mux.HandleFunc("POST "+logapi.PathEphorCalibrate, s.handleEphorCalibrate)
 	mux.HandleFunc("GET "+logapi.PathEphorReferences, s.handleEphorReferences)
 	mux.HandleFunc("GET "+logapi.PathSurface, s.handleSurfaceList)
 	mux.HandleFunc("GET "+logapi.PathInventory, s.handleInventory)
