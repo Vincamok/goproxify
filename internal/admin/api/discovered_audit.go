@@ -225,6 +225,10 @@ func (h *DiscoveredContainersHandler) Orphans(ctx context.Context) ([]OrphanProx
 		if host == "" {
 			host = env.Host
 		}
+		route.ID, route.Host = env.ID, host
+		if h.readable != nil && !h.readable(route) {
+			continue
+		}
 		out = append(out, OrphanProxy{ProxyID: env.ID, Host: host, Enabled: env.Enabled, Origin: *route.Origin})
 	}
 	return out, nil

@@ -216,7 +216,7 @@ Labels qui reproduisent un proxy (Admin `0.152.0`), pour le déclarer sur un con
 
 ### `GET /api/v1/discovered-containers`
 
-Routes découvertes par les labels (Docker, Podman, Portainer, Kubernetes…), agrégées sur les passerelles connectées. Scope `nodes:read`. Chaque entrée : `id`, `host`, `aliases`, `backends`, `container_ids`, `tls`, `source`, `edge_name`, `agent_name`, `config` (réglages issus des labels) et, depuis Admin `0.153.0`, **`shadowed_by`** : l'ID du proxy configuré qui sert l'hôte à la place de la route des labels (absent quand c'est la route des labels qui sert).
+Routes découvertes par les labels (Docker, Podman, Portainer, Kubernetes…), agrégées sur les passerelles connectées. Scope `nodes:read`. Depuis Admin `0.241.1`, la liste, `detail` et `orphans` sont limités au périmètre de l'utilisateur, comme `GET /proxies` : grants de l'utilisateur et de ses équipes (domaine, alias, serveur, passerelle) ; un admin sans grant voit tout, un utilisateur sans grant ne voit rien, et `detail` répond `404` hors périmètre (`POST /proxies/from-discovered` aussi, depuis `0.241.2`). Chaque entrée : `id`, `host`, `aliases`, `backends`, `container_ids`, `tls`, `source`, `edge_name`, `agent_name`, `config` (réglages issus des labels) et, depuis Admin `0.153.0`, **`shadowed_by`** : l'ID du proxy configuré qui sert l'hôte à la place de la route des labels (absent quand c'est la route des labels qui sert).
 
 Depuis Admin `0.155.0`, chaque entrée porte aussi **`missing`** : les contrôles de sécurité absents de la route parmi `tls`, `waf`, `rate_limit` (les snippets de la route sont fusionnés avant le jugement).
 

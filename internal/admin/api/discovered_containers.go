@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/vincamok/goproxify/internal/admin/auth"
+	"github.com/vincamok/goproxify/internal/admin/rbac"
 	"github.com/vincamok/goproxify/internal/edge/router"
 )
 
@@ -27,6 +28,8 @@ type DiscoveredContainersHandler struct {
 	Groups GroupResolver
 	// Pusher publie la liste des routes désactivées ; nil : la modification n'est enregistrée que côté Admin.
 	Pusher DisabledRoutesPusher
+	// readable : renseigné par ReadableBy, limite ce que le handler voit au périmètre d'un utilisateur ; nil : tout.
+	readable func(*router.Route) bool
 }
 
 type DiscoveredContainer struct {
@@ -61,6 +64,7 @@ type DiscoveredContainer struct {
 }
 
 func (h *DiscoveredContainersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h = h.ReadableBy(r.Context())
 	if r.Method == http.MethodPut && strings.TrimPrefix(r.URL.Path, "/api/v1/discovered-containers") == "/enabled" {
 		h.setEnabled(w, r)
 		return
@@ -82,7 +86,7 @@ func (h *DiscoveredContainersHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 }
 
 func (h *DiscoveredContainersHandler) list(w http.ResponseWriter, r *http.Request) {
-	result := withDisabled(h.FetchFromEdges(r.Context()), LoadDisabledRoutes(h.DB))
+	result := h.visible(withDisabled(h.FetchFromEdges(r.Context()), LoadDisabledRoutes(h.DB)))
 	store, _ := loadSnippetStore(r.Context(), h.DB)
 	for i := range result {
 		if route := routeOf(result[i].ProxyConfig); route != nil {
@@ -91,6 +95,45 @@ func (h *DiscoveredContainersHandler) list(w http.ResponseWriter, r *http.Reques
 		result[i].ProxyConfig = nil
 	}
 	jsonOK(w, result)
+}
+
+// ReadableBy retourne une copie du handler limitée à ce que l'utilisateur de ctx peut voir : routes (liste, détail,
+// conversion) et proxys orphelins, avec les mêmes règles que pour un proxy configuré (périmètres domaine, serveur et
+// passerelle de ses grants et de ceux de ses équipes). Sans utilisateur dans ctx, rien n'est visible.
+func (h *DiscoveredContainersHandler) ReadableBy(ctx context.Context) *DiscoveredContainersHandler {
+	userID := auth.UserIDFromContext(ctx)
+	role := rbac.UserRole(ctx, h.DB, userID)
+	grants, _ := rbac.UserEffectiveGrants(ctx, h.DB, userID)
+	scoped := *h
+	scoped.readable = func(route *router.Route) bool { return rbac.CanReadProxyWithGrants(role, grants, route) }
+	return &scoped
+}
+
+// visible retire les routes hors du périmètre de ReadableBy ; sans périmètre, la liste est rendue telle quelle.
+func (h *DiscoveredContainersHandler) visible(items []DiscoveredContainer) []DiscoveredContainer {
+	if h.readable == nil {
+		return items
+	}
+	out := make([]DiscoveredContainer, 0, len(items))
+	for _, c := range items {
+		if h.readable(c.route()) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// route est la route que les grants jugent. Un conteneur arrêté ou une route désactivée qu'aucune passerelle n'annonce
+// n'a pas de config de proxy : seuls son hôte, ses alias et ses backends comptent.
+func (c *DiscoveredContainer) route() *router.Route {
+	if route := routeOf(c.ProxyConfig); route != nil {
+		return route
+	}
+	route := &router.Route{ID: c.ID, Host: c.Host, Aliases: c.Aliases}
+	for _, b := range c.Backends {
+		route.Backends = append(route.Backends, router.Backend{URL: b})
+	}
+	return route
 }
 
 // routeOf lit la config de proxy d'une route découverte ; nil si elle est absente ou illisible.
@@ -167,7 +210,7 @@ func (c *DiscoveredContainer) ConversionConfig(proxyID string, updatedAt time.Ti
 // FetchFromEdges liste les routes découvertes par les labels (Docker, Kubernetes…) sur toutes les passerelles.
 func (h *DiscoveredContainersHandler) FetchFromEdges(ctx context.Context) []DiscoveredContainer {
 	items, _ := h.fetchAll(ctx)
-	return items
+	return h.visible(items)
 }
 
 // fetchAll liste les routes découvertes et les passerelles qui ont répondu : une passerelle muette n'a pas de liste,

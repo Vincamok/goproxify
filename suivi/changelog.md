@@ -7,6 +7,20 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ## [Unreleased]
 
+### Corrigé
+
+- **Le MCP applique le périmètre de l'utilisateur du PAT aux proxys et aux conteneurs (Admin 0.241.2)** : les outils de proxys ne regardaient que le scope du jeton, jamais les grants du compte (domaine, serveur, passerelle, équipes). Un compte limité à un domaine listait, lisait, modifiait ou supprimait les proxys de tous les domaines.
+  - **Lecture** : `list_proxies` (et la ressource `goproxify://proxies`), `get_proxy`, `get_proxy_labels`, `get_discovered_container` et `list_orphan_proxies` ne montrent que le périmètre du compte. Hors périmètre, un proxy ou un conteneur est « introuvable ».
+  - **Écriture** : `create_proxy`, `update_proxy` (l'hôte d'origine **et** le résultat sont jugés : on ne déplace pas un proxy vers un autre domaine), `set_proxy_enabled`, `purge_proxy_cache`, `convert_discovered_container` et les outils de surface qui réécrivent un proxy exigent un droit d'écriture sur le domaine ; `delete_proxy` suit la règle de `DELETE /proxies/{id}` (`Erreur: proxy hors de votre périmètre`).
+  - **API** : `GET /discovered-containers`, `/detail`, `/orphans` et `POST /proxies/from-discovered` passent par le même filtre (`DiscoveredContainersHandler.ReadableBy`) ; la conversion d'un conteneur hors périmètre répond `404` au lieu de `403`.
+  - Vérifié par des tests : liste restreinte (proxys gérés et conteneurs), admin global, compte sans grant, lecture, labels, modification, activation, purge et suppression refusées hors périmètre, création et déplacement bornés par le domaine, lecture et conversion de conteneur hors périmètre.
+  - Reste hors périmètre, côté REST comme MCP : les endpoints de surface applicative (lecture, propositions, OpenAPI, réinitialisation) ne filtrent pas par grants ; `PUT /proxies/{id}` ne juge que la nouvelle config, pas celle du proxy remplacé.
+
+- **Le périmètre d'un utilisateur s'applique aussi aux conteneurs découverts (Admin 0.241.1)** : un utilisateur limité à un domaine voyait pourtant, dans les pages Trafic, Infrastructure, Portail et l'inspecteur de proxy, les routes issues des labels (Docker, Podman, Portainer, Kubernetes…) de tous les domaines, leur détail (config et labels) et les proxys orphelins des autres.
+  - `GET /discovered-containers`, `/detail` et `/orphans` appliquent les mêmes règles que `GET /proxies` : grants de l'utilisateur et de ses équipes (domaine, alias, serveur, passerelle). Un admin sans grant voit tout ; un utilisateur sans grant ne voit rien.
+  - Un conteneur arrêté et une route désactivée que plus aucune passerelle n'annonce sont jugés sur leur hôte. Le détail d'un conteneur hors périmètre répond `404`, comme s'il n'existait pas.
+  - Vérifié par des tests : liste restreinte au domaine, admin global et utilisateur sans grant, routes désactivées, détail hors périmètre, orphelins.
+
 ### Ajouté
 
 - **Calibrage des valeurs de départ sur le trafic réel : `goproxify security threat calibrate` (Edge 0.147.0, Admin 0.241.0)** : [ADR 0020](../docs/adr/0020-reference-saisonniere-seuils-et-visibilite-amont.md), question 4 (les valeurs initiales sont des points de départ à calibrer).

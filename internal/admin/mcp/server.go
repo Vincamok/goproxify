@@ -678,7 +678,7 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 	case "get_discovered_container":
 		result, toolErr = h.toolGetDiscoveredContainer(r, p.Arguments)
 	case "list_orphan_proxies":
-		result, toolErr = (&api.DiscoveredContainersHandler{DB: h.DB, Log: h.Log, Groups: h.Groups}).Orphans(r.Context())
+		result, toolErr = (&api.DiscoveredContainersHandler{DB: h.DB, Log: h.Log, Groups: h.Groups}).ReadableBy(r.Context()).Orphans(r.Context())
 	case "convert_discovered_container":
 		result, toolErr = h.toolConvertDiscoveredContainer(r, p.Arguments)
 	case "set_container_route_enabled":
@@ -1032,8 +1032,12 @@ func (h *Handler) toolListProxies(r *http.Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	readable := h.readableEnvelope(r.Context())
 	out := make([]map[string]any, 0, len(envs))
 	for _, e := range envs {
+		if !readable(e) {
+			continue
+		}
 		var host, rtype string
 		var tls *bool
 		var m map[string]any
@@ -1060,7 +1064,7 @@ func (h *Handler) toolListProxies(r *http.Request) (any, error) {
 			"source": source,
 		})
 	}
-	dc := &api.DiscoveredContainersHandler{DB: h.DB, Log: h.Log, Groups: h.Groups}
+	dc := (&api.DiscoveredContainersHandler{DB: h.DB, Log: h.Log, Groups: h.Groups}).ReadableBy(r.Context())
 	for _, d := range dc.FetchFromEdges(r.Context()) {
 		out = append(out, map[string]any{
 			"id": d.ID, "name": d.Host, "enabled": !d.Disabled, "host": d.Host, "type": "http", "tls": d.TLS,
@@ -1146,6 +1150,9 @@ func (h *Handler) toolCreateProxy(r *http.Request, args map[string]any) (any, er
 	if err != nil {
 		return nil, err
 	}
+	if err := h.requireWrite(r.Context(), id, host, cfgJSON); err != nil {
+		return nil, err
+	}
 	actor := adminauth.ActorFromContext(r.Context())
 	if err := h.publishToEdges(r.Context(), id, host, true, cfgJSON, actor); err != nil {
 		return nil, err
@@ -1161,7 +1168,7 @@ func (h *Handler) toolGetDiscoveredContainer(r *http.Request, args map[string]an
 	if id == "" {
 		return nil, fmt.Errorf("id requis")
 	}
-	dc := &api.DiscoveredContainersHandler{DB: h.DB, Log: h.Log, Groups: h.Groups}
+	dc := (&api.DiscoveredContainersHandler{DB: h.DB, Log: h.Log, Groups: h.Groups}).ReadableBy(r.Context())
 	c, err := dc.Find(r.Context(), id, edge)
 	if err != nil {
 		return nil, err
@@ -1192,8 +1199,11 @@ func (h *Handler) toolConvertDiscoveredContainer(r *http.Request, args map[strin
 	if id == "" {
 		return nil, fmt.Errorf("id requis")
 	}
-	c, err := (&api.DiscoveredContainersHandler{DB: h.DB, Log: h.Log, Groups: h.Groups}).ForConversion(r.Context(), id, edge)
+	c, err := (&api.DiscoveredContainersHandler{DB: h.DB, Log: h.Log, Groups: h.Groups}).ReadableBy(r.Context()).ForConversion(r.Context(), id, edge)
 	if err != nil {
+		return nil, err
+	}
+	if err := h.requireWrite(r.Context(), c.ID, c.Host, c.ProxyConfig); err != nil {
 		return nil, err
 	}
 	for _, b := range c.Backends {
@@ -1236,7 +1246,11 @@ func (h *Handler) resolveProxyEnvelope(ctx context.Context, ref string) (*proxys
 	if err != nil {
 		return nil, err
 	}
+	readable := h.readableEnvelope(ctx)
 	for _, e := range envs {
+		if !readable(e) {
+			continue
+		}
 		if e.ID == ref || e.Host == ref {
 			return e, nil
 		}
@@ -1353,6 +1367,9 @@ func (h *Handler) toolUpdateProxy(r *http.Request, args map[string]any) (any, er
 	if err != nil {
 		return nil, err
 	}
+	if err := h.requireWrite(r.Context(), id, name, []byte(cfgJSON), outJSON); err != nil {
+		return nil, err
+	}
 	actor := adminauth.ActorFromContext(r.Context())
 	if err := h.publishToEdges(r.Context(), id, name, enabled == 1, outJSON, actor); err != nil {
 		return nil, err
@@ -1371,6 +1388,9 @@ func (h *Handler) toolSetProxyEnabled(r *http.Request, args map[string]any) (any
 	if err != nil {
 		return nil, err
 	}
+	if err := h.requireWrite(r.Context(), id, name, []byte(cfgJSON)); err != nil {
+		return nil, err
+	}
 	actor := adminauth.ActorFromContext(r.Context())
 	if err := h.publishToEdges(r.Context(), id, name, en, json.RawMessage(cfgJSON), actor); err != nil {
 		return nil, err
@@ -1386,6 +1406,9 @@ func (h *Handler) toolSetProxyEnabled(r *http.Request, args map[string]any) (any
 func (h *Handler) toolDeleteProxy(r *http.Request, id string) (any, error) {
 	env, err := h.resolveProxyEnvelope(r.Context(), id)
 	if err != nil {
+		return nil, err
+	}
+	if err := h.requireDelete(r.Context(), env); err != nil {
 		return nil, err
 	}
 	id = env.ID
@@ -1412,6 +1435,9 @@ func (h *Handler) toolPurgeProxyCache(r *http.Request, args map[string]any) (any
 	idArg, _ := args["id"].(string)
 	env, err := h.resolveProxyEnvelope(r.Context(), idArg)
 	if err != nil {
+		return nil, err
+	}
+	if err := h.requireWrite(r.Context(), env.ID, env.Host, env.Config); err != nil {
 		return nil, err
 	}
 	splitList := func(key string) []string {

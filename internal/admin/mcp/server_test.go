@@ -81,7 +81,7 @@ func setupMCPDB(t *testing.T) *Handler {
 
 func TestCreateUpdateEnableProxy(t *testing.T) {
 	h := setupMCPDB(t)
-	r := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	r := adminRequest(t, h)
 
 	created, err := h.toolCreateProxy(r, map[string]any{
 		"host": "app.example.com", "backend": "http://10.0.0.5:3000",
@@ -119,7 +119,7 @@ func TestCreateUpdateEnableProxy(t *testing.T) {
 
 func TestListProxiesIncludesLabelProxies(t *testing.T) {
 	h := setupMCPDB(t)
-	r := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	r := adminRequest(t, h)
 	if _, err := h.toolCreateProxy(r, map[string]any{"host": "app.example.com", "backend": "http://10.0.0.5:3000"}); err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestListAgentsApprove(t *testing.T) {
 
 func TestConvertDiscoveredContainerCreatesManagedProxy(t *testing.T) {
 	h := setupMCPDB(t)
-	r := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	r := adminRequest(t, h)
 
 	if _, err := h.toolConvertDiscoveredContainer(r, map[string]any{"id": "docker-host:absent.example.com"}); err == nil {
 		t.Fatal("un conteneur inconnu doit être refusé")
@@ -246,7 +246,7 @@ func TestConvertDiscoveredContainerCreatesManagedProxy(t *testing.T) {
 
 func TestGetDiscoveredContainerAuditsAndFiltersFormat(t *testing.T) {
 	h := setupMCPDB(t)
-	r := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	r := adminRequest(t, h)
 
 	res, err := h.toolGetDiscoveredContainer(r, map[string]any{"id": "lab.example.com", "format": "compose"})
 	if err != nil {

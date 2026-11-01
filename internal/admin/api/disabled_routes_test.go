@@ -120,8 +120,8 @@ func TestListKeepsDisabledHostsVisible(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/discovered-containers", nil))
+	adminUser(t, h)
+	rec := getAs(t, h, "ad", "/api/v1/discovered-containers")
 	var list []DiscoveredContainer
 	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
 		t.Fatal(err)

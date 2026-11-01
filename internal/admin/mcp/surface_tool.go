@@ -179,6 +179,9 @@ func (h *Handler) MutateProxyConfig(ctx context.Context, ref, actor string, muta
 	if err != nil {
 		return id, err
 	}
+	if err := h.requireWrite(ctx, id, name, []byte(cfgJSON), out); err != nil {
+		return id, err
+	}
 	if err := h.publishToEdges(ctx, id, name, enabled == 1, out, actor); err != nil {
 		return id, err
 	}

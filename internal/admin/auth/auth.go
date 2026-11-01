@@ -189,6 +189,11 @@ func RequireJWT(secret string) func(http.Handler) http.Handler {
 	}
 }
 
+// WithUserID place l'utilisateur authentifié dans le contexte, comme le font RequireJWT et RequirePAT.
+func WithUserID(ctx context.Context, userID string) context.Context {
+	return context.WithValue(ctx, ctxUserID, userID)
+}
+
 // UserIDFromContext extrait l'identifiant utilisateur du contexte.
 func UserIDFromContext(ctx context.Context) string {
 	v, _ := ctx.Value(ctxUserID).(string)

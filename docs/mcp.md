@@ -47,6 +47,8 @@ Les scopes d'écriture (`proxies:delete`, `nodes:write`, `alerts:write`, `domain
 - `Erreur: accès réservé aux administrateurs` : outil † appelé par un compte `user` ;
 - `Erreur: outil sans scope déclaré: <outil>` : outil exposé sans entrée dans la table outil → scope (bug serveur, refusé par sécurité).
 
+**Périmètre du compte (Admin `0.241.2`).** Le scope du PAT dit quels outils sont permis ; les grants du compte et de ses équipes (domaine, serveur, passerelle) disent sur quels proxys, comme pour l'API REST. Un compte limité à un domaine ne voit par `list_proxies`, `get_proxy`, `get_proxy_labels`, `get_discovered_container` et `list_orphan_proxies` que les proxys et conteneurs de ce domaine (les autres sont « introuvables »). `create_proxy`, `update_proxy` (l'hôte d'origine et le résultat sont jugés), `set_proxy_enabled`, `purge_proxy_cache`, `convert_discovered_container` et `set_container_route_enabled` exigent un droit d'écriture sur le domaine, `delete_proxy` la règle de `DELETE /proxies/{id}` ; sinon `Erreur: proxy hors de votre périmètre`. Un admin sans grant a accès à tout.
+
 `tools/list` n'annonce que les outils que l'appelant peut appeler (mêmes contrôles : scope du PAT ∩ droits du compte, rôle admin pour les outils †). Un PAT limité à quelques scopes réduit donc d'autant la liste envoyée au modèle.
 
 ### Groupes d'outils (`?toolsets=`)

@@ -29,7 +29,7 @@ func (h *ProxiesHandler) fromDiscovered(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	c, err := (&DiscoveredContainersHandler{DB: h.DB, Log: h.Log}).ForConversion(r.Context(), body.ID, body.Edge)
+	c, err := (&DiscoveredContainersHandler{DB: h.DB, Log: h.Log}).ReadableBy(r.Context()).ForConversion(r.Context(), body.ID, body.Edge)
 	switch {
 	case errors.Is(err, ErrContainerNotFound):
 		writeErr(w, r, http.StatusNotFound, "api.err.container_not_found")
