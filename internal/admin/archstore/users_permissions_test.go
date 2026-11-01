@@ -11,19 +11,19 @@ import (
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
 )
 
-// users.yaml recharge une base vide : le droit de révélation accordé en propre ou à une équipe
-// doit y survivre, comme le rôle dpo.
-func TestUsersArchiveKeepsPermissions(t *testing.T) {
+// users.yaml recharge une base vide : les capacités d'une équipe et sa composition y survivent, ainsi que l'équipe
+// intégrée du DPO. Le compte ne porte ni accès ni capacité en propre.
+func TestUsersArchiveKeepsTeamCapabilities(t *testing.T) {
 	src, err := admindb.Open(filepath.Join(t.TempDir(), "src.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer src.Close()
 	for _, q := range []string{
-		`INSERT INTO users (id, email, password_hash, role) VALUES ('dpo','dpo@t','x','dpo'), ('direct','d@t','x','user')`,
-		`INSERT INTO user_permissions (user_id, permission) VALUES ('direct','gdpr:reveal')`,
-		`INSERT INTO teams (id, name) VALUES ('legal','Juridique')`,
-		`INSERT INTO team_permissions (team_id, permission) VALUES ('legal','gdpr:reveal')`,
+		`INSERT INTO users (id, email, password_hash, role) VALUES ('dpo','dpo@t','x','user'), ('other','o@t','x','user')`,
+		`INSERT INTO teams (id, name) VALUES ('team-dpo','DPO'), ('legal','Juridique')`,
+		`INSERT INTO team_permissions (team_id, permission) VALUES ('team-dpo','gdpr:reveal'), ('team-dpo','gdpr:erase'), ('legal','gdpr:reveal')`,
+		`INSERT INTO team_members (team_id, user_id) VALUES ('team-dpo','dpo')`,
 	} {
 		if _, err := src.Exec(q); err != nil {
 			t.Fatal(err)
@@ -42,12 +42,11 @@ func TestUsersArchiveKeepsPermissions(t *testing.T) {
 	if err := NewUserStore(dir).LoadIntoDB(ctx, dst); err != nil {
 		t.Fatal(err)
 	}
-	var role string
-	var userPerms, teamPerms int
-	dst.QueryRow(`SELECT role FROM users WHERE id='dpo'`).Scan(&role)                                                          //nolint:errcheck
-	dst.QueryRow(`SELECT COUNT(*) FROM user_permissions WHERE user_id='direct' AND permission='gdpr:reveal'`).Scan(&userPerms) //nolint:errcheck
-	dst.QueryRow(`SELECT COUNT(*) FROM team_permissions WHERE team_id='legal' AND permission='gdpr:reveal'`).Scan(&teamPerms)  //nolint:errcheck
-	if role != "dpo" || userPerms != 1 || teamPerms != 1 {
-		t.Fatalf("après rechargement : role=%q user_permissions=%d team_permissions=%d", role, userPerms, teamPerms)
+	var member, dpoPerms, legalPerms int
+	dst.QueryRow(`SELECT COUNT(*) FROM team_members WHERE team_id='team-dpo' AND user_id='dpo'`).Scan(&member)              //nolint:errcheck
+	dst.QueryRow(`SELECT COUNT(*) FROM team_permissions WHERE team_id='team-dpo'`).Scan(&dpoPerms)                         //nolint:errcheck
+	dst.QueryRow(`SELECT COUNT(*) FROM team_permissions WHERE team_id='legal' AND permission='gdpr:reveal'`).Scan(&legalPerms) //nolint:errcheck
+	if member != 1 || dpoPerms != 2 || legalPerms != 1 {
+		t.Fatalf("après rechargement : membre DPO=%d capacités DPO=%d capacité Juridique=%d", member, dpoPerms, legalPerms)
 	}
 }

@@ -105,8 +105,54 @@ func runArchitecture() {
 			fmt.Fprintf(os.Stderr, "  injoignable : %s\n", u)
 		}
 
+	case "group-attributes":
+		if len(os.Args) < 4 || strings.HasPrefix(os.Args[3], "-") {
+			fmt.Fprintln(os.Stderr, "usage: goproxify architecture group-attributes <groupe> [-environment <env>] [-region <région>] [-tags a,b]")
+			os.Exit(1)
+		}
+		group := os.Args[3]
+		args := parseFlags(os.Args[4:])
+		client, err := newAdminClient(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+			os.Exit(1)
+		}
+		path := "/api/v1/architecture/groups/" + group + "/attributes"
+		var attrs struct {
+			Environment string   `json:"environment"`
+			Region      string   `json:"region"`
+			Tags        []string `json:"tags"`
+		}
+		if _, err := client.DoJSON("GET", path, nil, &attrs); err != nil {
+			fmt.Fprintf(os.Stderr, "architecture group-attributes : %v\n", err)
+			os.Exit(1)
+		}
+		_, setEnv := args["-environment"]
+		_, setRegion := args["-region"]
+		_, setTags := args["-tags"]
+		if setEnv || setRegion || setTags {
+			if setEnv {
+				attrs.Environment = flagValue(args, "-environment", "")
+			}
+			if setRegion {
+				attrs.Region = flagValue(args, "-region", "")
+			}
+			if setTags {
+				attrs.Tags = nil
+				if v := flagValue(args, "-tags", ""); v != "" {
+					attrs.Tags = strings.Split(v, ",")
+				}
+			}
+			if _, err := client.DoJSON("PUT", path, attrs, &attrs, 200); err != nil {
+				fmt.Fprintf(os.Stderr, "architecture group-attributes : %v\n", err)
+				os.Exit(1)
+			}
+		}
+		fmt.Printf("groupe %s — environnement : %s · région : %s · tags : %s\n", group,
+			orDash(attrs.Environment), orDash(attrs.Region), orDash(strings.Join(attrs.Tags, ", ")))
+
 	default:
-		fmt.Fprintln(os.Stderr, "usage: goproxify architecture show [-version <nom>] | versions | restore -name <version> | recover [-edges nom1,nom2]")
+		fmt.Fprintln(os.Stderr, "usage: goproxify architecture show [-version <nom>] | versions | restore -name <version> | recover [-edges nom1,nom2] | group-attributes <groupe> [-environment e] [-region r] [-tags a,b]")
 		os.Exit(1)
 	}
 }

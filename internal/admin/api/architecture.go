@@ -9,11 +9,13 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/vincamok/goproxify/internal/admin/archstore"
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
+	"github.com/vincamok/goproxify/internal/admin/rbac"
 	edgews "github.com/vincamok/goproxify/internal/edge/ws"
 )
 
@@ -24,6 +26,7 @@ import (
 //	GET  /api/v1/architecture/versions/{name}
 //	POST /api/v1/architecture/restore   {"name": "architecture-….json"}
 //	POST /api/v1/architecture/recover   {"edges": ["nom", …]}  (facultatif : toutes les passerelles connues)
+//	GET|PUT /api/v1/architecture/groups/{nom}/attributes   {"environment", "region", "tags"}  (lus par les périmètres de droits)
 type ArchitectureHandler struct {
 	DB    *sql.DB
 	Log   *slog.Logger
@@ -54,6 +57,13 @@ func (h *ArchitectureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		h.restore(w, r)
 	case r.Method == http.MethodPost && sub == "recover":
 		h.recover(w, r)
+	case strings.HasPrefix(sub, "groups/") && strings.HasSuffix(sub, "/attributes") && (r.Method == http.MethodGet || r.Method == http.MethodPut):
+		group := strings.TrimSuffix(strings.TrimPrefix(sub, "groups/"), "/attributes")
+		if r.Method == http.MethodGet {
+			h.groupAttributes(w, r, group)
+		} else {
+			h.setGroupAttributes(w, r, group)
+		}
 	default:
 		http.NotFound(w, r)
 	}
@@ -192,4 +202,53 @@ func (h *ArchitectureHandler) groups(w http.ResponseWriter, r *http.Request) {
 		out[g] = list
 	}
 	jsonOK(w, out)
+}
+
+// groupAttributes rend l'environnement, la région et les tags d'un groupe HA : ce que les périmètres de droits lisent
+// pour désigner « les groupes de production » ou « la région paris » (ADR 0022).
+func (h *ArchitectureHandler) groupAttributes(w http.ResponseWriter, r *http.Request, group string) {
+	if !h.groupExists(group) {
+		writeErr(w, r, http.StatusNotFound, "api.err.not_found")
+		return
+	}
+	attrs := h.Store.GroupAttributesOf(group)
+	if attrs.Tags == nil {
+		attrs.Tags = []string{}
+	}
+	jsonOK(w, attrs)
+}
+
+// setGroupAttributes remplace les attributs d'un groupe. Ils ne sont lus que par l'Admin, pour les droits : les
+// passerelles ne les reçoivent pas.
+func (h *ArchitectureHandler) setGroupAttributes(w http.ResponseWriter, r *http.Request, group string) {
+	if !h.groupExists(group) {
+		writeErr(w, r, http.StatusNotFound, "api.err.not_found")
+		return
+	}
+	var req archstore.GroupAttributes
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, r, http.StatusBadRequest, "api.err.json")
+		return
+	}
+	req.Environment, req.Region = strings.TrimSpace(req.Environment), strings.TrimSpace(req.Region)
+	if err := rbac.ValidateGroupAttributes(req.Environment, req.Region, req.Tags); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := h.Store.SetGroupAttributes(group, req); err != nil {
+		h.Log.Error("architecture: attributs du groupe", "group", group, "err", err)
+		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
+		return
+	}
+	_ = admindb.WriteAudit(h.DB, adminauth.UserIDFromContext(r.Context()), "update", "group:"+group,
+		"environnement="+req.Environment+" région="+req.Region+" tags="+strings.Join(req.Tags, ","))
+	if req.Tags == nil {
+		req.Tags = []string{}
+	}
+	jsonOK(w, req)
+}
+
+func (h *ArchitectureHandler) groupExists(group string) bool {
+	names, _ := h.Store.Groups()
+	return slices.Contains(names, group)
 }

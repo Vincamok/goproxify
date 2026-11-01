@@ -10,7 +10,7 @@ pages['access-policies'] = async function () {
   await renderAccessPolicies(content);
 };
 
-// Extrait pour être réutilisé comme section dans "Gestion d'équipe" (workspaces.js).
+// Rendu isolé pour pouvoir être réutilisé comme section d'une autre page.
 async function renderAccessPolicies(content) {
   content.innerHTML = `<p style="color:var(--text2)">${t('access.loading')}</p>`;
 
@@ -23,10 +23,12 @@ async function renderAccessPolicies(content) {
       api('GET', '/tokens?role=edge').catch(() => []),
     ]);
 
-    // Détails scopes par utilisateur (parallel)
+    // Accès effectif par utilisateur : calculé par le serveur (équipes fusionnées, administrateur = global), pas ici.
     const userDetails = await Promise.all(
       (usersRaw || []).map(u =>
-        api('GET', `/users/${encodeURIComponent(u.id)}`).catch(() => u)
+        api('GET', `/users/${encodeURIComponent(u.id)}/access`)
+          .then(access => ({ ...u, access }))
+          .catch(() => ({ ...u, access: null }))
       )
     );
 
@@ -58,7 +60,7 @@ async function renderAccessPolicies(content) {
 
     // ── Filtrage : seuls les users admin ou avec des grants sont intéressants ──
     const relevantUsers = (userDetails || []).filter(u =>
-      u.role === 'admin' || u.role === 'superadmin' || (u.scopes && u.scopes.length > 0)
+      u.access && (u.access.global || (u.access.grants || []).length > 0)
     );
     const relevantTeams = (teams || []).filter(tm =>
       (teamScopes[tm.id] || []).length > 0
@@ -161,7 +163,7 @@ async function renderAccessPolicies(content) {
 
     const userColsHtml = relevantUsers.map(u => {
       const label = u.email?.split('@')[0] || u.email || u.id;
-      const isGlobalAdmin = (u.role === 'admin' || u.role === 'superadmin') && !(u.scopes?.length > 0);
+      const isGlobalAdmin = !!u.access?.global;
       return `<th title="${esc(u.email)}" style="${thUser}">
         ${esc(label)}${isGlobalAdmin ? '<br><span class="tag tag-accent" style="font-size:9px;vertical-align:top">admin</span>' : ''}
       </th>`;
@@ -186,9 +188,8 @@ async function renderAccessPolicies(content) {
 
       // Cellules utilisateurs
       const userCells = relevantUsers.map(u => {
-        const isGlobalAdmin = (u.role === 'admin' || u.role === 'superadmin') && !(u.scopes?.length > 0);
-        if (isGlobalAdmin) return `<td style="text-align:center">${modeTag('write')}</td>`;
-        const mode = effectiveMode(u.scopes, domain);
+        if (u.access?.global) return `<td style="text-align:center">${modeTag('write')}</td>`;
+        const mode = effectiveMode(u.access?.grants, domain);
         return `<td style="text-align:center">${modeTag(mode)}</td>`;
       }).join('');
 

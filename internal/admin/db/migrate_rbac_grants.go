@@ -12,24 +12,13 @@ import (
 )
 
 // migrateRBACGrants applique le modèle grants (scope + access_mode) :
-//   - table user_scopes
 //   - team_scopes.access_mode
 //   - team_members sans role (héritage intégral)
 //   - users.role operator/viewer → user
 //   - scission B' des équipes mixtes avant suppression de team_members.role
+//
+// Les droits sur les ressources ne se portent que par les équipes (ADR 0021) : il n'y a plus de table user_scopes.
 func migrateRBACGrants(db *sql.DB) error {
-	if _, err := db.Exec(`
-		CREATE TABLE IF NOT EXISTS user_scopes (
-			id           TEXT PRIMARY KEY,
-			user_id      TEXT NOT NULL,
-			scope_type   TEXT NOT NULL CHECK(scope_type IN ('domain','server','proxy','edge')),
-			scope_value  TEXT NOT NULL,
-			access_mode  TEXT NOT NULL DEFAULT 'read' CHECK(access_mode IN ('read','write')),
-			UNIQUE(user_id, scope_type, scope_value)
-		)`); err != nil {
-		return fmt.Errorf("user_scopes: %w", err)
-	}
-
 	hasMemberRole := tableHasColumn(db, "team_members", "role")
 	hasAccessMode := tableHasColumn(db, "team_scopes", "access_mode")
 

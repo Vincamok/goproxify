@@ -172,7 +172,7 @@ Commandes d'administration (API Admin — -admin-url / -token) :
   settings       Configuration Admin (smtp get/set/test)
   auth-provider  Fournisseurs SSO/OIDC/SAML/LDAP (list/get/create/update/enable/disable/delete)
   plugin         Plugins WebAssembly des passerelles (list/get/install/update/delete)
-  teams          Équipes RBAC (list/get/create/update/members/delete)
+  teams          Équipes RBAC (list/get/create/update/members/permissions/delete)
   ip-profile     Profils IP GeoIP/réputation (list/get/create/update/delete)
   containers     Conteneurs découverts par les Agents (list/convert en proxy)
   me             Profil courant + tokens API personnels (PAT)

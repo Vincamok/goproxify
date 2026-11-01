@@ -495,6 +495,10 @@ func (h *LogsHandler) revealIP(w http.ResponseWriter, r *http.Request) {
 // deleteByIP supprime tous les logs d'une IP (droit à l'effacement RGPD).
 // Body JSON optionnel : {"reason": "demande RGPD article 17"}
 func (h *LogsHandler) deleteByIP(w http.ResponseWriter, r *http.Request, ip string) {
+	if !rbac.EffectiveHasScope(r.Context(), h.DB, rbac.ScopeGDPRErase) {
+		writeErr(w, r, http.StatusForbidden, "api.err.gdpr_erase_forbidden")
+		return
+	}
 	if ip == "" {
 		writeErr(w, r, http.StatusBadRequest, "api.err.missing_ip")
 		return
@@ -564,6 +568,10 @@ func (h *LogsHandler) deleteByIP(w http.ResponseWriter, r *http.Request, ip stri
 // deleteByUser supprime tous les logs d'un utilisateur (droit à l'effacement RGPD).
 // Body JSON optionnel : {"reason": "demande RGPD article 17"}
 func (h *LogsHandler) deleteByUser(w http.ResponseWriter, r *http.Request, userID string) {
+	if !rbac.EffectiveHasScope(r.Context(), h.DB, rbac.ScopeGDPRErase) {
+		writeErr(w, r, http.StatusForbidden, "api.err.gdpr_erase_forbidden")
+		return
+	}
 	if userID == "" {
 		writeErr(w, r, http.StatusBadRequest, "api.err.missing_user")
 		return
@@ -610,6 +618,10 @@ func logsJSONErr(w http.ResponseWriter, err error, code int) {
 // télécharger. L'IP voyage dans le corps, pas dans l'URL ; l'audit n'en garde que l'empreinte.
 // Body JSON : {"ip": "…"} ou {"user_id": "…"}, plus un "reason" facultatif.
 func (h *LogsHandler) subjectExport(w http.ResponseWriter, r *http.Request) {
+	if !rbac.EffectiveHasScope(r.Context(), h.DB, rbac.ScopeGDPRExport) {
+		writeErr(w, r, http.StatusForbidden, "api.err.gdpr_export_forbidden")
+		return
+	}
 	var body struct {
 		IP     string `json:"ip"`
 		UserID string `json:"user_id"`

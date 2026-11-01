@@ -86,7 +86,7 @@ Une AIPD est exigée quand le traitement est « susceptible d'engendrer un risqu
 
 | Risque | Mesure fournie |
 |---|---|
-| Accès illégitime aux logs | Rôles, équipes et scopes ; lecture limitée aux administrateurs ; révélation d'IP réservée au super-administrateur et au rôle `dpo`, avec motif obligatoire et audit |
+| Accès illégitime aux logs | Rôles, équipes et scopes ; lecture limitée aux administrateurs ; révélation d'IP réservée au super-administrateur et aux membres de l'équipe DPO, avec motif obligatoire et audit |
 | Conservation excessive | Purge nocturne ; durées courtes par défaut ; bases de logs des passerelles purgées par fichier de période (365 jours, réglable) |
 | Ré-identification | Anonymisation (irréversible) ou pseudonymisation (clé AES-GCM, empreinte HMAC pour l'effacement) |
 | Perte de maîtrise des droits | Export d'accès (`logs subject-export`), effacement par IP ou par compte (`logs delete`), y compris sur les passerelles |

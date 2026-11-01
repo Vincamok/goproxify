@@ -46,7 +46,6 @@ var secretTables = []string{
 	"internal_ca_certs",
 	"cert_pull_tokens",
 	"team_permissions",
-	"user_permissions",
 	"alert_channels",
 }
 

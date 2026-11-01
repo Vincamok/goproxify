@@ -263,6 +263,8 @@ var tools = []map[string]any{
 			opt("tls_enabled", "boolean", "Active HTTPS (défaut: false)"),
 			opt("type", "string", "Type de route: http (défaut), tcp, udp"),
 			opt("lb", "string", "Load balancing: round_robin (défaut), weighted, adaptive"),
+			opt("name", "string", "Nom du proxy, lu par les périmètres de droits (défaut : son domaine)"),
+			opt("labels", "object", "Étiquettes clé → valeur (ex. {\"env\":\"prod\"}), lues par les périmètres de droits"),
 		),
 	},
 	{
@@ -297,7 +299,7 @@ var tools = []map[string]any{
 	},
 	{
 		"name":        "update_proxy",
-		"description": "Met à jour un proxy existant (host, backend, tls, lb, enabled, options avancées).",
+		"description": "Met à jour un proxy existant (host, backend, tls, lb, enabled, nom, étiquettes, options avancées).",
 		"inputSchema": schema(
 			req("id", "string", "ID, nom ou domaine du proxy"),
 			opt("host", "string", "Nouveau domaine"),
@@ -305,6 +307,8 @@ var tools = []map[string]any{
 			opt("tls_enabled", "boolean", "Active ou désactive HTTPS"),
 			opt("lb", "string", "Load balancing: round_robin, weighted, adaptive"),
 			opt("enabled", "boolean", "Active ou désactive la route"),
+			opt("name", "string", "Nom du proxy, lu par les périmètres de droits (vide = retirer, le domaine sert alors de nom)"),
+			opt("labels", "object", "Étiquettes clé → valeur qui remplacent les actuelles ({} = retirer toutes), lues par les périmètres de droits"),
 			opt("options", "object", "Options avancées à poser (valeur null = retirer) : split, maintenance, signed_url, graphql, bandwidth, redact_json, html_inject, hedge, static, request_schema, openapi, grpc_transcode, surface (apprentissage de la surface : {\"mode\":\"learn\"}), grpc_web, rate_limit, conditions"),
 		),
 	},
@@ -389,6 +393,11 @@ var tools = []map[string]any{
 		"name":        "list_users",
 		"description": "Liste les utilisateurs enregistrés avec leur rôle (sans données sensibles).",
 		"inputSchema": schema(),
+	},
+	{
+		"name":        "get_user_access",
+		"description": "Accès effectif d'un compte et origine de chaque droit : son rôle (un administrateur voit toute la plateforme), ses équipes, les accès (domaine, serveur, proxy, passerelle × lecture/écriture) et les capacités RGPD qu'elles apportent.",
+		"inputSchema": schema(req("id", "string", "Identifiant du compte (voir list_users)")),
 	},
 	// Snippets
 	{
@@ -717,6 +726,9 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 		result, toolErr = h.toolListBackups(r)
 	case "list_users":
 		result, toolErr = h.toolListUsers(r)
+	case "get_user_access":
+		id, _ := p.Arguments["id"].(string)
+		result, toolErr = h.toolGetUserAccess(r, id)
 	case "list_snippets":
 		result, toolErr = h.toolListSnippets(r)
 	case "list_detector_types":
@@ -910,6 +922,8 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 		result, toolErr = h.toolListDeclaredNodes(r)
 	case "get_architecture":
 		result, toolErr = h.toolGetArchitecture(p.Arguments)
+	case "set_group_attributes":
+		result, toolErr = h.toolSetGroupAttributes(r, p.Arguments)
 	case "list_discovery_sources":
 		result = agentsources.Manifests()
 	case "create_declared_node":
@@ -1135,6 +1149,10 @@ func (h *Handler) toolCreateProxy(r *http.Request, args map[string]any) (any, er
 	if lb == "" {
 		lb = "round_robin"
 	}
+	identity, err := parseProxyIdentity(args)
+	if err != nil {
+		return nil, err
+	}
 	id := uuid.New().String()
 	now := time.Now().UTC()
 	cfg := map[string]any{
@@ -1146,6 +1164,7 @@ func (h *Handler) toolCreateProxy(r *http.Request, args map[string]any) (any, er
 		"tls_enabled": tlsEnabled,
 		"updated_at":  now,
 	}
+	identity.apply(cfg)
 	cfgJSON, err := json.Marshal(cfg)
 	if err != nil {
 		return nil, err
@@ -1316,7 +1335,19 @@ func (h *Handler) toolUpdateProxy(r *http.Request, args map[string]any) (any, er
 	if err := json.Unmarshal([]byte(cfgJSON), &cfg); err != nil {
 		return nil, err
 	}
-	changed := false
+	identity, err := parseProxyIdentity(args)
+	if err != nil {
+		return nil, err
+	}
+	var labelsBefore map[string]string
+	if prev, ok := cfg["labels"].(map[string]any); ok {
+		labelsBefore = map[string]string{}
+		for k, v := range prev {
+			labelsBefore[k], _ = v.(string)
+		}
+	}
+	changed := identity.hasName || identity.hasLabels
+	identity.apply(cfg)
 	if host, ok := args["host"].(string); ok && host != "" {
 		cfg["host"] = host
 		name = host
@@ -1375,6 +1406,11 @@ func (h *Handler) toolUpdateProxy(r *http.Request, args map[string]any) (any, er
 		return nil, err
 	}
 	_ = admindb.WriteAudit(h.DB, actor, "update", "proxy:"+id, name)
+	if identity.hasLabels {
+		if change := api.LabelChange(labelsBefore, identity.labels); change != "" {
+			_ = admindb.WriteAudit(h.DB, actor, "labels", "proxy:"+id, change)
+		}
+	}
 	return map[string]any{"id": id, "name": name, "enabled": enabled == 1, "config": cfg}, nil
 }
 
@@ -1588,6 +1624,16 @@ func (h *Handler) toolListBackups(r *http.Request) (any, error) {
 		out = []map[string]any{}
 	}
 	return out, nil
+}
+
+func (h *Handler) toolGetUserAccess(r *http.Request, id string) (any, error) {
+	if id == "" {
+		return nil, fmt.Errorf("id requis")
+	}
+	if rbac.UserRole(r.Context(), h.DB, id) == "" {
+		return nil, fmt.Errorf("compte introuvable: %s", id)
+	}
+	return rbac.EffectiveAccess(r.Context(), h.DB, id)
 }
 
 func (h *Handler) toolListUsers(r *http.Request) (any, error) {

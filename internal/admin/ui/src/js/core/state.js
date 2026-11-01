@@ -14,8 +14,8 @@ const Role = {
   isOperator:   () => ['superadmin','admin','operator'].includes(state.user?.role),
   isViewer:     () => !!state.user,
 
-  // Admin global = admin/superadmin sans scopes d'équipe
-  isGlobalAdmin: () => Role.isAdmin() && !(state.user?.effective_scopes?.length > 0),
+  // Un administrateur voit toute la plateforme : ses équipes ne le limitent jamais (ADR 0021).
+  isGlobalAdmin: () => Role.isAdmin(),
 
   // L'utilisateur peut-il supprimer ?
   canDelete: () => Role.isAdmin(),
@@ -23,7 +23,7 @@ const Role = {
   // L'utilisateur peut-il écrire (créer/modifier/désactiver) ?
   canWrite: () => Role.isOperator(),
 
-  // RGPD : révéler l'IP réelle d'une entrée pseudonymisée (superadmin, rôle dpo, droit délégué).
+  // RGPD : révéler l'IP réelle d'une entrée pseudonymisée (superadmin ou membre d'une équipe qui porte gdpr:reveal, ex. l'équipe DPO).
   canRevealIP: () => (state.user?.permissions || []).includes('gdpr:reveal'),
 
   // Snippets : admin, ou user avec au moins un grant write (rbac.RequireOperator côté API).

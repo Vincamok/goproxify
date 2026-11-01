@@ -340,6 +340,8 @@ goproxify proxy cache-purge <id> [-tag a,b] [-path /x,/y*] [-admin-url …] [-to
   Sans -tag ni -path, tout le cache du proxy est vidé
 goproxify proxy option <id> <option> <json|@fichier|off> [-admin-url …] [-token …]
   Pose ou retire une option avancée du proxy : split, maintenance, signed_url, graphql, bandwidth, redact_json, html_inject, hedge, static, request_schema, openapi, grpc_transcode, grpc_web, rate_limit, conditions, surface, max_body_size, ip_filter, geo_ip, cors, waf (`off` la retire)
+goproxify proxy tag <id> [-name <nom>] [-unset clé,clé] [clé=valeur ...] [-admin-url …] [-token …]
+  Pose le nom et les étiquettes du proxy, que les périmètres de droits lisent (env=prod, projet=alpha) ; sans -name, le nom reste celui du proxy (à défaut, son domaine)
 goproxify proxy delete  <id> [-y] [-admin-url …] [-token …]
   -y  Confirmation automatique
   Sur un proxy implicite (marqué « (implicite) » par `proxy list` : portail Access, délégation), retire seulement la surcouche — la route redevient celle que GoProxify génère
@@ -420,9 +422,10 @@ goproxify architecture show [-version <nom>]
 goproxify architecture versions
 goproxify architecture restore -name <version>
 goproxify architecture recover [-edges nom1,nom2]
+goproxify architecture group-attributes <groupe> [-environment <env>] [-region <région>] [-tags a,b]
 ```
 
-`show` affiche l'architecture courante en JSON, ou une version conservée avec `-version` (sans la restaurer). `recover` reconstitue le fichier à partir des fiches de groupe que détiennent les passerelles appairées (toutes, ou celles de `-edges`) : groupes, membres et domaines absents du fichier sont ajoutés, le reste n'est pas modifié (`POST /api/v1/architecture/recover`). À utiliser sur un Admin neuf, démarré avec le même `GPX_PAIRING_SECRET` et l'adresse d'au moins une passerelle (aucune approbation à faire) ; les passerelles qui n'ont pas répondu sont listées, et la commande peut être rejouée.
+`show` affiche l'architecture courante en JSON, ou une version conservée avec `-version` (sans la restaurer). `group-attributes` affiche l'environnement, la région et les tags d'un groupe HA, et les pose si l'un des drapeaux est donné (`PUT /api/v1/architecture/groups/{nom}/attributes`, les autres restent inchangés) : les périmètres de droits désignent les groupes par ces attributs ([ADR 0022](adr/0022-modele-de-droits-niveaux-et-perimetres.md)). `recover` reconstitue le fichier à partir des fiches de groupe que détiennent les passerelles appairées (toutes, ou celles de `-edges`) : groupes, membres et domaines absents du fichier sont ajoutés, le reste n'est pas modifié (`POST /api/v1/architecture/recover`). À utiliser sur un Admin neuf, démarré avec le même `GPX_PAIRING_SECRET` et l'adresse d'au moins une passerelle (aucune approbation à faire) ; les passerelles qui n'ont pas répondu sont listées, et la commande peut être rejouée.
 
 Exemple :
 
@@ -466,14 +469,17 @@ Gestion des utilisateurs de l'Administration.
 ```
 goproxify user list   [-admin-url …] [-token …]
 goproxify user get    <id> [-admin-url …] [-token …]
-goproxify user create -email <email> -password <mdp> [-role admin|user|dpo] [-permissions gdpr:reveal] [-admin-url …] [-token …]
-goproxify user update <id> [-role admin|user|dpo] [-permissions gdpr:reveal|none] [-admin-url …] [-token …]
+goproxify user create -email <email> -password <mdp> [-role admin|user] [-admin-url …] [-token …]
+goproxify user update <id> -role admin|user [-admin-url …] [-token …]
+goproxify user access <id> [-admin-url …] [-token …]
 goproxify user passwd <id> -password <nouveau-mdp> [-admin-url …] [-token …]
 goproxify user delete <id> [-y] [-admin-url …] [-token …]
 ```
 
-- `list` affiche le rôle et les permissions effectives de chaque compte.
-- `-role dpo` (délégué à la protection des données) et `-permissions gdpr:reveal` (révélation des IP pseudonymisées) ne sont acceptés que du superadmin ; `-permissions none` retire les permissions accordées en propre. Un compte superadmin ou détenteur de ce droit n'est modifiable (`update`, `passwd`, `delete`) que par le superadmin. Voir [rgpd.md](rgpd.md).
+- `list` affiche le rôle et les capacités effectives de chaque compte.
+- **Un administrateur voit toute la plateforme ; un utilisateur n'a que ce que lui donnent ses équipes** (`goproxify teams`). Il n'y a plus de droits personnels ni de rôle `dpo` (Admin `0.243.0`, [ADR 0021](adr/0021-droits-et-acces-equipes-seules-porteuses.md)).
+- `access` affiche l'accès effectif d'un compte et l'origine de chaque droit (`GET /api/v1/users/{id}/access`) : global pour un administrateur, sinon les équipes, les accès fusionnés et les capacités.
+- Les capacités RGPD s'obtiennent en entrant dans l'**équipe DPO** (`goproxify teams members add team-dpo -user <id>`, réservé au superadmin). Un compte superadmin ou détenteur d'une capacité n'est modifiable (`update`, `passwd`, `delete`) que par le superadmin. Voir [rgpd.md](rgpd.md).
 - Depuis Admin `0.78.0`, `-role` est réellement transmis (il était ignoré : les comptes étaient toujours créés en `user`) ; `-status` est retiré, l'API ne l'a jamais pris en charge.
 
 Exemples :
@@ -481,8 +487,8 @@ Exemples :
 ```bash
 goproxify user list
 goproxify user create -email ops@example.fr -password s3cret -role user
-goproxify user create -email dpo@example.fr -password s3cret -role dpo
-goproxify user update <id> -permissions gdpr:reveal
+goproxify teams members add team-dpo -user <id>   # désigner un DPO (superadmin)
+goproxify user access <id>
 goproxify user passwd <id> -password s3cret
 goproxify user delete <id> -y
 ```
@@ -558,9 +564,10 @@ goproxify logs siem status
 - `logs siem` (Admin `0.178.0`, Edge `0.87.0`, [ADR 0012](adr/0012-logs-proprietaire-edge.md)) pilote l'**exporteur SIEM** : chaque passerelle envoie ses logs à vos destinations (syslog RFC 5424 sur TCP ou TLS, HTTP NDJSON ou OTLP/HTTP JSON, Admin `0.179.0`) avec son propre curseur, au moins une fois, même Admin éteint. `show` affiche la configuration en JSON (les valeurs des en-têtes, des jetons, sont masquées) ; `set` l'enregistre depuis un fichier ou l'entrée standard, dans le même format : une valeur laissée masquée garde le jeton enregistré, une destination sans `id` en reçoit un ; `enable` / `disable` allument ou éteignent l'exporteur sans toucher aux destinations (une destination retirée ou éteinte perd son curseur) ; `status` affiche, par passerelle et par destination, l'état, les lignes livrées, le retard (âge de la plus ancienne ligne non livrée), `À RISQUE` quand le retard menace des lignes qui vont être purgées, et la dernière erreur. Rôle admin ; avec un token API, `logs:read` pour `show` et `status`, `logs:write` pour le reste. Un retard au-delà du seuil de la destination (`alert_after_minutes`, 60 par défaut) déclenche l'alerte `siem_export_lag`.
 
 - `-source edge` (Admin `0.169.0`, [ADR 0012](adr/0012-logs-proprietaire-edge.md)) lit les lignes dans la base de logs de **chaque passerelle** au lieu de la copie de l'Admin, et les fusionne du plus récent au plus ancien, avec les logs propres de l'Admin ; `-node` vise une seule passerelle. La liste signale sur la sortie d'erreur les passerelles injoignables (leurs lignes manquent) et une recherche arrêtée par son délai, et affiche le `-cursor` de la page suivante. `-limit` (500 au plus) devient la taille de page ; l'export fusionné va jusqu'à 100 000 lignes. La colonne `id` d'une ligne de passerelle est la référence à passer à `reveal-ip -entry-ref`.
-- `reveal-ip` affiche l'IP réelle d'une entrée pseudonymisée (RGPD) ; réservé au superadmin (scope `gdpr:reveal` avec un token API). Fonctionne aussi après la désactivation de la pseudonymisation, tant que l'entrée est conservée.
+- `reveal-ip` affiche l'IP réelle d'une entrée pseudonymisée (RGPD) ; réservé au superadmin et aux membres de l'équipe DPO (scope `gdpr:reveal` avec un token API). Fonctionne aussi après la désactivation de la pseudonymisation, tant que l'entrée est conservée.
 - `delete` efface les logs d'une IP (entrées pseudonymisées comprises) ou d'un utilisateur (droit à l'effacement, Art. 17) et affiche le nombre d'entrées supprimées ; avec `-by-ip`, supprime aussi les bans de l'IP, leur historique et son entrée du cache GeoIP (et lève ses bans sur les passerelles) ; il affiche aussi, par passerelle, ce qu'elle a effacé ou qu'elle est injoignable et recevra l'ordre à sa connexion (Admin `0.177.0`) ; rôle admin, scope `logs:write` avec un token API. Le journal d'audit garde le motif et le nombre d'entrées, pas l'IP en clair.
 - `subject-export` produit le fichier JSON du droit d'accès et de portabilité (RGPD Art. 15 et 20) : pour une IP, ses logs (pseudonymisés compris), bans, historique des bans, position GeoIP et entrées d'audit ; pour un compte, son profil (jamais le mot de passe), ses équipes, ses logs et ses entrées d'audit. Sans `-output`, le JSON va sur la sortie standard. L'IP voyage dans le corps de la requête ; l'audit garde le motif et les compteurs, pas l'IP. Rôle admin, scope `logs:write` avec un token API.
+- Depuis Admin `0.243.0`, `delete` exige la capacité `gdpr:erase` et `subject-export` la capacité `gdpr:export` : le superadmin, les membres de l'équipe DPO et les administrateurs les détiennent (`logs:write` n'est plus requis). La révélation (`reveal-ip`) et le gel légal restent réservés à l'équipe DPO et au superadmin.
 
 Exemples :
 
@@ -890,29 +897,31 @@ goproxify auth-provider delete  <id> -y
 
 ### `goproxify teams`
 
-Équipes RBAC — regroupement d'utilisateurs avec un rôle commun.
+Équipes RBAC — seul porteur des droits d'un utilisateur : ses membres reçoivent l'union de leurs accès. L'équipe intégrée **DPO** (`team-dpo`) porte les capacités RGPD.
 
 ```
 goproxify teams list   [-admin-url …] [-token …]
 goproxify teams get    <id> [-admin-url …] [-token …]
-goproxify teams create <nom> [-role admin|operator|viewer] [-admin-url …] [-token …]
-goproxify teams update <id> [-name <nom>] [-role admin|operator|viewer] [-admin-url …] [-token …]
+goproxify teams create <nom> [-admin-url …] [-token …]
+goproxify teams update <id> -name <nom> [-admin-url …] [-token …]
 goproxify teams delete <id> [-y] [-admin-url …] [-token …]
 
 goproxify teams members list   <team-id> [-admin-url …] [-token …]
 goproxify teams members add    <team-id> -user <user-id> [-admin-url …] [-token …]
 goproxify teams members remove <team-id> -user <user-id> [-admin-url …] [-token …]
 
-goproxify teams permissions <team-id> [-permissions gdpr:reveal|none] [-admin-url …] [-token …]
+goproxify teams permissions <team-id> [-permissions gdpr:reveal,gdpr:export,gdpr:erase,gdpr:hold|none] [-admin-url …] [-token …]
 ```
 
-`teams permissions` affiche les permissions accordées aux membres de l'équipe ; avec `-permissions`, les remplace (`none` = aucune). `gdpr:reveal` permet aux membres de révéler les IP pseudonymisées (RGPD). Modifier ces permissions, les membres d'une équipe qui en porte, ou supprimer une telle équipe est réservé au superadmin.
+`teams permissions` affiche les capacités accordées aux membres de l'équipe ; avec `-permissions`, les remplace (`none` = aucune). `gdpr:reveal` révèle les IP pseudonymisées, `gdpr:export` fait l'export d'accès et de portabilité (Art. 15 et 20), `gdpr:erase` efface les logs d'une IP ou d'un utilisateur (Art. 17), `gdpr:hold` pose le gel légal. Modifier ces capacités, les membres d'une équipe qui en porte, ou supprimer une telle équipe est réservé au superadmin.
+
+L'équipe DPO est intégrée : `update`, `delete` et `permissions` y répondent `409` (elle ne se renomme pas, ne se supprime pas, ses quatre capacités sont fixes) ; seule sa composition change (`members add|remove`, superadmin). Le drapeau `-role`, que l'API ignorait, est retiré ; `teams update` utilise `PUT` (il envoyait `PATCH`, que l'API refusait).
 
 Exemples :
 
 ```bash
 goproxify teams list
-goproxify teams create ops-team -role operator
+goproxify teams create ops-team
 goproxify teams members list   <team-id>
 goproxify teams members add    <team-id> -user <user-id>
 goproxify teams members remove <team-id> -user <user-id>

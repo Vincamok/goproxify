@@ -6,9 +6,13 @@ package mcp
 import (
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/vincamok/goproxify/internal/admin/api"
+	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
+	admindb "github.com/vincamok/goproxify/internal/admin/db"
+	"github.com/vincamok/goproxify/internal/admin/rbac"
 )
 
 func (h *Handler) nodesHandler() *api.NodesHandler {
@@ -44,9 +48,19 @@ func infraTools() []map[string]any {
 		},
 		{
 			"name":        "get_architecture",
-			"description": "Architecture déclarée (architecture.json, référentiel de la topologie) : nœuds passerelle/Agent avec leur hôte, région et capacités (HA, TLS, Docker, Portainer…), plus les domaines et, par groupe HA, la version de sa fiche (`groups`). Sans argument : l'architecture courante ; avec `version` : une version conservée (voir `goproxify architecture versions`).",
+			"description": "Architecture déclarée (architecture.json, référentiel de la topologie) : nœuds passerelle/Agent avec leur hôte, région et capacités (HA, TLS, Docker, Portainer…), plus les domaines et, par groupe HA, la version de sa fiche, son environnement, sa région et ses tags (`groups`). Sans argument : l'architecture courante ; avec `version` : une version conservée (voir `goproxify architecture versions`).",
 			"inputSchema": schema(
 				opt("version", "string", "Nom d'une version conservée (architecture-….json) ; vide = version courante"),
+			),
+		},
+		{
+			"name":        "set_group_attributes",
+			"description": "Pose l'environnement, la région et les tags d'un groupe de passerelles (HA) : les périmètres de droits des équipes désignent les groupes par ces attributs (« les groupes de production », « la région paris »). Les attributs non fournis restent inchangés ; un tableau tags vide les retire. Ils ne sont lus que par l'Admin, jamais envoyés aux passerelles.",
+			"inputSchema": schema(
+				req("group", "string", "Nom du groupe HA (clé de groups dans get_architecture)"),
+				opt("environment", "string", "Environnement (ex. prod, test)"),
+				opt("region", "string", "Région (ex. paris)"),
+				opt("tags", "array", "Tags du groupe (ex. [\"lan\"]) ; remplace les actuels"),
 			),
 		},
 		{
@@ -122,6 +136,49 @@ func (h *Handler) toolGetArchitecture(args map[string]any) (any, error) {
 		return h.ArchStore.Version(v)
 	}
 	return h.ArchStore.Get()
+}
+
+func (h *Handler) toolSetGroupAttributes(r *http.Request, args map[string]any) (any, error) {
+	if h.ArchStore == nil {
+		return nil, fmt.Errorf("architecture.json indisponible (persistance disque désactivée)")
+	}
+	group := argStr(args, "group")
+	if group == "" {
+		return nil, fmt.Errorf("group requis")
+	}
+	if names, _ := h.ArchStore.Groups(); !slices.Contains(names, group) {
+		return nil, fmt.Errorf("groupe %q inconnu", group)
+	}
+	attrs := h.ArchStore.GroupAttributesOf(group)
+	if v, ok := args["environment"].(string); ok {
+		attrs.Environment = strings.TrimSpace(v)
+	}
+	if v, ok := args["region"].(string); ok {
+		attrs.Region = strings.TrimSpace(v)
+	}
+	if v, ok := args["tags"]; ok {
+		list, isList := v.([]any)
+		if v != nil && !isList {
+			return nil, fmt.Errorf("tags : tableau de textes attendu")
+		}
+		attrs.Tags = nil
+		for _, t := range list {
+			s, isString := t.(string)
+			if !isString {
+				return nil, fmt.Errorf("tags : tableau de textes attendu")
+			}
+			attrs.Tags = append(attrs.Tags, s)
+		}
+	}
+	if err := rbac.ValidateGroupAttributes(attrs.Environment, attrs.Region, attrs.Tags); err != nil {
+		return nil, err
+	}
+	if err := h.ArchStore.SetGroupAttributes(group, attrs); err != nil {
+		return nil, err
+	}
+	_ = admindb.WriteAudit(h.DB, adminauth.ActorFromContext(r.Context()), "update", "group:"+group,
+		"environnement="+attrs.Environment+" région="+attrs.Region+" tags="+strings.Join(attrs.Tags, ","))
+	return map[string]any{"group": group, "environment": attrs.Environment, "region": attrs.Region, "tags": attrs.Tags}, nil
 }
 
 func (h *Handler) toolListHosts(r *http.Request) (any, error) {

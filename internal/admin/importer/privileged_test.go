@@ -19,7 +19,7 @@ func privilegedDB(t *testing.T) *sql.DB {
 	}
 	t.Cleanup(func() { db.Close() })
 	for _, q := range []string{
-		`INSERT INTO users (id, email, password_hash, role) VALUES ('sa','sa@t','x','superadmin'), ('a','a@t','x','admin'), ('dpo','dpo@t','x','dpo')`,
+		`INSERT INTO users (id, email, password_hash, role) VALUES ('sa','sa@t','x','superadmin'), ('a','a@t','x','admin'), ('dpo','dpo@t','x','user')`,
 		`INSERT INTO teams (id, name) VALUES ('legal','Juridique'), ('ops','Ops')`,
 		`INSERT INTO team_permissions (team_id, permission) VALUES ('legal','gdpr:reveal')`,
 	} {
@@ -43,7 +43,7 @@ func isMember(db *sql.DB, team, user string) bool {
 }
 
 // Une sauvegarde importée par un admin écrasait le rôle des comptes existants : il pouvait se
-// passer superadmin ou dpo, rétrograder le superadmin, ou entrer dans une équipe portant gdpr:reveal.
+// passer superadmin, rétrograder le superadmin, ou entrer dans une équipe portant une capacité RGPD.
 func TestImportCannotGrantPrivileges(t *testing.T) {
 	b := &Backup{
 		Users: []BackupUser{
@@ -58,7 +58,7 @@ func TestImportCannotGrantPrivileges(t *testing.T) {
 	}
 	db := privilegedDB(t)
 	Apply(db, b, ImportSelection{ImportUsers: true, ImportConfig: true, OnConflict: "overwrite"})
-	for email, want := range map[string]string{"a@t": "admin", "sa@t": "superadmin", "dpo@t": "dpo", "new@t": "user"} {
+	for email, want := range map[string]string{"a@t": "admin", "sa@t": "superadmin", "dpo@t": "user", "new@t": "user"} {
 		if got := roleOf(db, email); got != want {
 			t.Errorf("import par un admin : %s a le rôle %q, attendu %q", email, got, want)
 		}
@@ -67,11 +67,11 @@ func TestImportCannotGrantPrivileges(t *testing.T) {
 		t.Errorf("import par un admin : legal=%v (attendu false) ops=%v (attendu true)", isMember(db, "legal", "a"), isMember(db, "ops", "a"))
 	}
 
-	// Le superadmin peut restaurer rôle dpo et équipe RGPD, jamais un second superadmin.
+	// Le superadmin peut restaurer les membres de l'équipe RGPD, jamais un second superadmin ; l'ancien rôle dpo devient user.
 	db = privilegedDB(t)
 	b.Users = []BackupUser{{Email: "a@t", Role: "dpo"}, {Email: "dpo@t", Role: "user"}, {Email: "new@t", Role: "superadmin"}}
 	Apply(db, b, ImportSelection{ImportUsers: true, ImportConfig: true, OnConflict: "overwrite", AllowPrivileged: true})
-	for email, want := range map[string]string{"a@t": "dpo", "dpo@t": "user", "new@t": "user", "sa@t": "superadmin"} {
+	for email, want := range map[string]string{"a@t": "user", "dpo@t": "user", "new@t": "user", "sa@t": "superadmin"} {
 		if got := roleOf(db, email); got != want {
 			t.Errorf("import par le superadmin : %s a le rôle %q, attendu %q", email, got, want)
 		}

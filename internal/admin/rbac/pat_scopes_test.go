@@ -11,7 +11,6 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/google/uuid"
 	"github.com/vincamok/goproxify/internal/admin/auth"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
@@ -35,8 +34,7 @@ func TestAvailableScopesByRole(t *testing.T) {
 	insert("v", "user")
 	insert("o", "user")
 	insert("a", "admin")
-	_, _ = db.Exec(`INSERT INTO user_scopes (id, user_id, scope_type, scope_value, access_mode) VALUES (?,?,?,?,?)`,
-		uuid.New().String(), "o", "domain", "*.io", "write")
+	grantViaTeam(t, db, "o", "domain", "*.io", "write")
 
 	ctx := context.Background()
 	viewer := rbac.AvailableScopesForUser(ctx, db, "v")
@@ -66,8 +64,7 @@ func TestEffectiveHasScopeIntersection(t *testing.T) {
 	}
 	defer db.Close()
 	db.Exec(`INSERT INTO users (id, email, password_hash, role) VALUES ('u','e','x','user')`)
-	db.Exec(`INSERT INTO user_scopes (id, user_id, scope_type, scope_value, access_mode) VALUES (?,?,?,?,?)`,
-		uuid.New().String(), "u", "domain", "*", "write")
+	grantViaTeam(t, db, "u", "domain", "*", "write")
 
 	plain := auth.GeneratePAT()
 	db.Exec(`INSERT INTO user_api_tokens (id, user_id, label, token_hash, token_prefix) VALUES (?,?,?,?,?)`,
@@ -93,7 +90,7 @@ func TestEffectiveHasScopeIntersection(t *testing.T) {
 	}
 
 	// Retirer le grant write → write disparaît malgré le scope PAT
-	db.Exec(`UPDATE user_scopes SET access_mode='read' WHERE user_id='u'`)
+	db.Exec(`UPDATE team_scopes SET access_mode='read'`)
 	gotWrite = false
 	h.ServeHTTP(rr, req)
 	if gotWrite {
@@ -284,8 +281,7 @@ func TestWriteScopesAreAdminOnly(t *testing.T) {
 		}
 	}
 	// Grant write : ouvre proxies:write / snippets:write, pas les nouveaux scopes d'écriture.
-	_, _ = db.Exec(`INSERT INTO user_scopes (id, user_id, scope_type, scope_value, access_mode) VALUES (?,?,?,?,?)`,
-		uuid.New().String(), "u", "domain", "*", "write")
+	grantViaTeam(t, db, "u", "domain", "*", "write")
 
 	ctx := context.Background()
 	for _, scope := range []string{rbac.ScopeAlertsWrite, rbac.ScopeDomainsWrite, rbac.ScopeCertsWrite} {

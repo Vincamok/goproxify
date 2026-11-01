@@ -238,6 +238,10 @@ func (s *Server) Start(ctx context.Context) error {
 		_ = userStore.LoadIntoDB(ctx, s.db)
 		go userStore.SyncFromDB(ctx, s.db) //nolint:errcheck
 	}
+	// L'équipe DPO existe d'office, avec ses capacités RGPD, qu'un users.yaml ait été relu ou non.
+	if err := rbac.EnsureBuiltInTeams(ctx, s.db); err != nil {
+		s.log.Warn("équipes intégrées", "err", err)
+	}
 	syncUsers := func() {
 		if userStore != nil {
 			go userStore.SyncFromDB(context.Background(), s.db) //nolint:errcheck
@@ -602,7 +606,6 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 	}
 	teamsH := &api.TeamsHandler{DB: s.db, Log: s.log, OnChange: syncUsers}
-	workspacesH := &api.WorkspacesHandler{DB: s.db, Log: s.log}
 	discoveredH := &api.DiscoveredContainersHandler{DB: s.db, Log: s.log, Pusher: manager}
 	if archStore != nil {
 		discoveredH.Groups = api.NewGroupResolver(archStore, s.db)
@@ -781,8 +784,6 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/api/v1/users/", adminOnly(usersH))
 	mux.Handle("/api/v1/teams", adminOnly(teamsH))
 	mux.Handle("/api/v1/teams/", adminOnly(teamsH))
-	mux.Handle("/api/v1/workspaces", adminOnly(workspacesH))
-	mux.Handle("/api/v1/workspaces/", adminOnly(workspacesH))
 	mux.Handle("/api/v1/detector-types", operatorWrites(api.DetectorTypesHandler{}))
 	mux.Handle("/api/v1/snippets", operatorWrites(snippetsH))
 	mux.Handle("/api/v1/snippets/", operatorWrites(snippetsH))
@@ -846,9 +847,12 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/api/v1/alert-rules/", adminWrites(rulesH))
 	mux.Handle("/api/v1/logs", adminWrites(logsH))
 	mux.Handle("/api/v1/logs/", adminWrites(logsH))
-	// Révélation : ouverte aux détenteurs de gdpr:reveal (rôle dpo, droit délégué), pas
-	// seulement aux admins ; le handler vérifie la permission.
+	// Droits RGPD : ouverts aux membres de l'équipe DPO (et au superadmin), pas seulement aux admins ; le handler
+	// vérifie la capacité (gdpr:reveal, gdpr:export, gdpr:erase). Un administrateur garde l'export et l'effacement.
 	mux.Handle("/api/v1/logs/reveal-ip", protected(logsH))
+	mux.Handle("/api/v1/logs/subject-export", protected(logsH))
+	mux.Handle("/api/v1/logs/by-ip/", protected(logsH))
+	mux.Handle("/api/v1/logs/by-user/", protected(logsH))
 	// L'exporteur SIEM porte des jetons et des adresses internes : administrateurs seulement, en lecture aussi.
 	mux.Handle("/api/v1/logs/siem", adminOnly(logsH))
 	mux.Handle("/api/v1/logs/siem/status", adminOnly(logsH))

@@ -6,8 +6,11 @@
 // Hiérarchie des rôles plateforme :
 //
 //	superadmin : accès total, protégé (non supprimable), premier compte créé
-//	admin      : CRUD plateforme ; proxies = tous si aucun grant, sinon match des grants
-//	user       : proxies uniquement via grants effectifs (user_scopes ∪ team_scopes)
+//	admin      : toute la plateforme ; aucun grant ne le restreint ni ne l'étend
+//	user       : uniquement ce que lui donnent ses équipes (team_scopes) ; sans équipe, rien
+//
+// Les droits sur les ressources ne se portent que par les équipes (ADR 0021). Les capacités
+// (permissions.go) s'obtiennent aussi par une équipe, jamais par le compte.
 //
 // Grant = (scope_type, scope_value, access_mode read|write) :
 //
@@ -40,11 +43,11 @@ type Scope struct {
 	Value string
 }
 
-// Grant est un scope avec mode lecture/écriture (user_scopes / team_scopes).
+// Grant est un scope avec mode lecture/écriture (team_scopes).
 type Grant struct {
-	Type  string
-	Value string
-	Mode  string // "read" | "write"
+	Type  string `json:"type"`
+	Value string `json:"value"`
+	Mode  string `json:"access_mode"` // "read" | "write"
 }
 
 // Scope projette le grant sans le mode (compat MatchRoute / tokens).
@@ -262,26 +265,14 @@ func IsAdmin(ctx context.Context, db *sql.DB, userID string) bool {
 
 // --- Scopes / grants utilisateur ---
 
-// IsGlobalAdmin retourne true si l'utilisateur est admin/superadmin sans aucun grant.
-func IsGlobalAdmin(ctx context.Context, db *sql.DB, userID string) bool {
-	if !IsAdmin(ctx, db, userID) {
-		return false
-	}
-	grants, _ := UserEffectiveGrants(ctx, db, userID)
-	return len(grants) == 0
-}
-
-// UserEffectiveGrants union user_scopes + team_scopes ; même (type,value) → max(mode) (write > read).
+// UserEffectiveGrants union des team_scopes des équipes du compte ; même (type,value) → max(mode) (write > read).
+// Un administrateur n'est jamais jugé sur ces grants : il voit toute la plateforme.
 func UserEffectiveGrants(ctx context.Context, db *sql.DB, userID string) ([]Grant, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT scope_type, scope_value, access_mode FROM (
-			SELECT scope_type, scope_value, access_mode FROM user_scopes WHERE user_id = ?
-			UNION ALL
-			SELECT ts.scope_type, ts.scope_value, ts.access_mode
-			FROM team_scopes ts
-			JOIN team_members tm ON tm.team_id = ts.team_id
-			WHERE tm.user_id = ?
-		)`, userID, userID)
+		SELECT ts.scope_type, ts.scope_value, ts.access_mode
+		FROM team_scopes ts
+		JOIN team_members tm ON tm.team_id = ts.team_id
+		WHERE tm.user_id = ?`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -397,15 +388,7 @@ func CanReadProxyWithGrants(role string, grants []Grant, route *router.Route) bo
 }
 
 func canReadProxyWithGrants(role string, grants []Grant, route *router.Route) bool {
-	if IsSuperAdminRole(role) {
-		return true
-	}
-	// Streams L4 (tcp/udp) : host = label libre, pas un domaine DNS — les grants
-	// « domain » ne matchent jamais. Les admins doivent quand même les voir.
-	if IsAdminRole(role) && routeIsL4(route) {
-		return true
-	}
-	if IsAdminRole(role) && len(grants) == 0 {
+	if IsAdminRole(role) {
 		return true
 	}
 	return len(grants) > 0 && MatchRoute(GrantsAsScopes(grants), route)
@@ -430,13 +413,7 @@ func CanWriteProxyWithGrants(role string, grants []Grant, route *router.Route) b
 }
 
 func canWriteProxyWithGrants(role string, grants []Grant, route *router.Route) bool {
-	if IsSuperAdminRole(role) {
-		return true
-	}
-	if IsAdminRole(role) && routeIsL4(route) {
-		return true
-	}
-	if IsAdminRole(role) && len(grants) == 0 {
+	if IsAdminRole(role) {
 		return true
 	}
 	write := WriteGrants(grants)
@@ -456,20 +433,9 @@ func routeIsL4(route *router.Route) bool {
 }
 
 // CanDeleteProxy retourne true si l'utilisateur peut supprimer ce proxy.
-// Réservé aux admins plateforme (superadmin, admin global ou admin sans restriction de grant delete en v1).
+// Réservé aux administrateurs de la plateforme : la suppression par une équipe viendra avec le niveau « Gestion » (ADR 0022).
 func CanDeleteProxy(ctx context.Context, db *sql.DB, userID string, route *router.Route) bool {
-	role := UserRole(ctx, db, userID)
-	if IsSuperAdminRole(role) {
-		return true
-	}
-	if !IsAdminRole(role) {
-		return false
-	}
-	grants, err := UserEffectiveGrants(ctx, db, userID)
-	if err != nil {
-		return false
-	}
-	return canDeleteProxyWithGrants(role, grants, route)
+	return canDeleteProxyWithGrants(UserRole(ctx, db, userID), nil, route)
 }
 
 // CanDeleteProxyWithGrants est identique à CanDeleteProxy sans requête DB supplémentaire.
@@ -477,29 +443,14 @@ func CanDeleteProxyWithGrants(role string, grants []Grant, route *router.Route) 
 	return canDeleteProxyWithGrants(role, grants, route)
 }
 
-func canDeleteProxyWithGrants(role string, grants []Grant, route *router.Route) bool {
-	if IsSuperAdminRole(role) {
-		return true
-	}
-	if !IsAdminRole(role) {
-		return false
-	}
-	if routeIsL4(route) {
-		return true
-	}
-	if len(grants) == 0 {
-		return true
-	}
-	return MatchRoute(GrantsAsScopes(grants), route)
+func canDeleteProxyWithGrants(role string, _ []Grant, _ *router.Route) bool {
+	return IsAdminRole(role)
 }
 
-// CanReadDomain retourne true si l'utilisateur peut voir ce domaine.
-// Admins globaux voient tout ; users scopés voient les domaines couverts par leurs grants de type "domain".
+// CanReadDomainWithGrants retourne true si l'utilisateur peut voir ce domaine.
+// Les administrateurs voient tout ; les users voient les domaines couverts par les grants de type "domain" de leurs équipes.
 func CanReadDomainWithGrants(role string, grants []Grant, domain string) bool {
-	if IsSuperAdminRole(role) {
-		return true
-	}
-	if IsAdminRole(role) && len(grants) == 0 {
+	if IsAdminRole(role) {
 		return true
 	}
 	for _, g := range grants {
@@ -511,23 +462,6 @@ func CanReadDomainWithGrants(role string, grants []Grant, domain string) bool {
 		}
 	}
 	return false
-}
-
-// UserScopedEdgeGlobs retourne les globs de passerelles accessibles via scope type "edge".
-// Retourne nil si l'utilisateur a un accès global (superadmin ou admin sans grants).
-func UserScopedEdgeGlobs(ctx context.Context, db *sql.DB, userID string) []string {
-	role := UserRole(ctx, db, userID)
-	grants, _ := UserEffectiveGrants(ctx, db, userID)
-	if IsSuperAdminRole(role) || (IsAdminRole(role) && len(grants) == 0) {
-		return nil // accès global
-	}
-	var globs []string
-	for _, g := range grants {
-		if g.Type == "edge" {
-			globs = append(globs, g.Value)
-		}
-	}
-	return globs
 }
 
 // --- Droits token (Passerelle/Agent) ---

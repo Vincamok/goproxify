@@ -128,6 +128,10 @@ func (h *ProxiesHandler) createFiles(w http.ResponseWriter, r *http.Request) {
 	_ = json.Unmarshal(body.Config, &route)
 	route.ID = uuid.New().String()
 	route.UpdatedAt = time.Now()
+	if err := ValidateProxyIdentity(&route); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	userID := auth.UserIDFromContext(r.Context())
 	if !rbac.CanWriteProxy(r.Context(), h.DB, userID, &route) {
 		writeErr(w, r, http.StatusForbidden, "api.err.out_of_scope_domain")
@@ -166,6 +170,10 @@ func (h *ProxiesHandler) updateFiles(w http.ResponseWriter, r *http.Request, id 
 	_ = json.Unmarshal(body.Config, &route)
 	route.ID = id
 	route.UpdatedAt = time.Now()
+	if err := ValidateProxyIdentity(&route); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	userID := auth.UserIDFromContext(r.Context())
 	existing, existsErr := h.fetchProd(r.Context(), id)
 	// La config reçue et le proxy qu'elle remplace doivent être dans le périmètre : sinon une config de son domaine prendrait la place du proxy d'un autre.
@@ -200,6 +208,13 @@ func (h *ProxiesHandler) updateFiles(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 	_ = admindb.WriteAudit(h.DB, userID, "update", "proxy:"+id, route.Host)
+	if existsErr == nil {
+		var before router.Route
+		_ = json.Unmarshal(existing.Config, &before)
+		if change := LabelChange(before.Labels, route.Labels); change != "" {
+			_ = admindb.WriteAudit(h.DB, userID, "labels", "proxy:"+id, change)
+		}
+	}
 	updated := envelopeToRow(prod)
 	updated.Config = h.maskConfig(updated.Config)
 	jsonOK(w, updated)

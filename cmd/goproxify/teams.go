@@ -69,13 +69,10 @@ func runTeams() {
 			name = flagValue(args, "-name", "")
 		}
 		if name == "" {
-			fmt.Fprintln(os.Stderr, "usage: goproxify teams create <nom> [-role admin|operator|viewer]")
+			fmt.Fprintln(os.Stderr, "usage: goproxify teams create <nom>")
 			os.Exit(1)
 		}
 		payload := map[string]any{"name": name}
-		if role := flagValue(args, "-role", ""); role != "" {
-			payload["role"] = role
-		}
 		client, err := newAdminClient(args)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
@@ -93,18 +90,15 @@ func runTeams() {
 		args := parseFlags(os.Args[3:])
 		id := firstPositional(os.Args[3:], args)
 		if id == "" {
-			fmt.Fprintln(os.Stderr, "usage: goproxify teams update <id> [-name <nom>] [-role admin|operator|viewer]")
+			fmt.Fprintln(os.Stderr, "usage: goproxify teams update <id> -name <nom>")
 			os.Exit(1)
 		}
 		payload := map[string]any{}
 		if v := flagValue(args, "-name", ""); v != "" {
 			payload["name"] = v
 		}
-		if v := flagValue(args, "-role", ""); v != "" {
-			payload["role"] = v
-		}
 		if len(payload) == 0 {
-			fmt.Fprintln(os.Stderr, "aucun champ à mettre à jour (-name, -role)")
+			fmt.Fprintln(os.Stderr, "aucun champ à mettre à jour (-name)")
 			os.Exit(1)
 		}
 		client, err := newAdminClient(args)
@@ -112,7 +106,7 @@ func runTeams() {
 			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
 			os.Exit(1)
 		}
-		if _, err := client.DoJSON("PATCH", "/api/v1/teams/"+url.PathEscape(id), payload, nil, 200, 204); err != nil {
+		if _, err := client.DoJSON("PUT", "/api/v1/teams/"+url.PathEscape(id), payload, nil, 200, 204); err != nil {
 			fmt.Fprintf(os.Stderr, "teams update : %v\n", err)
 			os.Exit(1)
 		}
@@ -126,7 +120,7 @@ func runTeams() {
 		id := firstPositional(os.Args[3:], args)
 		perms, set := permissionsFlag(args)
 		if id == "" {
-			fmt.Fprintln(os.Stderr, "usage: goproxify teams permissions <id> [-permissions gdpr:reveal|none]")
+			fmt.Fprintln(os.Stderr, "usage: goproxify teams permissions <id> [-permissions gdpr:reveal,gdpr:export,gdpr:erase,gdpr:hold|none]")
 			os.Exit(1)
 		}
 		client, err := newAdminClient(args)
@@ -191,22 +185,24 @@ Sous-commandes :
   create   Crée une équipe
   update   Modifie une équipe
   members  Gestion des membres (list / add / remove)
-  permissions  Affiche ou remplace les permissions accordées aux membres (superadmin)
+  permissions  Affiche ou remplace les capacités accordées aux membres (superadmin)
   delete   Supprime une équipe
 
 goproxify teams list   [-admin-url …] [-token …]
 goproxify teams get    <id> [-admin-url …] [-token …]
-goproxify teams create <nom> [-role admin|operator|viewer] [-admin-url …] [-token …]
-goproxify teams update <id> [-name <nom>] [-role admin|operator|viewer] [-admin-url …] [-token …]
+goproxify teams create <nom> [-admin-url …] [-token …]
+goproxify teams update <id> -name <nom> [-admin-url …] [-token …]
 goproxify teams delete <id> [-y] [-admin-url …] [-token …]
 
 goproxify teams members list   <team-id> [-admin-url …] [-token …]
 goproxify teams members add    <team-id> -user <user-id> [-admin-url …] [-token …]
 goproxify teams members remove <team-id> -user <user-id> [-admin-url …] [-token …]
 
-goproxify teams permissions <id> [-permissions gdpr:reveal|none] [-admin-url …] [-token …]
-  Sans -permissions : affiche. gdpr:reveal = révélation des IP pseudonymisées (RGPD).
-  Modifier ces permissions, ou les membres d'une équipe qui en porte, est réservé au superadmin.
+goproxify teams permissions <id> [-permissions gdpr:reveal,gdpr:export,gdpr:erase,gdpr:hold|none] [-admin-url …] [-token …]
+  Sans -permissions : affiche. gdpr:reveal = révéler une IP pseudonymisée, gdpr:export = export d'accès (Art. 15/20),
+  gdpr:erase = effacement (Art. 17), gdpr:hold = gel légal. L'équipe DPO (intégrée) porte les quatre ; elle ne se renomme
+  ni ne se supprime et ses capacités sont fixes.
+  Modifier ces capacités, ou les membres d'une équipe qui en porte, est réservé au superadmin.
 `)
 	default:
 		fmt.Fprintf(os.Stderr, "sous-commande teams inconnue : %q\n", sub)

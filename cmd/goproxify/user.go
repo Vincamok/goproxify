@@ -30,7 +30,7 @@ func runUser() {
 			fmt.Println("(aucun utilisateur)")
 			return
 		}
-		fmt.Printf("%-36s  %-30s  %-10s  %s\n", "ID", "EMAIL", "RÔLE", "PERMISSIONS")
+		fmt.Printf("%-36s  %-30s  %-10s  %s\n", "ID", "EMAIL", "RÔLE", "CAPACITÉS")
 		fmt.Println(strings.Repeat("-", 90))
 		for _, u := range users {
 			id, _ := u["id"].(string)
@@ -71,7 +71,7 @@ func runUser() {
 		password := flagValue(args, "-password", "")
 		role := flagValue(args, "-role", "user")
 		if email == "" {
-			fmt.Fprintln(os.Stderr, "usage: goproxify user create -email <email> -password <mdp> [-role admin|user|dpo] [-permissions gdpr:reveal]")
+			fmt.Fprintln(os.Stderr, "usage: goproxify user create -email <email> -password <mdp> [-role admin|user]")
 			os.Exit(1)
 		}
 		client, err := newAdminClient(args)
@@ -82,9 +82,6 @@ func runUser() {
 		payload := map[string]any{"email": email, "role": role}
 		if password != "" {
 			payload["password"] = password
-		}
-		if perms, ok := permissionsFlag(args); ok {
-			payload["permissions"] = perms
 		}
 		var result map[string]any
 		if _, err := client.DoJSON("POST", "/api/v1/users", payload, &result, 200, 201); err != nil {
@@ -98,18 +95,15 @@ func runUser() {
 		args := parseFlags(os.Args[3:])
 		id := firstPositional(os.Args[3:], args)
 		if id == "" {
-			fmt.Fprintln(os.Stderr, "usage: goproxify user update <id> [-role admin|user|dpo] [-permissions gdpr:reveal|none]")
+			fmt.Fprintln(os.Stderr, "usage: goproxify user update <id> -role admin|user")
 			os.Exit(1)
 		}
 		patch := map[string]any{}
 		if r := flagValue(args, "-role", ""); r != "" {
 			patch["role"] = r
 		}
-		if perms, ok := permissionsFlag(args); ok {
-			patch["permissions"] = perms
-		}
 		if len(patch) == 0 {
-			fmt.Fprintln(os.Stderr, "rien à modifier : spécifier -role ou -permissions")
+			fmt.Fprintln(os.Stderr, "rien à modifier : spécifier -role")
 			os.Exit(1)
 		}
 		client, err := newAdminClient(args)
@@ -131,6 +125,26 @@ func runUser() {
 			os.Exit(1)
 		}
 		fmt.Printf("Utilisateur %s mis à jour.\n", id)
+
+	case "access":
+		args := parseFlags(os.Args[3:])
+		id := firstPositional(os.Args[3:], args)
+		if id == "" {
+			fmt.Fprintln(os.Stderr, "usage: goproxify user access <id>")
+			os.Exit(1)
+		}
+		client, err := newAdminClient(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+			os.Exit(1)
+		}
+		var access map[string]any
+		if _, err := client.DoJSON("GET", "/api/v1/users/"+url.PathEscape(id)+"/access", nil, &access); err != nil {
+			fmt.Fprintf(os.Stderr, "user access : %v\n", err)
+			os.Exit(1)
+		}
+		out, _ := json.MarshalIndent(access, "", "  ")
+		fmt.Println(string(out))
 
 	case "passwd":
 		args := parseFlags(os.Args[3:])
@@ -187,19 +201,23 @@ Sous-commandes :
   list    Liste les utilisateurs
   get     Affiche un utilisateur
   create  Crée un utilisateur
-  update  Modifie le rôle ou les permissions
+  update  Modifie le rôle
+  access  Affiche l'accès effectif et l'origine de chaque droit
   passwd  Change le mot de passe
   delete  Supprime un utilisateur
 
 goproxify user list   [-admin-url …] [-token …]
 goproxify user get    <id> [-admin-url …] [-token …]
-goproxify user create -email <email> -password <mdp> [-role admin|user|dpo] [-permissions gdpr:reveal] [-admin-url …] [-token …]
-goproxify user update <id> [-role admin|user|dpo] [-permissions gdpr:reveal|none] [-admin-url …] [-token …]
+goproxify user create -email <email> -password <mdp> [-role admin|user] [-admin-url …] [-token …]
+goproxify user update <id> -role admin|user [-admin-url …] [-token …]
+goproxify user access <id> [-admin-url …] [-token …]
 goproxify user passwd <id> -password <nouveau-mdp> [-admin-url …] [-token …]
 goproxify user delete <id> [-y] [-admin-url …] [-token …]
 
-Le rôle dpo et la permission gdpr:reveal (révélation des IP pseudonymisées) ne sont
-attribuables que par le superadmin ; un compte qui les détient n'est modifiable que par lui.
+Un administrateur voit toute la plateforme ; un utilisateur n'a que ce que lui donnent ses équipes
+(goproxify teams). Les capacités RGPD (gdpr:reveal, gdpr:export, gdpr:erase, gdpr:hold) s'obtiennent
+en entrant dans l'équipe DPO ; seul le superadmin en compose la liste des membres, et un compte qui
+en détient une n'est modifiable que par lui.
 `)
 	default:
 		fmt.Fprintf(os.Stderr, "sous-commande user inconnue : %q\n", sub)

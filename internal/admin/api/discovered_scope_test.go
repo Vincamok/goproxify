@@ -4,6 +4,7 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -34,11 +35,25 @@ func addUser(t *testing.T, h *DiscoveredContainersHandler, id, role string, gran
 		t.Fatal(err)
 	}
 	for i, g := range grants {
-		if _, err := h.DB.Exec(`INSERT INTO user_scopes (id, user_id, scope_type, scope_value, access_mode) VALUES (?, ?, ?, ?, 'read')`,
-			id+g[1], id, g[0], g[1]); err != nil {
+		if err := grantViaTeam(h.DB, id, g[0], g[1], "read"); err != nil {
 			t.Fatal(i, err)
 		}
 	}
+}
+
+// grantViaTeam donne un accès à un compte par une équipe, seule voie prévue (ADR 0021).
+func grantViaTeam(db *sql.DB, userID, scopeType, value, mode string) error {
+	team := "equipe-" + userID + "-" + value
+	for _, q := range []string{
+		`INSERT OR IGNORE INTO teams (id, name) VALUES ('` + team + `', '` + team + `')`,
+		`INSERT OR IGNORE INTO team_members (team_id, user_id) VALUES ('` + team + `', '` + userID + `')`,
+		`INSERT INTO team_scopes (id, team_id, scope_type, scope_value, access_mode) VALUES ('` + team + `-s', '` + team + `', '` + scopeType + `', '` + value + `', '` + mode + `')`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 const twoContainers = `[

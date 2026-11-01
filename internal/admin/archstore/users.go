@@ -17,14 +17,6 @@ import (
 
 const usersFilename = "users.yaml"
 
-// UserScopeEntry est un scope RBAC direct sur un utilisateur.
-type UserScopeEntry struct {
-	ID         string `yaml:"id"`
-	ScopeType  string `yaml:"scope_type"`
-	ScopeValue string `yaml:"scope_value"`
-	AccessMode string `yaml:"access_mode"`
-}
-
 // UserMFAEntry est une méthode MFA activée et vérifiée pour un utilisateur.
 type UserMFAEntry struct {
 	ID     string `yaml:"id"`
@@ -44,8 +36,6 @@ type UserEntry struct {
 	Email        string                `yaml:"email"`
 	PasswordHash string                `yaml:"password_hash"` // bcrypt, non réversible
 	Role         string                `yaml:"role"`
-	Scopes       []UserScopeEntry      `yaml:"scopes,omitempty"`
-	Permissions  []string              `yaml:"permissions,omitempty"` // ex. gdpr:reveal
 	MFAMethods   []UserMFAEntry        `yaml:"mfa_methods,omitempty"`
 	BackupCodes  []UserBackupCodeEntry `yaml:"backup_codes,omitempty"`
 }
@@ -75,7 +65,7 @@ type TeamEntry struct {
 	Name    string           `yaml:"name"`
 	Members     []string         `yaml:"members,omitempty"` // user IDs
 	Scopes      []TeamScopeEntry `yaml:"scopes,omitempty"`
-	Permissions []string         `yaml:"permissions,omitempty"` // accordées aux membres
+	Permissions []string         `yaml:"permissions,omitempty"` // capacités accordées aux membres (ex. gdpr:reveal)
 }
 
 // UsersArchive est la racine de users.yaml.
@@ -124,15 +114,6 @@ func (s *UserStore) LoadIntoDB(ctx context.Context, db *sql.DB) error {
 			db.ExecContext(ctx, //nolint:errcheck
 				`INSERT OR IGNORE INTO users(id, email, password_hash, role) VALUES(?,?,?,?)`,
 				u.ID, u.Email, u.PasswordHash, u.Role)
-			for _, sc := range u.Scopes {
-				db.ExecContext(ctx, //nolint:errcheck
-					`INSERT OR IGNORE INTO user_scopes(id, user_id, scope_type, scope_value, access_mode) VALUES(?,?,?,?,?)`,
-					sc.ID, u.ID, sc.ScopeType, sc.ScopeValue, sc.AccessMode)
-			}
-			for _, p := range u.Permissions {
-				db.ExecContext(ctx, //nolint:errcheck
-					`INSERT OR IGNORE INTO user_permissions(user_id, permission) VALUES(?,?)`, u.ID, p)
-			}
 			for _, m := range u.MFAMethods {
 				db.ExecContext(ctx, //nolint:errcheck
 					`INSERT OR IGNORE INTO user_mfa(id, user_id, method, config, enabled, verified) VALUES(?,?,?,?,1,1)`,
@@ -212,36 +193,6 @@ func (s *UserStore) buildFromDB(ctx context.Context, db *sql.DB) (*UsersArchive,
 		}
 	}
 	urows.Close()
-
-	// user_scopes — attachés à chaque UserEntry
-	usrows, err := db.QueryContext(ctx,
-		`SELECT id, user_id, scope_type, scope_value, access_mode FROM user_scopes ORDER BY user_id`)
-	if err == nil {
-		defer usrows.Close()
-		for usrows.Next() {
-			var sc UserScopeEntry
-			var uid string
-			if usrows.Scan(&sc.ID, &uid, &sc.ScopeType, &sc.ScopeValue, &sc.AccessMode) == nil {
-				if idx, ok := userIdx[uid]; ok {
-					archive.Users[idx].Scopes = append(archive.Users[idx].Scopes, sc)
-				}
-			}
-		}
-		usrows.Close()
-	}
-
-	uprows, _ := db.QueryContext(ctx, `SELECT user_id, permission FROM user_permissions ORDER BY user_id, permission`)
-	if uprows != nil {
-		for uprows.Next() {
-			var uid, p string
-			if uprows.Scan(&uid, &p) == nil {
-				if idx, ok := userIdx[uid]; ok {
-					archive.Users[idx].Permissions = append(archive.Users[idx].Permissions, p)
-				}
-			}
-		}
-		uprows.Close()
-	}
 
 	// user_mfa — méthodes vérifiées, attachées à chaque UserEntry
 	mfarows, _ := db.QueryContext(ctx,

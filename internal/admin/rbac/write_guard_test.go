@@ -33,7 +33,7 @@ func TestWriteGuards_JWTAndPAT(t *testing.T) {
 	must(`INSERT INTO users (id, email, password_hash, role) VALUES ('u','u@t.local','x','user')`)
 	must(`INSERT INTO users (id, email, password_hash, role) VALUES ('w','w@t.local','x','user')`)
 	must(`INSERT INTO users (id, email, password_hash, role) VALUES ('a','a@t.local','x','admin')`)
-	must(`INSERT INTO user_scopes (id, user_id, scope_type, scope_value, access_mode) VALUES ('s1','w','domain','*.example.io','write')`)
+	grantViaTeam(t, db, "w", "domain", "*.example.io", "write")
 
 	const secret = "test-secret"
 	creds := map[string]string{}

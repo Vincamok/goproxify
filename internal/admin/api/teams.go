@@ -91,10 +91,25 @@ type teamRow struct {
 	MemberCount int       `json:"member_count"`
 	ScopeCount  int       `json:"scope_count"`
 	Permissions []string  `json:"permissions"`
+	// Builtin : équipe intégrée (DPO) ; seule sa composition change, par le superadmin.
+	Builtin bool `json:"builtin,omitempty"`
+}
+
+// refuseBuiltin répond 409 pour une équipe intégrée : elle ne se renomme ni ne se supprime, n'a aucun accès sur les
+// ressources et ses capacités sont fixes.
+func refuseBuiltin(w http.ResponseWriter, r *http.Request, teamID string) bool {
+	if !rbac.IsBuiltInTeam(teamID) {
+		return false
+	}
+	writeErr(w, r, http.StatusConflict, "api.err.builtin_team")
+	return true
 }
 
 // setPermissions remplace les permissions accordées aux membres de l'équipe (superadmin).
 func (h *TeamsHandler) setPermissions(w http.ResponseWriter, r *http.Request, teamID string) {
+	if refuseBuiltin(w, r, teamID) {
+		return
+	}
 	actor := adminauth.UserIDFromContext(r.Context())
 	if !rbac.IsSuperAdmin(r.Context(), h.DB, actor) {
 		writeErr(w, r, http.StatusForbidden, "api.err.superadmin_required")
@@ -149,6 +164,7 @@ func (h *TeamsHandler) listTeams(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var t teamRow
 		if err := rows.Scan(&t.ID, &t.Name, &t.CreatedAt, &t.MemberCount, &t.ScopeCount); err == nil {
+			t.Builtin = rbac.IsBuiltInTeam(t.ID)
 			result = append(result, t)
 		}
 	}
@@ -194,10 +210,14 @@ func (h *TeamsHandler) getTeam(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 	t.Permissions = orEmpty(rbac.TeamPermissions(r.Context(), h.DB, id))
+	t.Builtin = rbac.IsBuiltInTeam(t.ID)
 	jsonOK(w, t)
 }
 
 func (h *TeamsHandler) updateTeam(w http.ResponseWriter, r *http.Request, id string) {
+	if refuseBuiltin(w, r, id) {
+		return
+	}
 	var req struct {
 		Name string `json:"name"`
 	}
@@ -223,6 +243,9 @@ func (h *TeamsHandler) updateTeam(w http.ResponseWriter, r *http.Request, id str
 }
 
 func (h *TeamsHandler) deleteTeam(w http.ResponseWriter, r *http.Request, id string) {
+	if refuseBuiltin(w, r, id) {
+		return
+	}
 	if !h.guardTeamPermissions(w, r, id) {
 		return
 	}
@@ -364,6 +387,9 @@ func (h *TeamsHandler) listScopes(w http.ResponseWriter, r *http.Request, teamID
 }
 
 func (h *TeamsHandler) addScope(w http.ResponseWriter, r *http.Request, teamID string) {
+	if refuseBuiltin(w, r, teamID) {
+		return
+	}
 	var req struct {
 		ScopeType  string `json:"scope_type"`
 		Value      string `json:"value"`

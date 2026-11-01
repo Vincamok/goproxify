@@ -79,12 +79,14 @@ Une requête authentifiée par PAT doit porter le scope de la route (`403 scope 
 | `/api/v1/import` | `audit:read` | `import:write` |
 | `/api/v1/portal`, `/portal-page-templates` | `portal:read` | `portal:write` (contenu d'un terminal — rejeu, observation — : `portal:write` même en `GET`) |
 | `/api/v1/prism`, `/metrics/proxies`, `/metrics/summary` | `metrics:read` | idem |
-| `/api/v1/logs` (`/logs/reveal-ip` : `gdpr:reveal`) | `logs:read` | `logs:write` |
+| `/api/v1/logs` (`/logs/reveal-ip` : `gdpr:reveal`, `/logs/subject-export` : `gdpr:export`, `/logs/by-ip`, `/logs/by-user` : `gdpr:erase`) | `logs:read` | `logs:write` (réglages) |
 | `/api/v1/backups` · `/users` · `/tokens` · `/teams` · `/audit` · `/pairing-secret` | `backups:read` · `users:read` · `users:read` · `teams:read` · `audit:read` · `pairing:read` | idem |
 
 Depuis Admin `0.70.0` : les écritures sur `/alert-*`, `/domains`, `/certs` exigent `alerts:write`, `domains:write`, `certs:write` (le scope de lecture suffisait auparavant), `/internal-ca` exige `certs:read` / `certs:write`, et `/rules-engine`, `/scheduled-tasks`, `/playbooks` exigent `audit:read` / `security:write` (aucun scope n'était vérifié auparavant, seul le rôle admin). Ces scopes d'écriture sont réservés aux rôles admin et superadmin ; un PAT existant ne les reçoit pas, il faut en créer un nouveau.
 
 Depuis Admin `0.70.4` : les écritures sur `/logs` (réglages, effacement RGPD) exigent `logs:write`, réservé aux rôles admin et superadmin ; `logs:read` suffisait auparavant.
+
+Depuis Admin `0.243.0` : l'export (`/logs/subject-export`) et l'effacement (`/logs/by-ip`, `/logs/by-user`) RGPD n'exigent plus `logs:write` mais les scopes `gdpr:export` et `gdpr:erase`, que détiennent le superadmin, les membres d'une équipe qui porte la capacité (l'équipe DPO) et, par leur rôle, les administrateurs. `logs:write` ne couvre plus que les réglages des logs. Les trois routes sont ouvertes à tout compte authentifié et le droit est vérifié dans le gestionnaire, comme `/logs/reveal-ip`.
 
 ### Rôle exigé pour les écritures
 
@@ -93,9 +95,9 @@ Routes ouvertes en lecture à tout compte authentifié mais dont les écritures 
 | Routes | Lecture (`GET`) | Écriture (toute autre méthode) |
 |---|---|---|
 | `/api/v1/certs` (dont `deploy-targets`, `pull-tokens`), `/domains`, `/alert-channels`, `/alert-rules` (dont `simulate`), `/alert-events` (`ack`), `/ip-profiles` (dont `refresh`) | tout compte | admin / superadmin — sinon `403 accès réservé aux administrateurs` |
-| `/api/v1/snippets` | tout compte | admin / superadmin, ou `user` disposant d'au moins un grant `write` (équipe ou direct) — sinon `403 accès insuffisant` |
-| `/api/v1/logs` (`settings`, `by-ip`, `by-user`, `subject-export`) | tout compte | admin / superadmin — sinon `403 accès réservé aux administrateurs` |
-| `/api/v1/logs/reveal-ip` | — | détenteur de `gdpr:reveal` (superadmin, rôle `dpo`, droit accordé en propre ou via une équipe), admin ou non — sinon `403` (depuis Admin `0.78.0` ; superadmin seul auparavant) |
+| `/api/v1/snippets` | tout compte | admin / superadmin, ou `user` disposant d'au moins un accès `write` par une équipe — sinon `403 accès insuffisant` |
+| `/api/v1/logs` (`settings`) | tout compte | admin / superadmin — sinon `403 accès réservé aux administrateurs` |
+| `/api/v1/logs/reveal-ip` · `/logs/subject-export` · `/logs/by-ip/{ip}` · `/logs/by-user/{id}` | — | capacité `gdpr:reveal` · `gdpr:export` · `gdpr:erase` · `gdpr:erase` (superadmin ou membre d'une équipe qui la porte, comme l'équipe DPO), admin ou non ; un administrateur garde l'export et l'effacement — sinon `403` (depuis Admin `0.243.0` ; `logs:write` + admin auparavant pour l'export et l'effacement) |
 
 Depuis Admin `0.70.4` pour `/logs` : un compte `user` pouvait désactiver l'anonymisation ou la pseudonymisation des IP, réduire la rétention et effacer des logs par IP ou par utilisateur.
 
@@ -287,6 +289,8 @@ Contrôles : `syntax`, `structure` (type, host, backends, URLs, et — depuis Ed
 ### `POST /api/v1/proxies`
 
 Crée un proxy manuel. Corps : objet conforme au schéma canonique (section `proxies`).
+
+**Nom et étiquettes (Admin `0.244.0`).** `config.name` (128 caractères au plus) et `config.labels` (`clé → valeur`, clé en minuscules, valeur alphanumérique avec `_ . -`, 63 caractères et 32 étiquettes au plus) n'ont aucun effet sur le routage : ce sont ce que les périmètres de droits des équipes lisent ([ADR 0022](adr/0022-modele-de-droits-niveaux-et-perimetres.md)). Sans nom, le proxy se désigne par son domaine. `400` si l'un est invalide. Le changement des étiquettes d'un proxy (`PUT`) est inscrit au journal d'audit (action `labels`, `+clé=valeur`, `-clé=valeur` ou `clé: avant → après`) ; la règle « avant et après dans le périmètre » de l'écriture s'applique, une équipe ne peut donc pas poser une étiquette qui sortirait le proxy de son propre périmètre.
 
 Options avancées de la configuration (Edge 0.37.0, détail dans [fonctionnalites.md](fonctionnalites.md)) : `split`, `maintenance`, `signed_url`, `graphql`, `bandwidth`, `redact_json`, `html_inject` (Edge 0.61.0 : `position` `head_end`/`body_end`, `content` ≤ 16 Kio, `csp_nonce`), `rate_limit.quota` / `quota_period` / `key_by` (`header:<nom>`, `cookie:<nom>`), condition `jwt_claim`, et pour `sso` : `provider: "oauth2_proxy"`, `forward_auth_signin_url`, `forward_auth_timeout_ms`.
 
@@ -1064,6 +1068,12 @@ Rôle admin requis. Remet en place une version conservée, réaligne la base des
 **Body :** `{"name": "architecture-20260926T070623359846127Z.json"}`
 
 **Réponse :** `{"restored": "<name>", "applied": {"declared": 2, "removed": 0, "scopes": 0, "domains": 0}}`. Un nom qui n'est pas une version conservée renvoie `404`.
+
+### `GET|PUT /api/v1/architecture/groups/{nom}/attributes` `[AUTH]`
+
+Rôle admin requis (Admin `0.244.0` ; ADR 0022). Lit ou remplace l'environnement, la région et les tags d'un groupe HA (`404` si le groupe n'est pas déclaré dans `architecture.json`). Les périmètres de droits désignent les groupes de passerelles par ces attributs : un groupe qui reçoit `environment: prod` entre dans le périmètre « groupes de production », ses futurs membres aussi. Les attributs vivent dans `architecture.json` (section `groups`), ne sont lus que par l'Admin et ne figurent pas dans la fiche de groupe que les passerelles gardent.
+
+**Body (PUT) :** `{"environment": "prod", "region": "paris", "tags": ["lan"]}`. Environnement et région : lettres, chiffres, `_ . -`, 63 caractères au plus ; 16 tags au plus, sans doublon (`400` sinon). **Réponse :** les attributs retenus. Chaque écriture est inscrite au journal d'audit.
 
 ### `POST /api/v1/architecture/recover` `[AUTH]`
 
@@ -2004,46 +2014,37 @@ Tous les messages WS utilisent l'enveloppe suivante :
 
 ---
 
-## Utilisateurs, équipes et permissions — `/api/v1/users`, `/api/v1/teams`
+## Comptes, équipes et capacités — `/api/v1/users`, `/api/v1/teams`
 
-Routes réservées aux admins (`adminOnly`, scope PAT `users:read` / `teams:read`). Rôles plateforme : `superadmin` (unique, non attribuable), `admin`, `user`, `dpo`. Le rôle `dpo` a les droits d'un compte `user` plus la permission `gdpr:reveal`.
+Routes réservées aux admins (`adminOnly`, scope PAT `users:read` / `teams:read`). Rôles plateforme : `superadmin` (unique, non attribuable), `admin`, `user`. Depuis Admin `0.243.0` ([ADR 0021](adr/0021-droits-et-acces-equipes-seules-porteuses.md)) :
 
-**Permissions** : droits de capacité, distincts des grants de ressources (`domain`, `server`, `proxy`, `edge`). Seule permission connue : `gdpr:reveal` (révéler l'IP réelle d'une entrée de log pseudonymisée, voir [Logs RGPD](#logs-rgpd--apiv1logs)). Elle est détenue par le superadmin, par le rôle `dpo`, en propre (`user_permissions`) ou via une équipe (`team_permissions`). Une permission inconnue renvoie `400`.
+- **Un administrateur voit toute la plateforme.** Les accès de ses équipes ne le restreignent ni ne l'étendent (il n'y a plus d'administrateur limité à un domaine).
+- **Un utilisateur n'a que ce que lui donnent ses équipes** (`team_scopes`). Il n'a plus de droits personnels : le champ `scopes` des comptes et la table `user_scopes` n'existent plus. Sans équipe, il ne voit rien.
+- **Le rôle `dpo` n'existe plus** (`400 api.err.role_admin_user`). Le délégué à la protection des données est l'**équipe intégrée « DPO »** (`team-dpo`), créée au démarrage ; ses membres sont des comptes nommés, de n'importe quel rôle.
+
+**Capacités** : droits qui ne portent sur aucune ressource (distincts des accès `domain`, `server`, `proxy`, `edge`). Connues : `gdpr:reveal` (révéler l'IP réelle d'une entrée de log pseudonymisée), `gdpr:export` (export d'accès et de portabilité, Art. 15 et 20), `gdpr:erase` (effacement par IP ou par utilisateur, Art. 17), `gdpr:hold` (gel légal et export signé) — voir [Logs RGPD](#logs-rgpd--apiv1logs). Elles s'obtiennent par le rôle superadmin ou par une équipe qui les porte (`team_permissions`), plus en propre. L'équipe DPO les porte toutes ; un administrateur garde par son rôle l'export et l'effacement qu'il exerçait avec `logs:write`, pas la révélation ni le gel. Une capacité inconnue renvoie `400`.
 
 | Méthode | Endpoint | Description |
 |---|---|---|
-| GET | `/api/v1/users` · `/api/v1/users/{id}` | Comptes ; chaque compte porte `permissions` (accordées en propre) et `effective_permissions` (y compris rôle et équipes) |
-| POST | `/api/v1/users` | `{email, password, role, scopes?, permissions?}` |
-| PUT | `/api/v1/users/{id}` | `{email, role, password?, scopes?, permissions?}` ; `permissions` absent = inchangé, `[]` = retirées |
+| GET | `/api/v1/users` · `/api/v1/users/{id}` | Comptes ; chaque compte porte `effective_permissions` (capacités détenues par le rôle superadmin ou par ses équipes) |
+| GET | `/api/v1/users/{id}/access` | Accès effectif et origine de chaque droit : `{role, global, teams:[{id, name, builtin?, scopes, permissions}], grants:[{type, value, access_mode, teams}], permissions:[{permission, via_role?, via_teams?}]}`. `global: true` pour un administrateur, dont `grants` reste vide. Les accès des équipes sont fusionnés, le mode `write` l'emporte. `404` si le compte n'existe pas |
+| POST | `/api/v1/users` | `{email, password, role}` — `role` : `admin` ou `user` |
+| PUT | `/api/v1/users/{id}` | `{email, role, password?}` |
 | PUT | `/api/v1/users/{id}/password` | `{password}` |
 | DELETE | `/api/v1/users/{id}` | — |
-| GET | `/api/v1/teams` · `/api/v1/teams/{id}` | Équipes ; chacune porte `permissions` (accordées à ses membres) |
+| GET | `/api/v1/teams` · `/api/v1/teams/{id}` | Équipes ; chacune porte `permissions` (capacités accordées à ses membres) et `builtin: true` pour l'équipe DPO |
 | GET · PUT | `/api/v1/teams/{id}/permissions` | `{permissions: [...]}` ; `PUT` remplace la liste |
+| GET · POST · DELETE | `/api/v1/teams/{id}/scopes[/{scope_id}]` | Accès de l'équipe sur les ressources |
 | POST · DELETE | `/api/v1/teams/{id}/members[/{user_id}]` | Membres |
-| GET | `/api/v1/me` | Compte courant ; `permissions` = permissions effectives |
+| GET | `/api/v1/me` | Compte courant ; `permissions` = capacités effectives, `teams`, `effective_scopes` (vide pour un administrateur : accès global) |
 
-Règles (depuis Admin `0.78.0`), contrôlées pour les sessions UI comme pour les PAT :
+Règles, contrôlées pour les sessions UI comme pour les PAT :
 
-- **attribuer ou retirer** une permission est réservé au superadmin : rôle `dpo` donné ou retiré, `permissions` d'un compte modifiées, `PUT /teams/{id}/permissions`, ajout ou retrait de membres et suppression d'une équipe qui porte une permission — sinon `403` (`api.err.superadmin_required`). Chaque attribution est auditée (`set_permissions`) ;
-- **compte protégé** : un compte superadmin ou détenteur d'une permission (par n'importe quelle voie) ne peut être modifié (`PUT /users/{id}`), voir son mot de passe changé ou être supprimé que par le superadmin — sinon `403` (`api.err.protected_account`). Auparavant, un admin pouvait changer le mot de passe de n'importe quel compte, superadmin compris.
+- **attribuer ou retirer** une capacité est réservé au superadmin : `PUT /teams/{id}/permissions`, ajout ou retrait de membres et suppression d'une équipe qui porte une capacité — sinon `403` (`api.err.superadmin_required`). Chaque attribution est auditée (`set_permissions`) ;
+- **équipe intégrée** : renommer l'équipe DPO, la supprimer, changer ses capacités ou lui donner un accès renvoie `409` (`api.err.builtin_team`) ; seule sa composition change, par le superadmin ;
+- **compte protégé** : un compte superadmin ou détenteur d'une capacité (par n'importe quelle voie) ne peut être modifié (`PUT /users/{id}`), voir son mot de passe changé ou être supprimé que par le superadmin — sinon `403` (`api.err.protected_account`).
 
-Les permissions sont copiées dans `users.yaml` (comptes et équipes). Elles ne font pas partie des sauvegardes de configuration (`team_permissions` est exclue de la section standard ; elle est dans la section `secrets` chiffrée, restaurable par le seul superadmin). Un import ou une restauration (`POST /api/v1/import/backup/apply`, `POST /api/v1/backups/snapshots/{id}/restore`) lancé par un admin n'attribue jamais le rôle `superadmin` ni `dpo` (compte créé en `user`, rôle d'un compte existant conservé), ne modifie pas le rôle du superadmin ni d'un `dpo`, et n'ajoute aucun membre à une équipe qui porte une permission. Lancé par le superadmin, il restaure le rôle `dpo` et ces membres ; le rôle `superadmin` n'est jamais importé. Auparavant, un import en `overwrite` réécrivait le rôle de tout compte existant, superadmin compris.
-
-## Workspaces — `/api/v1/workspaces`
-
-> Accès : admin / superadmin uniquement.
-
-| Méthode | Endpoint | Description |
-|---|---|---|
-| GET | `/api/v1/workspaces` | Liste tous les espaces de travail (avec compteurs membres/ressources) |
-| POST | `/api/v1/workspaces` | Crée un espace (`name`, `description`) |
-| GET | `/api/v1/workspaces/{id}` | Détail complet : membres + ressources |
-| PUT | `/api/v1/workspaces/{id}` | Renomme / modifie la description |
-| DELETE | `/api/v1/workspaces/{id}` | Supprime (en cascade membres + ressources) |
-| POST | `/api/v1/workspaces/{id}/members` | Ajoute un membre (`entity_type`: `user`/`team`, `entity_id`) |
-| DELETE | `/api/v1/workspaces/{id}/members/{type}/{entityID}` | Retire un membre |
-| POST | `/api/v1/workspaces/{id}/resources` | Ajoute une ressource (`resource_type`: `proxy`/`domain`/`edge`, `resource_id`) |
-| DELETE | `/api/v1/workspaces/{id}/resources/{type}/{resourceID}` | Retire une ressource |
+Les capacités et la composition des équipes sont copiées dans `users.yaml` (comptes et équipes, sans droits personnels). Elles ne font pas partie des sauvegardes de configuration (`team_permissions` est exclue de la section standard ; elle est dans la section `secrets` chiffrée, restaurable par le seul superadmin). Un import ou une restauration (`POST /api/v1/import/backup/apply`, `POST /api/v1/backups/snapshots/{id}/restore`) lancé par un admin n'attribue jamais le rôle `superadmin` (compte créé en `user`, rôle d'un compte existant conservé), ne modifie pas le rôle du superadmin et n'ajoute aucun membre à une équipe qui porte une capacité. Lancé par le superadmin, il restaure ces membres ; le rôle `superadmin` n'est jamais importé. Un ancien rôle `dpo` d'une sauvegarde devient `user`.
 
 ---
 
@@ -2060,10 +2061,10 @@ Les permissions sont copiées dans `users.yaml` (comptes et équipes). Elles ne 
 | GET | `/api/v1/logs/siem` | `logs:read` + admin | *(Admin `0.178.0`, Edge `0.87.0`, [ADR 0012](adr/0012-logs-proprietaire-edge.md))* Configuration de l'**exporteur SIEM** : `{enabled, destinations:[{id, name, type, address, tls, ca_pem, headers, kinds, min_level, security_only, backfill_hours, alert_after_minutes, facility, nodes}]}`. `type` : `syslog` (`address` `hôte:port`, RFC 5424 sur TCP, TLS avec `tls`, cadrage par comptage d'octets RFC 6587), `http` (`address` URL http(s), un lot NDJSON par `POST`, 2xx = accusé) ou `otlp` *(Admin `0.179.0`, Edge `0.89.0`)* (OTLP/HTTP en JSON : `address` est l'URL complète du collecteur, par exemple `http://collector.example.com:4318/v1/logs`, un `ExportLogsServiceRequest` par `POST`, attributs sémantiques OpenTelemetry comme `http.response.status_code`, `client.address`, `url.path`, `log.id`). `nodes` *(Admin `0.179.0`)* : noms des passerelles qui exportent vers cette destination (vide : toutes) ; l'Admin n'envoie à chaque passerelle que ses destinations, une destination qui ne la vise plus y est éteinte avec son curseur. `kinds` : `access` et/ou `system` (vide = les deux) ; `min_level` : `info` (défaut), `warn`, `error` ; `security_only` : seuls les accès signalés par le WAF ou Ephor (les logs système ne sont pas filtrés par là) ; `backfill_hours` : à la création, repart de N heures en arrière au lieu de « maintenant » ; `alert_after_minutes` : retard déclenchant l'alerte `siem_export_lag` (60 par défaut) ; `ca_pem` : autorité de confiance en plus de celles du système. **Les valeurs de `headers` (jetons) sont masquées** (`********`) |
 | PUT | `/api/v1/logs/siem` | `logs:write` + admin | Enregistre la configuration (corps de même forme ; au plus 8 destinations, `400` avec la raison si une destination est invalide ou un identifiant en double). Une valeur d'en-tête renvoyée masquée garde le jeton enregistré ; une destination sans `id` en reçoit un (le curseur d'une destination est attaché à son `id` : retirée ou éteinte, elle le perd). Audité (`logs_siem_config`, sans aucun secret). La configuration est poussée à chaque passerelle (`push_siem_config`), qui en garde une copie chiffrée et exporte seule ensuite, même Admin éteint ; elle l'est aussi à la connexion d'une passerelle. Réponse : la configuration enregistrée, masquée |
 | GET | `/api/v1/logs/siem/status` | `logs:read` + admin | État rapporté par chaque passerelle toutes les 30 s : `{nodes:[{node_name, reported_at, stale?, destinations:[{id, name, type, state, last_error?, last_error_at?, delivered, last_sent?, lag_sec, at_risk?, alert_after_min}]}]}`. `state` : `starting`, `ok`, `retrying` (le dernier envoi a échoué, il est renvoyé tel quel après attente), `stopped`. `lag_sec` : âge de la plus ancienne ligne pas encore livrée (0 : à jour). `at_risk` : le retard dépasse 80 % de la conservation, des lignes vont être purgées avant livraison. `stale` : la passerelle n'a rien rapporté depuis 90 s |
-| POST | `/api/v1/logs/reveal-ip` | `gdpr:reveal` (superadmin, rôle `dpo`, droit délégué — voir [Utilisateurs, équipes et permissions](#utilisateurs-équipes-et-permissions--apiv1users-apiv1teams)) | Révéler l'IP réelle d'une entrée pseudonymisée |
-| DELETE | `/api/v1/logs/by-ip/{ip}` | `logs:write` + admin | Effacement RGPD Art.17 par IP, entrées pseudonymisées comprises (empreinte `ip_hmac`), IPv6 quelle que soit sa notation → `{deleted, bans_deleted, ban_history_deleted, geoip_cache_deleted, ip_counters_deleted, audit_ip_cleared, ip}` : supprime aussi les bans de l'IP, leur historique, son entrée du cache GeoIP et ses compteurs d'erreurs des Seuils multi-passerelles, vide son adresse dans le journal d'audit (l'entrée reste), lève ses bans sur les passerelles et ordonne aux passerelles d'effacer ses lignes d'access log et son historique de bans (`erase_ips`, rejoué à la reconnexion des passerelles hors ligne pendant 365 jours, IP chiffrée dans la file) (Admin `0.163.0`, Edge `0.73.0`). *(Admin `0.177.0`, Edge `0.86.0`)* L'ordre est aussi envoyé à chaque passerelle joignable par `POST /internal/v1/logs/erase` : elle efface les lignes de sa base de logs (accès **et** logs système, pseudonymisées comprises, par adresse et par empreinte) et rend ce qu'elle a supprimé ; la réponse porte `gateways: [{node_name, status, log_lines, ban_rows, error?}]` avec `status` `erased` (la passerelle a répondu avec ses comptes : c'est la preuve de l'effacement chez elle) ou `pending` (elle n'a pas répondu, l'ordre mis en file lui sera rejoué), et l'audit en garde le total. `{ip}` doit être une adresse IP (`400` sinon). L'audit (`rgpd_erasure_ip`) et le log système ne contiennent que l'empreinte de l'IP (`hmac:…`) |
-| DELETE | `/api/v1/logs/by-user/{user_id}` | `logs:write` + admin | Effacement RGPD Art.17 par utilisateur |
-| POST | `/api/v1/logs/subject-export` | `logs:write` + admin | Export RGPD d'accès et de portabilité (Art. 15 et 20) : corps `{"ip"}` ou `{"user_id"}` (un seul des deux, `400` sinon ; `reason` facultatif). Réponse JSON à télécharger : pour une IP, logs (entrées pseudonymisées comprises, retrouvées par empreinte), bans, historique des bans, position GeoIP et entrées d'audit portant l'adresse ; pour un compte, profil (jamais le mot de passe), équipes, logs attribués et entrées d'audit. Logs plafonnés à 100 000 lignes (`logs_truncated`). *(Admin `0.173.0`)* Pour une IP, les lignes d'accès viennent de la base de chaque passerelle (les plus récentes d'abord) ; `gateways_missing` nomme celles qui n'ont pas répondu : l'export est alors incomplet. Audité (`rgpd_export_ip`, `rgpd_export_user`) sans l'IP en clair |
+| POST | `/api/v1/logs/reveal-ip` | `gdpr:reveal` (superadmin ou membre de l'équipe DPO — voir [Comptes, équipes et capacités](#comptes-équipes-et-capacités--apiv1users-apiv1teams)) | Révéler l'IP réelle d'une entrée pseudonymisée |
+| DELETE | `/api/v1/logs/by-ip/{ip}` | `gdpr:erase` (équipe DPO, superadmin ou administrateur) | Effacement RGPD Art.17 par IP, entrées pseudonymisées comprises (empreinte `ip_hmac`), IPv6 quelle que soit sa notation → `{deleted, bans_deleted, ban_history_deleted, geoip_cache_deleted, ip_counters_deleted, audit_ip_cleared, ip}` : supprime aussi les bans de l'IP, leur historique, son entrée du cache GeoIP et ses compteurs d'erreurs des Seuils multi-passerelles, vide son adresse dans le journal d'audit (l'entrée reste), lève ses bans sur les passerelles et ordonne aux passerelles d'effacer ses lignes d'access log et son historique de bans (`erase_ips`, rejoué à la reconnexion des passerelles hors ligne pendant 365 jours, IP chiffrée dans la file) (Admin `0.163.0`, Edge `0.73.0`). *(Admin `0.177.0`, Edge `0.86.0`)* L'ordre est aussi envoyé à chaque passerelle joignable par `POST /internal/v1/logs/erase` : elle efface les lignes de sa base de logs (accès **et** logs système, pseudonymisées comprises, par adresse et par empreinte) et rend ce qu'elle a supprimé ; la réponse porte `gateways: [{node_name, status, log_lines, ban_rows, error?}]` avec `status` `erased` (la passerelle a répondu avec ses comptes : c'est la preuve de l'effacement chez elle) ou `pending` (elle n'a pas répondu, l'ordre mis en file lui sera rejoué), et l'audit en garde le total. `{ip}` doit être une adresse IP (`400` sinon). L'audit (`rgpd_erasure_ip`) et le log système ne contiennent que l'empreinte de l'IP (`hmac:…`) |
+| DELETE | `/api/v1/logs/by-user/{user_id}` | `gdpr:erase` (équipe DPO, superadmin ou administrateur) | Effacement RGPD Art.17 par utilisateur |
+| POST | `/api/v1/logs/subject-export` | `gdpr:export` (équipe DPO, superadmin ou administrateur) | Export RGPD d'accès et de portabilité (Art. 15 et 20) : corps `{"ip"}` ou `{"user_id"}` (un seul des deux, `400` sinon ; `reason` facultatif). Réponse JSON à télécharger : pour une IP, logs (entrées pseudonymisées comprises, retrouvées par empreinte), bans, historique des bans, position GeoIP et entrées d'audit portant l'adresse ; pour un compte, profil (jamais le mot de passe), équipes, logs attribués et entrées d'audit. Logs plafonnés à 100 000 lignes (`logs_truncated`). *(Admin `0.173.0`)* Pour une IP, les lignes d'accès viennent de la base de chaque passerelle (les plus récentes d'abord) ; `gateways_missing` nomme celles qui n'ont pas répondu : l'export est alors incomplet. Audité (`rgpd_export_ip`, `rgpd_export_user`) sans l'IP en clair |
 | GET | `/api/v1/logs/histogram` | `logs:read` | Entrées par tranche de temps et par niveau : mêmes filtres que la liste plus `bucket` (`minute`, `hour`, `day` ; défaut selon l'étendue, 24 h sans `date_from`) → `{bucket, points:[{bucket, total, warn, error}]}` |
 | GET | `/api/v1/logs/facets` | `logs:read` | Comptage des entrées filtrées par valeur, pour l'explorateur de logs : mêmes filtres que la liste plus `fields` (CSV parmi `level`, `component`, `node_name`, `domain`, `method`, `tls_ja4`, `tls_ja3` ; par défaut les cinq premiers) → `{<field>: [{value, count}]}`, 12 valeurs les plus fréquentes par champ, valeurs vides exclues |
 | GET | `/api/v1/audit/histogram` | authentifié | Actions du journal d'audit par tranche et par gravité : filtres `component`, `action`, `actor`, `severity`, `from`, `to` (RFC 3339) plus `bucket` → `{bucket, points:[{bucket, total, warn, critical}]}` |

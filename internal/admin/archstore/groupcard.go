@@ -13,10 +13,59 @@ import (
 // GroupEntry retient, pour un groupe HA, la version de sa fiche et l'empreinte du contenu de cette version
 // (ADR 0014, section 3). La composition elle-même se déduit des nœuds (config.cluster_group) : la fiche en est la
 // projection que les passerelles gardent, et ce qui permet de reconstituer le fichier si l'Admin est perdu.
+//
+// Environment, Region et Tags qualifient le groupe pour les droits (ADR 0022) : une équipe désigne « les groupes de
+// production » ou « la région paris » sans nommer chaque groupe, et un groupe nouveau reçoit les droits dès qu'il porte
+// l'attribut. Ils ne sont lus que par l'Admin et ne figurent pas dans la fiche que les passerelles gardent.
 type GroupEntry struct {
-	Name    string `json:"name"`
-	Version int64  `json:"version"`
-	Hash    string `json:"hash,omitempty"`
+	Name        string   `json:"name"`
+	Version     int64    `json:"version"`
+	Hash        string   `json:"hash,omitempty"`
+	Environment string   `json:"environment,omitempty"`
+	Region      string   `json:"region,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+}
+
+// GroupAttributes sont les attributs d'un groupe qui servent à le désigner dans un périmètre.
+type GroupAttributes struct {
+	Environment string   `json:"environment"`
+	Region      string   `json:"region"`
+	Tags        []string `json:"tags"`
+}
+
+// GroupAttributesOf rend les attributs retenus pour le groupe (vides s'il n'en a pas).
+func (s *Store) GroupAttributesOf(name string) GroupAttributes {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	arch, err := s.readLocked()
+	if err != nil {
+		return GroupAttributes{}
+	}
+	for _, g := range arch.Groups {
+		if g.Name == name {
+			return GroupAttributes{Environment: g.Environment, Region: g.Region, Tags: g.Tags}
+		}
+	}
+	return GroupAttributes{}
+}
+
+// SetGroupAttributes retient les attributs d'un groupe ; l'entrée du groupe est créée si elle n'existe pas encore.
+func (s *Store) SetGroupAttributes(name string, a GroupAttributes) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	arch, err := s.readLocked()
+	if err != nil {
+		return err
+	}
+	for i := range arch.Groups {
+		if arch.Groups[i].Name == name {
+			arch.Groups[i].Environment, arch.Groups[i].Region, arch.Groups[i].Tags = a.Environment, a.Region, a.Tags
+			return s.writeLocked(arch)
+		}
+	}
+	arch.Groups = append(arch.Groups, GroupEntry{Name: name, Environment: a.Environment, Region: a.Region, Tags: a.Tags})
+	sort.Slice(arch.Groups, func(i, j int) bool { return arch.Groups[i].Name < arch.Groups[j].Name })
+	return s.writeLocked(arch)
 }
 
 // GroupCardVersion rend la version et l'empreinte retenues pour le groupe (0 et "" s'il n'en a pas encore).
@@ -52,6 +101,7 @@ func setGroupEntry(arch *Architecture, g GroupEntry) {
 	for i := range arch.Groups {
 		if arch.Groups[i].Name == g.Name {
 			if g.Version >= arch.Groups[i].Version {
+				g.Environment, g.Region, g.Tags = arch.Groups[i].Environment, arch.Groups[i].Region, arch.Groups[i].Tags
 				arch.Groups[i] = g
 			}
 			return

@@ -16,11 +16,15 @@ type RouteOrigin struct {
 
 // Route décrit un proxy HTTP ou TCP/UDP vers un ou plusieurs backends.
 type Route struct {
-	ID       string    `json:"id"`
-	Host     string    `json:"host"`              // ex: "app.example.fr" — vide pour TCP/UDP
-	Aliases  []string  `json:"aliases,omitempty"` // domaines secondaires pointant vers la même route
-	Type     RouteType `json:"type"`              // http | tcp | udp
-	Backends []Backend `json:"backends"`
+	ID string `json:"id"`
+	// Name désigne le proxy dans les périmètres de droits (glob ou expression régulière) ; vide = son hôte.
+	// Étiquettes : mêmes usages ; ni l'un ni l'autre n'a d'effet sur le routage.
+	Name     string            `json:"name,omitempty"`
+	Labels   map[string]string `json:"labels,omitempty"`
+	Host     string            `json:"host"`              // ex: "app.example.fr" — vide pour TCP/UDP
+	Aliases  []string          `json:"aliases,omitempty"` // domaines secondaires pointant vers la même route
+	Type     RouteType         `json:"type"`              // http | tcp | udp
+	Backends []Backend         `json:"backends"`
 
 	// AgentName est le nœud Agent qui a découvert / injecté cette route (docker:/k8s:).
 	AgentName string `json:"agent_name,omitempty"`

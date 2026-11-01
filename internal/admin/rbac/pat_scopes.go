@@ -40,6 +40,8 @@ const (
 	ScopePortalRead    = "portal:read"
 	ScopePortalWrite   = "portal:write"
 	ScopeGDPRReveal    = "gdpr:reveal"
+	ScopeGDPRExport    = "gdpr:export"
+	ScopeGDPRErase     = "gdpr:erase"
 )
 
 // AllPATScopes liste tous les scopes connus (ordre stable pour l'UI).
@@ -51,7 +53,7 @@ var AllPATScopes = []string{
 	ScopeLogsRead, ScopeLogsWrite, ScopeTeamsRead, ScopeAuditRead,
 	ScopeSecurityWrite, ScopeImportWrite, ScopePairingRead,
 	ScopePortalRead, ScopePortalWrite,
-	ScopeGDPRReveal,
+	ScopeGDPRReveal, ScopeGDPRExport, ScopeGDPRErase,
 }
 
 // ScopeMeta décrit un scope pour l'UI / API.
@@ -80,7 +82,7 @@ func ScopeCatalog() []ScopeMeta {
 		ScopeCertsRead:     "Lister les certificats, cibles de déploiement et CA internes",
 		ScopeCertsWrite:    "Obtenir, importer, supprimer et déployer des certificats ; gérer la CA interne",
 		ScopeLogsRead:      "Lire les logs",
-		ScopeLogsWrite:     "Modifier les réglages des logs (rétention, protection des IP) et effacer des logs (RGPD Art. 17)",
+		ScopeLogsWrite:     "Modifier les réglages des logs (rétention, protection des IP)",
 		ScopeTeamsRead:     "Lister les équipes",
 		ScopeAuditRead:     "Lire le journal d'audit, la sécurité (bans, menaces, CVE, profils IP, fournisseurs d'auth) et l'automatisation (flux : règles, planifications, playbooks)",
 		ScopeSecurityWrite: "Muter la sécurité (bans, profils IP, fournisseurs d'auth) et piloter l'automatisation (flux : règles, planifications, playbooks)",
@@ -88,7 +90,9 @@ func ScopeCatalog() []ScopeMeta {
 		ScopePairingRead:   "Lire le secret d'appairage",
 		ScopePortalRead:    "Lire GoProxify Access (config, catalogue, users, templates, audit)",
 		ScopePortalWrite:   "Gérer GoProxify Access (config, catalogue, invitations, templates, push)",
-		ScopeGDPRReveal:    "Révéler l'IP réelle d'une entrée de log pseudonymisée (RGPD — DPO/juriste/RSSI uniquement)",
+		ScopeGDPRReveal:    "Révéler l'IP réelle d'une entrée de log pseudonymisée (RGPD — équipe DPO uniquement)",
+		ScopeGDPRExport:    "Export d'accès et de portabilité des données d'une personne (RGPD Art. 15 et 20)",
+		ScopeGDPRErase:     "Effacer les logs d'une IP ou d'un utilisateur (RGPD Art. 17)",
 	}
 	out := make([]ScopeMeta, 0, len(AllPATScopes))
 	for _, id := range AllPATScopes {
@@ -102,12 +106,12 @@ func ScopeCatalog() []ScopeMeta {
 // Doit contenir exactement les outils du serveur MCP (vérifié par un test de internal/admin/mcp).
 var mcpTools = []string{
 	"list_proxies", "get_proxy", "get_proxy_labels", "get_discovered_container", "list_orphan_proxies", "create_proxy", "convert_discovered_container", "set_container_route_enabled", "update_proxy", "set_proxy_enabled", "delete_proxy", "purge_proxy_cache",
-	"list_nodes", "list_agents", "list_declared_nodes", "get_topology_live", "get_architecture", "list_discovery_sources",
+	"list_nodes", "list_agents", "list_declared_nodes", "get_topology_live", "get_architecture", "list_discovery_sources", "set_group_attributes",
 	"approve_agent", "revoke_agent", "create_declared_node", "delete_declared_node",
 	"create_bootstrap_ticket", "list_hosts", "create_host_join_ticket", "accept_node", "reject_node",
 	"list_alerts", "list_alert_events", "list_alert_channels", "list_alert_channel_types", "list_alert_rules",
 	"create_alert_channel", "delete_alert_channel", "create_alert_rule", "delete_alert_rule", "ack_alert_event",
-	"get_metrics", "get_proxy_metrics", "list_backups", "list_users",
+	"get_metrics", "get_proxy_metrics", "list_backups", "list_users", "get_user_access",
 	"list_snippets", "list_detector_types", "create_snippet", "delete_snippet",
 	"list_domains", "create_domain", "renew_domain", "rotate_cert",
 	"list_certs", "get_cert_status", "list_cert_deploy_targets", "list_cert_deploy_types", "list_internal_cas", "list_internal_certs", "get_ech_status", "list_dns_providers", "list_dns_provider_types",
@@ -179,14 +183,16 @@ func AvailableScopesForUser(ctx context.Context, db *sql.DB, userID string) []st
 			ScopeSecurityWrite, ScopeImportWrite, ScopePairingRead,
 			ScopePortalRead, ScopePortalWrite)
 	default:
-		// user, dpo (et legacy operator/viewer normalisés) : write PAT si grant write effectif
+		// user (et legacy operator/viewer normalisés) : write PAT si grant write effectif d'une équipe
 		if UserHasWriteGrant(ctx, db, userID) {
 			add(ScopeProxiesWrite, ScopeSnippetsWrite)
 		}
 	}
-	// Superadmin, rôle dpo, ou permission accordée en propre / via une équipe.
-	if HasPermission(ctx, db, userID, PermGDPRReveal) {
-		add(ScopeGDPRReveal)
+	// Capacités RGPD : superadmin ou équipe qui les porte ; un administrateur garde l'export et l'effacement.
+	for _, scope := range []string{ScopeGDPRReveal, ScopeGDPRExport, ScopeGDPRErase} {
+		if CanExerciseGDPR(ctx, db, userID, scope) {
+			add(scope)
+		}
 	}
 	return out
 }
@@ -231,7 +237,7 @@ func ToolRequiredScope(tool string) string {
 		return ScopeProxiesDelete
 	case "list_nodes", "list_agents", "list_declared_nodes", "get_topology_live", "get_architecture", "list_discovery_sources", "list_hosts":
 		return ScopeNodesRead
-	case "approve_agent", "revoke_agent",
+	case "approve_agent", "revoke_agent", "set_group_attributes",
 		"create_declared_node", "delete_declared_node",
 		"create_bootstrap_ticket", "create_host_join_ticket", "accept_node", "reject_node":
 		return ScopeNodesWrite
@@ -243,7 +249,7 @@ func ToolRequiredScope(tool string) string {
 		return ScopeMetricsRead
 	case "list_backups":
 		return ScopeBackupsRead
-	case "list_users":
+	case "list_users", "get_user_access":
 		return ScopeUsersRead
 	case "list_snippets", "list_detector_types":
 		return ScopeSnippetsRead
@@ -295,9 +301,9 @@ func ToolRequiresAdmin(tool string) bool {
 		return true
 	}
 	switch tool {
-	case "list_agents", "approve_agent", "revoke_agent",
+	case "list_agents", "approve_agent", "revoke_agent", "set_group_attributes",
 		"get_architecture", "list_discovery_sources", "list_dns_providers", "list_dns_provider_types",
-		"list_backups", "list_users", "list_teams",
+		"list_backups", "list_users", "get_user_access", "list_teams",
 		"get_security_overview", "list_security_bans", "list_security_engine_types", "get_waf_activity", "list_plugins", "lookup_asn", "list_security_threats", "list_security_cves", "get_proxy_surface", "get_app_inventory", "get_entry_rejections", "get_traffic_reference", "get_tls_reputation", "get_domain_watch", "get_proxy_surface_proposals", "get_proxy_surface_openapi", "get_proxy_surface_suggestions", "reset_proxy_surface", "enforce_proxy_surface", "accept_proxy_surface_suggestions", "relax_proxy_surface",
 		"create_security_ban", "delete_security_ban", "ban_ip", "unban_ip", "get_siem_status", "simulate_ephor_config", "calibrate_ephor", "get_ephor_references", "suggest_ephor_thresholds", "trace_ip", "preview_security_ban", "preview_asn_ban", "list_ban_whitelist", "add_ban_whitelist", "remove_ban_whitelist", "import_security_bans", "ban_asn", "unban_asn",
 		"list_auth_providers", "list_auth_provider_types", "create_auth_provider", "delete_auth_provider",
@@ -390,6 +396,10 @@ func RequiredScopeForRequest(r *http.Request) string {
 		return ScopeCertsWrite
 	case strings.HasPrefix(path, "/api/v1/logs/reveal-ip"):
 		return ScopeGDPRReveal
+	case strings.HasPrefix(path, "/api/v1/logs/subject-export"):
+		return ScopeGDPRExport
+	case strings.HasPrefix(path, "/api/v1/logs/by-ip/"), strings.HasPrefix(path, "/api/v1/logs/by-user/"):
+		return ScopeGDPRErase
 	case strings.HasPrefix(path, "/api/v1/logs"):
 		if method == http.MethodGet {
 			return ScopeLogsRead

@@ -23,12 +23,12 @@ Chaque outil exige un scope, le même que sa route REST équivalente. Les outils
 | `proxies:write` | `create_proxy`, `convert_discovered_container`, `set_container_route_enabled`, `update_proxy`, `set_proxy_enabled`, `purge_proxy_cache` |
 | `proxies:delete` | `delete_proxy` |
 | `nodes:read` | `list_nodes`, `list_declared_nodes`, `list_hosts`, `get_topology_live`, `list_agents` †, `get_architecture` †, `list_discovery_sources` † |
-| `nodes:write` | `create_declared_node`, `delete_declared_node`, `create_bootstrap_ticket`, `create_host_join_ticket`, `accept_node`, `reject_node`, `approve_agent` †, `revoke_agent` † |
+| `nodes:write` | `create_declared_node`, `delete_declared_node`, `create_bootstrap_ticket`, `create_host_join_ticket`, `accept_node`, `reject_node`, `set_group_attributes` †, `approve_agent` †, `revoke_agent` † |
 | `alerts:read` | `list_alerts`, `list_alert_events`, `list_alert_channels`, `list_alert_channel_types`, `list_alert_rules` |
 | `alerts:write` | `create_alert_channel`, `delete_alert_channel`, `create_alert_rule`, `delete_alert_rule`, `ack_alert_event` |
 | `metrics:read` | `get_metrics`, `get_proxy_metrics` |
 | `backups:read` | `list_backups` † |
-| `users:read` | `list_users` † |
+| `users:read` | `list_users` †, `get_user_access` † |
 | `teams:read` | `list_teams` † |
 | `snippets:read` | `list_snippets`, `list_detector_types` |
 | `snippets:write` | `create_snippet`, `delete_snippet` |
@@ -216,6 +216,8 @@ Crée une nouvelle route proxy (HTTP, TCP ou UDP). Le `backend` doit appartenir 
 | `tls_enabled` | boolean | —      | Active HTTPS (défaut : `false`)                        |
 | `type`        | string  | —      | `http` (défaut), `tcp`, `udp`                          |
 | `lb`          | string  | —      | `round_robin` (défaut), `weighted`, `adaptive`         |
+| `name`        | string  | —      | Nom du proxy, lu par les périmètres de droits (défaut : son domaine ; 128 caractères au plus) |
+| `labels`      | object  | —      | Étiquettes `clé → valeur` (clé en minuscules, valeur alphanumérique avec `_ . -`, 63 caractères et 32 étiquettes au plus), lues par les périmètres de droits |
 
 **Réponse exemple :**
 ```json
@@ -236,6 +238,8 @@ Met à jour un proxy existant (champs partiels).
 | `tls_enabled` | boolean | —      | Active ou désactive HTTPS                      |
 | `lb`          | string  | —      | `round_robin`, `weighted`, `adaptive`          |
 | `enabled`     | boolean | —      | Active ou désactive la route                   |
+| `name`        | string  | —      | Nom du proxy pour les périmètres de droits ; vide = le retirer (le domaine sert alors de nom) |
+| `labels`      | object  | —      | Remplace les étiquettes du proxy (`{}` = les retirer toutes) ; chaque changement est inscrit au journal d'audit (action `labels`) |
 | `options`     | object  | —      | Options avancées à poser (`null` = retirer) : `split`, `maintenance`, `signed_url`, `graphql`, `bandwidth`, `redact_json`, `html_inject`, `hedge`, `static`, `request_schema`, `openapi`, `grpc_transcode`, `surface`, `max_body_size`, `ip_filter`, `geo_ip`, `cors`, `waf`, `grpc_web`, `rate_limit`, `conditions` ; clé inconnue refusée |
 
 **Réponse :** `{ "id", "name", "enabled", "config" }`
@@ -469,11 +473,34 @@ Liste les comptes utilisateurs avec leur rôle. Les données sensibles (hash du 
 ```json
 [
   { "id": "usr_01", "email": "admin@example.fr", "role": "superadmin", "created_at": "2026-01-10T08:00:00Z" },
-  { "id": "usr_02", "email": "ops@example.fr",   "role": "operator",   "created_at": "2026-02-15T09:30:00Z" }
+  { "id": "usr_02", "email": "ops@example.fr",   "role": "user",       "created_at": "2026-02-15T09:30:00Z" }
 ]
 ```
 
-**Rôles possibles :** `superadmin`, `admin`, `operator`, `viewer`
+**Rôles possibles :** `superadmin`, `admin`, `user`
+
+---
+
+### `get_user_access`
+
+*(Admin `0.243.0`)* Accès effectif d'un compte et origine de chaque droit : son rôle, ses équipes, les accès (domaine, serveur, proxy, passerelle × lecture/écriture) et les capacités RGPD qu'elles apportent. Un administrateur voit toute la plateforme : `global: true` et aucun accès listé, ses équipes ne le limitent pas. Même source que `GET /api/v1/users/{id}/access`. Scope `users:read` †.
+
+**Paramètres :**
+
+| Nom | Type | Requis | Description |
+|-----|------|--------|-------------|
+| `id` | string | ✓ | Identifiant du compte (voir `list_users`) |
+
+**Réponse exemple :**
+```json
+{
+  "role": "user",
+  "global": false,
+  "teams": [{ "id": "t-ops", "name": "Ops", "scopes": [{ "type": "domain", "value": "*.example.fr", "access_mode": "write" }], "permissions": [] }],
+  "grants": [{ "type": "domain", "value": "*.example.fr", "access_mode": "write", "teams": ["Ops"] }],
+  "permissions": []
+}
+```
 
 ---
 
@@ -1431,13 +1458,28 @@ Scopes PAT : `nodes:read` (lecture) / `nodes:write` (écriture). Alignés sur `/
 
 ### `get_architecture`
 
-Architecture déclarée (`architecture.json`, référentiel de la topologie) : nœuds passerelle / Agent avec leur hôte (`config.host`), région et capacités (HA, TLS, Docker, Portainer…), plus les domaines et, pour chaque groupe HA, la version de sa fiche (`groups`). Scope : `nodes:read` + rôle admin (comme `GET /api/v1/architecture`). La reconstitution de l'architecture à partir des fiches (`goproxify architecture recover`) reste une opération volontaire de l'opérateur, hors MCP.
+Architecture déclarée (`architecture.json`, référentiel de la topologie) : nœuds passerelle / Agent avec leur hôte (`config.host`), région et capacités (HA, TLS, Docker, Portainer…), plus les domaines et, pour chaque groupe HA, la version de sa fiche, son environnement, sa région et ses tags (`groups`). Scope : `nodes:read` + rôle admin (comme `GET /api/v1/architecture`). La reconstitution de l'architecture à partir des fiches (`goproxify architecture recover`) reste une opération volontaire de l'opérateur, hors MCP.
 
 | Paramètre | Type   | Requis | Description |
 |-----------|--------|--------|-------------|
 | `version` | string | —      | Nom d'une version conservée (`architecture-….json`, voir `goproxify architecture versions`) ; vide = version courante |
 
 Retourne `{schema_version, nodes, domains}` (même format que `GET /api/v1/architecture`). Une version qui n'existe pas renvoie une erreur ; rien n'est restauré.
+
+---
+
+### `set_group_attributes`
+
+Pose l'environnement, la région et les tags d'un groupe de passerelles (HA). Les périmètres de droits des équipes ([ADR 0022](adr/0022-modele-de-droits-niveaux-et-perimetres.md)) désignent les groupes par ces attributs (« les groupes de production », « la région paris ») : un groupe qui reçoit l'attribut entre dans le périmètre, y compris ses futurs membres. Scope : `nodes:write` + rôle admin (comme `PUT /api/v1/architecture/groups/{nom}/attributes`). Les attributs ne sont lus que par l'Admin, jamais envoyés aux passerelles.
+
+| Paramètre     | Type   | Requis | Description |
+|---------------|--------|--------|-------------|
+| `group`       | string | ✓      | Nom du groupe HA (clé de `groups` dans `get_architecture`) |
+| `environment` | string | —      | Environnement (ex. `prod`, `test`) |
+| `region`      | string | —      | Région (ex. `paris`) |
+| `tags`        | array  | —      | Tags du groupe (16 au plus, sans doublon) ; remplace les actuels, `[]` les retire |
+
+Les attributs non fournis restent inchangés. **Réponse :** `{ "group", "environment", "region", "tags" }`.
 
 ---
 

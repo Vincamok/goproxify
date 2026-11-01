@@ -36,8 +36,10 @@ func TestPutCannotOverwriteAProxyOutsideTheScope(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	for _, q := range []string{
-		`INSERT INTO users (id, email, password_hash, role) VALUES ('scoped','s@x.fr','x','admin')`,
-		`INSERT INTO user_scopes (id, user_id, scope_type, scope_value, access_mode) VALUES ('g1','scoped','domain','*.test','write')`,
+		`INSERT INTO users (id, email, password_hash, role) VALUES ('scoped','s@x.fr','x','user')`,
+		`INSERT INTO teams (id, name) VALUES ('t-scoped','equipe test')`,
+		`INSERT INTO team_members (team_id, user_id) VALUES ('t-scoped','scoped')`,
+		`INSERT INTO team_scopes (id, team_id, scope_type, scope_value, access_mode) VALUES ('g1','t-scoped','domain','*.test','write')`,
 	} {
 		if _, err := db.Exec(q); err != nil {
 			t.Fatal(err)

@@ -169,31 +169,44 @@ Removes all log entries attributed to an authenticated user (JWT subject).
 
 ---
 
-## 3 bis. Droit de révélation IP (scope `gdpr:reveal`)
+## 3 bis. Droits RGPD : révéler, exporter, effacer, geler (capacités `gdpr:*`)
 
-Les utilisateurs possédant le scope `gdpr:reveal` peuvent obtenir l'IP réelle d'une entrée pseudonymisée, avec traçabilité complète. C'est possible tant que l'entrée est conservée, même si la pseudonymisation a été désactivée depuis.
+Quatre **capacités** (Admin `0.243.0`, [ADR 0021](adr/0021-droits-et-acces-equipes-seules-porteuses.md)) donnent les droits de la personne qui traite les demandes RGPD, sans qu'elle soit administratrice :
 
-### Qui peut avoir ce droit ?
-
-| Compte | `gdpr:reveal` |
+| Capacité | Droit |
 |---|---|
-| Super-admin | ✓ toujours |
-| Rôle `dpo` (délégué à la protection des données) | ✓ — droits d'un compte `user`, plus la révélation |
-| Compte auquel le super-admin a accordé le droit | ✓ — quel que soit son rôle (DPO externe, juriste, RSSI…) |
-| Membre d'une équipe à laquelle le super-admin a accordé le droit | ✓ — tant qu'il en est membre |
-| Admin, utilisateur sans délégation | ❌ |
+| `gdpr:reveal` | obtenir l'IP réelle d'une entrée pseudonymisée, avec traçabilité complète — possible tant que l'entrée est conservée, même si la pseudonymisation a été désactivée depuis |
+| `gdpr:export` | export d'accès et de portabilité (Art. 15 et 20) |
+| `gdpr:erase` | effacement par IP ou par utilisateur (Art. 17) |
+| `gdpr:hold` | gel légal et export signé de l'historique |
 
-Avec un token API, le scope `gdpr:reveal` doit en plus figurer sur le token ; un compte ne peut le placer sur ses tokens que s'il détient le droit.
+### Qui peut les avoir ?
 
-**Seul le super-admin délègue** : lui seul attribue ou retire le rôle `dpo`, accorde ou retire le droit à un compte ou à une équipe, et change les membres d'une équipe qui le porte. Chaque attribution est inscrite au journal d'audit (`set_permissions`).
+Les capacités s'obtiennent par **l'appartenance à une équipe qui les porte**, jamais en propre sur un compte. L'**équipe « DPO »** est intégrée : créée au démarrage, elle porte les quatre capacités, ne se renomme ni ne se supprime, et n'a aucun accès aux ressources. Ses membres sont des comptes nommés, de n'importe quel rôle (un administrateur peut être DPO) ; plusieurs sont possibles (suppléant, cabinet externe).
 
-**Comptes protégés** : un compte super-admin ou détenteur du droit ne peut être modifié, voir son mot de passe changé ou être supprimé que par le super-admin. Sinon, un admin pourrait réinitialiser le mot de passe d'un DPO et révéler des IP sous son identité. De même, un import ou une restauration de sauvegarde lancé par un admin n'attribue jamais ce droit (rôle `dpo`, membres d'une équipe qui le porte).
+| Compte | `reveal` | `export` | `erase` | `hold` |
+|---|---|---|---|---|
+| Super-admin | ✓ | ✓ | ✓ | ✓ |
+| Membre de l'équipe DPO | ✓ | ✓ | ✓ | ✓ |
+| Membre d'une autre équipe que le super-admin a dotée d'une capacité | cette capacité | cette capacité | cette capacité | cette capacité |
+| Administrateur | ❌ | ✓ (par son rôle) | ✓ (par son rôle) | ❌ |
+| Utilisateur sans équipe qui en porte | ❌ | ❌ | ❌ | ❌ |
 
-Pour déléguer :
+Un administrateur garde l'export et l'effacement qu'il exerçait avec les réglages des logs ; la révélation d'IP et le gel légal ne s'obtiennent que par l'équipe DPO (ou le super-admin).
 
-- **Interface** : page **Utilisateurs** → modifier le compte → rôle **dpo**, ou case **Révélation des IP pseudonymisées (RGPD)** ; pour une équipe → modifier l'équipe → case **Les membres peuvent révéler les IP pseudonymisées**. Ces contrôles ne sont actifs que pour le super-admin.
-- **CLI** : `goproxify user create -email dpo@example.com -password … -role dpo`, `goproxify user update <id> -permissions gdpr:reveal` (`none` pour retirer), `goproxify teams permissions <id> -permissions gdpr:reveal`.
-- **API** : `role: "dpo"` ou `permissions: ["gdpr:reveal"]` sur `POST/PUT /api/v1/users`, `PUT /api/v1/teams/{id}/permissions` (voir [api_specs.md](api_specs.md#utilisateurs-équipes-et-permissions--apiv1users-apiv1teams)).
+Avec un token API, le scope `gdpr:reveal`, `gdpr:export` ou `gdpr:erase` doit en plus figurer sur le token ; un compte ne peut le placer sur ses tokens que s'il détient le droit.
+
+**Seul le super-admin délègue** : lui seul compose l'équipe DPO ou une équipe qui porte une capacité, et lui accorde ou retire des capacités. Chaque attribution est inscrite au journal d'audit (`set_permissions`).
+
+**Comptes protégés** : un compte super-admin ou détenteur d'une capacité ne peut être modifié, voir son mot de passe changé ou être supprimé que par le super-admin. Sinon, un admin pourrait réinitialiser le mot de passe d'un DPO et révéler des IP sous son identité. De même, un import ou une restauration de sauvegarde lancé par un admin n'ajoute jamais de membre à une équipe qui porte une capacité.
+
+Pour désigner un DPO :
+
+- **Interface** : page **Utilisateurs & équipes** → modifier le compte → cocher l'équipe **DPO** (case active pour le super-admin seul). La liste des comptes affiche un badge « DPO ».
+- **CLI** : `goproxify teams members add team-dpo -user <id>` (`remove` pour retirer) ; `goproxify user access <id>` montre d'où vient chaque droit.
+- **API** : `POST /api/v1/teams/team-dpo/members` `{"user_id": "<id>"}` ; `GET /api/v1/users/{id}/access` (voir [api_specs.md](api_specs.md#comptes-équipes-et-capacités--apiv1users-apiv1teams)).
+
+Le rôle `dpo` et la permission propre à un compte, qui existaient avant, sont supprimés : une seule voie, l'appartenance à l'équipe.
 
 Un admin ne peut toujours rien révéler, mais il peut désactiver la pseudonymisation : les nouvelles entrées sont alors conservées en clair. La séparation protège les entrées déjà pseudonymisées, pas la configuration future.
 
@@ -282,7 +295,7 @@ The SIEM keeps its own copy: an erasure by IP (Article 17) deletes the lines fro
 Before going to production, ensure:
 
 - [ ] IP anonymisation enabled (`ip_anonymize: true`) if no legitimate need to store full IPs — or pseudonymisation if real IPs must remain obtainable for legal requests
-- [ ] Only the accounts that need it are admins (they can change these settings and erase logs) or can reveal pseudonymised IPs (superadmin, `dpo` role, right granted to an account or a team — review the GDPR badges on the Users page)
+- [ ] Only the accounts that need it are admins (they can change these settings and erase logs) or can use the GDPR capabilities (superadmin, members of the built-in DPO team or of a team that carries one — review the DPO badges on the Users page)
 - [ ] Log retention set to the shortest period that meets your legal obligations (defaults: 90 days for logs, 365 for the ban history, 90 for portal session recordings)
 - [ ] `geoip.allow_external_lookup` left at `false`
 - [ ] Register of processing, impact assessment and privacy notice done from [rgpd-conformite.md](rgpd-conformite.md)

@@ -112,15 +112,24 @@ func TestMigrateRBACGrants_Homogeneous(t *testing.T) {
 	}
 }
 
-func TestOpenCreatesUserScopes(t *testing.T) {
+// Les droits ne se portent que par les équipes (ADR 0021) : une base neuve n'a ni accès ni capacité au niveau du compte.
+func TestOpenHasNoPersonalGrantTables(t *testing.T) {
 	db, err := admindb.Open(filepath.Join(t.TempDir(), "fresh.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name='user_scopes'`).Scan(&n); err != nil || n != 1 {
-		t.Fatalf("user_scopes missing: %v n=%d", err, n)
+	for _, table := range []string{"user_scopes", "user_permissions"} {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name=?`, table).Scan(&n); err != nil || n != 0 {
+			t.Fatalf("%s ne doit plus exister : %v n=%d", table, err, n)
+		}
+	}
+	for _, table := range []string{"team_scopes", "team_permissions", "team_members"} {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name=?`, table).Scan(&n); err != nil || n != 1 {
+			t.Fatalf("%s manque : %v n=%d", table, err, n)
+		}
 	}
 	if admindb.TableHasColumnForTest(db, "team_members", "role") {
 		t.Fatal("nouvelle DB ne doit pas avoir team_members.role")

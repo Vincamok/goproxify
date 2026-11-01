@@ -289,6 +289,61 @@ func runProxy() {
 			fmt.Printf("Option %s posée sur %s.\n", name, id)
 		}
 
+	case "tag":
+		args := parseFlags(os.Args[3:])
+		pos := positionalArgs(os.Args[3:])
+		if len(pos) < 1 {
+			fmt.Fprintln(os.Stderr, "usage: goproxify proxy tag <id> [-name <nom>] [-unset clé,clé] [clé=valeur ...]")
+			os.Exit(1)
+		}
+		id := pos[0]
+		client, err := newAdminClient(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+			os.Exit(1)
+		}
+		var cur struct {
+			Config  map[string]any `json:"config"`
+			Enabled bool           `json:"enabled"`
+		}
+		if _, err := client.DoJSON("GET", "/api/v1/proxies/"+url.PathEscape(id), nil, &cur); err != nil {
+			fmt.Fprintf(os.Stderr, "proxy tag : %v\n", err)
+			os.Exit(1)
+		}
+		labels := map[string]any{}
+		if prev, ok := cur.Config["labels"].(map[string]any); ok {
+			labels = prev
+		}
+		for _, kv := range pos[1:] {
+			k, v, ok := strings.Cut(kv, "=")
+			if !ok {
+				fmt.Fprintf(os.Stderr, "étiquette %q : attendu clé=valeur\n", kv)
+				os.Exit(1)
+			}
+			labels[k] = v
+		}
+		for _, k := range strings.Split(flagValue(args, "-unset", ""), ",") {
+			delete(labels, strings.TrimSpace(k))
+		}
+		if len(labels) == 0 {
+			delete(cur.Config, "labels")
+		} else {
+			cur.Config["labels"] = labels
+		}
+		if _, ok := args["-name"]; ok {
+			if name := flagValue(args, "-name", ""); name == "" {
+				delete(cur.Config, "name")
+			} else {
+				cur.Config["name"] = name
+			}
+		}
+		if _, err := client.DoJSON("PUT", "/api/v1/proxies/"+url.PathEscape(id),
+			map[string]any{"config": cur.Config, "enabled": cur.Enabled}, nil, 200); err != nil {
+			fmt.Fprintf(os.Stderr, "proxy tag : %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("%s — nom : %v · étiquettes : %v\n", id, cur.Config["name"], cur.Config["labels"])
+
 	case "help":
 		fmt.Print(`Usage: goproxify proxy <sous-commande> [options]
 
@@ -302,6 +357,7 @@ Sous-commandes :
   metrics Débit, erreurs et p95 par host (dernier relevé)
   cache-purge Vide le cache HTTP d'un proxy (tout, par tag ou par chemin)
   option  Pose ou retire une option avancée (split, maintenance, signed_url, graphql, bandwidth, redact_json, html_inject, hedge, static, request_schema, surface, grpc_web, rate_limit, conditions)
+  tag     Pose le nom et les étiquettes d'un proxy (lus par les périmètres de droits) : tag <id> [-name nom] [-unset clé] [clé=valeur ...]
 
 goproxify proxy list   [-admin-url …] [-token …]
 goproxify proxy get    <id> [-admin-url …] [-token …]

@@ -189,8 +189,8 @@ const APP_CONFIG = {
       guard: (u) => u?.role === 'superadmin' || u?.role === 'admin',
       children: [
         {
-          page: 'workspaces',
-          label: 'Gestion d\'équipe',
+          page: 'users',
+          label: 'Utilisateurs & équipes',
           icon: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="5" r="2.5"/><path d="M1 13c0-2.5 2.2-4 5-4s5 1.5 5 4"/><circle cx="13" cy="5" r="2"/><path d="M18 13c0-2-1.8-3.2-4-3.2"/></svg>',
         },
         {
@@ -212,7 +212,7 @@ const APP_CONFIG = {
       label: 'Paramètres',
       section: 'Plateforme',
       icon: '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.2 3.2l1.4 1.4M11.4 11.4l1.4 1.4M3.2 12.8l1.4-1.4M11.4 4.6l1.4-1.4"/></svg>',
-      guard: (u) => (u?.role === 'superadmin') || (u?.role === 'admin' && !(u?.effective_scopes?.length > 0)),
+      guard: (u) => u?.role === 'superadmin' || u?.role === 'admin',
     },
   ],
 
@@ -387,7 +387,6 @@ const APP_CONFIG = {
     'api-tokens':        'Mes tokens API',
     access:              'Accès',
     'access-policies':   'Politiques d\'accès',
-    workspaces:          'Gestion d\'équipe',
     prism:              'Prism — Analyse',
     'edge-prism':       'Prism',
     alerts:             'Règles d\'alertes',
@@ -499,8 +498,7 @@ const APP_CONFIG = {
     tokens:               'tokens appairage pairing enrôlement enroll rejoindre join nouvelle passerelle agent',
     'edge-tokens':        'tokens appairage pairing enrôlement enroll rejoindre join',
     'api-tokens':         'tokens api clé key bearer cli automatisation personnel',
-    workspaces:           'équipe team espaces de travail workspaces scopes rbac rôles roles permissions groupes',
-    users:                'utilisateurs users comptes accounts rôles roles admin operator viewer invitation',
+    users:                'utilisateurs users comptes accounts équipes teams rôles roles admin operator viewer invitation scopes rbac permissions groupes',
     'access-policies':    'politiques d\'accès matrice domaines sujets rbac permissions',
     access:               'accès rbac équipes tokens certificats mcp',
     'acme-monitor':       'domaines certificats certificates domains acme let\'s encrypt tls ssl renouvellement renewal wildcard dns-01 http-01 expiration',

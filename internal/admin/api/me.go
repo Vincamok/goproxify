@@ -48,12 +48,12 @@ type meTeam struct {
 type meResponse struct {
 	ID              string     `json:"id"`
 	Email           string     `json:"email"`
-	Role            string     `json:"role"` // "superadmin" | "admin" | "user" | "dpo"
+	Role            string     `json:"role"` // "superadmin" | "admin" | "user"
 	IsSuper         bool       `json:"is_super"`
 	CreatedAt       *time.Time `json:"created_at,omitempty"`
 	Teams           []meTeam   `json:"teams"`
 	EffectiveScopes []meScope  `json:"effective_scopes"`
-	// Permissions effectives (rôle, en propre, équipes), ex. ["gdpr:reveal"].
+	// Capacités effectives (rôle superadmin, équipes), ex. ["gdpr:reveal"].
 	Permissions []string `json:"permissions"`
 }
 
@@ -106,66 +106,28 @@ func (h *MeHandler) getMe(w http.ResponseWriter, r *http.Request, userID string)
 		me.CreatedAt = &createdAt.Time
 	}
 	me.IsSuper = me.Role == "superadmin"
-	me.Permissions = orEmpty(rbac.UserPermissions(r.Context(), h.DB, userID))
-
-	// Équipes + grants ; effective = union user_scopes + team_scopes (max mode côté client via mode)
-	rows, err := h.DB.QueryContext(r.Context(), `
-		SELECT tm.team_id, t.name
-		FROM team_members tm
-		JOIN teams t ON t.id = tm.team_id
-		WHERE tm.user_id = ?
-		ORDER BY t.name`, userID)
+	access, err := rbac.EffectiveAccess(r.Context(), h.DB, userID)
+	if err != nil {
+		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
+		return
+	}
+	me.Permissions = []string{}
+	for _, p := range access.Permissions {
+		me.Permissions = append(me.Permissions, p.Permission)
+	}
+	// Équipes avec leurs accès. Un administrateur voit toute la plateforme : ses équipes ne lui apportent pas d'accès
+	// sur les ressources, donc aucun accès effectif n'est renvoyé (le navigateur y lit « accès global »).
 	me.Teams = []meTeam{}
+	for _, t := range access.Teams {
+		mt := meTeam{TeamID: t.ID, TeamName: t.Name, Scopes: []meScope{}}
+		for _, g := range t.Scopes {
+			mt.Scopes = append(mt.Scopes, meScope{Type: g.Type, Value: g.Value, AccessMode: g.Mode})
+		}
+		me.Teams = append(me.Teams, mt)
+	}
 	me.EffectiveScopes = []meScope{}
-	seenScopes := map[string]string{} // key → access_mode (write gagne)
-	addEffective := func(s meScope) {
-		key := s.Type + ":" + s.Value
-		prev, ok := seenScopes[key]
-		if !ok || (s.AccessMode == "write" && prev != "write") {
-			seenScopes[key] = s.AccessMode
-		}
-	}
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var mt meTeam
-			if rows.Scan(&mt.TeamID, &mt.TeamName) != nil {
-				continue
-			}
-			srows, _ := h.DB.QueryContext(r.Context(),
-				`SELECT scope_type, scope_value, access_mode FROM team_scopes WHERE team_id=? ORDER BY scope_type, scope_value`,
-				mt.TeamID)
-			mt.Scopes = []meScope{}
-			if srows != nil {
-				for srows.Next() {
-					var s meScope
-					if srows.Scan(&s.Type, &s.Value, &s.AccessMode) == nil {
-						mt.Scopes = append(mt.Scopes, s)
-						addEffective(s)
-					}
-				}
-				srows.Close()
-			}
-			me.Teams = append(me.Teams, mt)
-		}
-	}
-	urow, _ := h.DB.QueryContext(r.Context(),
-		`SELECT scope_type, scope_value, access_mode FROM user_scopes WHERE user_id=?`, userID)
-	if urow != nil {
-		defer urow.Close()
-		for urow.Next() {
-			var s meScope
-			if urow.Scan(&s.Type, &s.Value, &s.AccessMode) == nil {
-				addEffective(s)
-			}
-		}
-	}
-	for key, mode := range seenScopes {
-		parts := strings.SplitN(key, ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		me.EffectiveScopes = append(me.EffectiveScopes, meScope{Type: parts[0], Value: parts[1], AccessMode: mode})
+	for _, g := range access.Grants {
+		me.EffectiveScopes = append(me.EffectiveScopes, meScope{Type: g.Type, Value: g.Value, AccessMode: g.AccessMode})
 	}
 
 	jsonOK(w, me)

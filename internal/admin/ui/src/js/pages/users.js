@@ -19,14 +19,17 @@ async function refreshUsers(content) {
 
     function roleTag(r) {
       if (r === 'admin' || r === 'superadmin') return 'tag-accent';
-      if (r === 'dpo') return 'tag-outline';
       return 'tag-neutral';
     }
-    // Droit de révélation obtenu autrement que par le rôle (en propre ou via une équipe).
-    const revealBadge = u => (u.effective_permissions || []).includes('gdpr:reveal') && u.role !== 'superadmin' && u.role !== 'dpo'
+    // Membre de l'équipe DPO (ou d'une équipe qui porte une capacité RGPD) : badge « DPO ».
+    const revealBadge = u => (u.effective_permissions || []).length && u.role !== 'superadmin'
       ? ` <span class="tag tag-outline" style="font-size:10px;" title="${esc(t('users.reveal_badge_title'))}">${esc(t('users.reveal_badge'))}</span>` : '';
     const canDeleteUser = u => u.role !== 'superadmin' && (Role.isSuperAdmin() || !(u.effective_permissions || []).length);
-    const teamHasReveal = team => (team.permissions || []).includes('gdpr:reveal');
+    const teamHasCaps = team => (team.permissions || []).length > 0;
+    const teamBadge = team => team.builtin
+      ? ` <span class="tag tag-outline" style="font-size:10px;">${esc(t('users.team_builtin'))}</span>`
+      : (teamHasCaps(team) ? ` <span class="tag tag-outline" style="font-size:10px;">${esc(t('users.team_caps'))}</span>` : '');
+    const canDeleteTeam = team => !team.builtin && (!teamHasCaps(team) || Role.isSuperAdmin());
     function teamNames(u) {
       return u.team_names || '—';
     }
@@ -59,11 +62,6 @@ async function refreshUsers(content) {
             </tr>
             <tr>
               <td><span class="tag tag-neutral">user</span></td>
-              <td>${t('users.no')}</td>
-              <td>${t('users.user_proxies')}</td>
-            </tr>
-            <tr>
-              <td><span class="tag tag-outline">dpo</span></td>
               <td>${t('users.no')}</td>
               <td>${t('users.user_proxies')}</td>
             </tr>
@@ -114,10 +112,10 @@ async function refreshUsers(content) {
           <div class="card blueprint" style="display:flex;flex-direction:column;gap:0;padding:0;overflow:hidden;">
             <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
             <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:14px 16px 12px;">
-              <div class="card-title" style="font-size:14px;font-weight:600;">${esc(team.name)}${teamHasReveal(team) ? ` <span class="tag tag-outline" style="font-size:10px;" title="${esc(t('users.reveal_badge_title'))}">${esc(t('users.reveal_badge'))}</span>` : ''}</div>
+              <div class="card-title" style="font-size:14px;font-weight:600;">${esc(team.name)}${teamBadge(team)}</div>
               <div style="display:inline-flex;gap:4px;flex-shrink:0;">
                 <button class="btn btn-ghost btn-icon" onclick="openTeamModal('${esc(team.id)}')" title="${esc(t('common.edit'))}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-                ${teamHasReveal(team) && !Role.isSuperAdmin() ? '' : `<button class="btn btn-ghost btn-icon" onclick="deleteTeam('${esc(team.id)}')" title="${esc(t('common.delete'))}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>`}
+                ${!canDeleteTeam(team) ? '' : `<button class="btn btn-ghost btn-icon" onclick="deleteTeam('${esc(team.id)}')" title="${esc(t('common.delete'))}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>`}
               </div>
             </div>
             <div style="display:flex;gap:0;border-top:1px solid var(--border);">
@@ -154,41 +152,61 @@ function grantListHtml(scopes, listId, removeFn) {
   }).join('');
 }
 
+// Capacités qu'une équipe peut porter (rbac.KnownPermissions) : elles ne portent sur aucune ressource.
+const TEAM_CAPS = ['gdpr:reveal', 'gdpr:export', 'gdpr:erase', 'gdpr:hold'];
+function teamCapLabel(p) {
+  return {
+    'gdpr:reveal': t('users.cap_reveal'), 'gdpr:export': t('users.cap_export'),
+    'gdpr:erase': t('users.cap_erase'), 'gdpr:hold': t('users.cap_hold'),
+  }[p] || p;
+}
+
+// Équipe intégrée (DPO) : en lecture seule. Elle ne se renomme ni ne se supprime, ne porte aucun accès et ses capacités
+// sont fixes ; sa composition se règle depuis la fiche du compte, par le superadmin.
+function openBuiltinTeamModal(team) {
+  document.getElementById('team-modal-backdrop')?.remove();
+  document.body.insertAdjacentHTML('beforeend', `
+    <div id="team-modal-backdrop" class="dialog-backdrop" style="background:rgba(0,0,0,0.55);">
+      <div class="dialog blueprint" role="dialog" aria-modal="true" style="width:min(520px,96vw);max-width:none;">
+        <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <div class="dialog-title">${esc(team.name)} <span class="tag tag-outline" style="font-size:10px;">${esc(t('users.team_builtin'))}</span></div>
+        <div class="dialog-body" style="display:flex;flex-direction:column;gap:14px;">
+          <p style="margin:0;font-size:12.5px;line-height:1.5;opacity:0.8;">${esc(t('users.team_builtin_hint'))}</p>
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            <label style="font-size:13px;font-weight:500;">${t('users.team_caps')}</label>
+            ${(team.permissions || []).map(p => `<div style="font-size:13px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;">${esc(teamCapLabel(p))}</div>`).join('')}
+          </div>
+        </div>
+        <div class="dialog-actions">
+          <button class="btn btn-secondary blueprint" onclick="document.getElementById('team-modal-backdrop').remove()"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>${t('common.close')}</button>
+        </div>
+      </div>
+    </div>`);
+}
+
 window.openUserModal = async function(id) {
   let u = null;
+  let access = null;
   let teams = [];
   try {
     if (id) u = await api('GET', `/users/${id}`);
+    if (id) access = await api('GET', `/users/${id}/access`).catch(() => null);
     teams = await api('GET', '/teams').catch(() => []) || [];
   } catch {}
   const userTeams = u?.teams || [];
   window._userOrigTeams = userTeams;
   let role = u?.role || 'user';
-  if (role === 'operator' || role === 'viewer') role = 'user';
+  if (role === 'operator' || role === 'viewer' || role === 'dpo') role = 'user';
   const isSuper = role === 'superadmin';
-  // Rôle dpo et droit de révélation : attribués par le superadmin seul ; un compte qui les
-  // détient (ou le superadmin) n'est modifiable que par lui (rbac.IsProtectedAccount).
+  // Les capacités RGPD s'obtiennent en entrant dans l'équipe DPO : seul le superadmin compose une équipe qui en porte,
+  // et un compte qui en détient (ou le superadmin) n'est modifiable que par lui (rbac.IsProtectedAccount).
   const actorSuper = Role.isSuperAdmin();
   const locked = !actorSuper && (isSuper || (u?.effective_permissions || []).length > 0);
-  const directReveal = (u?.permissions || []).includes('gdpr:reveal');
-  const roleOpt = (value, desc, disabled) => `
-              <label style="display:flex;align-items:flex-start;gap:10px;cursor:${disabled ? 'not-allowed' : 'pointer'};font-size:13px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;${role===value?'border-color:var(--accent);background:var(--accent-alpha,rgba(58,134,255,0.06));':''}${disabled ? 'opacity:0.55;' : ''}">
-                <input type="radio" name="um-role" value="${value}" ${role===value?'checked':''} ${disabled ? 'disabled' : ''} style="margin-top:2px;">
+  const roleOpt = (value, desc) => `
+              <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:13px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;${role===value?'border-color:var(--accent);background:var(--accent-alpha,rgba(58,134,255,0.06));':''}">
+                <input type="radio" name="um-role" value="${value}" ${role===value?'checked':''} style="margin-top:2px;">
                 <div><strong>${value}</strong> — ${desc}</div>
               </label>`;
-  const scopes = (u?.scopes || []).map(sc => ({
-    id: sc.id,
-    type: sc.scope_type,
-    value: sc.value,
-    mode: sc.access_mode || 'read',
-  }));
-  window._userScopes = scopes;
-  window._userScopesOrig = [...scopes];
-
-  const renderUserScopes = () => {
-    const el = document.getElementById('um-scopes-list');
-    if (el) el.innerHTML = grantListHtml(window._userScopes, 'um-scopes-list', 'window._removeUserScope');
-  };
 
   const roleField = isSuper
     ? `<div class="field"><label>${t('users.platform_role')}</label>
@@ -199,15 +217,35 @@ window.openUserModal = async function(id) {
       </div>`
     : `<div class="field"><label>${t('users.platform_role')}</label>
             <div style="display:flex;flex-direction:column;gap:6px;margin-top:2px;">
-              ${roleOpt('admin', t('users.role_admin_desc'), false)}
-              ${roleOpt('user', t('users.role_user_desc'), false)}
-              ${roleOpt('dpo', esc(t('users.role_dpo_desc')), !actorSuper)}
+              ${roleOpt('admin', t('users.role_admin_desc'))}
+              ${roleOpt('user', t('users.role_user_desc'))}
             </div>
-          </div>
-          <label style="display:flex;align-items:flex-start;gap:10px;font-size:13px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;cursor:${actorSuper ? 'pointer' : 'not-allowed'};${actorSuper ? '' : 'opacity:0.55;'}">
-            <input type="checkbox" id="um-perm-reveal" ${directReveal ? 'checked' : ''} ${actorSuper ? '' : 'disabled'} style="margin-top:2px;">
-            <div><strong>${esc(t('users.perm_reveal'))}</strong><div style="font-size:11.5px;opacity:0.6;margin-top:2px;">${esc(t('users.perm_reveal_hint'))}</div></div>
-          </label>`;
+          </div>`;
+
+  // Accès effectif : lecture seule, calculé par le serveur (rbac.EffectiveAccess) avec l'origine de chaque droit.
+  const rowStyle = 'display:flex;align-items:center;gap:8px;font-size:12.5px;padding:6px 10px;border:1px solid var(--border);';
+  const grantRows = !access ? '' : access.global
+    ? `<div style="${rowStyle}">${esc(t('users.access_global'))}</div>`
+    : ((access.grants || []).length
+      ? access.grants.map(g => `<div style="${rowStyle}">
+          <span class="tag tag-outline" style="font-size:10px;">${esc(g.type)}</span>
+          <code style="flex:1;">${esc(g.value)}</code>
+          <span class="tag ${g.access_mode==='write'?'tag-accent':'tag-neutral'}" style="font-size:10px;">${g.access_mode==='write'?t('users.ecriture'):t('users.lecture')}</span>
+          <span style="font-size:11px;opacity:0.55;">${esc(t('users.access_via', { teams: (g.teams || []).join(', ') }))}</span>
+        </div>`).join('')
+      : `<span style="font-size:12px;opacity:0.55;">${esc(t('users.access_none'))}</span>`);
+  const capRows = (access?.permissions || []).map(p => {
+    const via = [];
+    if (p.via_role) via.push(t('users.access_via_role', { role: p.via_role }));
+    if ((p.via_teams || []).length) via.push(t('users.access_via', { teams: p.via_teams.join(', ') }));
+    return `<div style="${rowStyle}"><span style="flex:1;">${esc(teamCapLabel(p.permission))}</span><span style="font-size:11px;opacity:0.55;">${esc(via.join(' · '))}</span></div>`;
+  }).join('');
+  const accessField = !access ? '' : `<div class="field"><label>${t('users.access_effective')}</label>
+            <div style="display:flex;flex-direction:column;gap:4px;margin-top:4px;">
+              ${grantRows}
+              ${capRows ? `<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.07em;opacity:0.5;margin-top:6px;">${esc(t('users.access_caps'))}</div>${capRows}` : ''}
+            </div>
+          </div>`;
 
   document.getElementById('user-modal-backdrop')?.remove();
   document.body.insertAdjacentHTML('beforeend', `
@@ -220,39 +258,23 @@ window.openUserModal = async function(id) {
           <div class="field"><label>${t('users.col.email')}</label><input class="input" id="u-email" type="email" placeholder="alice@corp.io" value="${esc(u?.email||'')}"></div>
           <div class="field"><label>${id ? (t('users.new_password') + ' <span style="opacity:0.5;font-weight:400;">' + t('users.pass_unchanged') + '</span>') : t('users.password')}</label><input class="input" id="u-pass" type="password" placeholder="••••••••" autocomplete="new-password"></div>
           ${roleField}
-          <div class="field">
-            <label>${t('users.personal_grants')}</label>
-            <div id="um-scopes-list" style="display:flex;flex-direction:column;gap:4px;margin:6px 0;"></div>
-            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-              <select id="um-sc-type" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--input-bg,var(--bg2));color:var(--text);">
-                <option value="domain">domain</option>
-                <option value="server">server</option>
-                <option value="proxy">proxy</option>
-                <option value="edge">edge</option>
-              </select>
-              <input class="input" id="um-sc-val" placeholder="*.corp.io" style="flex:1;min-width:120px;">
-              <select id="um-sc-mode" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--input-bg,var(--bg2));color:var(--text);">
-                <option value="read">${t('users.read_opt')}</option>
-                <option value="write">${t('users.write_opt')}</option>
-              </select>
-              <button class="btn btn-ghost btn-icon" onclick="window._addUserScope()" title="${esc(t('users.add'))}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg></button>
-            </div>
-          </div>
           ${teams.length ? `<div class="field"><label>${t('users.col.teams')}</label>
             <div style="display:flex;flex-direction:column;gap:6px;margin-top:2px;">
               ${teams.map(team => {
                 const checked = !!userTeams.find(ut => ut.team_id === team.id);
-                const reveal = (team.permissions || []).includes('gdpr:reveal');
-                const off = reveal && !actorSuper;
+                const caps = (team.permissions || []).length > 0;
+                const off = caps && !actorSuper;
+                const badge = team.builtin ? t('users.team_builtin') : (caps ? t('users.team_caps') : '');
                 return `<label style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;cursor:${off ? 'not-allowed' : 'pointer'};font-size:13px;${off ? 'opacity:0.55;' : ''}">
                   <input type="checkbox" name="um-team" value="${esc(team.id)}" ${checked?'checked':''} ${off ? 'disabled' : ''} style="flex-shrink:0;">
-                  <span style="flex:1;font-weight:500;">${esc(team.name)}${reveal ? ` <span class="tag tag-outline" style="font-size:10px;" title="${esc(t('users.reveal_badge_title'))}">${esc(t('users.reveal_badge'))}</span>` : ''}</span>
+                  <span style="flex:1;font-weight:500;">${esc(team.name)}${badge ? ` <span class="tag tag-outline" style="font-size:10px;">${esc(badge)}</span>` : ''}</span>
                   <span style="font-size:11px;opacity:0.45;">${team.scope_count||0} ${(team.scope_count||0)!==1?t('users.grants_lbl'):t('users.grant_lbl')}</span>
                 </label>`;
               }).join('')}
             </div>
             <p style="margin:6px 0 0;font-size:11px;opacity:0.55;">${t('users.team_inherit_modal')}</p>
           </div>` : ''}
+          ${accessField}
         </div>
         <div class="dialog-actions">
           <button class="btn btn-secondary blueprint" onclick="document.getElementById('user-modal-backdrop').remove()"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>${t('common.cancel')}</button>
@@ -260,40 +282,16 @@ window.openUserModal = async function(id) {
         </div>
       </div>
     </div>`);
-  renderUserScopes();
-  window._addUserScope = function() {
-    const type = document.getElementById('um-sc-type')?.value || 'domain';
-    const value = document.getElementById('um-sc-val')?.value?.trim();
-    const mode = document.getElementById('um-sc-mode')?.value || 'read';
-    if (!value) return;
-    window._userScopes.push({ type, value, mode });
-    document.getElementById('um-sc-val').value = '';
-    renderUserScopes();
-  };
-  window._removeUserScope = function(i) {
-    window._userScopes.splice(i, 1);
-    renderUserScopes();
-  };
 };
 
 window.saveUser = async function(id, isSuper) {
-  const scopes = (window._userScopes || []).map(sc => ({
-    scope_type: sc.type || sc.scope_type,
-    value: sc.value || sc.scope_value,
-    access_mode: sc.mode || sc.access_mode || 'read',
-    id: sc.id,
-  }));
   const payload = {
     email: document.getElementById('u-email').value.trim(),
     role: isSuper ? 'admin' : (document.querySelector('input[name="um-role"]:checked')?.value || 'user'),
     password: document.getElementById('u-pass').value,
-    scopes,
   };
   // Le backend ignore le rôle demandé pour un superadmin ; on envoie quand même un rôle valide.
   if (!payload.password && id) delete payload.password;
-  // Droit de révélation : envoyé par le superadmin seul (absent = inchangé côté API).
-  const permEl = document.getElementById('um-perm-reveal');
-  if (Role.isSuperAdmin() && permEl) payload.permissions = permEl.checked ? ['gdpr:reveal'] : [];
   try {
     let uid = id;
     if (id) {
@@ -344,9 +342,10 @@ window.openTeamModal = async function(id) {
       }));
     } catch {}
   }
+  if (team?.builtin) { openBuiltinTeamModal(team); return; }
   window._scopesOrig = [...scopes];
-  const teamReveal = (team?.permissions || []).includes('gdpr:reveal');
-  window._teamRevealOrig = teamReveal;
+  const teamCaps = team?.permissions || [];
+  window._teamCapsOrig = [...teamCaps];
   const actorSuper = Role.isSuperAdmin();
 
   let _acProxies = [];
@@ -374,10 +373,14 @@ window.openTeamModal = async function(id) {
         <div class="dialog-title">${id ? t('users.edit_team') : t('users.new_team')}</div>
         <div class="dialog-body" style="display:flex;flex-direction:column;gap:14px;">
           <div class="field"><label>${t('users.team_name')}</label><input class="input" id="tm-name" placeholder="Backend" value="${esc(team?.name||'')}"></div>
-          <label style="display:flex;align-items:flex-start;gap:10px;font-size:13px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;cursor:${actorSuper ? 'pointer' : 'not-allowed'};${actorSuper ? '' : 'opacity:0.55;'}">
-            <input type="checkbox" id="tm-perm-reveal" ${teamReveal ? 'checked' : ''} ${actorSuper ? '' : 'disabled'} style="margin-top:2px;">
-            <div><strong>${esc(t('users.team_perm_reveal'))}</strong><div style="font-size:11.5px;opacity:0.6;margin-top:2px;">${esc(t('users.team_perm_hint'))}</div></div>
-          </label>
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            <label style="font-size:13px;font-weight:500;">${t('users.team_caps')}</label>
+            <p style="margin:0;font-size:11px;opacity:0.55;">${esc(t('users.team_caps_hint'))}</p>
+            ${TEAM_CAPS.map(p => `<label style="display:flex;align-items:center;gap:10px;font-size:13px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;cursor:${actorSuper ? 'pointer' : 'not-allowed'};${actorSuper ? '' : 'opacity:0.55;'}">
+              <input type="checkbox" name="tm-cap" value="${p}" ${teamCaps.includes(p) ? 'checked' : ''} ${actorSuper ? '' : 'disabled'}>
+              <span>${esc(teamCapLabel(p))}</span>
+            </label>`).join('')}
+          </div>
           <div style="display:flex;flex-direction:column;gap:8px;">
             <label style="font-size:13px;font-weight:500;">${t('users.grants_scope')}</label>
             <p style="margin:0;font-size:11px;opacity:0.55;">${t('users.team_grants_hint')}</p>
@@ -517,9 +520,10 @@ window.saveTeam = async function(id) {
       }).catch(() => {});
     }
 
-    const reveal = !!document.getElementById('tm-perm-reveal')?.checked;
-    if (Role.isSuperAdmin() && reveal !== !!window._teamRevealOrig) {
-      await api('PUT', `/teams/${tid}/permissions`, { permissions: reveal ? ['gdpr:reveal'] : [] });
+    const caps = [...document.querySelectorAll('input[name="tm-cap"]:checked')].map(cb => cb.value);
+    const origCaps = window._teamCapsOrig || [];
+    if (Role.isSuperAdmin() && (caps.length !== origCaps.length || caps.some(p => !origCaps.includes(p)))) {
+      await api('PUT', `/teams/${tid}/permissions`, { permissions: caps });
     }
 
     toast(t('users.team_saved'), 'success');

@@ -43,8 +43,7 @@ Sauvegardées telles quelles (toutes colonnes), avec redaction des secrets.
 | Domaines & certificats | `domains`, `cert_deploy_targets` | Domaines, délégation DNS, cibles de déploiement de certificats |
 | Authentification | `auth_providers` | Fournisseurs OIDC / SAML / LDAP… |
 | Réseau | `ip_profiles`, `node_tunnel_configs` | Profils IP (listes, feeds), tunnels de nœuds |
-| Équipes & RBAC | `teams`, `team_members`, `team_scopes`, `user_scopes` | |
-| Workspaces | `workspaces`, `workspace_members`, `workspace_resources` | |
+| Équipes & RBAC | `teams`, `team_members`, `team_scopes` | Les accès ne se portent que par les équipes (Admin `0.243.0`) : plus de table `user_scopes` |
 | Pages | `error_page_templates`, `error_page_assets`, `portal_page_templates` | Les assets binaires sont encodés en base64 |
 | Portail Access | `portal_destinations`, `portal_users`, `portal_groups`, `portal_dest_groups` | Utilisateurs sans hash d'invitation |
 
@@ -84,7 +83,7 @@ Si `GPX_BACKUP_KEY` est définie, le snapshot contient en plus une section `secr
 
 | Contenu | Détail |
 |---|---|
-| Tables sensibles, lignes brutes | `users` (hash des mots de passe), `tokens` (secrets des nœuds), `user_api_tokens`, `user_mfa`, `user_backup_codes`, `user_trusted_devices`, `gdpr_keys`, `ech_keys`, `internal_ca`, `internal_ca_certs`, `cert_pull_tokens`, `alert_channels`, `team_permissions`, `user_permissions` (permissions de capacité : restaurées par le seul superadmin) |
+| Tables sensibles, lignes brutes | `users` (hash des mots de passe), `tokens` (secrets des nœuds), `user_api_tokens`, `user_mfa`, `user_backup_codes`, `user_trusted_devices`, `gdpr_keys`, `ech_keys`, `internal_ca`, `internal_ca_certs`, `cert_pull_tokens`, `alert_channels`, `team_permissions` (capacités des équipes, dont l'équipe DPO : restaurées par le seul superadmin) |
 | Tables de configuration, non rédigées | Celles des tables du §2.2 que la rédaction modifie, avec leurs secrets (secrets OIDC/SAML/LDAP, identifiants DNS, webhooks…) |
 | Fichiers hors dossiers | `admin-secrets.json` : le **secret racine** (`GPX_PAIRING_SECRET`) et ses précédents (`GPX_PAIRING_SECRET_PREVIOUS`), dont dérivent les clés de toutes les passerelles et de tous les Agents ; `admin-tls.crt` et `admin-tls.key` : le certificat TLS de l'Admin (chemins `GPX_ADMIN_TLS_CERT` et `GPX_ADMIN_TLS_KEY`) ; la config HA effective et `admin.json`. À la restauration ils sont déposés dans `restored-config/`, jamais dans la config vivante : ils servent à reconstruire un Admin sur une machine neuve. Le secret JWT n'y est pas (il ne sert qu'aux sessions) |
 | Fichiers | Copie du dossier `<storage.base_path>/state/` (`architecture.json`, magasins utilisateurs et configuration, `acme-providers.yaml` : fournisseurs DNS nommés et leurs identifiants) et de `<storage.base_path>/certs/` (CA interne, certificats) ; fichiers de plus de 8 Mo ignorés |
@@ -146,7 +145,7 @@ Si `GPX_BACKUP_KEY` est définie, le snapshot contient en plus une section `secr
 | Restaurer un seul proxy | Fenêtre *Restaurer* : liste des proxies du snapshot (recherche, cases, « Tous / Aucun », « Seulement celui-ci » qui décoche tout le reste) ; chaque proxy indique s'il sera créé ou s'il existe. La topologie déclarée a sa propre case |
 | Import d'un fichier (sélection) | Cases par entité : proxies, utilisateurs, tokens, PAT, snippets, canaux, règles, **configuration** (identique dans *Sauvegardes → Restaurer*, *Import* et l'assistant de premier démarrage) ; conflit `skip` (conserver l'existant) ou `overwrite` |
 | Utilisateurs | Créés avec un mot de passe aléatoire ; en overwrite, seul le rôle est mis à jour |
-| Ordre | Les tables de configuration sont restaurées dans un ordre fixe (settings → règles → domaines → équipes → workspaces → pages → portail) |
+| Ordre | Les tables de configuration sont restaurées dans un ordre fixe (settings → règles → domaines → équipes → pages → portail) |
 | Tokens de nœuds | Le secret n'étant jamais sauvegardé, les tokens de nœuds sont **ignorés** (comptés « ignorés ») à la restauration : les nœuds doivent être ré-appairés |
 | Anciennes sauvegardes | Sans section `tables` : restauration inchangée, la case *Configuration* n'apparaît pas |
 | Colonnes inconnues | Ignorées (compatibilité entre versions) |

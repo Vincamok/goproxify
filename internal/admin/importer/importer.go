@@ -17,7 +17,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/vincamok/goproxify/internal/admin/auth"
 	"github.com/vincamok/goproxify/internal/admin/edgeproxy"
-	"github.com/vincamok/goproxify/internal/admin/rbac"
 	"github.com/vincamok/goproxify/internal/edge/router"
 	"github.com/vincamok/goproxify/internal/sqltime"
 )
@@ -301,21 +300,24 @@ func Apply(db *sql.DB, b *Backup, sel ImportSelection) ImportResult {
 				id = uuid.New().String()
 			}
 			hash, _ := auth.HashPassword(uuid.New().String()) // mot de passe aléatoire pour les nouveaux comptes
-			// Rôle non importable (superadmin, ou dpo hors superadmin) : compte créé en user,
-			// rôle d'un compte existant laissé tel quel.
+			// Rôle non importable (superadmin) : compte créé en user, rôle d'un compte existant laissé tel quel.
+			// L'ancien rôle dpo n'existe plus : le DPO est l'équipe intégrée, ses membres se restaurent avec les équipes.
 			role, keepRole := u.Role, false
-			if role == "superadmin" || (role == rbac.RoleDPO && !sel.AllowPrivileged) {
+			if role == "superadmin" {
 				role, keepRole = "user", true
+			}
+			if role == "dpo" {
+				role = "user"
 			}
 			if overwrite && !keepRole {
 				// Mettre à jour email et rôle sans toucher au mot de passe de l'utilisateur existant.
-				// Jamais le superadmin ; un dpo n'est rétrogradé que par le superadmin.
+				// Jamais le superadmin.
 				_, err := db.Exec(
 					`INSERT INTO users (id, email, password_hash, role) VALUES (?,?,?,?)
 					 ON CONFLICT(email) DO UPDATE SET role=excluded.role
-					 WHERE users.role != 'superadmin' AND (? OR users.role != 'dpo')
+					 WHERE users.role != 'superadmin'
 					   AND (users.id != excluded.id OR users.role != excluded.role)`,
-					id, u.Email, hash, role, sel.AllowPrivileged)
+					id, u.Email, hash, role)
 				if err == nil {
 					res.Users++
 				} else {

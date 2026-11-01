@@ -25,14 +25,13 @@ func adminReq(t *testing.T, h *SecurityHandler, method, target string, body io.R
 	return r.WithContext(auth.WithUserID(r.Context(), "root"))
 }
 
-// scopedUser crée un administrateur limité à un domaine, en lecture seule ou en écriture.
+// scopedUser crée un utilisateur limité à un domaine par une équipe, en lecture seule ou en écriture.
 func scopedUser(t *testing.T, h *SecurityHandler, id, domain, mode string) {
 	t.Helper()
-	if _, err := h.DB.Exec(`INSERT INTO users (id, email, password_hash, role) VALUES (?, ?, 'x', 'admin')`, id, id+"@x.fr"); err != nil {
+	if _, err := h.DB.Exec(`INSERT INTO users (id, email, password_hash, role) VALUES (?, ?, 'x', 'user')`, id, id+"@x.fr"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.DB.Exec(`INSERT INTO user_scopes (id, user_id, scope_type, scope_value, access_mode) VALUES (?, ?, 'domain', ?, ?)`,
-		id+"-s", id, domain, mode); err != nil {
+	if err := grantViaTeam(h.DB, id, "domain", domain, mode); err != nil {
 		t.Fatal(err)
 	}
 }
