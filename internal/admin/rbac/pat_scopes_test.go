@@ -34,7 +34,9 @@ func TestAvailableScopesByRole(t *testing.T) {
 	insert("v", "user")
 	insert("o", "user")
 	insert("a", "admin")
+	insert("nobody", "user")
 	grantViaTeam(t, db, "o", "domain", "*.io", "write")
+	grantViaTeam(t, db, "v", "domain", "*.io", "read")
 
 	ctx := context.Background()
 	viewer := rbac.AvailableScopesForUser(ctx, db, "v")
@@ -43,6 +45,9 @@ func TestAvailableScopesByRole(t *testing.T) {
 	}
 	if !contains(viewer, rbac.ScopeProxiesRead) {
 		t.Fatal("user doit avoir proxies:read")
+	}
+	if got := rbac.AvailableScopesForUser(ctx, db, "nobody"); len(got) != 0 {
+		t.Fatalf("un compte sans équipe ne détient aucun scope (plus de lecture de base) : %v", got)
 	}
 
 	op := rbac.AvailableScopesForUser(ctx, db, "o")
@@ -90,7 +95,7 @@ func TestEffectiveHasScopeIntersection(t *testing.T) {
 	}
 
 	// Retirer le grant write → write disparaît malgré le scope PAT
-	db.Exec(`UPDATE team_scopes SET access_mode='read'`)
+	db.Exec(`UPDATE team_accesses SET levels='{"proxies":"read"}'`)
 	gotWrite = false
 	h.ServeHTTP(rr, req)
 	if gotWrite {

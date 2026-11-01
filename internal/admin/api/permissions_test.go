@@ -18,6 +18,7 @@ import (
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	"github.com/vincamok/goproxify/internal/admin/logs"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
+	"github.com/vincamok/goproxify/internal/admin/rbac/rbactest"
 )
 
 func permsFixture(t *testing.T) (*sql.DB, func(h http.Handler, method, path, user string, body any) *httptest.ResponseRecorder) {
@@ -105,7 +106,7 @@ func TestCapabilitiesAreGrantedBySuperadminOnly(t *testing.T) {
 		{"renommer l'équipe DPO", http.MethodPut, "/api/v1/teams/team-dpo", map[string]any{"name": "Autre"}},
 		{"supprimer l'équipe DPO", http.MethodDelete, "/api/v1/teams/team-dpo", nil},
 		{"changer les capacités de l'équipe DPO", http.MethodPut, "/api/v1/teams/team-dpo/permissions", map[string]any{"permissions": []string{}}},
-		{"donner un accès à l'équipe DPO", http.MethodPost, "/api/v1/teams/team-dpo/scopes", map[string]any{"scope_type": "domain", "value": "*", "access_mode": "write"}},
+		{"donner un accès à l'équipe DPO", http.MethodPost, "/api/v1/teams/team-dpo/accesses", map[string]any{"name": "tout", "levels": map[string]string{"proxies": "read"}}},
 	} {
 		if rec := do(teams, c.method, c.path, "sa", c.body); rec.Code != http.StatusConflict {
 			t.Errorf("%s : status %d, attendu 409 (%s)", c.name, rec.Code, rec.Body)
@@ -146,7 +147,7 @@ func TestCapabilitiesAreGrantedBySuperadminOnly(t *testing.T) {
 func TestUserAccessEndpoint(t *testing.T) {
 	db, do := permsFixture(t)
 	users := &UsersHandler{DB: db, Log: slog.Default()}
-	if _, err := db.Exec(`INSERT INTO team_scopes (id, team_id, scope_type, scope_value, access_mode) VALUES ('s1','ops','domain','*.example.io','write')`); err != nil {
+	if err := rbactest.Save(db, "ops", "s1", rbactest.Access("domain", "*.example.io", "write")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO team_members (team_id, user_id) VALUES ('ops','plain')`); err != nil {
@@ -158,7 +159,9 @@ func TestUserAccessEndpoint(t *testing.T) {
 		t.Fatalf("status %d (%s)", rec.Code, rec.Body)
 	}
 	json.Unmarshal(rec.Body.Bytes(), &acc) //nolint:errcheck
-	if acc.Global || len(acc.Grants) != 1 || acc.Grants[0].AccessMode != "write" || !slices.Equal(acc.Grants[0].Teams, []string{"Ops"}) {
+	if acc.Global || len(acc.Teams) != 1 || acc.Teams[0].Name != "Ops" || len(acc.Teams[0].Accesses) != 1 ||
+		acc.Teams[0].Accesses[0].Perimeter.Domain != "*.example.io" || acc.Teams[0].Accesses[0].Levels["proxies"] != "operate" ||
+		!slices.Contains(acc.Granted, "proxies:operate") {
 		t.Errorf("accès effectif : %+v", acc)
 	}
 	if rec := do(users, http.MethodGet, "/api/v1/users/absent/access", "a", nil); rec.Code != http.StatusNotFound {

@@ -37,7 +37,7 @@ func registeredRoutes(t *testing.T) map[string]string {
 			pattern = strings.Trim(pattern, `"`)
 		}
 		wrapper := "none"
-		for _, w := range []string{"protected(", "adminOnly(", "adminWrites(", "operatorWrites(", "auth.RequireBearerToken(", "auth.RequirePAT("} {
+		for _, w := range []string{"protected(", "adminOnly(", "adminWrites(", "operatorWrites(", "gatedReads(", "gatedOpen(", "auth.RequireBearerToken(", "auth.RequirePAT("} {
 			if strings.HasPrefix(m[2], w) {
 				wrapper = strings.TrimSuffix(w, "(")
 			}
@@ -61,6 +61,8 @@ var wrapperKinds = map[string][]routeKind{
 	"adminOnly":               {kindService},
 	"adminWrites":             {kindService},
 	"operatorWrites":          {kindService},
+	"gatedReads":              {kindService},
+	"gatedOpen":               {kindService},
 }
 
 // Toute route déclare ses droits dans routeDeclarations (rights.go) : une route ajoutée sans déclaration fait échouer

@@ -21,14 +21,14 @@ func TestGetUserAccessTool(t *testing.T) {
 		t.Fatal(err)
 	}
 	acc := res.(rbac.Access)
-	if acc.Global || len(acc.Grants) != 1 || acc.Grants[0].Value != "*.example.com" || acc.Grants[0].AccessMode != "write" {
+	if acc.Global || len(acc.Teams) != 1 || len(acc.Teams[0].Accesses) != 1 || acc.Teams[0].Accesses[0].Perimeter.Domain != "*.example.com" || acc.Teams[0].Accesses[0].Levels["proxies"] != "operate" {
 		t.Fatalf("accès d'un utilisateur : %+v", acc)
 	}
 	res, err = h.toolGetUserAccess(r, "boss")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if acc := res.(rbac.Access); !acc.Global || len(acc.Grants) != 0 {
+	if acc := res.(rbac.Access); !acc.Global || len(acc.Granted) != 0 {
 		t.Fatalf("un administrateur est global, ses équipes n'ajoutent aucun accès : %+v", acc)
 	}
 	if _, err := h.toolGetUserAccess(r, "absent"); err == nil {

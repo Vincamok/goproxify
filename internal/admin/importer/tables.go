@@ -36,7 +36,7 @@ var backupTables = []string{
 	"node_tunnel_configs",
 	"teams",
 	"team_members",
-	"team_scopes",
+	"team_accesses",
 	"error_page_templates",
 	"error_page_assets",
 	"portal_destinations",

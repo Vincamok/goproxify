@@ -47,27 +47,27 @@ const (
 // Level est un échelon d'un service ; les échelons sont cumulatifs de gauche à droite. PAT liste les scopes de jeton
 // API actuels qui lui correspondent.
 type Level struct {
-	ID    string
-	Label string
-	Class Class
-	PAT   []string
+	ID    string   `json:"id"`
+	Label string   `json:"label"`
+	Class Class    `json:"class"`
+	PAT   []string `json:"pat,omitempty"`
 }
 
 // Explicit est une permission qu'aucun niveau n'implique.
 type Explicit struct {
-	ID    string
-	Label string
-	PAT   []string
+	ID    string   `json:"id"`
+	Label string   `json:"label"`
+	PAT   []string `json:"pat,omitempty"`
 }
 
 type Service struct {
-	ID        string
-	Label     string
-	Group     string
-	Nature    Nature
-	Criteria  []Criterion
-	Levels    []Level
-	Explicits []Explicit
+	ID        string      `json:"id"`
+	Label     string      `json:"label"`
+	Group     string      `json:"group"`
+	Nature    Nature      `json:"nature"`
+	Criteria  []Criterion `json:"criteria,omitempty"`
+	Levels    []Level     `json:"levels"`
+	Explicits []Explicit  `json:"explicits"`
 }
 
 // Permission est une entrée du catalogue à plat : « service:niveau » ou une permission explicite.

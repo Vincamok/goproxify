@@ -7,17 +7,14 @@
 //
 //	superadmin : accès total, protégé (non supprimable), premier compte créé
 //	admin      : toute la plateforme ; aucun grant ne le restreint ni ne l'étend
-//	user       : uniquement ce que lui donnent ses équipes (team_scopes) ; sans équipe, rien
+//	user       : uniquement ce que lui donnent les accès de ses équipes (team_accesses) ; sans équipe, rien
 //
 // Les droits sur les ressources ne se portent que par les équipes (ADR 0021). Les capacités
 // (permissions.go) s'obtiennent aussi par une équipe, jamais par le compte.
 //
-// Grant = (scope_type, scope_value, access_mode read|write) :
-//
-//	edge   : glob sur node_name de la passerelle → accès à toutes ses ressources
-//	domain : glob sur Route.Host
-//	proxy  : identifiant exact d'un proxy
-//	server : glob sur Backend.URL
+// Un accès d'équipe est un périmètre (perimeter.go) et un niveau par service (team_access.go, catalog.go) ; le
+// moteur (engine.go) répond Can et Scope. Les Scope ci-dessous ne servent plus qu'aux jetons des passerelles
+// (token_scopes : domain, server, proxy, edge).
 package rbac
 
 import (
@@ -25,7 +22,10 @@ import (
 	"database/sql"
 	"net/http"
 	"path"
+	"slices"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/vincamok/goproxify/internal/admin/auth"
 	"github.com/vincamok/goproxify/internal/edge/router"
@@ -43,15 +43,8 @@ type Scope struct {
 	Value string
 }
 
-// Grant est un scope avec mode lecture/écriture (team_scopes).
-type Grant struct {
-	Type  string `json:"type"`
-	Value string `json:"value"`
-	Mode  string `json:"access_mode"` // "read" | "write"
-}
-
-// Scope projette le grant sans le mode (compat MatchRoute / tokens).
-func (g Grant) Scope() Scope { return Scope{Type: g.Type, Value: g.Value} }
+// Grant est l'accès d'une équipe tel que les contrôles de proxy le reçoivent (ADR 0022).
+type Grant = TeamAccess
 
 // match retourne true si la route correspond à ce scope.
 func (s Scope) match(route *router.Route) bool {
@@ -263,161 +256,86 @@ func IsAdmin(ctx context.Context, db *sql.DB, userID string) bool {
 	return IsAdminRole(UserRole(ctx, db, userID))
 }
 
-// --- Scopes / grants utilisateur ---
+// --- Accès utilisateur ---
 
-// UserEffectiveGrants union des team_scopes des équipes du compte ; même (type,value) → max(mode) (write > read).
-// Un administrateur n'est jamais jugé sur ces grants : il voit toute la plateforme.
+// UserEffectiveGrants rend les accès des équipes du compte. Un administrateur n'est jamais jugé sur eux : il voit toute
+// la plateforme.
 func UserEffectiveGrants(ctx context.Context, db *sql.DB, userID string) ([]Grant, error) {
-	rows, err := db.QueryContext(ctx, `
-		SELECT ts.scope_type, ts.scope_value, ts.access_mode
-		FROM team_scopes ts
-		JOIN team_members tm ON tm.team_id = ts.team_id
-		WHERE tm.user_id = ?`, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	merged := map[string]Grant{}
-	for rows.Next() {
-		var g Grant
-		if err := rows.Scan(&g.Type, &g.Value, &g.Mode); err != nil {
-			continue
-		}
-		if g.Mode != AccessWrite {
-			g.Mode = AccessRead
-		}
-		key := g.Type + "\x00" + g.Value
-		if prev, ok := merged[key]; ok {
-			if prev.Mode == AccessWrite || g.Mode == AccessWrite {
-				g.Mode = AccessWrite
-			}
-		}
-		merged[key] = g
-	}
-	out := make([]Grant, 0, len(merged))
-	for _, g := range merged {
-		out = append(out, g)
-	}
-	return out, rows.Err()
-}
-
-// GrantsAsScopes extrait les Scope (sans mode) pour MatchRoute.
-func GrantsAsScopes(grants []Grant) []Scope {
-	out := make([]Scope, len(grants))
-	for i, g := range grants {
-		out[i] = g.Scope()
-	}
-	return out
-}
-
-// WriteGrants filtre les grants en écriture.
-func WriteGrants(grants []Grant) []Grant {
-	var out []Grant
-	for _, g := range grants {
-		if g.Mode == AccessWrite {
-			out = append(out, g)
-		}
-	}
-	return out
-}
-
-// UserHasWriteGrant indique si l'utilisateur a au moins un grant write.
-func UserHasWriteGrant(ctx context.Context, db *sql.DB, userID string) bool {
-	grants, err := UserEffectiveGrants(ctx, db, userID)
-	if err != nil {
-		return false
-	}
-	return len(WriteGrants(grants)) > 0
-}
-
-// UserTeamScopes retourne les scopes effectifs (lecture) — compat. Préférer UserEffectiveGrants.
-func UserTeamScopes(ctx context.Context, db *sql.DB, userID string) ([]Scope, error) {
-	grants, err := UserEffectiveGrants(ctx, db, userID)
-	if err != nil {
-		return nil, err
-	}
-	return GrantsAsScopes(grants), nil
-}
-
-// UserWriteScopes retourne les scopes en écriture — compat. Préférer UserEffectiveGrants.
-func UserWriteScopes(ctx context.Context, db *sql.DB, userID string) ([]Scope, error) {
-	grants, err := UserEffectiveGrants(ctx, db, userID)
-	if err != nil {
-		return nil, err
-	}
-	return GrantsAsScopes(WriteGrants(grants)), nil
-}
-
-// UserAdminScopes : delete scopé non supporté en v1 grants — réservé admin plateforme (voir CanDeleteProxy).
-func UserAdminScopes(ctx context.Context, db *sql.DB, userID string) ([]Scope, error) {
-	return nil, nil
-}
-
-func scanScopes(rows *sql.Rows) ([]Scope, error) {
-	defer rows.Close()
-	var scopes []Scope
-	for rows.Next() {
-		var s Scope
-		if err := rows.Scan(&s.Type, &s.Value); err == nil {
-			scopes = append(scopes, s)
-		}
-	}
-	return scopes, rows.Err()
+	return UserAccesses(ctx, db, userID)
 }
 
 // --- Vérifications d'accès ---
 
-// CanReadProxy retourne true si l'utilisateur peut voir ce proxy.
-func CanReadProxy(ctx context.Context, db *sql.DB, userID string, route *router.Route) bool {
-	role := UserRole(ctx, db, userID)
-	if IsSuperAdminRole(role) {
-		return true
-	}
-	grants, err := UserEffectiveGrants(ctx, db, userID)
-	if err != nil {
-		return false
-	}
-	return canReadProxyWithGrants(role, grants, route)
+// defaultGroups sert aux contrôles qui n'ont pas de catalogue de groupes sous la main : il est posé au démarrage.
+var defaultGroups = struct {
+	mu      sync.Mutex
+	source  ArchitectureGroups
+	set     bool
+	cached  GroupCatalog
+	fetched time.Time
+}{}
+
+const groupCatalogTTL = 2 * time.Second
+
+// SetGroupSource indique d'où lire les groupes de passerelles pour juger un critère de groupe.
+func SetGroupSource(source ArchitectureGroups) {
+	defaultGroups.mu.Lock()
+	defer defaultGroups.mu.Unlock()
+	defaultGroups.source, defaultGroups.set, defaultGroups.cached = source, true, nil
 }
 
-// CanReadProxyWithGrants est identique à CanReadProxy mais évite une requête DB quand
-// le rôle et les grants sont déjà chargés (utiliser dans les boucles list).
-func CanReadProxyWithGrants(role string, grants []Grant, route *router.Route) bool {
-	return canReadProxyWithGrants(role, grants, route)
+// currentGroups rend un cliché récent des groupes (relu au plus toutes les deux secondes : une liste de proxys juge
+// chaque ligne), ou nil si aucune source n'a été posée.
+func currentGroups() GroupCatalog {
+	defaultGroups.mu.Lock()
+	defer defaultGroups.mu.Unlock()
+	if !defaultGroups.set || defaultGroups.source.Store == nil {
+		return nil
+	}
+	if defaultGroups.cached == nil || time.Since(defaultGroups.fetched) > groupCatalogTTL {
+		defaultGroups.cached, defaultGroups.fetched = defaultGroups.source.Snapshot(), time.Now()
+	}
+	return defaultGroups.cached
 }
 
-func canReadProxyWithGrants(role string, grants []Grant, route *router.Route) bool {
+func canOnRoute(role string, accesses []Grant, permission string, route *router.Route) bool {
 	if IsAdminRole(role) {
 		return true
 	}
-	return len(grants) > 0 && MatchRoute(GrantsAsScopes(grants), route)
+	return FilterFor(accesses, permission).AllowsRoute(route, currentGroups())
+}
+
+func userCanOnRoute(ctx context.Context, db *sql.DB, userID, permission string, route *router.Route) bool {
+	role := UserRole(ctx, db, userID)
+	if IsAdminRole(role) {
+		return true
+	}
+	accesses, err := UserAccesses(ctx, db, userID)
+	if err != nil {
+		return false
+	}
+	return canOnRoute(role, accesses, permission, route)
+}
+
+// CanReadProxy retourne true si l'utilisateur peut voir ce proxy.
+func CanReadProxy(ctx context.Context, db *sql.DB, userID string, route *router.Route) bool {
+	return userCanOnRoute(ctx, db, userID, "proxies:read", route)
+}
+
+// CanReadProxyWithGrants est identique à CanReadProxy mais évite une requête DB quand
+// le rôle et les accès sont déjà chargés (utiliser dans les boucles list).
+func CanReadProxyWithGrants(role string, grants []Grant, route *router.Route) bool {
+	return canOnRoute(role, grants, "proxies:read", route)
 }
 
 // CanWriteProxy retourne true si l'utilisateur peut créer/modifier/désactiver ce proxy.
 func CanWriteProxy(ctx context.Context, db *sql.DB, userID string, route *router.Route) bool {
-	role := UserRole(ctx, db, userID)
-	if IsSuperAdminRole(role) {
-		return true
-	}
-	grants, err := UserEffectiveGrants(ctx, db, userID)
-	if err != nil {
-		return false
-	}
-	return canWriteProxyWithGrants(role, grants, route)
+	return userCanOnRoute(ctx, db, userID, "proxies:operate", route)
 }
 
 // CanWriteProxyWithGrants est identique à CanWriteProxy sans requête DB supplémentaire.
 func CanWriteProxyWithGrants(role string, grants []Grant, route *router.Route) bool {
-	return canWriteProxyWithGrants(role, grants, route)
-}
-
-func canWriteProxyWithGrants(role string, grants []Grant, route *router.Route) bool {
-	if IsAdminRole(role) {
-		return true
-	}
-	write := WriteGrants(grants)
-	return len(write) > 0 && MatchRoute(GrantsAsScopes(write), route)
+	return canOnRoute(role, grants, "proxies:operate", route)
 }
 
 // routeIsL4 detects TCP/UDP streams (host is a free label, not a DNS domain).
@@ -432,36 +350,22 @@ func routeIsL4(route *router.Route) bool {
 	return route.ListenPort > 0
 }
 
-// CanDeleteProxy retourne true si l'utilisateur peut supprimer ce proxy.
-// Réservé aux administrateurs de la plateforme : la suppression par une équipe viendra avec le niveau « Gestion » (ADR 0022).
+// CanDeleteProxy retourne true si l'utilisateur peut supprimer ce proxy : le niveau « Gestion » des proxys.
 func CanDeleteProxy(ctx context.Context, db *sql.DB, userID string, route *router.Route) bool {
-	return canDeleteProxyWithGrants(UserRole(ctx, db, userID), nil, route)
+	return userCanOnRoute(ctx, db, userID, "proxies:manage", route)
 }
 
 // CanDeleteProxyWithGrants est identique à CanDeleteProxy sans requête DB supplémentaire.
 func CanDeleteProxyWithGrants(role string, grants []Grant, route *router.Route) bool {
-	return canDeleteProxyWithGrants(role, grants, route)
-}
-
-func canDeleteProxyWithGrants(role string, _ []Grant, _ *router.Route) bool {
-	return IsAdminRole(role)
+	return canOnRoute(role, grants, "proxies:manage", route)
 }
 
 // CanReadDomainWithGrants retourne true si l'utilisateur peut voir ce domaine.
-// Les administrateurs voient tout ; les users voient les domaines couverts par les grants de type "domain" de leurs équipes.
 func CanReadDomainWithGrants(role string, grants []Grant, domain string) bool {
 	if IsAdminRole(role) {
 		return true
 	}
-	for _, g := range grants {
-		if g.Type == "domain" && hostMatchesDomainScope(g.Value, domain) {
-			return true
-		}
-		if g.Type == "edge" {
-			return true
-		}
-	}
-	return false
+	return FilterFor(grants, "domains:read").Allows(Resource{Hosts: []string{domain}})
 }
 
 // --- Droits token (Passerelle/Agent) ---
@@ -553,4 +457,23 @@ func writesOnly(guard func(http.Handler) http.Handler) func(http.Handler) http.H
 			guarded.ServeHTTP(w, r)
 		})
 	}
+}
+
+func scanScopes(rows *sql.Rows) ([]Scope, error) {
+	defer rows.Close()
+	var scopes []Scope
+	for rows.Next() {
+		var s Scope
+		if err := rows.Scan(&s.Type, &s.Value); err == nil {
+			scopes = append(scopes, s)
+		}
+	}
+	return scopes, rows.Err()
+}
+
+// UserHasWriteGrant indique si une équipe du compte lui donne l'exploitation des proxys : c'est ce qui fait d'un
+// utilisateur un « opérateur » (snippets, détecteurs).
+func UserHasWriteGrant(ctx context.Context, db *sql.DB, userID string) bool {
+	accesses, err := UserAccesses(ctx, db, userID)
+	return err == nil && slices.ContainsFunc(accesses, func(a TeamAccess) bool { return a.Grants("proxies:operate") })
 }

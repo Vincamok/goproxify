@@ -33,16 +33,10 @@ func (h *MeHandler) notifyChange() {
 	}
 }
 
-type meScope struct {
-	Type       string `json:"type"`
-	Value      string `json:"value"`
-	AccessMode string `json:"access_mode,omitempty"`
-}
-
 type meTeam struct {
-	TeamID   string    `json:"team_id"`
-	TeamName string    `json:"team_name"`
-	Scopes   []meScope `json:"scopes"`
+	TeamID   string            `json:"team_id"`
+	TeamName string            `json:"team_name"`
+	Accesses []rbac.TeamAccess `json:"accesses"`
 }
 
 type meResponse struct {
@@ -52,7 +46,8 @@ type meResponse struct {
 	IsSuper         bool       `json:"is_super"`
 	CreatedAt       *time.Time `json:"created_at,omitempty"`
 	Teams           []meTeam   `json:"teams"`
-	EffectiveScopes []meScope  `json:"effective_scopes"`
+	// Permissions du catalogue que portent les accès de ses équipes (vide pour un administrateur, qui les détient toutes).
+	Granted []string `json:"granted"`
 	// Capacités effectives (rôle superadmin, équipes), ex. ["gdpr:reveal"].
 	Permissions []string `json:"permissions"`
 }
@@ -119,16 +114,9 @@ func (h *MeHandler) getMe(w http.ResponseWriter, r *http.Request, userID string)
 	// sur les ressources, donc aucun accès effectif n'est renvoyé (le navigateur y lit « accès global »).
 	me.Teams = []meTeam{}
 	for _, t := range access.Teams {
-		mt := meTeam{TeamID: t.ID, TeamName: t.Name, Scopes: []meScope{}}
-		for _, g := range t.Scopes {
-			mt.Scopes = append(mt.Scopes, meScope{Type: g.Type, Value: g.Value, AccessMode: g.Mode})
-		}
-		me.Teams = append(me.Teams, mt)
+		me.Teams = append(me.Teams, meTeam{TeamID: t.ID, TeamName: t.Name, Accesses: t.Accesses})
 	}
-	me.EffectiveScopes = []meScope{}
-	for _, g := range access.Grants {
-		me.EffectiveScopes = append(me.EffectiveScopes, meScope{Type: g.Type, Value: g.Value, AccessMode: g.AccessMode})
-	}
+	me.Granted = access.Granted
 
 	jsonOK(w, me)
 }

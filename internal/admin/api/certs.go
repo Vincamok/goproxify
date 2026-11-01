@@ -80,10 +80,14 @@ func (h *CertsHandler) list(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
+	visible := visibleCerts(r)
 	result := make([]certRow, 0)
 	for rows.Next() {
 		var c certRow
 		if err := rows.Scan(&c.ID, &c.Domain, &c.Issuer, &c.ExpiresAt, &c.UpdatedAt); err != nil {
+			continue
+		}
+		if !visible(c.Domain) {
 			continue
 		}
 		result = append(result, c)
@@ -193,11 +197,15 @@ func (h *CertsHandler) monitor(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	now := time.Now()
+	visible := visibleCerts(r)
 	resp := acmeMonitorResponse{Certs: make([]certMonitorRow, 0)}
 	for rows.Next() {
 		var c certRow
 		var dnsProv, certMethod, domainID string
 		if err := rows.Scan(&c.ID, &c.Domain, &c.Issuer, &c.ExpiresAt, &c.UpdatedAt, &dnsProv, &certMethod, &domainID); err != nil {
+			continue
+		}
+		if !visible(c.Domain) {
 			continue
 		}
 		daysLeft := int(c.ExpiresAt.Sub(now).Hours() / 24)
@@ -240,6 +248,10 @@ func (h *CertsHandler) monitor(w http.ResponseWriter, r *http.Request) {
 
 // pem renvoie uniquement le certificat public (jamais la clé privée).
 func (h *CertsHandler) pem(w http.ResponseWriter, r *http.Request, domain string) {
+	if !visibleCerts(r)(domain) {
+		http.Error(w, "certificat introuvable", http.StatusNotFound)
+		return
+	}
 	var certPEM string
 	err := h.DB.QueryRowContext(r.Context(), `SELECT cert_pem FROM certs WHERE domain=?`, domain).Scan(&certPEM)
 	if err == sql.ErrNoRows || (err == nil && certPEM == "") {

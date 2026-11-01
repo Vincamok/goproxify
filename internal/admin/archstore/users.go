@@ -51,21 +51,22 @@ type PATEntry struct {
 	ExpiresAt   string   `yaml:"expires_at,omitempty"` // RFC3339
 }
 
-// TeamScopeEntry est un scope RBAC attaché à une équipe.
-type TeamScopeEntry struct {
-	ID         string `yaml:"id"`
-	ScopeType  string `yaml:"scope_type"`
-	ScopeValue string `yaml:"scope_value"`
-	AccessMode string `yaml:"access_mode"`
+// TeamAccessEntry est un accès d'équipe (ADR 0022) : un périmètre et un niveau par service, en JSON.
+type TeamAccessEntry struct {
+	ID          string `yaml:"id"`
+	Name        string `yaml:"name,omitempty"`
+	Perimeter   string `yaml:"perimeter"`
+	Levels      string `yaml:"levels"`
+	Permissions string `yaml:"permissions"`
 }
 
 // TeamEntry décrit une équipe et ses membres/scopes.
 type TeamEntry struct {
-	ID      string           `yaml:"id"`
-	Name    string           `yaml:"name"`
-	Members     []string         `yaml:"members,omitempty"` // user IDs
-	Scopes      []TeamScopeEntry `yaml:"scopes,omitempty"`
-	Permissions []string         `yaml:"permissions,omitempty"` // capacités accordées aux membres (ex. gdpr:reveal)
+	ID          string            `yaml:"id"`
+	Name        string            `yaml:"name"`
+	Members     []string          `yaml:"members,omitempty"` // user IDs
+	Accesses    []TeamAccessEntry `yaml:"accesses,omitempty"`
+	Permissions []string          `yaml:"permissions,omitempty"` // capacités accordées aux membres (ex. gdpr:reveal)
 }
 
 // UsersArchive est la racine de users.yaml.
@@ -153,10 +154,10 @@ func (s *UserStore) LoadIntoDB(ctx context.Context, db *sql.DB) error {
 				db.ExecContext(ctx, //nolint:errcheck
 					`INSERT OR IGNORE INTO team_members(team_id, user_id) VALUES(?,?)`, te.ID, uid)
 			}
-			for _, sc := range te.Scopes {
+			for i, a := range te.Accesses {
 				db.ExecContext(ctx, //nolint:errcheck
-					`INSERT OR IGNORE INTO team_scopes(id, team_id, scope_type, scope_value, access_mode) VALUES(?,?,?,?,?)`,
-					sc.ID, te.ID, sc.ScopeType, sc.ScopeValue, sc.AccessMode)
+					`INSERT OR IGNORE INTO team_accesses(id, team_id, name, perimeter, levels, permissions, position) VALUES(?,?,?,?,?,?,?)`,
+					a.ID, te.ID, a.Name, a.Perimeter, a.Levels, a.Permissions, i+1)
 			}
 			for _, p := range te.Permissions {
 				db.ExecContext(ctx, //nolint:errcheck
@@ -288,19 +289,19 @@ func (s *UserStore) buildFromDB(ctx context.Context, db *sql.DB) (*UsersArchive,
 			mrows.Close()
 		}
 
-		tsrows, _ := db.QueryContext(ctx,
-			`SELECT id, team_id, scope_type, scope_value, access_mode FROM team_scopes ORDER BY team_id`)
-		if tsrows != nil {
-			for tsrows.Next() {
-				var sc TeamScopeEntry
+		tarows, _ := db.QueryContext(ctx,
+			`SELECT id, team_id, name, perimeter, levels, permissions FROM team_accesses ORDER BY team_id, position, id`)
+		if tarows != nil {
+			for tarows.Next() {
+				var a TeamAccessEntry
 				var tid string
-				if tsrows.Scan(&sc.ID, &tid, &sc.ScopeType, &sc.ScopeValue, &sc.AccessMode) == nil {
+				if tarows.Scan(&a.ID, &tid, &a.Name, &a.Perimeter, &a.Levels, &a.Permissions) == nil {
 					if idx, ok := teamIdx[tid]; ok {
-						archive.Teams[idx].Scopes = append(archive.Teams[idx].Scopes, sc)
+						archive.Teams[idx].Accesses = append(archive.Teams[idx].Accesses, a)
 					}
 				}
 			}
-			tsrows.Close()
+			tarows.Close()
 		}
 
 		tprows, _ := db.QueryContext(ctx, `SELECT team_id, permission FROM team_permissions ORDER BY team_id, permission`)

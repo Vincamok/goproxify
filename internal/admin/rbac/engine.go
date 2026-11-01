@@ -132,87 +132,42 @@ func (f Filter) AllowsRoute(route *router.Route, groups GroupCatalog) bool {
 	return f.Allows(RouteResource(route, gs))
 }
 
-// accessRule est un accès d'équipe réduit à ce que le moteur juge : un périmètre et si l'écriture est permise.
-type accessRule struct {
-	perimeter Perimeter
-	write     bool
+// FilterFor rend le périmètre qu'il faut appliquer à une liste pour la permission demandée, d'après des accès d'équipe :
+// l'union des périmètres des accès qui la portent. Un accès sans critère, ou sur un service de plateforme (qui n'a pas
+// de périmètre), la donne sur tout.
+func FilterFor(accesses []TeamAccess, permission string) Filter {
+	p, ok := PermissionByID(permission)
+	if !ok {
+		return Filter{}
+	}
+	svc, _ := ServiceByID(p.Service)
+	var f Filter
+	for _, a := range accesses {
+		if !a.Grants(permission) {
+			continue
+		}
+		if svc.Nature == NaturePlatform || a.Perimeter.IsEmpty() {
+			return Filter{all: true}
+		}
+		f.perimeters = append(f.perimeters, a.Perimeter)
+	}
+	return f
 }
 
 // Engine répond « cette personne peut-elle faire ceci sur cet objet ? » (Can) et « sur quoi peut-elle le faire ? »
-// (Scope). Tant que les accès à grille de niveaux n'existent pas (ADR 0022, livraison 3), il lit les accès d'équipe
-// actuels, qui sont chacun un critère unique en lecture ou en écriture.
+// (Scope) : l'administrateur peut tout, un utilisateur ce que portent les accès de ses équipes.
 type Engine struct{ DB *sql.DB }
-
-// legacyServices sont les services que les accès d'équipe actuels (type, valeur, mode) savent porter : les proxys et
-// ce qui en dépend. Les autres restent à l'administrateur jusqu'à la grille de niveaux.
-var legacyServices = []string{"proxies", "containers", "surface", "domains"}
-
-// required dit ce que l'accès actuel doit porter pour la permission : (lecture, true) ou (écriture, true) ; false si
-// aucun accès d'équipe actuel ne la donne (destructive, sensible, plateforme, service hors des accès actuels).
-func required(permission string) (write, ok bool) {
-	p, found := PermissionByID(permission)
-	if !found || !slices.Contains(legacyServices, p.Service) {
-		return false, false
-	}
-	if p.Class != ClassOrdinary {
-		return false, false
-	}
-	svc, _ := ServiceByID(p.Service)
-	if p.ID == svc.ID+":"+svc.Levels[0].ID {
-		return false, true
-	}
-	return true, true
-}
-
-func (e Engine) rules(ctx context.Context, userID string) ([]accessRule, error) {
-	grants, err := UserEffectiveGrants(ctx, e.DB, userID)
-	if err != nil {
-		return nil, err
-	}
-	rules := make([]accessRule, 0, len(grants))
-	for _, g := range grants {
-		rule := accessRule{write: g.Mode == AccessWrite}
-		switch g.Type {
-		case "domain":
-			rule.perimeter.Domain = g.Value
-		case "proxy":
-			rule.perimeter.Proxy = g.Value
-		case "server":
-			rule.perimeter.Backend = g.Value
-		case "edge":
-			rule.perimeter.Group.Name = g.Value
-		default:
-			continue
-		}
-		rules = append(rules, rule)
-	}
-	return rules, nil
-}
 
 // Scope rend le périmètre qu'il faut appliquer à une liste pour la permission demandée.
 func (e Engine) Scope(ctx context.Context, userID, permission string) Filter {
 	if IsAdmin(ctx, e.DB, userID) {
 		return Filter{all: true}
 	}
-	write, ok := required(permission)
-	if !ok {
-		return Filter{}
-	}
-	rules, err := e.rules(ctx, userID)
+	accesses, err := UserAccesses(ctx, e.DB, userID)
 	if err != nil {
 		return Filter{}
 	}
-	var f Filter
-	for _, r := range rules {
-		if write && !r.write {
-			continue
-		}
-		if r.perimeter.IsEmpty() {
-			return Filter{all: true}
-		}
-		f.perimeters = append(f.perimeters, r.perimeter)
-	}
-	return f
+	return FilterFor(accesses, permission)
 }
 
 // Can dit si la personne a la permission sur la ressource.

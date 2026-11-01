@@ -910,8 +910,16 @@ goproxify teams members list   <team-id> [-admin-url …] [-token …]
 goproxify teams members add    <team-id> -user <user-id> [-admin-url …] [-token …]
 goproxify teams members remove <team-id> -user <user-id> [-admin-url …] [-token …]
 
+goproxify teams access list   <team-id> [-admin-url …] [-token …]
+goproxify teams access add    <team-id> [-name n] [-profile id] [-level service=niveau,…] [-allow perm,…] [-access id] [périmètre] [-admin-url …] [-token …]
+goproxify teams access remove <team-id> -access <id> [-admin-url …] [-token …]
+goproxify teams catalog [-admin-url …] [-token …]
+goproxify teams preview [périmètre] [-admin-url …] [-token …]
+
 goproxify teams permissions <team-id> [-permissions gdpr:reveal,gdpr:export,gdpr:erase,gdpr:hold|none] [-admin-url …] [-token …]
 ```
+
+`teams access` gère les **accès** d'une équipe (Admin `0.245.0`, [ADR 0022](adr/0022-modele-de-droits-niveaux-et-perimetres.md)) : un périmètre et un niveau par service. Périmètre (tous les critères posés sont requis, aucun = tout) : `-domain` glob, `-proxy` identifiant, glob sur le nom ou `re:<RE2>`, `-backend` glob, `-group` glob, `-environment`, `-region`, `-tag` (attributs du groupe de passerelles), `-label clé=valeur[,clé=valeur]`. `-profile` part d'un profil du catalogue, `-level proxies=operate,logs=read` fixe des niveaux (cumulatifs), `-allow certs:deploy` coche des permissions sensibles, `-access <id>` remplace un accès existant. `teams catalog` liste les services, leurs niveaux et les profils ; `teams preview` dit combien de proxys un périmètre couvre.
 
 `teams permissions` affiche les capacités accordées aux membres de l'équipe ; avec `-permissions`, les remplace (`none` = aucune). `gdpr:reveal` révèle les IP pseudonymisées, `gdpr:export` fait l'export d'accès et de portabilité (Art. 15 et 20), `gdpr:erase` efface les logs d'une IP ou d'un utilisateur (Art. 17), `gdpr:hold` pose le gel légal. Modifier ces capacités, les membres d'une équipe qui en porte, ou supprimer une telle équipe est réservé au superadmin.
 

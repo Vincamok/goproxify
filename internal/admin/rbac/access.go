@@ -6,24 +6,15 @@ package rbac
 import (
 	"context"
 	"database/sql"
-	"sort"
 )
 
 // AccessTeam est une équipe du compte avec ce qu'elle lui apporte.
 type AccessTeam struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Builtin     bool     `json:"builtin,omitempty"`
-	Scopes      []Grant  `json:"scopes"`
-	Permissions []string `json:"permissions"`
-}
-
-// AccessGrant est un accès sur les ressources, avec les équipes qui l'accordent. Le mode le plus haut l'emporte.
-type AccessGrant struct {
-	Type       string   `json:"type"`
-	Value      string   `json:"value"`
-	AccessMode string   `json:"access_mode"`
-	Teams      []string `json:"teams"`
+	ID          string       `json:"id"`
+	Name        string       `json:"name"`
+	Builtin     bool         `json:"builtin,omitempty"`
+	Accesses    []TeamAccess `json:"accesses"`
+	Permissions []string     `json:"permissions"`
 }
 
 // AccessPermission est une capacité avec son origine : le rôle du compte, ou les équipes qui la portent.
@@ -39,15 +30,17 @@ type Access struct {
 	// Global : le compte est administrateur, il voit toute la plateforme ; ses équipes ne le restreignent ni ne l'étendent.
 	Global      bool               `json:"global"`
 	Teams       []AccessTeam       `json:"teams"`
-	Grants      []AccessGrant      `json:"grants"`
 	Permissions []AccessPermission `json:"permissions"`
+	// Granted liste les permissions du catalogue que portent les accès de ses équipes (aucune pour un administrateur,
+	// qui les détient toutes) : ce que la navigation lit pour montrer ou cacher une page.
+	Granted []string `json:"granted"`
 }
 
-// EffectiveAccess calcule l'accès effectif d'un compte : ses équipes, les accès qu'elles accordent (fusionnés, le mode
-// écriture l'emporte) et ses capacités avec leur origine.
+// EffectiveAccess calcule l'accès effectif d'un compte : ses équipes avec leurs accès, les permissions du catalogue qui
+// en découlent et ses capacités avec leur origine.
 func EffectiveAccess(ctx context.Context, db *sql.DB, userID string) (Access, error) {
 	role := UserRole(ctx, db, userID)
-	out := Access{Role: role, Global: IsAdminRole(role), Teams: []AccessTeam{}, Grants: []AccessGrant{}, Permissions: []AccessPermission{}}
+	out := Access{Role: role, Global: IsAdminRole(role), Teams: []AccessTeam{}, Permissions: []AccessPermission{}, Granted: []string{}}
 
 	rows, err := db.QueryContext(ctx, `
 		SELECT t.id, t.name FROM team_members tm
@@ -65,39 +58,14 @@ func EffectiveAccess(ctx context.Context, db *sql.DB, userID string) (Access, er
 	}
 	rows.Close()
 
-	merged := map[string]*AccessGrant{}
-	var order []string
-	teamsOf := map[string][]string{} // permission → équipes
+	teamsOf := map[string][]string{} // capacité → équipes
+	var all []TeamAccess
 	for i := range out.Teams {
 		t := &out.Teams[i]
-		t.Scopes = []Grant{}
-		srows, err := db.QueryContext(ctx,
-			`SELECT scope_type, scope_value, access_mode FROM team_scopes WHERE team_id=? ORDER BY scope_type, scope_value`, t.ID)
-		if err != nil {
+		if t.Accesses, err = TeamAccesses(ctx, db, t.ID); err != nil {
 			return out, err
 		}
-		for srows.Next() {
-			var g Grant
-			if srows.Scan(&g.Type, &g.Value, &g.Mode) != nil {
-				continue
-			}
-			if g.Mode != AccessWrite {
-				g.Mode = AccessRead
-			}
-			t.Scopes = append(t.Scopes, g)
-			key := g.Type + "\x00" + g.Value
-			ag, ok := merged[key]
-			if !ok {
-				ag = &AccessGrant{Type: g.Type, Value: g.Value, AccessMode: g.Mode}
-				merged[key] = ag
-				order = append(order, key)
-			}
-			if g.Mode == AccessWrite {
-				ag.AccessMode = AccessWrite
-			}
-			ag.Teams = append(ag.Teams, t.Name)
-		}
-		srows.Close()
+		all = append(all, t.Accesses...)
 		t.Permissions = TeamPermissions(ctx, db, t.ID)
 		if t.Permissions == nil {
 			t.Permissions = []string{}
@@ -107,9 +75,13 @@ func EffectiveAccess(ctx context.Context, db *sql.DB, userID string) (Access, er
 		}
 	}
 	if !out.Global {
-		sort.Strings(order)
-		for _, key := range order {
-			out.Grants = append(out.Grants, *merged[key])
+		for _, p := range Permissions() {
+			for _, a := range all {
+				if a.Grants(p.ID) {
+					out.Granted = append(out.Granted, p.ID)
+					break
+				}
+			}
 		}
 	}
 

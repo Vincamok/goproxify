@@ -27,6 +27,9 @@ type PrismHandler struct {
 }
 
 func (h *PrismHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet && !requireUnrestricted(w, r, "dashboard:read") {
+		return
+	}
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/prism")
 	path = strings.TrimPrefix(path, "/")
 

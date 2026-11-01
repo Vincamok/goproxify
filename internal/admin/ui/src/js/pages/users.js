@@ -124,8 +124,8 @@ async function refreshUsers(content) {
                 <span style="font-size:10px;opacity:0.5;text-transform:uppercase;letter-spacing:0.07em;">${(team.member_count||0)!==1?t('users.members_lbl'):t('users.member_lbl')}</span>
               </div>
               <div style="flex:1;display:flex;flex-direction:column;align-items:center;padding:10px 8px;gap:2px;">
-                <span style="font-size:18px;font-weight:700;line-height:1;">${team.scope_count||0}</span>
-                <span style="font-size:10px;opacity:0.5;text-transform:uppercase;letter-spacing:0.07em;">${(team.scope_count||0)!==1?t('users.grants_lbl'):t('users.grant_lbl')}</span>
+                <span style="font-size:18px;font-weight:700;line-height:1;">${team.access_count||0}</span>
+                <span style="font-size:10px;opacity:0.5;text-transform:uppercase;letter-spacing:0.07em;">${(team.access_count||0)!==1?t('users.accesses_lbl'):t('users.access_lbl')}</span>
               </div>
             </div>
           </div>`).join('') : `
@@ -137,19 +137,6 @@ async function refreshUsers(content) {
       </div>
 `;
   } catch(e) { content.innerHTML = `<p style="color:var(--red)">${esc(e.message)}</p>`; }
-}
-
-function grantListHtml(scopes, listId, removeFn) {
-  if (!scopes.length) return '<span style="font-size:12px;opacity:0.45;">' + t('users.no_grant') + '</span>';
-  return scopes.map((sc, i) => {
-    const mode = sc.mode || sc.access_mode || 'read';
-    return `<div style="display:flex;align-items:center;gap:8px;font-size:12.5px;padding:6px 10px;border:1px solid var(--border);">
-      <span class="tag tag-outline" style="font-size:10px;">${esc(sc.type||sc.scope_type)}</span>
-      <code style="flex:1;">${esc(sc.value||sc.scope_value)}</code>
-      <span class="tag ${mode==='write'?'tag-accent':'tag-neutral'}" style="font-size:10px;">${mode==='write'?t('users.ecriture'):t('users.lecture')}</span>
-      <button class="btn btn-ghost btn-icon" onclick="${removeFn}(${i})"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-    </div>`;
-  }).join('');
 }
 
 // Capacités qu'une équipe peut porter (rbac.KnownPermissions) : elles ne portent sur aucune ressource.
@@ -191,6 +178,7 @@ window.openUserModal = async function(id) {
   try {
     if (id) u = await api('GET', `/users/${id}`);
     if (id) access = await api('GET', `/users/${id}/access`).catch(() => null);
+    window._rightsCatalogCache = await rightsCatalog().catch(() => null);
     teams = await api('GET', '/teams').catch(() => []) || [];
   } catch {}
   const userTeams = u?.teams || [];
@@ -226,13 +214,11 @@ window.openUserModal = async function(id) {
   const rowStyle = 'display:flex;align-items:center;gap:8px;font-size:12.5px;padding:6px 10px;border:1px solid var(--border);';
   const grantRows = !access ? '' : access.global
     ? `<div style="${rowStyle}">${esc(t('users.access_global'))}</div>`
-    : ((access.grants || []).length
-      ? access.grants.map(g => `<div style="${rowStyle}">
-          <span class="tag tag-outline" style="font-size:10px;">${esc(g.type)}</span>
-          <code style="flex:1;">${esc(g.value)}</code>
-          <span class="tag ${g.access_mode==='write'?'tag-accent':'tag-neutral'}" style="font-size:10px;">${g.access_mode==='write'?t('users.ecriture'):t('users.lecture')}</span>
-          <span style="font-size:11px;opacity:0.55;">${esc(t('users.access_via', { teams: (g.teams || []).join(', ') }))}</span>
-        </div>`).join('')
+    : ((access.teams || []).some(tm => (tm.accesses || []).length)
+      ? access.teams.flatMap(tm => (tm.accesses || []).map(a => `<div style="${rowStyle}flex-direction:column;align-items:flex-start;">
+          <div style="font-size:12.5px;font-weight:600;">${esc(a.name || t('users.access_unnamed'))} <span style="font-size:11px;font-weight:400;opacity:0.55;">${esc(t('users.access_via', { teams: tm.name }))}</span></div>
+          ${typeof accessSummaryHtml === 'function' ? accessSummaryHtml(a, window._rightsCatalogCache) : ''}
+        </div>`)).join('')
       : `<span style="font-size:12px;opacity:0.55;">${esc(t('users.access_none'))}</span>`);
   const capRows = (access?.permissions || []).map(p => {
     const via = [];
@@ -268,7 +254,7 @@ window.openUserModal = async function(id) {
                 return `<label style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;cursor:${off ? 'not-allowed' : 'pointer'};font-size:13px;${off ? 'opacity:0.55;' : ''}">
                   <input type="checkbox" name="um-team" value="${esc(team.id)}" ${checked?'checked':''} ${off ? 'disabled' : ''} style="flex-shrink:0;">
                   <span style="flex:1;font-weight:500;">${esc(team.name)}${badge ? ` <span class="tag tag-outline" style="font-size:10px;">${esc(badge)}</span>` : ''}</span>
-                  <span style="font-size:11px;opacity:0.45;">${team.scope_count||0} ${(team.scope_count||0)!==1?t('users.grants_lbl'):t('users.grant_lbl')}</span>
+                  <span style="font-size:11px;opacity:0.45;">${team.access_count||0} ${(team.access_count||0)!==1?t('users.accesses_lbl'):t('users.access_lbl')}</span>
                 </label>`;
               }).join('')}
             </div>
@@ -330,45 +316,15 @@ window.deleteUser = function(id) {
 window.openTeamModal = async function(id) {
   let team = null;
   if (id) { try { team = await api('GET', `/teams/${id}`); } catch {} }
-  let scopes = [];
-  if (id) {
-    try {
-      const raw = await api('GET', `/teams/${id}/scopes`);
-      scopes = (raw || []).map(sc => ({
-        id: sc.id,
-        type: sc.scope_type,
-        value: sc.value,
-        mode: sc.access_mode || 'read',
-      }));
-    } catch {}
-  }
   if (team?.builtin) { openBuiltinTeamModal(team); return; }
-  window._scopesOrig = [...scopes];
   const teamCaps = team?.permissions || [];
   window._teamCapsOrig = [...teamCaps];
   const actorSuper = Role.isSuperAdmin();
 
-  let _acProxies = [];
-  try { _acProxies = await api('GET', '/proxies').catch(() => []); } catch {}
-  let _acNodes = [];
-  try { _acNodes = (await api('GET', '/nodes').catch(() => [])).filter(n => n.role === 'edge'); } catch {}
-
-  const renderScopes = () => {
-    const el = document.getElementById('tm-scopes-list');
-    if (el) el.innerHTML = grantListHtml(window._scopes || scopes, 'tm-scopes-list', 'window._removeScope');
-  };
-
   document.getElementById('team-modal-backdrop')?.remove();
-  // inject autocomplete styles once
-  if (!document.getElementById('tm-ac-style')) {
-    const s = document.createElement('style');
-    s.id = 'tm-ac-style';
-    s.textContent = '#tm-ac-list{position:absolute;z-index:10001;background:var(--card-bg,#1a1a2e);border:1px solid var(--border);border-top:none;max-height:160px;overflow-y:auto;width:100%;box-sizing:border-box;display:none}#tm-ac-list .ac-item{padding:6px 10px;font-size:12.5px;cursor:pointer;font-family:monospace}#tm-ac-list .ac-item:hover,#tm-ac-list .ac-item.ac-active{background:var(--accent,#3a86ff22)}#tm-sc-wrap{position:relative;flex:1;min-width:120px}';
-    document.head.appendChild(s);
-  }
   document.body.insertAdjacentHTML('beforeend', `
     <div id="team-modal-backdrop" class="dialog-backdrop" style="background:rgba(0,0,0,0.55);">
-      <div class="dialog blueprint" role="dialog" aria-modal="true" style="width:min(520px,96vw);max-width:none;">
+      <div class="dialog blueprint" role="dialog" aria-modal="true" style="width:min(560px,96vw);max-width:none;max-height:92vh;overflow:auto;">
         <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
         <div class="dialog-title">${id ? t('users.edit_team') : t('users.new_team')}</div>
         <div class="dialog-body" style="display:flex;flex-direction:column;gap:14px;">
@@ -382,28 +338,12 @@ window.openTeamModal = async function(id) {
             </label>`).join('')}
           </div>
           <div style="display:flex;flex-direction:column;gap:8px;">
-            <label style="font-size:13px;font-weight:500;">${t('users.grants_scope')}</label>
-            <p style="margin:0;font-size:11px;opacity:0.55;">${t('users.team_grants_hint')}</p>
-            <div id="tm-scopes-list" style="display:flex;flex-direction:column;gap:4px;"></div>
-            <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
-              <div class="seg">
-                <label class="seg-opt"><input type="radio" name="tm-sc-type" value="domain" checked>domain</label>
-                <label class="seg-opt"><input type="radio" name="tm-sc-type" value="server">server</label>
-                <label class="seg-opt"><input type="radio" name="tm-sc-type" value="proxy">proxy</label>
-                <label class="seg-opt"><input type="radio" name="tm-sc-type" value="edge">edge</label>
-              </div>
-              <div id="tm-sc-wrap">
-                <input class="input" id="tm-sc-val" autocomplete="off" style="width:100%;box-sizing:border-box;" placeholder="*.corp.io">
-                <div id="tm-ac-list"></div>
-              </div>
-              <select id="tm-sc-mode" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--input-bg,var(--bg2));color:var(--text);">
-                <option value="read">${t('users.read_opt')}</option>
-                <option value="write" selected>${t('users.write_opt')}</option>
-              </select>
-              <button class="btn btn-ghost btn-icon" onclick="window._addScope()" title="${esc(t('users.add_grant'))}" style="flex-shrink:0;">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
-              </button>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+              <label style="font-size:13px;font-weight:500;">${t('users.accesses_title')}</label>
+              ${id ? `<button type="button" class="btn btn-secondary" onclick="openAccessModal('${esc(id)}')">${esc(t('users.access_add'))}</button>` : ''}
             </div>
+            <p style="margin:0;font-size:11px;opacity:0.55;">${esc(t('users.accesses_hint'))}</p>
+            <div id="tm-accesses" style="display:flex;flex-direction:column;gap:6px;"></div>
           </div>
         </div>
         <div class="dialog-actions">
@@ -412,85 +352,7 @@ window.openTeamModal = async function(id) {
         </div>
       </div>
     </div>`);
-
-  window._scopes = scopes;
-  renderScopes();
-
-  const acInput = document.getElementById('tm-sc-val');
-  const acList  = document.getElementById('tm-ac-list');
-  let acActive  = -1;
-
-  function acSuggestions(type, q) {
-    q = (q || '').toLowerCase();
-    let items = [];
-    if (type === 'proxy') {
-      items = _acProxies.map(p => p.id);
-    } else if (type === 'domain') {
-      const hosts = new Set();
-      _acProxies.forEach(p => { try { const r = JSON.parse(p.config||'{}'); if (r.host) hosts.add(r.host); } catch {} });
-      items = [...hosts];
-    } else if (type === 'server') {
-      const urls = new Set();
-      _acProxies.forEach(p => { try { const r = JSON.parse(p.config||'{}'); (r.backends||[]).forEach(b => { if (b.url) urls.add(b.url); }); } catch {} });
-      items = [...urls];
-    } else if (type === 'edge') {
-      items = _acNodes.map(n => n.node_name || n.display_name || n.id).filter(Boolean);
-    }
-    return items.filter(s => !q || s.toLowerCase().includes(q));
-  }
-
-  function acRender(items) {
-    if (!items.length) { acList.style.display = 'none'; return; }
-    acActive = -1;
-    acList.innerHTML = items.slice(0, 20).map((s, i) =>
-      `<div class="ac-item" data-val="${esc(s)}" onmousedown="event.preventDefault();window._acPick(${i})">${esc(s)}</div>`
-    ).join('');
-    acList.style.display = 'block';
-  }
-
-  window._acPick = function(i) {
-    const items = acList.querySelectorAll('.ac-item');
-    if (items[i]) acInput.value = items[i].dataset.val;
-    acList.style.display = 'none';
-  };
-
-  acInput.addEventListener('input', () => {
-    const type = document.querySelector('input[name="tm-sc-type"]:checked')?.value || 'domain';
-    acRender(acSuggestions(type, acInput.value));
-  });
-
-  acInput.addEventListener('keydown', e => {
-    const items = acList.querySelectorAll('.ac-item');
-    if (!items.length) return;
-    if (e.key === 'ArrowDown') { e.preventDefault(); acActive = Math.min(acActive+1, items.length-1); items.forEach((el,i) => el.classList.toggle('ac-active', i===acActive)); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); acActive = Math.max(acActive-1, 0); items.forEach((el,i) => el.classList.toggle('ac-active', i===acActive)); }
-    else if (e.key === 'Enter' && acActive >= 0) { e.preventDefault(); window._acPick(acActive); }
-    else if (e.key === 'Escape') { acList.style.display = 'none'; }
-  });
-
-  acInput.addEventListener('blur', () => { setTimeout(() => { acList.style.display = 'none'; }, 150); });
-
-  document.querySelectorAll('input[name="tm-sc-type"]').forEach(r => {
-    r.addEventListener('change', () => {
-      const placeholders = { domain: '*.corp.io', server: 'http://10.0.0.*', proxy: 'uuid…', edge: 'edge-paris-*' };
-      acInput.placeholder = placeholders[r.value] || '';
-      acList.style.display = 'none';
-      acInput.value = '';
-    });
-  });
-
-  window._addScope = function() {
-    const type = document.querySelector('input[name="tm-sc-type"]:checked')?.value || 'domain';
-    const value = acInput?.value?.trim();
-    const mode = document.getElementById('tm-sc-mode')?.value || 'read';
-    if (!value) return;
-    window._scopes.push({ type, value, mode });
-    acInput.value = '';
-    acList.style.display = 'none';
-    renderScopes();
-  };
-
-  window._removeScope = function(i) { window._scopes.splice(i, 1); renderScopes(); };
+  renderTeamAccesses(id);
 };
 
 window.saveTeam = async function(id) {
@@ -505,21 +367,6 @@ window.saveTeam = async function(id) {
       tid = created.id;
     }
 
-    const currentScopes = window._scopes || [];
-    const origScopes = window._scopesOrig || [];
-
-    // Remplace tous les grants (mode inclus)
-    for (const orig of origScopes) {
-      if (orig.id) await api('DELETE', `/teams/${tid}/scopes/${orig.id}`).catch(() => {});
-    }
-    for (const sc of currentScopes) {
-      await api('POST', `/teams/${tid}/scopes`, {
-        scope_type: sc.type || sc.scope_type,
-        value: sc.value || sc.scope_value,
-        access_mode: sc.mode || sc.access_mode || 'read',
-      }).catch(() => {});
-    }
-
     const caps = [...document.querySelectorAll('input[name="tm-cap"]:checked')].map(cb => cb.value);
     const origCaps = window._teamCapsOrig || [];
     if (Role.isSuperAdmin() && (caps.length !== origCaps.length || caps.some(p => !origCaps.includes(p)))) {
@@ -529,6 +376,8 @@ window.saveTeam = async function(id) {
     toast(t('users.team_saved'), 'success');
     document.getElementById('team-modal-backdrop')?.remove();
     refreshUsers();
+    // Les accès d'une équipe se composent une fois l'équipe créée : on rouvre la fenêtre pour les ajouter.
+    if (!id) openTeamModal(tid);
   } catch(e) { toast(e.message, 'error'); }
 };
 

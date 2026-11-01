@@ -115,6 +115,15 @@ func runTeams() {
 	case "members":
 		runTeamMembers()
 
+	case "access":
+		runTeamsAccess()
+
+	case "catalog":
+		runTeamsCatalog()
+
+	case "preview":
+		runTeamsPreview()
+
 	case "permissions":
 		args := parseFlags(os.Args[3:])
 		id := firstPositional(os.Args[3:], args)
@@ -185,6 +194,9 @@ Sous-commandes :
   create   Crée une équipe
   update   Modifie une équipe
   members  Gestion des membres (list / add / remove)
+  access   Accès de l'équipe : un périmètre et un niveau par service (list / add / remove)
+  catalog  Services, niveaux et profils disponibles pour un accès
+  preview  Proxys qu'un périmètre couvre
   permissions  Affiche ou remplace les capacités accordées aux membres (superadmin)
   delete   Supprime une équipe
 
@@ -197,6 +209,14 @@ goproxify teams delete <id> [-y] [-admin-url …] [-token …]
 goproxify teams members list   <team-id> [-admin-url …] [-token …]
 goproxify teams members add    <team-id> -user <user-id> [-admin-url …] [-token …]
 goproxify teams members remove <team-id> -user <user-id> [-admin-url …] [-token …]
+
+goproxify teams access list   <team-id> [-admin-url …] [-token …]
+goproxify teams access add    <team-id> [-name n] [-profile id] [-level service=niveau,…] [-allow perm,…] [-access id] [périmètre] [-admin-url …] [-token …]
+goproxify teams access remove <team-id> -access <id> [-admin-url …] [-token …]
+goproxify teams preview [périmètre] [-admin-url …] [-token …]
+  Périmètre (tous les critères posés sont requis ; aucun = tout) : -domain glob -proxy id|glob|re:<RE2> -backend glob
+  -group glob -environment e -region r -tag t -label clé=valeur[,clé=valeur]
+  Les niveaux sont cumulatifs (proxies=operate comprend read) ; goproxify teams catalog liste services, niveaux et profils.
 
 goproxify teams permissions <id> [-permissions gdpr:reveal,gdpr:export,gdpr:erase,gdpr:hold|none] [-admin-url …] [-token …]
   Sans -permissions : affiche. gdpr:reveal = révéler une IP pseudonymisée, gdpr:export = export d'accès (Art. 15/20),

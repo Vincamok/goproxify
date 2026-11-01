@@ -155,6 +155,7 @@ func (s *Server) Start(ctx context.Context) error {
 		manager.SetDataDir(stateDir)
 		archStore = archstore.New(stateDir)
 		manager.SetArchStore(archStore)
+		rbac.SetGroupSource(rbac.ArchitectureGroups{Store: archStore})
 	}
 	s.wsManager = manager
 	manager.SetSettings(s.runtimeSettings())
@@ -217,6 +218,7 @@ func (s *Server) Start(ctx context.Context) error {
 		s.alertingEngine.Emit(alerting.Event{Trigger: alerting.TriggerBackupFailed, Severity: sev, Component: "admin", Detail: detail})
 	})
 	proxiesH := &api.ProxiesHandler{DB: s.db, Log: s.log, Pusher: manager, Versioner: backupSched}
+	rbac.SetRouteSource(proxiesH.AllRoutes)
 	backupH := &api.BackupHandler{
 		DB: s.db, Log: s.log, Scheduler: backupSched, Pusher: manager, Auditor: s.auditor,
 		LauncherImage: launcher.Env{Registry: os.Getenv("GPX_DEPLOY_REGISTRY"), Tag: os.Getenv("GPX_DEPLOY_TAG")}.Image("launcher"),
@@ -606,6 +608,10 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 	}
 	teamsH := &api.TeamsHandler{DB: s.db, Log: s.log, OnChange: syncUsers}
+	rightsH := &api.RightsHandler{Log: s.log, Routes: proxiesH.AllRoutes}
+	if archStore != nil {
+		rightsH.Groups = rbac.ArchitectureGroups{Store: archStore}.Snapshot
+	}
 	discoveredH := &api.DiscoveredContainersHandler{DB: s.db, Log: s.log, Pusher: manager}
 	if archStore != nil {
 		discoveredH.Groups = api.NewGroupResolver(archStore, s.db)
@@ -771,6 +777,13 @@ func (s *Server) Start(ctx context.Context) error {
 	// Lecture pour tout authentifié ; mutations réservées admin (ou operator), JWT comme PAT.
 	adminWrites := func(h http.Handler) http.Handler { return protected(rbac.RequireAdminForWrites(s.db)(h)) }
 	operatorWrites := func(h http.Handler) http.Handler { return protected(rbac.RequireOperatorForWrites(s.db)(h)) }
+	// Services dont les accès d'équipe sont appliqués (logs, certificats, alertes, métriques ; ADR 0022) : une lecture exige la
+	// permission du catalogue et le handler filtre par périmètre ; gatedReads réserve encore les écritures aux
+	// administrateurs, gatedOpen laisse le handler décider des siennes.
+	gatedReads := func(h http.Handler) http.Handler {
+		return protected(rbac.Gate(s.db, readPermission)(rbac.RequireAdminForWrites(s.db)(h)))
+	}
+	gatedOpen := func(h http.Handler) http.Handler { return protected(rbac.Gate(s.db, readPermission)(h)) }
 	userTokensH := &api.UserTokensHandler{DB: s.db, Log: s.log, OnChange: syncUsers}
 
 	// Routes proxies : lecture pour tous les authentifiés (filtrée par scope dans le handler),
@@ -784,6 +797,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/api/v1/users/", adminOnly(usersH))
 	mux.Handle("/api/v1/teams", adminOnly(teamsH))
 	mux.Handle("/api/v1/teams/", adminOnly(teamsH))
+	mux.Handle("/api/v1/rights/", adminOnly(rightsH))
 	mux.Handle("/api/v1/detector-types", operatorWrites(api.DetectorTypesHandler{}))
 	mux.Handle("/api/v1/snippets", operatorWrites(snippetsH))
 	mux.Handle("/api/v1/snippets/", operatorWrites(snippetsH))
@@ -805,8 +819,8 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/api/v1/portal/", adminOnly(portalH))
 	mcpAccessH := &api.McpAccessHandler{DB: s.db, Log: s.log}
 	mux.Handle("/api/v1/mcp-access/", adminOnly(mcpAccessH))
-	mux.Handle("/api/v1/certs", adminWrites(certsH))
-	mux.Handle("/api/v1/certs/", adminWrites(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/api/v1/certs", gatedReads(certsH))
+	mux.Handle("/api/v1/certs/", gatedReads(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/api/v1/certs/")
 		parts := strings.SplitN(path, "/", 3)
 		if len(parts) >= 2 && (parts[1] == "deploy-targets" || parts[1] == "pull-tokens") {
@@ -816,7 +830,7 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 	})))
 	mux.Handle("/api/v1/cert-bundle", http.HandlerFunc(certBundleH.ServeHTTP))
-	mux.Handle("/api/v1/cert-deploy-types", adminWrites(api.CertDeployTypesHandler{}))
+	mux.Handle("/api/v1/cert-deploy-types", gatedReads(api.CertDeployTypesHandler{}))
 	mux.Handle("/api/v1/internal-ca", adminOnly(internalCAH))
 	mux.Handle("/api/v1/internal-ca/", adminOnly(internalCAH))
 	mux.Handle("/api/v1/nodes", protected(nodesH))
@@ -833,20 +847,20 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/api/v1/discovered-containers", protected(discoveredH))
 	mux.Handle("/api/v1/discovered-containers/", protected(discoveredH))
 	mux.Handle("/api/v1/backends/health", protected(backendsHealthH))
-	mux.Handle("/api/v1/metrics/proxies", protected(proxyMetricsH))
-	mux.Handle("/api/v1/metrics/summary", protected(http.HandlerFunc(proxyMetricsH.ServeSummary)))
+	mux.Handle("/api/v1/metrics/proxies", gatedOpen(proxyMetricsH))
+	mux.Handle("/api/v1/metrics/summary", gatedOpen(http.HandlerFunc(proxyMetricsH.ServeSummary)))
 	mux.Handle("/api/v1/audit", protected(auditH))
 	mux.Handle("/api/v1/audit/", protected(auditH))
-	mux.Handle("/api/v1/alert-channel-types", protected(api.ChannelTypesHandler{}))
-	mux.Handle("/api/v1/alert-channels", adminWrites(channelsH))
-	mux.Handle("/api/v1/alert-channels/", adminWrites(channelsH))
+	mux.Handle("/api/v1/alert-channel-types", gatedOpen(api.ChannelTypesHandler{}))
+	mux.Handle("/api/v1/alert-channels", gatedReads(channelsH))
+	mux.Handle("/api/v1/alert-channels/", gatedReads(channelsH))
 	alertEventsH := &api.AlertEventsHandler{DB: s.db}
-	mux.Handle("/api/v1/alert-events", adminWrites(alertEventsH))
-	mux.Handle("/api/v1/alert-events/", adminWrites(alertEventsH))
-	mux.Handle("/api/v1/alert-rules", adminWrites(rulesH))
-	mux.Handle("/api/v1/alert-rules/", adminWrites(rulesH))
-	mux.Handle("/api/v1/logs", adminWrites(logsH))
-	mux.Handle("/api/v1/logs/", adminWrites(logsH))
+	mux.Handle("/api/v1/alert-events", gatedReads(alertEventsH))
+	mux.Handle("/api/v1/alert-events/", gatedReads(alertEventsH))
+	mux.Handle("/api/v1/alert-rules", gatedReads(rulesH))
+	mux.Handle("/api/v1/alert-rules/", gatedReads(rulesH))
+	mux.Handle("/api/v1/logs", gatedReads(logsH))
+	mux.Handle("/api/v1/logs/", gatedReads(logsH))
 	// Droits RGPD : ouverts aux membres de l'équipe DPO (et au superadmin), pas seulement aux admins ; le handler
 	// vérifie la capacité (gdpr:reveal, gdpr:export, gdpr:erase). Un administrateur garde l'export et l'effacement.
 	mux.Handle("/api/v1/logs/reveal-ip", protected(logsH))
@@ -883,7 +897,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/api/v1/import/", adminOnly(importH))
 	mux.Handle("/api/v1/backups", adminOnly(backupH))
 	mux.Handle("/api/v1/backups/", adminOnly(backupH))
-	mux.Handle("/api/v1/prism/", protected(prismH))
+	mux.Handle("/api/v1/prism/", gatedOpen(prismH))
 	mux.Handle("/api/v1/ip-profiles", adminWrites(ipProfilesH))
 	mux.Handle("/api/v1/ip-profiles/", adminWrites(ipProfilesH))
 	mux.Handle("/api/v1/domains", adminWrites(domainsH))

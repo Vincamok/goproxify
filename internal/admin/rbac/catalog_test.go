@@ -72,3 +72,51 @@ func TestServiceIDsAreStable(t *testing.T) {
 		}
 	}
 }
+
+// Chaque profil se valide comme un accès : services, niveaux et permissions existent et sont accordables.
+func TestProfilesAreValidAccesses(t *testing.T) {
+	ids := map[string]bool{}
+	for _, p := range Profiles {
+		if ids[p.ID] {
+			t.Errorf("profil %q déclaré deux fois", p.ID)
+		}
+		ids[p.ID] = true
+		if err := p.Access().Validate(); err != nil {
+			t.Errorf("profil %q : %v", p.ID, err)
+		}
+	}
+}
+
+func TestAccessGrantsAreCumulativeAndExplicitPermissionsAreSeparate(t *testing.T) {
+	a := TeamAccess{Levels: map[string]string{"proxies": "operate", "certs": "read"}, Permissions: []string{"certs:deploy"}}
+	for perm, want := range map[string]bool{
+		"proxies:read": true, "proxies:operate": true, "proxies:manage": false,
+		"certs:read": true, "certs:manage": false, "certs:deploy": true, "certs:export_key": false,
+		"logs:read": false, "snippets:write": false, "inconnue": false,
+	} {
+		if got := a.Grants(perm); got != want {
+			t.Errorf("Grants(%s) = %v, attendu %v", perm, got, want)
+		}
+	}
+	if (TeamAccess{Permissions: []string{"certs:deploy"}}).Grants("certs:read") {
+		t.Error("une permission explicite n'ouvre pas le niveau de lecture")
+	}
+}
+
+func TestAccessValidateRefusesWhatATeamCannotHold(t *testing.T) {
+	for name, a := range map[string]TeamAccess{
+		"service inconnu":               {Levels: map[string]string{"inconnu": "read"}},
+		"niveau inconnu":                {Levels: map[string]string{"proxies": "dieu"}},
+		"écriture d'objet partagé":      {Levels: map[string]string{"snippets": "write"}},
+		"capacité RGPD":                 {Permissions: []string{"gdpr:erase"}},
+		"accorder des droits":           {Permissions: []string{"teams:write"}},
+		"niveau coché comme permission": {Permissions: []string{"proxies:read"}},
+		"permission inconnue":           {Permissions: []string{"x:y"}},
+		"doublon":                       {Permissions: []string{"certs:deploy", "certs:deploy"}},
+		"périmètre invalide":            {Perimeter: Perimeter{Proxy: "re:("}},
+	} {
+		if err := a.Validate(); err == nil {
+			t.Errorf("%s : devrait être refusé", name)
+		}
+	}
+}

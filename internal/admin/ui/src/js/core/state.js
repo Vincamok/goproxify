@@ -3,7 +3,7 @@ const state = {
   token:        localStorage.getItem('gpx_token') || '',
   page:         'dashboard',
   selectedEdge: null,
-  user:         null, // rempli après login : { id, email, role, is_super, teams, effective_scopes, permissions }
+  user:         null, // rempli après login : { id, email, role, is_super, teams, granted, permissions }
   timezone:     localStorage.getItem('gpx_tz') || '', // IANA (ex. Europe/Paris) — sync via /health
 };
 
@@ -26,31 +26,16 @@ const Role = {
   // RGPD : révéler l'IP réelle d'une entrée pseudonymisée (superadmin ou membre d'une équipe qui porte gdpr:reveal, ex. l'équipe DPO).
   canRevealIP: () => (state.user?.permissions || []).includes('gdpr:reveal'),
 
-  // Snippets : admin, ou user avec au moins un grant write (rbac.RequireOperator côté API).
-  canWriteSnippets: () => Role.isAdmin() || (state.user?.effective_scopes || []).some(s => s.access_mode === 'write'),
+  // Snippets : admin, ou user dont une équipe donne l'exploitation des proxys (rbac.RequireOperator côté API).
+  canWriteSnippets: () => Role.isAdmin() || (state.user?.granted || []).includes('proxies:operate'),
 
-  // L'utilisateur a-t-il un scope de type "edge" explicite sur cette passerelle ?
-  hasEdgeScope: (nodeName) => {
-    if (Role.isGlobalAdmin() || Role.isSuperAdmin()) return true;
-    return (state.user?.effective_scopes || []).some(s =>
-      s.type === 'edge' && _globMatch(s.value, nodeName)
-    );
-  },
+  // Les droits se donnent sur des groupes de passerelles (ADR 0022), que le navigateur ne résout pas : l'API fait le
+  // filtrage fin, la navigation montre les passerelles à qui a un droit de lecture sur l'infrastructure ou les proxys.
+  hasEdgeScope: () => Role.hasAccessToEdge(),
 
-  // L'utilisateur a-t-il accès (via n'importe quel scope) à au moins un domaine de cette passerelle ?
-  hasAccessToEdge: (edge) => {
+  hasAccessToEdge: () => {
     if (Role.isGlobalAdmin() || Role.isSuperAdmin()) return true;
-    const scopes = state.user?.effective_scopes || [];
-    return scopes.some(s => s.type === 'edge' && _globMatch(s.value, edge.node_name || edge.id));
-    // Note : l'accès via domain/proxy/server s'affiche aussi dans la passerelle qui héberge le domaine,
-    // mais ce filtrage fin est géré à l'affichage des proxies, pas de la nav.
+    const granted = state.user?.granted || [];
+    return granted.includes('infra:read') || granted.includes('proxies:read');
   },
 };
-
-// Mini glob-match JS (supporte * et ?)
-function _globMatch(pattern, str) {
-  if (!pattern || !str) return false;
-  if (pattern === '*') return true;
-  const re = new RegExp('^' + pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$');
-  return re.test(str);
-}

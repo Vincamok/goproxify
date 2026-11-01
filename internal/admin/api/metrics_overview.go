@@ -175,6 +175,9 @@ func (s *ProxyMetricsSampler) Summary() map[string]any {
 
 // ServeSummary : GET /api/v1/metrics/summary — voir Summary.
 func (s *ProxyMetricsSampler) ServeSummary(w http.ResponseWriter, r *http.Request) {
+	if !requireUnrestricted(w, r, "dashboard:read") {
+		return
+	}
 	if r.Method != http.MethodGet {
 		writeErr(w, r, http.StatusMethodNotAllowed, "api.err.method")
 		return

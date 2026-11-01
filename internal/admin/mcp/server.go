@@ -445,7 +445,7 @@ var tools = []map[string]any{
 	// Équipes
 	{
 		"name":        "list_teams",
-		"description": "Liste les équipes et leur nombre de membres.",
+		"description": "Liste les équipes et leur nombre de membres (leurs accès : list_team_accesses).",
 		"inputSchema": schema(),
 	},
 	// Audit
@@ -617,6 +617,7 @@ var tools = []map[string]any{
 func init() {
 	tools = append(tools, portalTools()...)
 	tools = append(tools, infraTools()...)
+	tools = append(tools, rightsTools()...)
 }
 
 // --- tools/call ----------------------------------------------------------
@@ -644,7 +645,7 @@ func (h *Handler) denyTool(r *http.Request, tool string) string {
 	if rbac.ToolRequiresAdmin(tool) && !rbac.IsAdmin(r.Context(), h.DB, adminauth.UserIDFromContext(r.Context())) {
 		return "accès réservé aux administrateurs"
 	}
-	return ""
+	return h.denyPerimeterBound(r.Context(), tool)
 }
 
 func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
@@ -746,6 +747,16 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 		result, toolErr = h.toolListLogsFiltered(r, domain, level, requestID, ja3, ja4)
 	case "get_siem_status":
 		result = h.toolSIEMStatus()
+	case "get_rights_catalog":
+		result, toolErr = h.toolGetRightsCatalog(r)
+	case "list_team_accesses":
+		result, toolErr = h.toolListTeamAccesses(r, p.Arguments)
+	case "set_team_access":
+		result, toolErr = h.toolSetTeamAccess(r, p.Arguments)
+	case "delete_team_access":
+		result, toolErr = h.toolDeleteTeamAccess(r, p.Arguments)
+	case "preview_perimeter":
+		result, toolErr = h.toolPreviewPerimeter(r, p.Arguments)
 	case "list_teams":
 		result, toolErr = h.toolListTeams(r)
 	case "get_audit_log":

@@ -7,17 +7,18 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"io"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/vincamok/goproxify/internal/admin/auth"
-	"github.com/vincamok/goproxify/internal/admin/edgeproxy"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
+	"github.com/vincamok/goproxify/internal/admin/edgeproxy"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
 	"github.com/vincamok/goproxify/internal/admin/routesecrets"
 	"github.com/vincamok/goproxify/internal/edge/proxystore"
@@ -94,6 +95,45 @@ func (h *ProxiesHandler) listFiles(w http.ResponseWriter, r *http.Request) {
 		result = append(result, p)
 	}
 	jsonOK(w, result)
+}
+
+// AllRoutes rend tous les proxys configurés, sans filtre de droits ni masquage : c'est ce que l'aperçu d'un périmètre
+// de droits parcourt. Une passerelle qui ne répond pas est ignorée tant qu'une autre répond.
+func (h *ProxiesHandler) AllRoutes(ctx context.Context) ([]router.Route, error) {
+	targets, err := edgeproxy.ListTargets(ctx, h.DB)
+	if err != nil || len(targets) == 0 {
+		return nil, errNoEdge
+	}
+	client := edgeproxy.NewClient()
+	byID := map[string]router.Route{}
+	var lastErr error
+	answered := 0
+	for _, t := range targets {
+		res, err := client.List(ctx, t)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		answered++
+		for _, env := range res.Production {
+			var route router.Route
+			_ = json.Unmarshal(env.Config, &route)
+			route.ID = env.ID
+			if route.Host == "" {
+				route.Host = env.Host
+			}
+			byID[route.ID] = route
+		}
+	}
+	if answered == 0 {
+		return nil, lastErr
+	}
+	routes := make([]router.Route, 0, len(byID))
+	for _, route := range byID {
+		routes = append(routes, route)
+	}
+	sort.Slice(routes, func(i, j int) bool { return rbac.ProxyName(&routes[i]) < rbac.ProxyName(&routes[j]) })
+	return routes, nil
 }
 
 func (h *ProxiesHandler) getFiles(w http.ResponseWriter, r *http.Request, id string) {
@@ -372,10 +412,10 @@ func (h *MigrateProxiesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 	defer rows.Close()
 
 	type item struct {
-		ID     string `json:"id"`
-		Host   string `json:"host"`
-		OK     bool   `json:"ok"`
-		Error  string `json:"error,omitempty"`
+		ID    string `json:"id"`
+		Host  string `json:"host"`
+		OK    bool   `json:"ok"`
+		Error string `json:"error,omitempty"`
 	}
 	client := edgeproxy.NewClient()
 	results := make([]item, 0)
@@ -580,10 +620,10 @@ func (h *ProxiesHandler) revisionsDiff(w http.ResponseWriter, r *http.Request, p
 	}
 
 	type diffRevMeta struct {
-		Revision  string     `json:"revision"`
-		Status    string     `json:"status"`
-		UpdatedAt time.Time  `json:"updated_at"`
-		CreatedBy string     `json:"created_by,omitempty"`
+		Revision  string    `json:"revision"`
+		Status    string    `json:"status"`
+		UpdatedAt time.Time `json:"updated_at"`
+		CreatedBy string    `json:"created_by,omitempty"`
 	}
 	meta := func(e *proxystore.Envelope) diffRevMeta {
 		return diffRevMeta{
@@ -632,11 +672,11 @@ func envelopeToRow(env *proxystore.Envelope) proxyRow {
 		return proxyRow{}
 	}
 	row := proxyRow{
-		ID:      env.ID,
-		Name:    env.Host,
-		Config:  env.Config,
-		Enabled: env.Enabled,
-		Implicit: env.Implicit,
+		ID:        env.ID,
+		Name:      env.Host,
+		Config:    env.Config,
+		Enabled:   env.Enabled,
+		Implicit:  env.Implicit,
 		UpdatedAt: env.UpdatedAt,
 	}
 	if env.CreatedAt != nil {

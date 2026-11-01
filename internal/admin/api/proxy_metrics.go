@@ -381,6 +381,17 @@ func (s *ProxyMetricsSampler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	points, _ := strconv.Atoi(r.URL.Query().Get("points"))
 	out, sampledAt := s.Snapshot(points)
 	global, edges, certs := s.Overview()
+	// Un accès à périmètre ne voit que les séries des hôtes qu'il couvre ; les totaux de la plateforme, des passerelles et
+	// des certificats ne se découpent pas par hôte : ils sont réservés à un accès sans critère.
+	if v, restricted := visibility(r, "dashboard:read"); restricted && !v.All() {
+		visible := out[:0:0]
+		for _, e := range out {
+			if v.Host(e.Host) {
+				visible = append(visible, e)
+			}
+		}
+		out, global, edges, certs = visible, nil, nil, nil
+	}
 	jsonOK(w, map[string]any{
 		"interval_s": int(proxyMetricsInterval / time.Second),
 		"sampled_at": sampledAt,

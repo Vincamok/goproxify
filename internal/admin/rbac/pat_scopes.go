@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/vincamok/goproxify/internal/admin/auth"
@@ -116,7 +117,7 @@ var mcpTools = []string{
 	"list_domains", "create_domain", "renew_domain", "rotate_cert",
 	"list_certs", "get_cert_status", "list_cert_deploy_targets", "list_cert_deploy_types", "list_internal_cas", "list_internal_certs", "get_ech_status", "list_dns_providers", "list_dns_provider_types",
 	"obtain_cert", "import_cert", "trigger_cert_deploy", "create_internal_ca", "issue_internal_cert", "revoke_internal_cert",
-	"list_logs", "get_siem_status", "simulate_ephor_config", "calibrate_ephor", "get_ephor_references", "suggest_ephor_thresholds", "trace_ip", "preview_security_ban", "preview_asn_ban", "get_prism_anomalies", "get_prism_geo", "get_prism_tls_fingerprints", "get_prism_slo", "list_teams",
+	"list_logs", "get_siem_status", "simulate_ephor_config", "calibrate_ephor", "get_ephor_references", "suggest_ephor_thresholds", "trace_ip", "preview_security_ban", "preview_asn_ban", "get_prism_anomalies", "get_prism_geo", "get_prism_tls_fingerprints", "get_prism_slo", "list_teams", "get_rights_catalog", "list_team_accesses", "set_team_access", "delete_team_access", "preview_perimeter",
 	"get_audit_log", "get_security_overview", "list_security_bans", "list_security_engine_types", "get_waf_activity", "list_plugins", "lookup_asn", "list_security_threats", "list_security_cves",
 	"list_ip_profiles", "list_auth_providers", "list_auth_provider_types",
 	"list_flows", "get_flow", "list_flow_versions", "list_flow_runs", "get_flow_run", "get_automation_catalog", "list_flow_templates", "list_silences", "export_automation",
@@ -166,26 +167,26 @@ func AvailableScopesForUser(ctx context.Context, db *sql.DB, userID string) []st
 			out = append(out, s)
 		}
 	}
-	// Lecture de base pour tout compte authentifié
-	add(ScopeProxiesRead, ScopeNodesRead, ScopeAlertsRead, ScopeMetricsRead,
-		ScopeBackupsRead, ScopeSnippetsRead, ScopeDomainsRead, ScopeCertsRead,
-		ScopeLogsRead, ScopeAuditRead)
-
-	switch {
-	case IsSuperAdminRole(role):
+	if IsAdminRole(role) {
+		add(ScopeProxiesRead, ScopeNodesRead, ScopeAlertsRead, ScopeMetricsRead,
+			ScopeBackupsRead, ScopeSnippetsRead, ScopeDomainsRead, ScopeCertsRead,
+			ScopeLogsRead, ScopeAuditRead)
 		add(ScopeProxiesWrite, ScopeProxiesDelete, ScopeSnippetsWrite, ScopeUsersRead, ScopeTeamsRead,
 			ScopeNodesWrite, ScopeAlertsWrite, ScopeDomainsWrite, ScopeCertsWrite, ScopeLogsWrite,
 			ScopeSecurityWrite, ScopeImportWrite, ScopePairingRead,
 			ScopePortalRead, ScopePortalWrite)
-	case IsAdminRole(role):
-		add(ScopeProxiesWrite, ScopeProxiesDelete, ScopeSnippetsWrite, ScopeUsersRead, ScopeTeamsRead,
-			ScopeNodesWrite, ScopeAlertsWrite, ScopeDomainsWrite, ScopeCertsWrite, ScopeLogsWrite,
-			ScopeSecurityWrite, ScopeImportWrite, ScopePairingRead,
-			ScopePortalRead, ScopePortalWrite)
-	default:
-		// user (et legacy operator/viewer normalisés) : write PAT si grant write effectif d'une équipe
-		if UserHasWriteGrant(ctx, db, userID) {
-			add(ScopeProxiesWrite, ScopeSnippetsWrite)
+	} else {
+		// user : les scopes de jeton qui correspondent aux permissions que portent les accès de ses équipes
+		accesses, _ := UserAccesses(ctx, db, userID)
+		for _, p := range Permissions() {
+			if !slices.ContainsFunc(accesses, func(a TeamAccess) bool { return a.Grants(p.ID) }) {
+				continue
+			}
+			for _, scope := range p.PAT {
+				if !slices.Contains(out, scope) {
+					add(scope)
+				}
+			}
 		}
 	}
 	// Capacités RGPD : superadmin ou équipe qui les porte ; un administrateur garde l'export et l'effacement.
@@ -266,7 +267,7 @@ func ToolRequiredScope(tool string) string {
 		return ScopeCertsWrite
 	case "list_logs", "get_siem_status", "simulate_ephor_config", "calibrate_ephor", "get_ephor_references", "suggest_ephor_thresholds", "trace_ip", "preview_security_ban", "preview_asn_ban", "get_prism_anomalies", "get_prism_geo", "get_prism_tls_fingerprints", "get_prism_slo":
 		return ScopeLogsRead
-	case "list_teams":
+	case "list_teams", "get_rights_catalog", "list_team_accesses", "set_team_access", "delete_team_access", "preview_perimeter":
 		return ScopeTeamsRead
 	case "get_audit_log",
 		"get_security_overview", "list_security_bans", "list_security_engine_types", "get_waf_activity", "list_plugins", "lookup_asn", "list_ban_whitelist",
@@ -303,7 +304,7 @@ func ToolRequiresAdmin(tool string) bool {
 	switch tool {
 	case "list_agents", "approve_agent", "revoke_agent", "set_group_attributes",
 		"get_architecture", "list_discovery_sources", "list_dns_providers", "list_dns_provider_types",
-		"list_backups", "list_users", "get_user_access", "list_teams",
+		"list_backups", "list_users", "get_user_access", "list_teams", "get_rights_catalog", "list_team_accesses", "set_team_access", "delete_team_access", "preview_perimeter",
 		"get_security_overview", "list_security_bans", "list_security_engine_types", "get_waf_activity", "list_plugins", "lookup_asn", "list_security_threats", "list_security_cves", "get_proxy_surface", "get_app_inventory", "get_entry_rejections", "get_traffic_reference", "get_tls_reputation", "get_domain_watch", "get_proxy_surface_proposals", "get_proxy_surface_openapi", "get_proxy_surface_suggestions", "reset_proxy_surface", "enforce_proxy_surface", "accept_proxy_surface_suggestions", "relax_proxy_surface",
 		"create_security_ban", "delete_security_ban", "ban_ip", "unban_ip", "get_siem_status", "simulate_ephor_config", "calibrate_ephor", "get_ephor_references", "suggest_ephor_thresholds", "trace_ip", "preview_security_ban", "preview_asn_ban", "list_ban_whitelist", "add_ban_whitelist", "remove_ban_whitelist", "import_security_bans", "ban_asn", "unban_asn",
 		"list_auth_providers", "list_auth_provider_types", "create_auth_provider", "delete_auth_provider",
@@ -405,7 +406,7 @@ func RequiredScopeForRequest(r *http.Request) string {
 			return ScopeLogsRead
 		}
 		return ScopeLogsWrite
-	case strings.HasPrefix(path, "/api/v1/teams"):
+	case strings.HasPrefix(path, "/api/v1/teams"), strings.HasPrefix(path, "/api/v1/rights"):
 		return ScopeTeamsRead
 	case strings.HasPrefix(path, "/api/v1/audit"):
 		return ScopeAuditRead

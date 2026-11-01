@@ -69,26 +69,27 @@ func TestRevealRouteOpenToPermissionHolders(t *testing.T) {
 }
 
 // TestWriteRoutesGuardedForJWT — EnforcePATScope ignore les sessions UI : sans garde
-// de rôle, un user connecté mute certificats, domaines, alertes, profils IP et snippets.
+// de rôle, un user connecté mute certificats, domaines, alertes, profils IP et snippets (gatedReads garde les écritures
+// réservées aux administrateurs, comme adminWrites).
 func TestWriteRoutesGuardedForJWT(t *testing.T) {
 	src := adminServerSource(t)
 	needles := []string{
-		`mux.Handle("/api/v1/certs", adminWrites(`,
-		`mux.Handle("/api/v1/certs/", adminWrites(`,
+		`mux.Handle("/api/v1/certs", gatedReads(`,
+		`mux.Handle("/api/v1/certs/", gatedReads(`,
 		`mux.Handle("/api/v1/domains", adminWrites(`,
 		`mux.Handle("/api/v1/domains/", adminWrites(`,
-		`mux.Handle("/api/v1/alert-channels", adminWrites(`,
-		`mux.Handle("/api/v1/alert-channels/", adminWrites(`,
-		`mux.Handle("/api/v1/alert-rules", adminWrites(`,
-		`mux.Handle("/api/v1/alert-rules/", adminWrites(`,
-		`mux.Handle("/api/v1/alert-events", adminWrites(`,
-		`mux.Handle("/api/v1/alert-events/", adminWrites(`,
+		`mux.Handle("/api/v1/alert-channels", gatedReads(`,
+		`mux.Handle("/api/v1/alert-channels/", gatedReads(`,
+		`mux.Handle("/api/v1/alert-rules", gatedReads(`,
+		`mux.Handle("/api/v1/alert-rules/", gatedReads(`,
+		`mux.Handle("/api/v1/alert-events", gatedReads(`,
+		`mux.Handle("/api/v1/alert-events/", gatedReads(`,
 		`mux.Handle("/api/v1/ip-profiles", adminWrites(`,
 		`mux.Handle("/api/v1/ip-profiles/", adminWrites(`,
 		`mux.Handle("/api/v1/snippets", operatorWrites(`,
 		`mux.Handle("/api/v1/snippets/", operatorWrites(`,
-		`mux.Handle("/api/v1/logs", adminWrites(`,
-		`mux.Handle("/api/v1/logs/", adminWrites(`,
+		`mux.Handle("/api/v1/logs", gatedReads(`,
+		`mux.Handle("/api/v1/logs/", gatedReads(`,
 	}
 	for _, n := range needles {
 		if !strings.Contains(src, n) {

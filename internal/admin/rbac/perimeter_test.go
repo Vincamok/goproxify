@@ -11,6 +11,7 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/archstore"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
+	"github.com/vincamok/goproxify/internal/admin/rbac/rbactest"
 	"github.com/vincamok/goproxify/internal/edge/router"
 )
 
@@ -270,5 +271,154 @@ func TestEdgeGrantIsNowAGroupCriterion(t *testing.T) {
 	}
 	if eng.CanRoute(ctx, "u", "proxies:read", &router.Route{ID: "b", Host: "www.public.io"}, groups) {
 		t.Fatal("le groupe internet n'est pas celui de l'accès")
+	}
+}
+
+// Un accès combine un périmètre à critères en ET et une grille de niveaux ; plusieurs accès s'additionnent.
+func TestEngineJudgesTheGridOfEachAccess(t *testing.T) {
+	db, err := admindb.Open(filepath.Join(t.TempDir(), "grid.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	if _, err := db.Exec(`INSERT INTO users (id, email, password_hash, role) VALUES ('u','u@t.local','x','user'), ('a','a@t.local','x','admin')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO teams (id, name) VALUES ('t1','prod'), ('t2','audit'); INSERT INTO team_members (team_id, user_id) VALUES ('t1','u'), ('t2','u')`); err != nil {
+		t.Fatal(err)
+	}
+	rbactest.AddAccess(t, db, "t1", rbac.TeamAccess{
+		Name:      "Exploitation prod",
+		Perimeter: rbac.Perimeter{Domain: "*.corp.io", Labels: map[string]string{"env": "prod"}},
+		Levels:    map[string]string{"proxies": "operate", "logs": "read", "alerts": "ack"},
+	})
+	rbactest.AddAccess(t, db, "t2", rbac.TeamAccess{Name: "Audit", Levels: map[string]string{"audit": "read", "certs": "read"}})
+	eng := rbac.Engine{DB: db}
+
+	prod := rbac.RouteResource(&router.Route{ID: "p", Host: "app.corp.io", Labels: map[string]string{"env": "prod"}}, nil)
+	test := rbac.RouteResource(&router.Route{ID: "q", Host: "app.corp.io", Labels: map[string]string{"env": "test"}}, nil)
+	elsewhere := rbac.RouteResource(&router.Route{ID: "r", Host: "x.other.io", Labels: map[string]string{"env": "prod"}}, nil)
+
+	for _, c := range []struct {
+		perm string
+		res  rbac.Resource
+		want bool
+	}{
+		{"proxies:operate", prod, true},
+		{"proxies:read", prod, true},
+		{"proxies:operate", test, false},
+		{"proxies:operate", elsewhere, false},
+		{"proxies:manage", prod, false},
+		{"logs:read", prod, true},
+		{"logs:export", prod, false},
+		{"alerts:ack", prod, true},
+		{"alerts:rules", prod, false},
+		// certs:read vient de l'autre équipe, sans périmètre : tout.
+		{"certs:read", elsewhere, true},
+		{"certs:manage", elsewhere, false},
+	} {
+		if got := eng.Can(ctx, "u", c.perm, c.res); got != c.want {
+			t.Errorf("%s : %v, attendu %v", c.perm, got, c.want)
+		}
+	}
+	// Le journal d'audit est de plateforme : il n'a pas de périmètre, l'accès sans critère le donne partout.
+	if f := eng.Scope(ctx, "u", "audit:read"); !f.All() {
+		t.Error("audit:read doit valoir sur toute la plateforme")
+	}
+	// Les permissions sensibles se cochent à part : le niveau ne les donne pas.
+	if eng.Can(ctx, "u", "certs:deploy", elsewhere) {
+		t.Error("certs:deploy n'est pas dans le niveau Gestion")
+	}
+	if !eng.Scope(ctx, "a", "proxies:manage").All() {
+		t.Error("un administrateur détient tout")
+	}
+}
+
+// L'accès « groupe » d'une équipe vaut pour tous les membres du groupe, présents et futurs.
+func TestGroupAccessCoversFutureMembers(t *testing.T) {
+	store := archstore.New(t.TempDir())
+	cluster := []byte(`{"cluster":true,"cluster_group":"paris-lan"}`)
+	for _, n := range []archstore.NodeEntry{
+		{ID: "e1", Role: "edge", Name: "lan-1", Config: cluster, RBACRole: "viewer", Scopes: []archstore.ScopeEntry{{ID: "s1", Type: "domain", Value: "*.corp.io"}}},
+	} {
+		if err := store.Upsert(n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.SetGroupAttributes("paris-lan", archstore.GroupAttributes{Environment: "prod"}); err != nil {
+		t.Fatal(err)
+	}
+	route := &router.Route{ID: "p", Host: "app.corp.io"}
+	byAttr := rbac.TeamAccess{Levels: map[string]string{"proxies": "read"}, Perimeter: rbac.Perimeter{Group: rbac.GroupCriterion{Environment: "prod"}}}
+	allows := func() bool {
+		return rbac.FilterFor([]rbac.TeamAccess{byAttr}, "proxies:read").AllowsRoute(route, rbac.ArchitectureGroups{Store: store}.Snapshot())
+	}
+	if !allows() {
+		t.Fatal("le groupe de production sert app.corp.io")
+	}
+	if err := store.Upsert(archstore.NodeEntry{ID: "e2", Role: "edge", Name: "lan-2", Config: cluster, RBACRole: "viewer",
+		Scopes: []archstore.ScopeEntry{{ID: "s2", Type: "domain", Value: "*.corp.io"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if !allows() {
+		t.Fatal("un membre qui rejoint le groupe est couvert sans rien modifier")
+	}
+	if err := store.SetGroupAttributes("paris-lan", archstore.GroupAttributes{Environment: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	if allows() {
+		t.Fatal("un groupe qui perd l'attribut sort du périmètre")
+	}
+}
+
+// Un périmètre se résout en hôtes visibles : ceux des proxys qu'il couvre, et ses domaines quand il ne désigne qu'eux.
+func TestVisibilityResolvesAPerimeterToHosts(t *testing.T) {
+	routes := []router.Route{
+		{ID: "1", Host: "a.corp.io", Aliases: []string{"www.a.corp.io"}, Labels: map[string]string{"env": "prod"}},
+		{ID: "2", Host: "b.corp.io", Labels: map[string]string{"env": "test"}},
+		{ID: "3", Host: "c.other.io", Labels: map[string]string{"env": "prod"}},
+	}
+	byLabel := rbac.FilterFor([]rbac.TeamAccess{{Levels: map[string]string{"logs": "read"}, Perimeter: rbac.Perimeter{Labels: map[string]string{"env": "prod"}}}}, "logs:read")
+	v := rbac.NewVisibility(byLabel, routes, nil)
+	for host, want := range map[string]bool{"a.corp.io": true, "www.a.corp.io": true, "c.other.io": true, "b.corp.io": false, "": false, "inconnu.io": false} {
+		if got := v.Host(host); got != want {
+			t.Errorf("par étiquette, Host(%q) = %v, attendu %v", host, got, want)
+		}
+	}
+	if v.All() || v.None() || len(v.Hosts()) != 3 {
+		t.Errorf("hôtes résolus : %v", v.Hosts())
+	}
+
+	byDomain := rbac.FilterFor([]rbac.TeamAccess{{Levels: map[string]string{"certs": "read"}, Perimeter: rbac.Perimeter{Domain: "*.corp.io"}}}, "certs:read")
+	vd := rbac.NewVisibility(byDomain, nil, nil)
+	if !vd.Host("x.corp.io") || vd.Host("x.other.io") || vd.Host("a.b.corp.io") {
+		t.Error("un domaine désigné seul vaut pour ses hôtes, même sans proxy (un seul label pour le joker)")
+	}
+	if !vd.CertName("*.corp.io") || !vd.CertName("x.corp.io") || vd.CertName("*.other.io") {
+		t.Error("noms de certificat")
+	}
+	if !vd.Pattern("*.corp.io") || !vd.Pattern("*.eu.corp.io") || vd.Pattern("*.other.io") || vd.Pattern("") {
+		t.Error("motifs de règle")
+	}
+
+	all := rbac.NewVisibility(rbac.FilterFor([]rbac.TeamAccess{{Levels: map[string]string{"logs": "read"}}}, "logs:read"), nil, nil)
+	if !all.All() || !all.Host("n'importe.quoi") {
+		t.Error("un accès sans critère voit tout")
+	}
+	none := rbac.NewVisibility(rbac.FilterFor(nil, "logs:read"), routes, nil)
+	if !none.None() || none.Host("a.corp.io") {
+		t.Error("sans accès, rien")
+	}
+}
+
+func TestCallerFilterAndGate(t *testing.T) {
+	var admin *rbac.Caller
+	if !admin.Filter("logs:read").All() {
+		t.Error("sans garde (appelant absent), rien n'est restreint")
+	}
+	user := &rbac.Caller{UserID: "u", Role: "user", Accesses: []rbac.TeamAccess{{Levels: map[string]string{"logs": "read"}}}}
+	if user.Filter("logs:read").None() || !user.Filter("certs:read").None() {
+		t.Error("filtre par permission")
 	}
 }

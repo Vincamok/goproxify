@@ -6,6 +6,7 @@ package rbac_test
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
@@ -48,7 +49,7 @@ func TestUserEffectiveGrantsAndCanProxy(t *testing.T) {
 		t.Fatal("accès read ne doit pas permettre l'écriture")
 	}
 
-	must(`UPDATE team_scopes SET access_mode='write' WHERE team_id=?`, team)
+	must(`UPDATE team_accesses SET levels='{"proxies":"operate","containers":"operate","surface":"learn","domains":"read"}' WHERE team_id=?`, team)
 	if !rbac.CanWriteProxy(ctx, db, "u", route) {
 		t.Fatal("accès write doit permettre l'écriture")
 	}
@@ -56,7 +57,7 @@ func TestUserEffectiveGrantsAndCanProxy(t *testing.T) {
 		t.Fatal("la suppression d'un proxy reste réservée aux administrateurs")
 	}
 
-	// Deux équipes, même périmètre : le mode le plus haut l'emporte.
+	// Deux équipes, même périmètre : les accès s'additionnent, le niveau le plus haut l'emporte.
 	must(`INSERT INTO users (id, email, password_hash, role) VALUES ('m','m@t.local','x','user')`)
 	grantViaTeam(t, db, "m", "domain", "*.example.io", "read")
 	grantViaTeam(t, db, "m", "domain", "*.example.io", "write")
@@ -64,8 +65,8 @@ func TestUserEffectiveGrantsAndCanProxy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(grants) != 1 || grants[0].Mode != rbac.AccessWrite {
-		t.Fatalf("mode max attendu write, got %#v", grants)
+	if len(grants) != 2 || !rbac.CanWriteProxy(ctx, db, "m", route) {
+		t.Fatalf("les accès des deux équipes s'additionnent, l'exploitation l'emporte : %#v", grants)
 	}
 
 	// Un administrateur membre d'une équipe à périmètre étroit n'est pas restreint pour autant.
@@ -98,12 +99,11 @@ func TestEffectiveAccessGivesTheOriginOfEachRight(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if acc.Global || len(acc.Teams) != 2 || len(acc.Grants) != 1 {
+	if acc.Global || len(acc.Teams) != 2 || len(acc.Teams[0].Accesses) != 1 || len(acc.Teams[1].Accesses) != 1 {
 		t.Fatalf("user : %+v", acc)
 	}
-	g := acc.Grants[0]
-	if g.AccessMode != rbac.AccessWrite || len(g.Teams) != 2 {
-		t.Fatalf("accès fusionné : mode max et deux équipes d'origine : %+v", g)
+	if !slices.Contains(acc.Granted, "proxies:operate") || !slices.Contains(acc.Granted, "domains:read") || slices.Contains(acc.Granted, "proxies:manage") {
+		t.Fatalf("permissions du catalogue portées par les accès : %v", acc.Granted)
 	}
 	if len(acc.Permissions) != 0 {
 		t.Fatalf("un user sans équipe DPO n'a aucune capacité : %+v", acc.Permissions)
@@ -113,7 +113,7 @@ func TestEffectiveAccessGivesTheOriginOfEachRight(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !adm.Global || len(adm.Grants) != 0 {
+	if !adm.Global || len(adm.Granted) != 0 {
 		t.Fatalf("un administrateur est global, sans accès par équipe : %+v", adm)
 	}
 	viaRole := map[string]string{}

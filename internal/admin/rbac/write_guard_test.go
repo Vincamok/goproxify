@@ -14,6 +14,7 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/auth"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
+	"github.com/vincamok/goproxify/internal/admin/rbac/rbactest"
 )
 
 // Même chaîne que adminWrites / operatorWrites dans server.go. EnforcePATScope ne
@@ -34,6 +35,8 @@ func TestWriteGuards_JWTAndPAT(t *testing.T) {
 	must(`INSERT INTO users (id, email, password_hash, role) VALUES ('w','w@t.local','x','user')`)
 	must(`INSERT INTO users (id, email, password_hash, role) VALUES ('a','a@t.local','x','admin')`)
 	grantViaTeam(t, db, "w", "domain", "*.example.io", "write")
+	// u lit les certificats (niveau Lecture du service Certificats) : sans accès d'équipe, un compte ne détient aucun scope.
+	rbactest.AddAccess(t, db, grantViaTeam(t, db, "u", "domain", "*.example.io", "read"), rbac.TeamAccess{Name: "certs", Levels: map[string]string{"certs": "read", "logs": "read"}})
 
 	const secret = "test-secret"
 	creds := map[string]string{}
@@ -108,12 +111,13 @@ func TestWriteGuards_JWTAndPAT(t *testing.T) {
 		{adminWrites, http.MethodDelete, "/api/v1/logs/by-ip/203.0.113.7", "jwt:a", http.StatusNoContent},
 		{adminWrites, http.MethodPost, "/api/v1/logs/reveal-ip", "jwt:u", http.StatusForbidden},
 		{adminWrites, http.MethodPost, "/api/v1/logs/reveal-ip", "pat:a-logs", http.StatusForbidden},
-		// Snippets : admin ou user avec un grant write.
+		// Snippets : admin ou user avec un grant write (REST) ; en PAT, administrateur seul.
 		{operatorWrites, http.MethodGet, "/api/v1/snippets", "jwt:u", http.StatusNoContent},
 		{operatorWrites, http.MethodPost, "/api/v1/snippets", "jwt:u", http.StatusForbidden},
 		{operatorWrites, http.MethodPost, "/api/v1/snippets", "pat:u", http.StatusForbidden},
 		{operatorWrites, http.MethodPut, "/api/v1/snippets/s1", "jwt:w", http.StatusNoContent},
-		{operatorWrites, http.MethodPost, "/api/v1/snippets", "pat:w", http.StatusNoContent},
+		// L'écriture des snippets est réservée à la plateforme (ADR 0022, D5) : aucun accès d'équipe ne donne snippets:write.
+		{operatorWrites, http.MethodPost, "/api/v1/snippets", "pat:w", http.StatusForbidden},
 		{operatorWrites, http.MethodDelete, "/api/v1/snippets/s1", "jwt:a", http.StatusNoContent},
 	}
 	for _, c := range cases {
@@ -124,5 +128,71 @@ func TestWriteGuards_JWTAndPAT(t *testing.T) {
 		if rec.Code != c.want {
 			t.Errorf("%s %s as %s: got %d want %d (%s)", c.method, c.path, c.cred, rec.Code, c.want, rec.Body.String())
 		}
+	}
+}
+
+// rbac.Gate refuse à un compte sans accès une lecture qu'il n'a pas le droit de faire, laisse passer l'administrateur et
+// range l'appelant dans le contexte pour que le handler filtre.
+func TestGateChecksTheCataloguePermission(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "gate.db")
+	db, err := admindb.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, q := range []string{
+		`INSERT INTO users (id, email, password_hash, role) VALUES ('reader','r@t','x','user'), ('none','n@t','x','user'), ('boss','b@t','x','admin')`,
+		`INSERT INTO teams (id, name) VALUES ('t','t'); INSERT INTO team_members (team_id, user_id) VALUES ('t','reader')`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rbactest.AddAccess(t, db, "t", rbac.TeamAccess{Name: "logs", Levels: map[string]string{"logs": "read"}, Perimeter: rbac.Perimeter{Domain: "*.corp.io"}})
+
+	resolve := func(r *http.Request) (string, bool) {
+		switch r.URL.Path {
+		case "/logs":
+			return "logs:read", true
+		case "/certs":
+			return "certs:read", true
+		}
+		return "", false // pas gérée par cette garde
+	}
+	var seen *rbac.Caller
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = rbac.CallerFrom(r.Context())
+		w.WriteHeader(http.StatusNoContent)
+	})
+	const secret = "gate-secret"
+	h := auth.RequireAuth(secret, db)(rbac.Gate(db, resolve)(next))
+	call := func(user, path string) int {
+		tok, err := auth.SignJWT(user, secret, time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	for _, c := range []struct {
+		user, path string
+		want       int
+	}{
+		{"reader", "/logs", http.StatusNoContent},
+		{"reader", "/certs", http.StatusForbidden},
+		{"none", "/logs", http.StatusForbidden},
+		{"boss", "/certs", http.StatusNoContent},
+		{"none", "/autre", http.StatusNoContent},
+	} {
+		if got := call(c.user, c.path); got != c.want {
+			t.Errorf("%s %s : %d, attendu %d", c.user, c.path, got, c.want)
+		}
+	}
+	call("reader", "/logs")
+	if seen == nil || seen.UserID != "reader" || seen.IsAdmin() || len(seen.Accesses) != 1 {
+		t.Errorf("appelant rangé dans le contexte : %+v", seen)
 	}
 }

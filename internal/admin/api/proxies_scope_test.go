@@ -16,6 +16,7 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/api"
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
+	"github.com/vincamok/goproxify/internal/admin/rbac/rbactest"
 )
 
 // Remplacer le proxy d'un autre domaine par une config de son propre domaine est refusé : le proxy remplacé compte
@@ -39,11 +40,13 @@ func TestPutCannotOverwriteAProxyOutsideTheScope(t *testing.T) {
 		`INSERT INTO users (id, email, password_hash, role) VALUES ('scoped','s@x.fr','x','user')`,
 		`INSERT INTO teams (id, name) VALUES ('t-scoped','equipe test')`,
 		`INSERT INTO team_members (team_id, user_id) VALUES ('t-scoped','scoped')`,
-		`INSERT INTO team_scopes (id, team_id, scope_type, scope_value, access_mode) VALUES ('g1','t-scoped','domain','*.test','write')`,
 	} {
 		if _, err := db.Exec(q); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := rbactest.Save(db, "t-scoped", "g1", rbactest.Access("domain", "*.test", "write")); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO tokens (id, token, role, node_name, node_endpoint, rbac_role) VALUES ('t1','tok','edge','edge1',?, 'operator')`, srv.URL); err != nil {
 		t.Fatal(err)

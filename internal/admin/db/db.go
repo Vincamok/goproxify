@@ -473,14 +473,18 @@ func migrate(db *sql.DB) error {
 			user_id    TEXT NOT NULL,
 			PRIMARY KEY (team_id, user_id)
 		)`,
-		`CREATE TABLE IF NOT EXISTS team_scopes (
+		// Un accès d'équipe (ADR 0022) : un périmètre et un niveau par service, en JSON (rbac.TeamAccess).
+		`CREATE TABLE IF NOT EXISTS team_accesses (
 			id          TEXT PRIMARY KEY,
 			team_id     TEXT NOT NULL,
-			scope_type  TEXT NOT NULL CHECK(scope_type IN ('domain','server','proxy')),
-			scope_value TEXT NOT NULL,
-			access_mode TEXT NOT NULL DEFAULT 'read' CHECK(access_mode IN ('read','write')),
-			UNIQUE(team_id, scope_type, scope_value)
+			name        TEXT NOT NULL DEFAULT '',
+			perimeter   TEXT NOT NULL DEFAULT '{}',
+			levels      TEXT NOT NULL DEFAULT '{}',
+			permissions TEXT NOT NULL DEFAULT '[]',
+			position    INTEGER NOT NULL DEFAULT 0,
+			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+		`CREATE INDEX IF NOT EXISTS idx_team_accesses_team ON team_accesses (team_id, position)`,
 		// Capacités (ex. gdpr:reveal) accordées aux membres d'une équipe ; seul le superadmin compose une équipe qui en porte.
 		`CREATE TABLE IF NOT EXISTS team_permissions (
 			team_id    TEXT NOT NULL,
@@ -595,28 +599,10 @@ func migrate(db *sql.DB) error {
 	// Migration : ajout delegation_mode pour les installations existantes
 	db.Exec(`ALTER TABLE domains ADD COLUMN delegation_mode TEXT NOT NULL DEFAULT 'passthrough'`) //nolint:errcheck
 
-	// Migration : ajout du scope_type 'edge' dans team_scopes et token_scopes.
+	// Migration : ajout du scope_type 'edge' dans token_scopes.
 	// SQLite ne supporte pas ALTER COLUMN, on recrée chaque table.
 	// Les 5 étapes sont idempotentes : erreurs silencieuses sur les runs suivants.
 	for _, s := range []string{
-		// team_scopes
-		`CREATE TABLE IF NOT EXISTS team_scopes_v2 (
-			id          TEXT PRIMARY KEY,
-			team_id     TEXT NOT NULL,
-			scope_type  TEXT NOT NULL CHECK(scope_type IN ('domain','server','proxy','edge')),
-			scope_value TEXT NOT NULL,
-			access_mode TEXT NOT NULL DEFAULT 'read' CHECK(access_mode IN ('read','write')),
-			UNIQUE(team_id, scope_type, scope_value)
-		)`,
-		// Préférer la copie avec access_mode (si la colonne existe)
-		`INSERT OR IGNORE INTO team_scopes_v2 (id, team_id, scope_type, scope_value, access_mode)
-		 SELECT id, team_id, scope_type, scope_value, access_mode FROM team_scopes`,
-		// Fallback anciennes tables sans access_mode
-		`INSERT OR IGNORE INTO team_scopes_v2 (id, team_id, scope_type, scope_value, access_mode)
-		 SELECT id, team_id, scope_type, scope_value, 'read' FROM team_scopes`,
-		`ALTER TABLE team_scopes RENAME TO team_scopes_old`,
-		`ALTER TABLE team_scopes_v2 RENAME TO team_scopes`,
-		`DROP TABLE IF EXISTS team_scopes_old`,
 		// token_scopes
 		`CREATE TABLE IF NOT EXISTS token_scopes_v2 (
 			id          TEXT PRIMARY KEY,
@@ -664,10 +650,6 @@ func migrate(db *sql.DB) error {
 		if _, err := db.Exec(s); err != nil {
 			return fmt.Errorf("migration user_api_tokens : %w", err)
 		}
-	}
-
-	if err := migrateRBACGrants(db); err != nil {
-		return fmt.Errorf("migration rbac grants : %w", err)
 	}
 
 	// Lien snapshot → planification (rétention indépendante par planning).

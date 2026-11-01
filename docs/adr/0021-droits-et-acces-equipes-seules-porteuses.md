@@ -68,7 +68,7 @@ Une page **Accès** à deux vues cohérentes, **Comptes** et **Équipes**, sans 
 
 ### 7. CLI, MCP, API : les droits deviennent pilotables
 
-- API : `GET|POST|DELETE /teams/{id}/scopes` existent déjà (leur forme change avec l'ADR 0022) ; s'y ajoute l'accès effectif d'un compte (`GET /users/{id}/access`). Le champ `scopes` de `PUT /users/{id}` disparaît, ainsi que `/workspaces` (9 points d'accès).
+- API : `GET|POST|DELETE /teams/{id}/scopes` ont existé (remplacés par `/teams/{id}/accesses`, ADR 0022, Admin 0.245.0) ; s'y ajoute l'accès effectif d'un compte (`GET /users/{id}/access`). Le champ `scopes` de `PUT /users/{id}` disparaît, ainsi que `/workspaces` (9 points d'accès).
 - CLI : `goproxify teams scopes list|add|remove <équipe>`, retrait du drapeau mort `-role`, ajout de `goproxify users access <compte>`. Les lignes `workspaces …` de la documentation sont retirées.
 - MCP : outils d'écriture de droits d'équipe (`add_team_scope`, `remove_team_scope`, `add_team_member`, `remove_team_member`) et lecture de l'accès effectif d'un compte (`get_user_access`), réservés aux administrateurs comme `list_teams`.
 

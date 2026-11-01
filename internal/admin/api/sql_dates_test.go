@@ -190,7 +190,7 @@ func TestNodeTokenExpiryIgnoresTheProcessTimezone(t *testing.T) {
 
 func TestPATExpirySurvivesTheUsersArchive(t *testing.T) {
 	db := openSQLDatesDB(t)
-	if _, err := db.Exec(`INSERT INTO users (id, email, password_hash, role) VALUES ('u1', 'a@example.com', 'x', 'user')`); err != nil {
+	if _, err := db.Exec(`INSERT INTO users (id, email, password_hash, role) VALUES ('u1', 'a@example.com', 'x', 'admin')`); err != nil {
 		t.Fatal(err)
 	}
 	jwt, err := adminauth.SignJWT("u1", "secret", time.Hour)

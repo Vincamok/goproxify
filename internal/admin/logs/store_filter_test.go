@@ -112,3 +112,38 @@ func TestBuildWhereSearchIncludesNodeName(t *testing.T) {
 		t.Fatalf("clause de recherche libre devrait inclure node_name, got %q", where)
 	}
 }
+
+// Une restriction d'hôtes borne la recherche en SQL et le flux en direct de la même façon.
+func TestRestrictionBoundsSearchAndLiveFilter(t *testing.T) {
+	where, args := buildWhere(SearchParams{Restrict: &Restriction{Hosts: []string{"a.corp.io"}, Patterns: []string{"*.eu.io"}}})
+	if !strings.Contains(where, "domain IN (?)") || !strings.Contains(where, "domain LIKE ? AND domain NOT LIKE ?") || len(args) != 3 {
+		t.Fatalf("clause : %q %v", where, args)
+	}
+	if where, _ := buildWhere(SearchParams{Restrict: &Restriction{}}); !strings.Contains(where, "0") {
+		t.Fatalf("une restriction vide ne laisse rien passer : %q", where)
+	}
+	if where, _ := buildWhere(SearchParams{Restrict: &Restriction{System: true}}); !strings.Contains(where, "status = 0") {
+		t.Fatalf("lignes système : %q", where)
+	}
+
+	r := &Restriction{Hosts: []string{"a.corp.io"}, Patterns: []string{"*.eu.io"}}
+	for _, c := range []struct {
+		e    Entry
+		want bool
+	}{
+		{Entry{Domain: "a.corp.io", Status: 200}, true},
+		{Entry{Domain: "A.corp.io", Status: 200}, true},
+		{Entry{Domain: "x.eu.io", Status: 200}, true},
+		{Entry{Domain: "x.y.eu.io", Status: 200}, false},
+		{Entry{Domain: "b.corp.io", Status: 200}, false},
+		{Entry{Domain: "", Status: 0}, false},
+		{Entry{Domain: "", Status: 200}, false},
+	} {
+		if got := matchesFilter(c.e, SearchParams{Restrict: r}); got != c.want {
+			t.Errorf("%+v : %v, attendu %v", c.e, got, c.want)
+		}
+	}
+	if !matchesFilter(Entry{Status: 0}, SearchParams{Restrict: &Restriction{System: true}}) {
+		t.Error("une ligne système passe quand System est vrai")
+	}
+}

@@ -43,7 +43,7 @@ Sauvegardées telles quelles (toutes colonnes), avec redaction des secrets.
 | Domaines & certificats | `domains`, `cert_deploy_targets` | Domaines, délégation DNS, cibles de déploiement de certificats |
 | Authentification | `auth_providers` | Fournisseurs OIDC / SAML / LDAP… |
 | Réseau | `ip_profiles`, `node_tunnel_configs` | Profils IP (listes, feeds), tunnels de nœuds |
-| Équipes & RBAC | `teams`, `team_members`, `team_scopes` | Les accès ne se portent que par les équipes (Admin `0.243.0`) : plus de table `user_scopes` |
+| Équipes & RBAC | `teams`, `team_members`, `team_accesses` | Les accès ne se portent que par les équipes (Admin `0.243.0`) : plus de table `user_scopes` |
 | Pages | `error_page_templates`, `error_page_assets`, `portal_page_templates` | Les assets binaires sont encodés en base64 |
 | Portail Access | `portal_destinations`, `portal_users`, `portal_groups`, `portal_dest_groups` | Utilisateurs sans hash d'invitation |
 

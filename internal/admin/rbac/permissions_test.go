@@ -97,7 +97,7 @@ func TestEnsureBuiltInTeamsIsIdempotentAndRestoresCapabilities(t *testing.T) {
 		t.Fatal("une capacité retirée de l'équipe DPO doit être rétablie au démarrage")
 	}
 	var scopes int
-	_ = db.QueryRow(`SELECT COUNT(*) FROM team_scopes WHERE team_id=?`, rbac.DPOTeamID).Scan(&scopes)
+	_ = db.QueryRow(`SELECT COUNT(*) FROM team_accesses WHERE team_id=?`, rbac.DPOTeamID).Scan(&scopes)
 	if scopes != 0 {
 		t.Fatal("l'équipe DPO ne porte aucun accès sur les ressources")
 	}

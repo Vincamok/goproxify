@@ -196,6 +196,7 @@ var routeDeclarations = map[string]routeRights{
 	"/api/v1/plugin-repos/":       svc("plugins", "plugins:read", "plugins:write"),
 	"/api/v1/users":               svc("accounts", "accounts:read", "users:write"),
 	"/api/v1/users/":              svc("accounts", "accounts:read", "users:write"),
+	"/api/v1/rights/":             svc("accounts", "accounts:read", "teams:write"),
 	"/api/v1/teams":               svc("accounts", "accounts:read", "teams:write"),
 	"/api/v1/teams/":              svc("accounts", "accounts:read", "teams:write"),
 	"/api/v1/mcp-access/":         svc("accounts", "accounts:read", "users:write"),

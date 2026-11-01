@@ -33,7 +33,8 @@ var toolPermissionGroups = []struct {
 
 	{"dashboard:read", "get_metrics get_proxy_metrics get_prism_anomalies get_prism_geo get_prism_tls_fingerprints get_prism_slo"},
 	{"backups:list", "list_backups"},
-	{"accounts:read", "list_users get_user_access list_teams"},
+	{"accounts:read", "list_users get_user_access list_teams get_rights_catalog list_team_accesses preview_perimeter"},
+	{"teams:write", "set_team_access delete_team_access"},
 
 	{"snippets:read", "list_snippets list_detector_types"},
 	{"snippets:write", "create_snippet delete_snippet"},

@@ -37,7 +37,7 @@ func (h *AlertEventsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			alertJSONErr(w, err, http.StatusInternalServerError)
 			return
 		}
-		jsonOK(w, out)
+		jsonOK(w, visibleAlertEvents(r, out))
 	case r.Method == http.MethodPost && strings.HasSuffix(path, "/ack"):
 		h.ack(w, r, strings.TrimSuffix(path, "/ack"))
 	default:

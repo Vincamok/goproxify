@@ -14,6 +14,7 @@ import (
 
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
+	"github.com/vincamok/goproxify/internal/admin/rbac/rbactest"
 )
 
 func toolNames() []string {
@@ -93,6 +94,28 @@ func mcpClientAt(t *testing.T, h *Handler, target, userID, role string, scopes .
 	if _, err := h.DB.Exec(`INSERT INTO users (id, email, password_hash, role) VALUES (?,?,?,?)`,
 		userID, userID+"@t.local", "x", role); err != nil {
 		t.Fatal(err)
+	}
+	if role == "user" {
+		// Un compte « user » ne détient que ce que lui donnent ses équipes : une équipe de lecture de toute la plateforme
+		// et du journal d'audit lui donne les scopes de lecture que ces tests lui prêtent.
+		levels := map[string]string{"audit": "read"}
+		for _, p := range rbac.Profiles {
+			if p.ID == "platform-read" {
+				for k, v := range p.Levels {
+					levels[k] = v
+				}
+			}
+		}
+		team := "equipe-" + userID
+		for _, q := range []string{
+			`INSERT INTO teams (id, name) VALUES ('` + team + `', '` + team + `')`,
+			`INSERT INTO team_members (team_id, user_id) VALUES ('` + team + `', '` + userID + `')`,
+		} {
+			if _, err := h.DB.Exec(q); err != nil {
+				t.Fatal(err)
+			}
+		}
+		rbactest.AddAccess(t, h.DB, team, rbac.TeamAccess{Name: "lecture", Levels: levels})
 	}
 	plain := adminauth.GeneratePAT()
 	if _, err := h.DB.Exec(`INSERT INTO user_api_tokens (id, user_id, label, token_hash, token_prefix) VALUES (?,?,?,?,?)`,

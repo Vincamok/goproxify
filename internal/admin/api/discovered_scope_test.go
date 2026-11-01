@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/vincamok/goproxify/internal/admin/auth"
+	"github.com/vincamok/goproxify/internal/admin/rbac/rbactest"
 	"github.com/vincamok/goproxify/internal/edge/proxystore"
 	"github.com/vincamok/goproxify/internal/edge/router"
 )
@@ -47,13 +48,12 @@ func grantViaTeam(db *sql.DB, userID, scopeType, value, mode string) error {
 	for _, q := range []string{
 		`INSERT OR IGNORE INTO teams (id, name) VALUES ('` + team + `', '` + team + `')`,
 		`INSERT OR IGNORE INTO team_members (team_id, user_id) VALUES ('` + team + `', '` + userID + `')`,
-		`INSERT INTO team_scopes (id, team_id, scope_type, scope_value, access_mode) VALUES ('` + team + `-s', '` + team + `', '` + scopeType + `', '` + value + `', '` + mode + `')`,
 	} {
 		if _, err := db.Exec(q); err != nil {
 			return err
 		}
 	}
-	return nil
+	return rbactest.Save(db, team, team+"-s", rbactest.Access(scopeType, value, mode))
 }
 
 const twoContainers = `[

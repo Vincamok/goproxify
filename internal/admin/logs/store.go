@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/netip"
+	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -112,6 +114,79 @@ type SearchParams struct {
 	// BeforeID active la pagination par curseur (keyset) : retourne les entrées avec id < BeforeID.
 	// Quand > 0, Page est ignoré et aucun COUNT n'est exécuté.
 	BeforeID int64
+	// Restrict borne les lignes visibles à des hôtes (accès d'équipe, ADR 0022) ; nil = tout.
+	Restrict *Restriction
+}
+
+// Restriction limite les lignes aux hôtes visibles de l'appelant. Hosts sont des hôtes exacts ; Patterns des motifs de
+// domaine (« *.corp.io » = un seul label, comme le routage). Une ligne sans hôte (événement de processus) n'est visible
+// que si System est vrai.
+type Restriction struct {
+	Hosts    []string
+	Patterns []string
+	System   bool
+}
+
+// maxRestrictionHosts borne la clause IN : au-delà, SQLite refuserait la requête (variables liées).
+const maxRestrictionHosts = 500
+
+// sql rend la clause et ses arguments.
+func (r *Restriction) sql() (string, []any) {
+	var alts []string
+	var args []any
+	hosts := r.Hosts
+	if len(hosts) > maxRestrictionHosts {
+		hosts = hosts[:maxRestrictionHosts]
+	}
+	if len(hosts) > 0 {
+		alts = append(alts, "domain IN ("+strings.TrimSuffix(strings.Repeat("?,", len(hosts)), ",")+")")
+		for _, h := range hosts {
+			args = append(args, h)
+		}
+	}
+	for _, p := range r.Patterns {
+		p = strings.ToLower(p)
+		if rest, ok := strings.CutPrefix(p, "*."); ok && !strings.ContainsAny(rest, "*?") {
+			alts = append(alts, "(domain LIKE ? AND domain NOT LIKE ?)")
+			args = append(args, "%."+rest, "%.%."+rest)
+			continue
+		}
+		alts = append(alts, "domain LIKE ?")
+		args = append(args, strings.NewReplacer("*", "%", "?", "_").Replace(p))
+	}
+	if r.System {
+		alts = append(alts, "status = 0")
+	}
+	if len(alts) == 0 {
+		return "0", nil
+	}
+	return "(" + strings.Join(alts, " OR ") + ")", args
+}
+
+// Allows est la version en mémoire de la clause, pour le flux en direct.
+func (r *Restriction) Allows(e Entry) bool {
+	if e.Status == 0 && e.Domain == "" {
+		return r.System
+	}
+	d := strings.ToLower(e.Domain)
+	if d == "" {
+		return false
+	}
+	if slices.Contains(r.Hosts, d) {
+		return true
+	}
+	for _, p := range r.Patterns {
+		if rest, ok := strings.CutPrefix(p, "*."); ok && !strings.ContainsAny(rest, "*?") {
+			if label, found := strings.CutSuffix(d, "."+rest); found && label != "" && !strings.Contains(label, ".") {
+				return true
+			}
+			continue
+		}
+		if ok, _ := path.Match(p, d); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // Store gère la persistance et la diffusion des logs.
@@ -612,6 +687,11 @@ func buildWhere(p SearchParams) (string, []any) {
 	if p.ExcludeInternal {
 		clauses = append(clauses, internalIPExclusionSQL())
 	}
+	if p.Restrict != nil {
+		clause, rargs := p.Restrict.sql()
+		clauses = append(clauses, clause)
+		args = append(args, rargs...)
+	}
 	if len(clauses) == 0 {
 		return "", args
 	}
@@ -684,6 +764,9 @@ func matchesFilter(e Entry, p SearchParams) bool {
 		}
 	}
 	if p.ExcludeInternal && isInternalIP(e.IP) {
+		return false
+	}
+	if p.Restrict != nil && !p.Restrict.Allows(e) {
 		return false
 	}
 	return true

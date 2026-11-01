@@ -29,7 +29,7 @@ Chaque outil exige un scope, le même que sa route REST équivalente. Les outils
 | `metrics:read` | `get_metrics`, `get_proxy_metrics` |
 | `backups:read` | `list_backups` † |
 | `users:read` | `list_users` †, `get_user_access` † |
-| `teams:read` | `list_teams` † |
+| `teams:read` | `list_teams` †, `get_rights_catalog` †, `list_team_accesses` †, `set_team_access` †, `delete_team_access` †, `preview_perimeter` † |
 | `snippets:read` | `list_snippets`, `list_detector_types` |
 | `snippets:write` | `create_snippet`, `delete_snippet` |
 | `domains:read` | `list_domains` |
@@ -496,8 +496,8 @@ Liste les comptes utilisateurs avec leur rôle. Les données sensibles (hash du 
 {
   "role": "user",
   "global": false,
-  "teams": [{ "id": "t-ops", "name": "Ops", "scopes": [{ "type": "domain", "value": "*.example.fr", "access_mode": "write" }], "permissions": [] }],
-  "grants": [{ "type": "domain", "value": "*.example.fr", "access_mode": "write", "teams": ["Ops"] }],
+  "teams": [{ "id": "t-ops", "name": "Ops", "accesses": [{ "id": "a1", "name": "Exploitation", "perimeter": { "domain": "*.example.fr" }, "levels": { "proxies": "operate", "logs": "read" }, "permissions": [] }], "permissions": [] }],
+  "granted": ["proxies:read", "proxies:operate", "logs:read"],
   "permissions": []
 }
 ```
@@ -658,6 +658,54 @@ Depuis Admin `0.71.2`, `ip_truncated: true` signale une IP tronquée par la pass
 *(Admin `0.178.0`, Edge `0.87.0`, [ADR 0012](adr/0012-logs-proprietaire-edge.md) ; scope `logs:read`, rôle admin)* Exporteur SIEM des passerelles : la configuration et l'état rapporté par chaque passerelle. Aucun paramètre.
 
 Réponse : `{config, nodes}`. `config` est la configuration enregistrée (`enabled`, `destinations` syslog RFC 5424 sur TCP/TLS, HTTP NDJSON ou OTLP/HTTP JSON, filtres par type, niveau et « sécurité seulement »), dont les valeurs d'en-têtes (jetons) sont masquées. `nodes` liste, par passerelle (`node_name`, `reported_at`, `stale` si elle est muette depuis 90 s), chaque destination avec son `state` (`starting`, `ok`, `retrying`, `stopped`), `delivered`, `lag_sec` (âge de la plus ancienne ligne non livrée), `at_risk` (le retard menace des lignes qui vont être purgées avant livraison), `last_error`. Chaque passerelle exporte seule, avec son propre curseur, même Admin éteint ; un retard au-delà du seuil de la destination déclenche l'alerte `siem_export_lag`. La configuration se modifie par `PUT /api/v1/logs/siem` ou `goproxify logs siem set`, pas par MCP.
+
+---
+
+**Périmètre et outils de lecture globale.** Les outils `list_logs`, `list_certs`, `get_cert_status`, `list_cert_deploy_targets`, `list_alerts`, `list_alert_events`, `list_alert_rules`, `get_metrics`, `get_proxy_metrics` et `get_prism_*` ne filtrent pas par hôte : un compte dont l'accès a un périmètre reçoit `Erreur: outil réservé aux accès sans périmètre` (l'API REST, elle, filtre) ; sans la permission du catalogue, `Erreur: accès insuffisant: <permission>` (Admin `0.246.0`).
+
+---
+
+### `get_rights_catalog`
+
+Catalogue des droits ([ADR 0022](adr/0022-modele-de-droits-niveaux-et-perimetres.md)) : les services avec leurs niveaux cumulatifs, les permissions sensibles à cocher à part, les critères de périmètre acceptés et les profils d'équipe. C'est le vocabulaire de `set_team_access`. Scope : `teams:read` + rôle admin. **Paramètres :** aucun.
+
+---
+
+### `list_team_accesses`
+
+Accès d'une équipe : `perimeter`, `levels` (service → niveau) et `permissions` cochées. Les accès d'une équipe s'additionnent. Scope : `teams:read` + rôle admin.
+
+| Paramètre | Type | Requis | Description |
+|---|---|---|---|
+| `team` | string | ✓ | Identifiant de l'équipe |
+
+---
+
+### `set_team_access`
+
+Crée un accès d'équipe, ou remplace entièrement celui dont l'identifiant est donné (`access`). Refusés : l'écriture des objets partagés, les capacités RGPD et les permissions qui accordent des droits (`users:write`, `teams:write`). Mêmes règles que `POST|PUT /api/v1/teams/{id}/accesses`. Scope : `teams:read` + rôle admin.
+
+| Paramètre | Type | Requis | Description |
+|---|---|---|---|
+| `team` | string | ✓ | Identifiant de l'équipe |
+| `access` | string | — | Accès à remplacer ; vide = en créer un |
+| `name` | string | — | Nom de l'accès |
+| `profile` | string | — | Profil de `get_rights_catalog` (`operations`, `soc`…) dont `levels` et `permissions` s'ajoutent ou remplacent service par service |
+| `perimeter` | object | — | `{domain, proxy, backend, group:{name, environment, region, tag}, labels}` ; tous les critères posés sont requis, vide = tout |
+| `levels` | object | — | Niveau par service : `{"proxies": "operate", "logs": "read"}` |
+| `permissions` | array | — | Permissions sensibles cochées |
+
+---
+
+### `delete_team_access`
+
+Supprime un accès (`team`, `access`). Scope : `teams:read` + rôle admin.
+
+---
+
+### `preview_perimeter`
+
+Proxys qu'un périmètre couvre : `{count, total, proxies}` (200 au plus listés). Paramètre : `perimeter` (objet, comme `set_team_access`). Scope : `teams:read` + rôle admin.
 
 ---
 

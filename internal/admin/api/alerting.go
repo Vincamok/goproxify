@@ -257,7 +257,8 @@ func (h *RulesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *RulesHandler) list(w http.ResponseWriter, _ *http.Request) {
+func (h *RulesHandler) list(w http.ResponseWriter, r *http.Request) {
+	visible := visibleAlertRule(r)
 	rows, err := h.DB.Query(
 		`SELECT id, name, scope, triggers, channels, cooldown_sec, priority, enabled, created_at, updated_at, COALESCE(group_window_sec,0), COALESCE(escalation_json,'[]')
 		 FROM alert_rules ORDER BY priority DESC, name`)
@@ -276,6 +277,9 @@ func (h *RulesHandler) list(w http.ResponseWriter, _ *http.Request) {
 		}
 		var scope, triggers, chans, escalation any
 		_ = json.Unmarshal([]byte(scopeJSON), &scope)
+		if !visible(scope) {
+			continue
+		}
 		_ = json.Unmarshal([]byte(triggersJSON), &triggers)
 		_ = json.Unmarshal([]byte(chansJSON), &chans)
 		_ = json.Unmarshal([]byte(escalationJSON), &escalation)

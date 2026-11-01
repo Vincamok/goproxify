@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
+	"github.com/vincamok/goproxify/internal/admin/rbac/rbactest"
 )
 
 func requestAs(t *testing.T, h *Handler, id, role string, grants ...string) *http.Request {
@@ -25,11 +26,13 @@ func requestAs(t *testing.T, h *Handler, id, role string, grants ...string) *htt
 		}{
 			{`INSERT OR IGNORE INTO teams (id, name) VALUES (?, ?)`, []any{team, team}},
 			{`INSERT OR IGNORE INTO team_members (team_id, user_id) VALUES (?, ?)`, []any{team, id}},
-			{`INSERT INTO team_scopes (id, team_id, scope_type, scope_value, access_mode) VALUES (?, ?, 'domain', ?, 'write')`, []any{team + "-s", team, domain}},
 		} {
 			if _, err := h.DB.Exec(q.sql, q.args...); err != nil {
 				t.Fatal(err)
 			}
+		}
+		if err := rbactest.Save(h.DB, team, team+"-s", rbactest.Access("domain", domain, "write")); err != nil {
+			t.Fatal(err)
 		}
 	}
 	r := httptest.NewRequest(http.MethodPost, "/mcp", nil)

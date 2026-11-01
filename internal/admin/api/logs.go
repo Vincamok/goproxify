@@ -101,11 +101,14 @@ func (h *LogsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *LogsHandler) list(w http.ResponseWriter, r *http.Request) {
+	p, ok := h.scopedParams(w, r, "logs:read")
+	if !ok {
+		return
+	}
 	if sourceIsEdge(r) {
 		h.listRemote(w, r)
 		return
 	}
-	p := parseLogsParams(r)
 	h.canonNodeID(r.Context(), &p)
 	entries, hasMore, err := h.Store.Search(p)
 	if err != nil {
@@ -161,7 +164,10 @@ func (h *LogsHandler) attachCountries(entries []logs.Entry) {
 }
 
 func (h *LogsHandler) live(w http.ResponseWriter, r *http.Request) {
-	filter := parseLogsParams(r)
+	filter, ok := h.scopedParams(w, r, "logs:read")
+	if !ok {
+		return
+	}
 	h.canonNodeID(r.Context(), &filter)
 	if h.Live != nil {
 		defer h.Live.AcquireLive()()
@@ -170,7 +176,10 @@ func (h *LogsHandler) live(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *LogsHandler) export(w http.ResponseWriter, r *http.Request) {
-	p := parseLogsParams(r)
+	p, ok := h.scopedParams(w, r, "logs:export")
+	if !ok {
+		return
+	}
 	format := r.URL.Query().Get("format")
 	if format == "" {
 		format = "json"
@@ -197,7 +206,10 @@ func (h *LogsHandler) export(w http.ResponseWriter, r *http.Request) {
 
 // facets : mêmes filtres que la liste, plus fields=level,component,node_name,domain,method (défaut : tous).
 func (h *LogsHandler) facets(w http.ResponseWriter, r *http.Request) {
-	p := parseLogsParams(r)
+	p, ok := h.scopedParams(w, r, "logs:read")
+	if !ok {
+		return
+	}
 	fields := []string{"level", "component", "node_name", "domain", "method"}
 	if v := r.URL.Query().Get("fields"); v != "" {
 		fields = strings.Split(v, ",")
@@ -217,7 +229,10 @@ func (h *LogsHandler) facets(w http.ResponseWriter, r *http.Request) {
 
 // histogram : mêmes filtres que la liste, plus bucket=minute|hour|day (défaut selon l'étendue ; 24 h si aucune date).
 func (h *LogsHandler) histogram(w http.ResponseWriter, r *http.Request) {
-	p := parseLogsParams(r)
+	p, ok := h.scopedParams(w, r, "logs:read")
+	if !ok {
+		return
+	}
 	now := time.Now()
 	from, to := now.Add(-24*time.Hour), now
 	if t, err := time.Parse(time.RFC3339, p.DateFrom); err == nil {
@@ -250,6 +265,54 @@ func (h *LogsHandler) histogram(w http.ResponseWriter, r *http.Request) {
 
 func parseLogsParams(r *http.Request) logs.SearchParams { return logsParamsFromValues(r.URL.Query()) }
 
+// scopedParams lit les filtres de la requête et y ajoute la restriction d'hôtes de l'appelant (ADR 0022) : un compte
+// qui n'a pas la permission reçoit 403 ; un accès sans critère voit tous les hôtes ; un accès à périmètre ne voit que
+// les hôtes qu'il couvre. Les lignes sans hôte (événements de processus) ne sont visibles que de qui a un accès aux logs
+// système sans critère. La source passerelle ne se filtre pas à la source : elle est refusée à un accès à périmètre.
+func (h *LogsHandler) scopedParams(w http.ResponseWriter, r *http.Request, permission string) (logs.SearchParams, bool) {
+	p := parseLogsParams(r)
+	caller := rbac.CallerFrom(r.Context())
+	if caller == nil || caller.IsAdmin() {
+		return p, true
+	}
+	vis := rbac.VisibilityFor(r.Context(), caller, permission)
+	if vis.None() {
+		http.Error(w, "accès insuffisant: "+permission, http.StatusForbidden)
+		return p, false
+	}
+	system := caller.Filter("system_logs:read")
+	restrict := &logs.Restriction{System: system.All()}
+	if vis.All() {
+		restrict.Patterns = []string{"?*"}
+	} else {
+		if sourceIsEdge(r) {
+			http.Error(w, "source=edge réservée aux accès sans périmètre", http.StatusForbidden)
+			return p, false
+		}
+		restrict.Hosts, restrict.Patterns = vis.Hosts(), vis.Patterns()
+	}
+	if vis.All() && sourceIsEdge(r) && !system.All() {
+		http.Error(w, "source=edge réservée aux accès aux logs système", http.StatusForbidden)
+		return p, false
+	}
+	p.Restrict = restrict
+	return p, true
+}
+
+// keepRestricted ne garde que les lignes qu'une restriction laisse voir (nil = toutes).
+func keepRestricted(entries []logs.Entry, restrict *logs.Restriction) []logs.Entry {
+	if restrict == nil {
+		return entries
+	}
+	out := entries[:0:0]
+	for _, e := range entries {
+		if restrict.Allows(e) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // logsParamsFromValues lit les filtres de logs d'une requête ou d'un appel d'outil.
 func logsParamsFromValues(q url.Values) logs.SearchParams {
 	page, _ := strconv.Atoi(q.Get("page"))
@@ -280,10 +343,14 @@ func logsParamsFromValues(q url.Values) logs.SearchParams {
 }
 
 func (h *LogsHandler) correlate(w http.ResponseWriter, r *http.Request) {
+	scoped, ok := h.scopedParams(w, r, "logs:read")
+	if !ok {
+		return
+	}
 	q := r.URL.Query()
 	requestID := q.Get("request_id")
 	if requestID != "" {
-		jsonOK(w, h.Store.CorrelateByRequestID(requestID))
+		jsonOK(w, keepRestricted(h.Store.CorrelateByRequestID(requestID), scoped.Restrict))
 		return
 	}
 	domain := q.Get("domain")
@@ -300,7 +367,7 @@ func (h *LogsHandler) correlate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	jsonOK(w, h.Store.Correlate(domain, at, window))
+	jsonOK(w, keepRestricted(h.Store.Correlate(domain, at, window), scoped.Restrict))
 }
 
 func (h *LogsHandler) getSettings(w http.ResponseWriter, r *http.Request) {
