@@ -536,3 +536,27 @@ func TestVersionsRestore(t *testing.T) {
 		t.Fatalf("restauration : v%d %v", got.Version, got.Steps[0].Action.Config)
 	}
 }
+
+// Séparation des tâches (ADR 0022) : on ne valide pas l'exécution qu'on a soi-même déclenchée.
+func TestApprovalIsNotGrantedByTheRunsOwnTrigger(t *testing.T) {
+	e := newEnv(t)
+	f := e.create(manual("appro-soi",
+		Step{ID: "ok", Type: StepApproval, Config: map[string]any{"message": "Couper ?", "timeout": "1h", "on_timeout": "reject"}},
+		act("a", "fait")))
+	r := e.run(f.ID, map[string]any{}) // déclenchée par « alice »
+	if r.Status != RunWaitingApproval {
+		t.Fatalf("approbation attendue : %s", r.Status)
+	}
+	if err := e.s.Decide(context.Background(), r.ID, true, "alice"); err == nil {
+		t.Fatal("alice a validé sa propre exécution")
+	}
+	if err := e.s.Decide(context.Background(), r.ID, false, "alice"); err == nil {
+		t.Fatal("alice a refusé sa propre exécution : la décision revient à un autre compte")
+	}
+	if got := e.get(r.ID).Status; got != RunWaitingApproval {
+		t.Fatalf("l'exécution doit rester en attente : %s", got)
+	}
+	if err := e.s.Decide(context.Background(), r.ID, true, "bob"); err != nil {
+		t.Fatalf("un autre compte valide : %v", err)
+	}
+}

@@ -231,3 +231,67 @@ func (v Visibility) Pattern(glob string) bool {
 		return p == glob || (strings.HasPrefix(p, "*.") && strings.HasSuffix(glob, p[1:]))
 	}) || (!strings.Contains(glob, "*") && v.Host(glob))
 }
+
+// GateUnrestricted est Gate pour les services qui ne se découpent pas encore par périmètre (portail, sécurité réseau,
+// automatisation) : un compte passe s'il porte la permission sans critère ; avec un périmètre, il est refusé plutôt que
+// de voir plus que ce que son accès désigne.
+func GateUnrestricted(db *sql.DB, resolve GatePermission) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			caller, err := LoadCaller(r.Context(), db, auth.UserIDFromContext(r.Context()))
+			if err != nil {
+				http.Error(w, "accès insuffisant", http.StatusForbidden)
+				return
+			}
+			r = r.WithContext(WithCaller(r.Context(), caller))
+			if caller.IsAdmin() {
+				next.ServeHTTP(w, r)
+				return
+			}
+			permission, gated := resolve(r)
+			if gated {
+				filter := caller.Filter(permission)
+				if !filter.All() && !(perimeterAware(permission) && !filter.None()) {
+					http.Error(w, "accès insuffisant: "+permission+" (sans périmètre)", http.StatusForbidden)
+					return
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// GateMemberReads laisse lire à tout compte qui a au moins un accès d'équipe, et refuse à celui qui n'en a aucun : sans
+// accès, rien n'est visible (ADR 0022, section 5). Il sert aux lectures de topologie (passerelles, événements, santé),
+// que l'interface charge pour construire sa navigation. Les écritures passent au handler.
+func GateMemberReads(db *sql.DB) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			caller, err := LoadCaller(r.Context(), db, auth.UserIDFromContext(r.Context()))
+			if err != nil {
+				http.Error(w, "accès insuffisant", http.StatusForbidden)
+				return
+			}
+			r = r.WithContext(WithCaller(r.Context(), caller))
+			if (r.Method == http.MethodGet || r.Method == http.MethodHead) && !caller.IsAdmin() && !caller.HasAnyAccess() {
+				http.Error(w, "accès insuffisant: aucun accès d'équipe", http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// HasAnyAccess : une équipe du compte lui donne au moins un niveau ou une case.
+func (c *Caller) HasAnyAccess() bool {
+	return c != nil && slices.ContainsFunc(c.Accesses, func(a TeamAccess) bool { return len(a.Levels) > 0 || len(a.Permissions) > 0 })
+}
+
+// perimeterAwareServices jugent eux-mêmes chaque objet contre le périmètre de l'appelant : la garde sans critère les laisse
+// passer dès que la permission est portée, quel que soit le périmètre.
+var perimeterAwareServices = []string{"surface"}
+
+func perimeterAware(permission string) bool {
+	p, ok := PermissionByID(permission)
+	return ok && slices.Contains(perimeterAwareServices, p.Service)
+}

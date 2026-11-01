@@ -298,6 +298,11 @@ func currentGroups() GroupCatalog {
 	return defaultGroups.cached
 }
 
+// CanOnRoute dit si les accès d'équipe donnent la permission sur ce proxy (un administrateur peut tout).
+func CanOnRoute(role string, accesses []Grant, permission string, route *router.Route) bool {
+	return canOnRoute(role, accesses, permission, route)
+}
+
 func canOnRoute(role string, accesses []Grant, permission string, route *router.Route) bool {
 	if IsAdminRole(role) {
 		return true

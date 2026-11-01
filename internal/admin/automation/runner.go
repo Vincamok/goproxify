@@ -429,6 +429,10 @@ func (s *Service) Decide(ctx context.Context, runID string, approve bool, actor 
 	if r.Status != RunWaitingApproval {
 		return invalid("cette exécution n'attend pas d'approbation (%s)", r.Status)
 	}
+	// Séparation des tâches (ADR 0022) : on ne valide pas l'exécution qu'on a soi-même déclenchée.
+	if actor != "" && r.Source == "manual:"+actor {
+		return invalid("vous avez déclenché cette exécution : un autre compte doit la valider")
+	}
 	return s.decide(r, approve, actor)
 }
 

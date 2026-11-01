@@ -317,6 +317,10 @@ func (h *RulesHandler) create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name requis", http.StatusBadRequest)
 		return
 	}
+	if !mayWriteAlertRule(r, h.DB, "", body.Scope.DomainGlob, true) {
+		http.Error(w, "hors de votre périmètre", http.StatusForbidden)
+		return
+	}
 	id := uuid.New().String()
 	scopeJSON, _ := json.Marshal(body.Scope)
 	triggersJSON, _ := json.Marshal(body.Triggers)
@@ -350,6 +354,10 @@ func (h *RulesHandler) update(w http.ResponseWriter, r *http.Request, id string)
 		writeErr(w, r, http.StatusBadRequest, "api.err.json")
 		return
 	}
+	if !mayWriteAlertRule(r, h.DB, id, body.Scope.DomainGlob, true) {
+		http.Error(w, "hors de votre périmètre", http.StatusForbidden)
+		return
+	}
 	scopeJSON, _ := json.Marshal(body.Scope)
 	triggersJSON, _ := json.Marshal(body.Triggers)
 	chansJSON, _ := json.Marshal(body.Channels)
@@ -376,6 +384,10 @@ func (h *RulesHandler) update(w http.ResponseWriter, r *http.Request, id string)
 }
 
 func (h *RulesHandler) delete(w http.ResponseWriter, r *http.Request, id string) {
+	if !mayWriteAlertRule(r, h.DB, id, "", false) {
+		http.Error(w, "hors de votre périmètre", http.StatusForbidden)
+		return
+	}
 	h.DB.Exec(`DELETE FROM alert_rules WHERE id=?`, id) //nolint:errcheck
 	if h.Engine != nil {
 		h.Engine.InvalidateRuleCache()

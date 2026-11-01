@@ -196,3 +196,48 @@ func TestGateChecksTheCataloguePermission(t *testing.T) {
 		t.Errorf("appelant rangé dans le contexte : %+v", seen)
 	}
 }
+
+// GateMemberReads : un compte sans aucun accès d'équipe ne lit pas la topologie ; un membre la lit ; les écritures
+// passent au handler, qui les juge.
+func TestGateMemberReads(t *testing.T) {
+	db, err := admindb.Open(filepath.Join(t.TempDir(), "member.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, q := range []string{
+		`INSERT INTO users (id, email, password_hash, role) VALUES ('member','m@t','x','user'), ('empty','e@t','x','user'), ('lonely','l@t','x','user'), ('boss','b@t','x','admin')`,
+		`INSERT INTO teams (id, name) VALUES ('t','t'), ('t0','vide'); INSERT INTO team_members (team_id, user_id) VALUES ('t','member'), ('t0','empty')`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rbactest.AddAccess(t, db, "t", rbac.TeamAccess{Name: "a", Levels: map[string]string{"proxies": "read"}})
+	rbactest.AddAccess(t, db, "t0", rbac.TeamAccess{Name: "rien"}) // un accès sans niveau ne donne rien
+
+	const secret = "member-secret"
+	h := auth.RequireAuth(secret, db)(rbac.GateMemberReads(db)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })))
+	call := func(user, method string) int {
+		tok, _ := auth.SignJWT(user, secret, time.Hour)
+		req := httptest.NewRequest(method, "/api/v1/nodes", nil)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	for _, c := range []struct {
+		user, method string
+		want         int
+	}{
+		{"member", "GET", http.StatusNoContent},
+		{"boss", "GET", http.StatusNoContent},
+		{"empty", "GET", http.StatusForbidden},
+		{"lonely", "GET", http.StatusForbidden},
+		{"lonely", "PATCH", http.StatusNoContent}, // l'écriture est jugée par le handler
+	} {
+		if got := call(c.user, c.method); got != c.want {
+			t.Errorf("%s %s : %d, attendu %d", c.user, c.method, got, c.want)
+		}
+	}
+}

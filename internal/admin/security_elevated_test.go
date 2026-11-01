@@ -46,7 +46,6 @@ func TestElevatedH1_PairingSecretAdminOnly(t *testing.T) {
 	src := adminServerSource(t)
 	needles := []string{
 		`mux.Handle("/api/v1/auth-providers", adminOnly(`,
-		`mux.Handle("/api/v1/security", adminOnly(`,
 		`mux.Handle("/api/v1/import", adminOnly(`,
 		`mux.Handle("/api/v1/backups", adminOnly(`,
 		`mux.Handle("/api/v1/agents", adminOnly(`,
@@ -74,20 +73,20 @@ func TestRevealRouteOpenToPermissionHolders(t *testing.T) {
 func TestWriteRoutesGuardedForJWT(t *testing.T) {
 	src := adminServerSource(t)
 	needles := []string{
-		`mux.Handle("/api/v1/certs", gatedReads(`,
-		`mux.Handle("/api/v1/certs/", gatedReads(`,
-		`mux.Handle("/api/v1/domains", adminWrites(`,
-		`mux.Handle("/api/v1/domains/", adminWrites(`,
-		`mux.Handle("/api/v1/alert-channels", gatedReads(`,
-		`mux.Handle("/api/v1/alert-channels/", gatedReads(`,
-		`mux.Handle("/api/v1/alert-rules", gatedReads(`,
-		`mux.Handle("/api/v1/alert-rules/", gatedReads(`,
-		`mux.Handle("/api/v1/alert-events", gatedReads(`,
-		`mux.Handle("/api/v1/alert-events/", gatedReads(`,
-		`mux.Handle("/api/v1/ip-profiles", adminWrites(`,
-		`mux.Handle("/api/v1/ip-profiles/", adminWrites(`,
-		`mux.Handle("/api/v1/snippets", operatorWrites(`,
-		`mux.Handle("/api/v1/snippets/", operatorWrites(`,
+		`mux.Handle("/api/v1/certs", gatedOperate(`,
+		`mux.Handle("/api/v1/certs/", gatedOperate(`,
+		`mux.Handle("/api/v1/domains", gatedOperate(`,
+		`mux.Handle("/api/v1/domains/", gatedOperate(`,
+		`mux.Handle("/api/v1/alert-channels", gatedOperate(`,
+		`mux.Handle("/api/v1/alert-channels/", gatedOperate(`,
+		`mux.Handle("/api/v1/alert-rules", gatedOperate(`,
+		`mux.Handle("/api/v1/alert-rules/", gatedOperate(`,
+		`mux.Handle("/api/v1/alert-events", gatedOperate(`,
+		`mux.Handle("/api/v1/alert-events/", gatedOperate(`,
+		`mux.Handle("/api/v1/ip-profiles", gatedReads(`,
+		`mux.Handle("/api/v1/ip-profiles/", gatedReads(`,
+		`mux.Handle("/api/v1/snippets", gatedOperatorReads(`,
+		`mux.Handle("/api/v1/snippets/", gatedOperatorReads(`,
 		`mux.Handle("/api/v1/logs", gatedReads(`,
 		`mux.Handle("/api/v1/logs/", gatedReads(`,
 	}
@@ -193,5 +192,24 @@ func TestElevatedH9_HelmHardeningDocumented(t *testing.T) {
 	}
 	if strings.Contains(string(agentTpl), "hostPID: true") && !strings.Contains(string(agentTpl), "agentHostPID") {
 		t.Fatal("H9: hostPID ne doit plus être forcé sans opt-in")
+	}
+}
+
+// TestPortalSecurityAutomationAreGatedByPermission — ces trois services ne sont plus adminOnly : un accès d'équipe sans
+// critère peut les ouvrir, par la table de permissions de leur résolveur ; sans résolveur, une route reste fermée.
+func TestPortalSecurityAutomationAreGatedByPermission(t *testing.T) {
+	src := adminServerSource(t)
+	for _, n := range []string{
+		`mux.Handle("/api/v1/portal", gatedAll(portalPermission,`,
+		`mux.Handle("/api/v1/portal/", gatedAll(portalPermission,`,
+		`mux.Handle("/api/v1/portal-page-templates", gatedAll(portalPermission,`,
+		`mux.Handle("/api/v1/security", gatedAll(securityPermission,`,
+		`mux.Handle("/api/v1/security/", gatedAll(securityPermission,`,
+		`mux.Handle("/api/v1/security/engine-types", adminOnly(`,
+		`mux.Handle("/api/v1/automation/", gatedAll(automationPermission,`,
+	} {
+		if !strings.Contains(src, n) {
+			t.Errorf("route manquante : %s", n)
+		}
 	}
 }

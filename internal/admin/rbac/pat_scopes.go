@@ -293,28 +293,25 @@ func ToolRequiredScope(tool string) string {
 	}
 }
 
-// ToolRequiresAdmin indique si la route REST équivalente de l'outil est adminOnly.
-// /mcp n'est monté qu'avec RequirePAT : sans ce contrôle, un compte user tenant un
-// scope de lecture commun (audit:read, certs:read…) passerait là où REST le refuse.
-func ToolRequiresAdmin(tool string) bool {
-	switch ToolRequiredScope(tool) {
-	case ScopePortalRead, ScopePortalWrite:
-		return true
-	}
-	switch tool {
-	case "list_agents", "approve_agent", "revoke_agent", "set_group_attributes",
-		"get_architecture", "list_discovery_sources", "list_dns_providers", "list_dns_provider_types",
-		"list_backups", "list_users", "get_user_access", "list_teams", "get_rights_catalog", "list_team_accesses", "set_team_access", "delete_team_access", "preview_perimeter",
-		"get_security_overview", "list_security_bans", "list_security_engine_types", "get_waf_activity", "list_plugins", "lookup_asn", "list_security_threats", "list_security_cves", "get_proxy_surface", "get_app_inventory", "get_entry_rejections", "get_traffic_reference", "get_tls_reputation", "get_domain_watch", "get_proxy_surface_proposals", "get_proxy_surface_openapi", "get_proxy_surface_suggestions", "reset_proxy_surface", "enforce_proxy_surface", "accept_proxy_surface_suggestions", "relax_proxy_surface",
-		"create_security_ban", "delete_security_ban", "ban_ip", "unban_ip", "get_siem_status", "simulate_ephor_config", "calibrate_ephor", "get_ephor_references", "suggest_ephor_thresholds", "trace_ip", "preview_security_ban", "preview_asn_ban", "list_ban_whitelist", "add_ban_whitelist", "remove_ban_whitelist", "import_security_bans", "ban_asn", "unban_asn",
-		"list_auth_providers", "list_auth_provider_types", "create_auth_provider", "delete_auth_provider",
-		"list_internal_cas", "list_internal_certs", "get_ech_status", "create_internal_ca", "issue_internal_cert", "revoke_internal_cert",
-		"list_flows", "get_flow", "list_flow_versions", "list_flow_runs", "get_flow_run", "get_automation_catalog", "list_flow_templates", "list_silences", "export_automation",
-		"create_flow", "update_flow", "set_flow_enabled", "delete_flow", "run_flow", "simulate_flow", "restore_flow_version", "detach_flow", "update_flow_params", "decide_flow_run", "cancel_flow_run", "replay_flow_run", "install_flow_template", "create_silence", "delete_silence", "import_automation":
-		return true
-	}
-	return false
+// memberTools sont les seuls outils MCP qu'un compte non administrateur appelle : ceux qui jugent eux-mêmes les droits
+// du compte (proxys et conteneurs, par périmètre) et les lectures que la garde de périmètre contrôle. Tout autre outil
+// est réservé aux administrateurs : un accès d'équipe peut donner à un compte un scope de jeton d'écriture
+// (`nodes:write`, `alerts:write`, `security:write`…) que la route REST équivalente, elle, refuse hors administrateur ; sans cette
+// liste fermée, ce scope ouvrirait l'outil MCP.
+var memberTools = []string{
+	"list_proxies", "get_proxy", "get_proxy_labels", "get_discovered_container", "list_orphan_proxies", "create_proxy",
+	"convert_discovered_container", "set_container_route_enabled", "update_proxy", "set_proxy_enabled", "delete_proxy", "purge_proxy_cache",
+	"list_nodes", "list_declared_nodes", "get_topology_live", "list_hosts",
+	"list_alerts", "list_alert_events", "list_alert_rules", "list_alert_channels", "list_alert_channel_types",
+	"get_metrics", "get_proxy_metrics", "get_prism_anomalies", "get_prism_geo", "get_prism_tls_fingerprints", "get_prism_slo",
+	"list_snippets", "create_snippet", "delete_snippet", "list_detector_types", "list_ip_profiles", "list_domains",
+	"list_certs", "get_cert_status", "list_cert_deploy_targets", "list_cert_deploy_types",
+	"list_logs", "get_audit_log",
 }
+
+// ToolRequiresAdmin indique si l'outil est réservé aux administrateurs : tout outil hors de memberTools.
+// /mcp n'est monté qu'avec RequirePAT : ce contrôle tient lieu du RequireAdmin des routes REST équivalentes.
+func ToolRequiresAdmin(tool string) bool { return !slices.Contains(memberTools, tool) }
 
 // RequiredScopeForRequest déduit le scope API pour une requête REST (PAT uniquement).
 // Retourne "" si aucune contrainte de scope PAT (ex. /me, MFA).
@@ -465,3 +462,6 @@ func EnforcePATScope(db *sql.DB) func(http.Handler) http.Handler {
 		})
 	}
 }
+
+// AllMCPTools liste les outils MCP connus (ceux de ToolRequiredScope).
+func AllMCPTools() []string { return slices.Clone(mcpTools) }

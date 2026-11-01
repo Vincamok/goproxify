@@ -114,6 +114,10 @@ func (h *CertsHandler) obtain(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "domain requis", http.StatusBadRequest)
 		return
 	}
+	if !mayManageCert(r, req.Domain) {
+		http.Error(w, "hors de votre périmètre", http.StatusForbidden)
+		return
+	}
 	if h.Manager == nil {
 		http.Error(w, "ACME non configuré", http.StatusServiceUnavailable)
 		return
@@ -267,6 +271,10 @@ func (h *CertsHandler) pem(w http.ResponseWriter, r *http.Request, domain string
 }
 
 func (h *CertsHandler) delete(w http.ResponseWriter, r *http.Request, domain string) {
+	if !mayManageCert(r, domain) {
+		http.Error(w, "hors de votre périmètre", http.StatusForbidden)
+		return
+	}
 	res, err := h.DB.ExecContext(r.Context(), `DELETE FROM certs WHERE domain=?`, domain)
 	if err != nil {
 		if !isCtxErr(err) {
@@ -321,6 +329,10 @@ func (h *CertsHandler) importCert(w http.ResponseWriter, r *http.Request) {
 	}
 	if domain == "" {
 		http.Error(w, "impossible de déterminer le domaine depuis le certificat", http.StatusBadRequest)
+		return
+	}
+	if !mayManageCert(r, domain) {
+		http.Error(w, "hors de votre périmètre", http.StatusForbidden)
 		return
 	}
 

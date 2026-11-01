@@ -131,7 +131,7 @@ func strSlice(v any) []string {
 // derniers (consigné à l'audit), jamais le premier.
 func EnforceSurface(ctx context.Context, db *sql.DB, edge *prismedge.Source, w ProxyConfigWriter, actor, edgeParam, route string, req EnforceRequest) (EnforceResult, error) {
 	res := EnforceResult{Route: route, DryRun: req.DryRun, BlockReasons: []string{}, Blockers: []string{}, Warnings: []string{}, Impact: []EnforceImpact{}}
-	if err := checkSurface(ctx, db, route, true); err != nil {
+	if err := checkSurfacePermission(ctx, db, route, "surface:enforce"); err != nil {
 		return res, err
 	}
 	reasons, err := normalizeReasons(req.Reasons)

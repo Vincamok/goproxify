@@ -48,6 +48,10 @@ func (h *AlertEventsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // ack marque un événement comme acquitté : les paliers d'escalade déjà
 // programmés le revérifient à leur échéance et ne renotifient plus.
 func (h *AlertEventsHandler) ack(w http.ResponseWriter, r *http.Request, id string) {
+	if !mayAckAlertEvent(r, h.DB, id) {
+		http.Error(w, "hors de votre périmètre", http.StatusForbidden)
+		return
+	}
 	actor := adminauth.ActorFromContext(r.Context())
 	res, err := h.DB.ExecContext(r.Context(),
 		`UPDATE alert_events SET acked=1, acked_at=CURRENT_TIMESTAMP, acked_by=? WHERE id=?`, actor, id)

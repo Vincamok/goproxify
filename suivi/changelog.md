@@ -9,6 +9,48 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ### Ajouté
 
+- **Page d'accueil : la commande qui lance le constructeur du launcher (Landing 0.8.2)** : la section Launcher affiche un bloc `shell · design` copiable (`docker run --rm -p 8080:8080 -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/vincamok/goproxify/launcher:preview`), jusque-là seulement mentionnée en texte. Elle ouvre la page de conception sur `http://<hôte>:8080/design`, protégée par le code d'accès affiché dans la sortie.
+- **La topologie est bornée aux groupes de passerelles que le compte voit (Admin 0.251.0)** : [ADR 0022](../docs/adr/0022-modele-de-droits-niveaux-et-perimetres.md), livraison 4, sixième partie. Jusqu'ici tout membre d'une équipe lisait toute la topologie.
+  - **Groupes visibles** (`rbac.NodeScope`) : ceux que désigne son accès à l'infrastructure (`infra:read` avec un critère de groupe, par nom ou par `environment`, `region`, `tags`) et ceux qui servent les proxys, conteneurs, logs ou métriques qu'il peut lire — il voit où tourne ce qu'il gère. Une passerelle isolée est un groupe d'un membre ; un Agent suit sa passerelle.
+  - **Lectures** : `/nodes`, `/node-events` filtrés ; `/architecture/groups` ne garde que les groupes visibles ; `/nodes/{id}` d'un autre groupe répond `404`. `/nodes/live`, `/backends/health`, `/edges/waf-status` (non découpables par passerelle) exigent `infra:read` sans critère. Un administrateur et un accès sans critère voient tout.
+  - Vérifié par un test de bout en bout du filtre (groupes servant des proxys de production, attributs de groupe, Agent rattaché, passerelle d'un autre groupe, vues globales).
+  - Restent : le périmètre par groupe du portail, de la sécurité réseau et de l'automatisation (accès sans critère exigé).
+
+### Ajouté
+
+- **La surface applicative suit les permissions du service « surface » (Admin 0.250.0)** : [ADR 0022](../docs/adr/0022-modele-de-droits-niveaux-et-perimetres.md), livraison 4, cinquième partie. Les contrôles par proxy de la surface (`surface_access.go`) jugeaient avec les droits de lecture et d'écriture des proxys ; ils jugent maintenant sous `surface:read`, `surface:learn` et la case `surface:enforce`, sur le périmètre de l'accès.
+  - **Routes** : `/security/surface/*` s'ouvre à un accès **avec périmètre** (la garde sans critère laisse passer les services qui jugent eux-mêmes chaque objet : `rbac.perimeterAwareServices`). Lecture : rapport, suggestions, propositions, OpenAPI, liste filtrée ; `accept`, `relax`, `reset` : apprentissage ; `enforce` : la case, en plus de la lecture du proxy.
+  - Les moteurs adaptatifs (WAF, Ephor, flotte, CrowdSec) restent aux administrateurs ; les outils MCP de surface aussi.
+  - Vérifié par des tests : table de permissions (lecture, apprentissage, enforce), proxy lisible mais non modifiable, case enforce, proxy hors périmètre introuvable.
+
+### Modifié
+
+- **Un compte sans accès d'équipe ne lit plus la topologie, les snippets ni les profils IP (Admin 0.249.0)** : [ADR 0022](../docs/adr/0022-modele-de-droits-niveaux-et-perimetres.md), livraison 4, quatrième partie. C'étaient les dernières lectures de base ouvertes à tout compte authentifié.
+  - **Topologie** : `GET /nodes`, `/nodes/*`, `/node-events`, `/backends/health`, `/architecture/groups`, `/edges/waf-status` exigent au moins un accès d'équipe (`rbac.GateMemberReads`) ; l'interface, qui charge ces listes pour sa navigation, continue de fonctionner pour un membre. Un membre voit toute la topologie : le détail par groupe de passerelles reste à faire.
+  - **Objets partagés** : snippets et détecteurs sous `snippets:read`, profils IP sous `ip_profiles:read` (leurs écritures inchangées). Les profils *Exploitation* et *Propriétaire de domaine* incluent ces deux lectures, pour que la fenêtre d'un proxy propose encore les préréglages.
+  - Il ne reste, ouvertes à tout compte authentifié, que les routes qui filtrent elles-mêmes par accès (proxys, conteneurs découverts), les droits RGPD vérifiés dans le handler et le libre-service du compte (liste revue par un test).
+  - Vérifié par des tests : compte sans accès, accès sans niveau, membre, administrateur ; écritures laissées au handler ; table des lectures d'objets partagés.
+
+### Ajouté
+
+- **Portail Access, sécurité réseau et automatisation sous les accès d'équipe (Admin 0.248.0)** : [ADR 0022](../docs/adr/0022-modele-de-droits-niveaux-et-perimetres.md), livraison 4, troisième partie. Ces services étaient réservés aux administrateurs (`adminOnly`).
+  - **Portail** : les huit sous-services ont chacun leur permission, lue dans le chemin et la méthode — demandes d'accès (lecture, décision), sessions en direct (lecture, coupure, case `portal_sessions:observe` pour la sortie du terminal), enregistrements (liste, case de rejeu, suppression), catalogue, utilisateurs et groupes, politiques, audit du portail, modèles-réglages-poussée.
+  - **Sécurité réseau** : lecture (bannissements, menaces, CVE…), analyse (traçage d'IP, lancement d'une analyse de CVE), réponse (bannir, débannir, liste blanche, ASN, statut d'une CVE) et la case d'import de bannissements. Les moteurs adaptatifs, la surface applicative et les réglages restent aux administrateurs.
+  - **Automatisation** : lecture, édition, exécution (lancer, annuler, rejouer) et approbation.
+  - **Un accès sans critère** ouvre ces services ; un accès à périmètre reçoit `403` (ils ne se découpent pas encore par groupe). Une route qu'aucune table ne reconnaît reste fermée à un non-administrateur ; les outils MCP restent aux administrateurs.
+  - **Séparation des tâches** : on ne valide ni ne refuse l'exécution d'un flux qu'on a déclenchée soi-même (`400` ; le refus compte aussi : la décision revient à un autre compte).
+  - Vérifié par des tests : trois tables de permissions (chemin × méthode → permission, le reste fermé), routes sous leur garde, approbation de sa propre exécution.
+
+### Ajouté
+
+- **Écritures des alertes, certificats et domaines par accès d'équipe, outils MCP fermés aux non-administrateurs, audit sous permission (Admin 0.247.0)** : [ADR 0022](../docs/adr/0022-modele-de-droits-niveaux-et-perimetres.md), livraison 4, deuxième partie.
+  - **Écritures dans le périmètre** : acquitter un événement (`alerts:ack`), créer, remplacer ou supprimer une règle (`alerts:rules`, domaine avant et après dans le périmètre), gérer les canaux (`alert_channels:manage`, `alert_channels:test`), obtenir, importer ou supprimer un certificat (`certs:manage`), créer, modifier, supprimer ou renouveler un domaine (`domains:manage`, délégation = case `domains:delegate`). Hors périmètre, `403`. Les cibles de déploiement, jetons de récupération, objectif de disponibilité, réglages des logs et SIEM restent aux administrateurs. Une route d'écriture que la table ne reconnaît pas est refusée à un non-administrateur.
+  - **Journal d'audit** : `/api/v1/audit` exige `audit:read` (aucun filtre par rôle n'existait : tout compte le lisait en entier).
+  - **Correctif de sécurité (livraison 3)** : un accès d'équipe donnait à un compte des scopes de jeton d'écriture (`nodes:write` par l'exploitation des conteneurs, `alerts:write`, `security:write`…) qui ouvraient des outils MCP d'écriture (billets d'enrôlement, nœuds déclarés, règles d'alerte, profils IP…) alors que les routes REST équivalentes les refusent hors administrateur. La liste des outils appelables par un non-administrateur est désormais **fermée** (`rbac.memberTools`) ; un test échoue si un outil d'écriture hors proxys et snippets s'y glisse.
+  - Vérifié par des tests : jugement de chaque objet (certificat, domaine par nom et par identifiant, événement, règle avant et après, délégation), table des permissions de lecture et d'écriture (le reste est refusé), liste fermée des outils.
+
+### Ajouté
+
 - **Les accès d'équipe s'appliquent aux logs, certificats, alertes et métriques (Admin 0.246.0)** : [ADR 0022](../docs/adr/0022-modele-de-droits-niveaux-et-perimetres.md), livraison 4, première partie (lectures). Jusqu'ici ces lectures étaient ouvertes à tout compte authentifié : un `user` limité à un domaine lisait les logs, certificats et alertes de tous les autres.
   - **Garde** (`rbac.Gate`) : une lecture exige la permission du catalogue (`logs:read`, `logs:export`, `logs_settings:read`, `certs:read`, `certs:deploy`, `alerts:read`, `alert_channels:read`, `dashboard:read`) ; sans elle, `403`. Une lecture que la table ne reconnaît pas est refusée à un non-administrateur (une route oubliée reste fermée). Les écritures restent réservées aux administrateurs.
   - **Périmètre → hôtes visibles** (`rbac.Visibility`) : les critères d'un accès (étiquette, nom de proxy, backend, groupe, domaine) sont résolus en hôtes à partir des proxys configurés (relus au plus toutes les 10 s) ; un accès qui ne désigne qu'un domaine couvre aussi les hôtes sans proxy.

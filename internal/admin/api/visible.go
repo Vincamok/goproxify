@@ -4,6 +4,8 @@
 package api
 
 import (
+	"database/sql"
+	"encoding/json"
 	"net/http"
 
 	"github.com/vincamok/goproxify/internal/admin/rbac"
@@ -73,4 +75,92 @@ func requireUnrestricted(w http.ResponseWriter, r *http.Request, permission stri
 		return false
 	}
 	return true
+}
+
+// Les écritures des services appliqués (alertes, certificats, domaines) sont ouvertes à un accès qui porte la permission
+// d'écriture, sur les objets de son périmètre ; la garde (rbac.Gate) a déjà vérifié qu'il la porte. Sans appelant posé
+// (appel direct, administrateur), tout est permis.
+
+// writeVisibility rend ce que l'appelant voit pour la permission d'écriture, et false quand rien n'est à restreindre.
+func writeVisibility(r *http.Request, permission string) (rbac.Visibility, bool) {
+	return visibility(r, permission)
+}
+
+// mayManageCert dit si l'appelant gère un certificat de ce nom (certs:manage).
+func mayManageCert(r *http.Request, name string) bool {
+	v, restricted := writeVisibility(r, "certs:manage")
+	return !restricted || v.CertName(name)
+}
+
+// mayManageDomain dit si l'appelant gère ce domaine (domains:manage).
+func mayManageDomain(r *http.Request, domain string) bool {
+	v, restricted := writeVisibility(r, "domains:manage")
+	return !restricted || v.Host(domain) || v.CertName(domain)
+}
+
+// mayManageDomainID juge le domaine déjà enregistré sous cet identifiant ; un identifiant inconnu n'a rien à protéger.
+func mayManageDomainID(r *http.Request, db *sql.DB, id string) bool {
+	if _, restricted := writeVisibility(r, "domains:manage"); !restricted {
+		return true
+	}
+	var domain string
+	if err := db.QueryRowContext(r.Context(), `SELECT domain FROM domains WHERE id=?`, id).Scan(&domain); err != nil {
+		return true
+	}
+	return mayManageDomain(r, domain)
+}
+
+// mayDelegate : déléguer un domaine à une autre passerelle crée des proxys implicites ailleurs ; c'est la permission
+// explicite domains:delegate, jamais le niveau Gestion.
+func mayDelegate(r *http.Request, req domainRequest) bool {
+	if req.DelegatedToEdgeID == "" && req.DelegatedEndpoint == "" && (req.DelegationMode == "" || req.DelegationMode == "passthrough") {
+		return true
+	}
+	c := rbac.CallerFrom(r.Context())
+	return c == nil || c.IsAdmin() || !c.Filter("domains:delegate").None()
+}
+
+// mayAckAlertEvent dit si l'appelant acquitte cet événement : son domaine est visible ; sans domaine, accès sans critère.
+func mayAckAlertEvent(r *http.Request, db *sql.DB, id string) bool {
+	v, restricted := writeVisibility(r, "alerts:ack")
+	if !restricted || v.All() {
+		return true
+	}
+	var detailJSON string
+	if err := db.QueryRowContext(r.Context(), `SELECT detail FROM alert_events WHERE id=?`, id).Scan(&detailJSON); err != nil {
+		return true
+	}
+	var detail map[string]any
+	_ = json.Unmarshal([]byte(detailJSON), &detail)
+	for _, key := range []string{"domain", "host"} {
+		if domain, _ := detail[key].(string); domain != "" && v.Host(domain) {
+			return true
+		}
+	}
+	return false
+}
+
+// mayWriteAlertRule juge une règle créée (id vide), remplacée (id) ou supprimée (id, sans nouveau périmètre) : son
+// domaine, avant et après, doit être dans le périmètre de l'appelant ; une règle sans domaine vise toutes les
+// passerelles et n'est permise qu'à un accès sans critère.
+func mayWriteAlertRule(r *http.Request, db *sql.DB, id, newGlob string, hasNew bool) bool {
+	v, restricted := writeVisibility(r, "alerts:rules")
+	if !restricted || v.All() {
+		return true
+	}
+	if hasNew && !v.Pattern(newGlob) {
+		return false
+	}
+	if id == "" {
+		return true
+	}
+	var scopeJSON string
+	if err := db.QueryRowContext(r.Context(), `SELECT scope FROM alert_rules WHERE id=?`, id).Scan(&scopeJSON); err != nil {
+		return true
+	}
+	var scope struct {
+		DomainGlob string `json:"domain_glob"`
+	}
+	_ = json.Unmarshal([]byte(scopeJSON), &scope)
+	return v.Pattern(scope.DomainGlob)
 }

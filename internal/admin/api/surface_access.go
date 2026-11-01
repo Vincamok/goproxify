@@ -102,16 +102,31 @@ func newSurfaceAccess(ctx context.Context, db *sql.DB) surfaceAccess {
 	return surfaceAccess{role: rbac.UserRole(ctx, db, userID), grants: grants, routes: loadRouteIndex(ctx, db)}
 }
 
-// check refuse l'accès au proxy ref : introuvable s'il est hors du périmètre en lecture, interdit s'il l'est en écriture.
+// check refuse l'accès au proxy ref : introuvable s'il est hors du périmètre en lecture (surface:read), interdit s'il l'est
+// en écriture (surface:learn).
 func (a surfaceAccess) check(ref string, write bool) error {
+	if write {
+		return a.checkPermission(ref, "surface:learn")
+	}
+	return a.checkPermission(ref, "surface:read")
+}
+
+// checkPermission juge le proxy ref sous une permission du service surface : il faut d'abord pouvoir le lire, puis porter la
+// permission (surface:learn, ou la case surface:enforce) sur ce proxy.
+func (a surfaceAccess) checkPermission(ref, permission string) error {
 	route := a.routes.of(ref)
-	if !rbac.CanReadProxyWithGrants(a.role, a.grants, route) {
+	if !rbac.CanOnRoute(a.role, a.grants, "surface:read", route) {
 		return ErrSurfaceNotFound
 	}
-	if write && !rbac.CanWriteProxyWithGrants(a.role, a.grants, route) {
+	if permission != "surface:read" && !rbac.CanOnRoute(a.role, a.grants, permission, route) {
 		return ErrSurfaceOutOfScope
 	}
 	return nil
+}
+
+// checkSurfacePermission est checkSurface pour une permission précise (surface:enforce).
+func checkSurfacePermission(ctx context.Context, db *sql.DB, ref, permission string) error {
+	return newSurfaceAccess(ctx, db).checkPermission(ref, permission)
 }
 
 // checkSurface est le garde des fonctions de surface qui portent sur un proxy.

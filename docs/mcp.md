@@ -661,6 +661,8 @@ Réponse : `{config, nodes}`. `config` est la configuration enregistrée (`enabl
 
 ---
 
+**Outils réservés aux administrateurs (Admin `0.247.0`).** Un accès d'équipe peut donner à un compte un scope de jeton d'écriture (`nodes:write` par les conteneurs, `alerts:write` par l'acquittement…) que les routes REST équivalentes refusent hors administrateur. La liste des outils qu'un compte non administrateur appelle est donc **fermée** (`memberTools` : outils de proxys et de conteneurs, qui jugent eux-mêmes le périmètre, et lectures filtrées) ; tout autre outil, y compris les écritures d'alertes, de certificats et de domaines, répond `Erreur: accès réservé aux administrateurs`.
+
 **Périmètre et outils de lecture globale.** Les outils `list_logs`, `list_certs`, `get_cert_status`, `list_cert_deploy_targets`, `list_alerts`, `list_alert_events`, `list_alert_rules`, `get_metrics`, `get_proxy_metrics` et `get_prism_*` ne filtrent pas par hôte : un compte dont l'accès a un périmètre reçoit `Erreur: outil réservé aux accès sans périmètre` (l'API REST, elle, filtre) ; sans la permission du catalogue, `Erreur: accès insuffisant: <permission>` (Admin `0.246.0`).
 
 ---

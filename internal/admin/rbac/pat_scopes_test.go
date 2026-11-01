@@ -335,3 +335,20 @@ func TestACMEProvidersNeedCertsScope(t *testing.T) {
 		}
 	}
 }
+
+// Un accès d'équipe peut donner à un compte un scope de jeton d'écriture (nodes:write via les conteneurs, alerts:write
+// via l'acquittement…) que les routes REST équivalentes refusent hors administrateur : tout outil d'écriture, hors
+// proxys et snippets, reste réservé aux administrateurs.
+func TestWriteToolsOutsideProxiesStayAdminOnly(t *testing.T) {
+	memberWrites := map[string]bool{"create_proxy": true, "convert_discovered_container": true, "set_container_route_enabled": true,
+		"update_proxy": true, "set_proxy_enabled": true, "purge_proxy_cache": true, "delete_proxy": true, "create_snippet": true, "delete_snippet": true}
+	for _, tool := range rbac.AllMCPTools() {
+		switch rbac.ToolRequiredScope(tool) {
+		case rbac.ScopeNodesWrite, rbac.ScopeAlertsWrite, rbac.ScopeDomainsWrite, rbac.ScopeCertsWrite,
+			rbac.ScopeLogsWrite, rbac.ScopeSecurityWrite, rbac.ScopeImportWrite, rbac.ScopeProxiesWrite, rbac.ScopeProxiesDelete, rbac.ScopeSnippetsWrite:
+			if !memberWrites[tool] && !rbac.ToolRequiresAdmin(tool) {
+				t.Errorf("%s (scope %s) : écriture ouverte à un compte non administrateur", tool, rbac.ToolRequiredScope(tool))
+			}
+		}
+	}
+}

@@ -339,6 +339,10 @@ func (h *DomainsHandler) create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "domain requis", http.StatusBadRequest)
 		return
 	}
+	if !mayManageDomain(r, req.Domain) || !mayDelegate(r, req) {
+		http.Error(w, "hors de votre périmètre", http.StatusForbidden)
+		return
+	}
 	if msg := certMethodError(req.Domain, req.CertMethod); msg != "" {
 		http.Error(w, msg, http.StatusBadRequest)
 		return
@@ -427,6 +431,10 @@ func (h *DomainsHandler) update(w http.ResponseWriter, r *http.Request, id strin
 		writeErr(w, r, http.StatusBadRequest, "api.err.json")
 		return
 	}
+	if !mayManageDomain(r, req.Domain) || !mayManageDomainID(r, h.DB, id) || !mayDelegate(r, req) {
+		http.Error(w, "hors de votre périmètre", http.StatusForbidden)
+		return
+	}
 	if msg := certMethodError(req.Domain, req.CertMethod); msg != "" {
 		http.Error(w, msg, http.StatusBadRequest)
 		return
@@ -487,6 +495,10 @@ func (h *DomainsHandler) update(w http.ResponseWriter, r *http.Request, id strin
 }
 
 func (h *DomainsHandler) delete(w http.ResponseWriter, r *http.Request, id string) {
+	if !mayManageDomainID(r, h.DB, id) {
+		http.Error(w, "hors de votre périmètre", http.StatusForbidden)
+		return
+	}
 	res, err := h.DB.ExecContext(r.Context(), `DELETE FROM domains WHERE id=?`, id)
 	if err != nil {
 		h.Log.Error("domains: delete", "err", err)
@@ -508,6 +520,10 @@ func (h *DomainsHandler) delete(w http.ResponseWriter, r *http.Request, id strin
 }
 
 func (h *DomainsHandler) renew(w http.ResponseWriter, r *http.Request, id string) {
+	if !mayManageDomainID(r, h.DB, id) {
+		http.Error(w, "hors de votre périmètre", http.StatusForbidden)
+		return
+	}
 	var domain, dnsProvider, credJSON, certMethod string
 	err := h.DB.QueryRowContext(r.Context(),
 		`SELECT domain, dns_provider, dns_credentials, cert_method FROM domains WHERE id=?`, id).

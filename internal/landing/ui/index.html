@@ -1282,6 +1282,16 @@ agent:
 
     <div class="code-block" style="margin-top:22px">
       <div class="code-block-header">
+        <span class="code-block-name">shell · design</span>
+        <button type="button" class="file-block-copy" data-i18n="copy" onclick="copyCodeBlock('cb-launcher-design')">Copy</button>
+      </div>
+      <div class="code-block-body" id="cb-launcher-design">
+        <div><span class="comment"># Open the design page: declare your machines and roles, see the diagram. Then open http://&lt;host&gt;:8080/design (access code printed in the output)</span></div>
+        <div><span class="prompt">$ </span><span class="cmd">docker run --rm -p 8080:8080 -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/vincamok/goproxify/launcher:preview</span></div>
+      </div>
+    </div>
+    <div class="code-block" style="margin-top:14px">
+      <div class="code-block-header">
         <span class="code-block-name">shell · update</span>
         <button type="button" class="file-block-copy" data-i18n="copy" onclick="copyCodeBlock('cb-launcher-update')">Copy</button>
       </div>

@@ -44,6 +44,219 @@ func readPermission(r *http.Request) (string, bool) {
 		return "alert_channels:read", true
 	case has("/api/v1/metrics"), has("/api/v1/prism"):
 		return "dashboard:read", true
+	case has("/api/v1/audit"):
+		return "audit:read", true
+	case has("/api/v1/snippets"), has("/api/v1/detector-types"):
+		return "snippets:read", true
+	case has("/api/v1/ip-profiles"):
+		return "ip_profiles:read", true
+	}
+	return "unmapped", true
+}
+
+// operatePermission dit quelle permission du catalogue exige une requête — lecture ou écriture — des services dont les
+// écritures sont ouvertes aux accès d'équipe : alertes, certificats et domaines (ADR 0022, livraison 4). Les handlers
+// jugent ensuite l'objet visé (hôte, domaine de la règle…). Ce qu'aucune ligne ne reconnaît est refusé à un
+// non-administrateur : une route ajoutée sans permission reste fermée.
+func operatePermission(r *http.Request) (string, bool) {
+	path := strings.TrimSuffix(r.URL.Path, "/")
+	has := func(prefix string) bool { return path == prefix || strings.HasPrefix(path, prefix+"/") }
+	read := r.Method == http.MethodGet || r.Method == http.MethodHead
+	switch {
+	case has("/api/v1/alert-events"):
+		if read {
+			return "alerts:read", true
+		}
+		if r.Method == http.MethodPost && strings.HasSuffix(path, "/ack") {
+			return "alerts:ack", true
+		}
+	case has("/api/v1/alert-rules"):
+		if read {
+			return "alerts:read", true
+		}
+		return "alerts:rules", true
+	case has("/api/v1/alert-channels"):
+		if read {
+			return "alert_channels:read", true
+		}
+		if r.Method == http.MethodPost && strings.HasSuffix(path, "/test") {
+			return "alert_channels:test", true
+		}
+		return "alert_channels:manage", true
+	case has("/api/v1/alert-channel-types"):
+		if read {
+			return "alert_channels:read", true
+		}
+	case has("/api/v1/certs"):
+		if read {
+			return readPermission(r)
+		}
+		rest := strings.TrimPrefix(strings.TrimPrefix(path, "/api/v1/certs"), "/")
+		if rest == "" || rest == "import" || (r.Method == http.MethodDelete && !strings.Contains(rest, "/")) {
+			return "certs:manage", true
+		}
+		// Cibles de déploiement et jetons de récupération : exécution ou exposition, réservés aux administrateurs.
+	case has("/api/v1/domains"):
+		if read {
+			return "domains:read", true
+		}
+		return "domains:manage", true
+	}
+	return "unmapped", true
+}
+
+// Les trois tables suivantes donnent la permission d'une requête du portail Access, de la sécurité réseau et de
+// l'automatisation. Ces services s'appliquent à toute la plateforme (le portail et les flux n'ont pas encore de
+// périmètre par groupe) : la garde exige un accès sans critère. Ce qu'une table ne reconnaît pas est refusé à un
+// non-administrateur.
+
+func isRead(r *http.Request) bool { return r.Method == http.MethodGet || r.Method == http.MethodHead }
+
+func pathParts(r *http.Request, prefix string) []string {
+	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, prefix), "/")
+	if rest == "" {
+		return nil
+	}
+	return strings.Split(rest, "/")
+}
+
+func readOrManage(r *http.Request, read, manage string) (string, bool) {
+	if isRead(r) {
+		return read, true
+	}
+	return manage, true
+}
+
+// portalPermission : les huit sous-services du portail (ADR 0022, annexe §2.5).
+func portalPermission(r *http.Request) (string, bool) {
+	if strings.HasPrefix(r.URL.Path, "/api/v1/portal-page-templates") {
+		return readOrManage(r, "portal_templates:read", "portal_templates:manage")
+	}
+	parts := pathParts(r, "/api/v1/portal")
+	if len(parts) == 0 {
+		return readOrManage(r, "portal_templates:read", "portal_templates:manage")
+	}
+	switch parts[0] {
+	case "users", "groups":
+		return readOrManage(r, "portal_users:read", "portal_users:manage")
+	case "destinations", "destination-groups":
+		return readOrManage(r, "portal_catalog:read", "portal_catalog:manage")
+	case "policy":
+		return readOrManage(r, "portal_policies:read", "portal_policies:manage")
+	case "audit":
+		if isRead(r) {
+			return "portal_audit:read", true
+		}
+	case "access-requests":
+		return readOrManage(r, "portal_requests:read", "portal_requests:decide")
+	case "recordings":
+		switch {
+		case r.Method == http.MethodDelete:
+			return "portal_recordings:delete", true
+		case isRead(r) && len(parts) == 1:
+			return "portal_recordings:list", true
+		case isRead(r):
+			return "portal_recordings:replay", true
+		}
+	case "sessions":
+		switch {
+		case isRead(r) && len(parts) >= 3 && parts[len(parts)-1] == "watch":
+			return "portal_sessions:observe", true
+		case isRead(r):
+			return "portal_sessions:read", true
+		default:
+			return "portal_sessions:cut", true
+		}
+	case "enabled", "push", "config":
+		return readOrManage(r, "portal_templates:read", "portal_templates:manage")
+	}
+	return "unmapped", true
+}
+
+// securityPermission : la sécurité réseau (bannissements, menaces, CVE, traçage d'IP). Les moteurs adaptatifs, la
+// surface applicative, la surveillance des domaines et les réglages (flotte, CrowdSec, WAF, objectifs) restent aux
+// administrateurs.
+func securityPermission(r *http.Request) (string, bool) {
+	parts := pathParts(r, "/api/v1/security")
+	if len(parts) == 0 {
+		return readOrManage(r, "netsec:read", "unmapped")
+	}
+	switch parts[0] {
+	case "overview", "threats", "cves", "headers", "timeline", "ip-timeline":
+		if isRead(r) {
+			return "netsec:read", true
+		}
+		if parts[0] == "cves" && r.Method == http.MethodPatch {
+			return "netsec:respond", true
+		}
+	case "ip-trace":
+		if isRead(r) {
+			return "netsec:analyse", true
+		}
+	case "surface":
+		// Surface applicative : les handlers jugent chaque proxy (périmètre) ; la garde ne ferme que les comptes sans accès.
+		if isRead(r) {
+			return "surface:read", true
+		}
+		if len(parts) == 2 {
+			switch parts[1] {
+			case "accept", "relax", "reset":
+				return "surface:learn", true
+			case "enforce":
+				return "surface:enforce", true
+			}
+		}
+	case "vulnscan":
+		if len(parts) == 1 {
+			return readOrManage(r, "netsec:read", "netsec:analyse")
+		}
+	case "asn":
+		return readOrManage(r, "netsec:read", "netsec:respond")
+	case "bans":
+		switch {
+		case len(parts) >= 2 && parts[1] == "import" && r.Method == http.MethodPost:
+			return "bans:import", true
+		case isRead(r):
+			return "netsec:read", true
+		default:
+			return "netsec:respond", true
+		}
+	}
+	return "unmapped", true
+}
+
+// automationPermission : flux, exécutions, modèles, sourdines (annexe §2.4).
+func automationPermission(r *http.Request) (string, bool) {
+	parts := pathParts(r, "/api/v1/automation")
+	if isRead(r) {
+		if len(parts) > 0 {
+			switch parts[0] {
+			case "flows", "runs", "catalog", "options", "templates", "silences", "stats", "export":
+				return "automation:read", true
+			}
+		}
+		return "unmapped", true
+	}
+	if len(parts) == 0 {
+		return "unmapped", true
+	}
+	switch parts[0] {
+	case "flows":
+		if len(parts) == 3 && parts[2] == "run" {
+			return "automation:run", true
+		}
+		return "automation:edit", true
+	case "runs":
+		if len(parts) == 3 {
+			switch parts[2] {
+			case "approve", "reject":
+				return "automation:approve", true
+			case "cancel", "replay":
+				return "automation:run", true
+			}
+		}
+	case "simulate", "templates", "silences", "import":
+		return "automation:edit", true
 	}
 	return "unmapped", true
 }

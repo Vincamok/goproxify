@@ -7,6 +7,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/vincamok/goproxify/internal/admin/logs"
@@ -127,5 +128,101 @@ func TestAggregateViewsAreForUnrestrictedAccessesOnly(t *testing.T) {
 	}
 	if !requireUnrestricted(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil), "dashboard:read") {
 		t.Fatal("sans appelant, rien n'est restreint")
+	}
+}
+
+func TestWritesAreJudgedOnTheObjectInThePerimeter(t *testing.T) {
+	db := openSQLDatesDB(t)
+	if _, err := db.Exec(`INSERT INTO alert_events (id, rule_id, trigger, detail, channels, fired_at) VALUES
+		(1, 'r', 'high_error_rate', '{"domain":"a.corp.io"}', '[]', CURRENT_TIMESTAMP),
+		(2, 'r', 'high_error_rate', '{"domain":"b.other.io"}', '[]', CURRENT_TIMESTAMP),
+		(3, 'r', 'node_offline', '{"node_name":"e1"}', '[]', CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO alert_rules (id, name, scope, triggers, channels) VALUES
+		('in', 'dedans', '{"domain_glob":"*.corp.io"}', '[]', '[]'),
+		('out', 'dehors', '{"domain_glob":"*.other.io"}', '[]', '[]'),
+		('global', 'toutes', '{}', '[]', '[]')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO domains (id, domain) VALUES ('d-in', 'app.corp.io'), ('d-out', 'app.other.io')`); err != nil {
+		t.Fatal(err)
+	}
+	levels := map[string]string{"alerts": "rules", "certs": "manage", "domains": "manage"}
+	scoped := restrictedRequest(t, "/", rbac.Perimeter{Domain: "*.corp.io"}, levels)
+
+	if !mayManageCert(scoped, "app.corp.io") || !mayManageCert(scoped, "*.corp.io") || mayManageCert(scoped, "app.other.io") {
+		t.Error("certificats gérés sous un nom du périmètre")
+	}
+	if !mayManageDomain(scoped, "app.corp.io") || mayManageDomain(scoped, "app.other.io") {
+		t.Error("domaines gérés dans le périmètre")
+	}
+	if !mayManageDomainID(scoped, db, "d-in") || mayManageDomainID(scoped, db, "d-out") || !mayManageDomainID(scoped, db, "inconnu") {
+		t.Error("domaine retrouvé par identifiant")
+	}
+	if mayDelegate(scoped, domainRequest{DelegatedToEdgeID: "e2"}) || !mayDelegate(scoped, domainRequest{}) || !mayDelegate(scoped, domainRequest{DelegationMode: "passthrough"}) {
+		t.Error("la délégation est une permission à part")
+	}
+	if !mayAckAlertEvent(scoped, db, "1") || mayAckAlertEvent(scoped, db, "2") || mayAckAlertEvent(scoped, db, "3") {
+		t.Error("acquittement : domaine visible, pas d'événement sans domaine")
+	}
+	if !mayWriteAlertRule(scoped, db, "", "*.corp.io", true) || !mayWriteAlertRule(scoped, db, "", "*.eu.corp.io", true) ||
+		mayWriteAlertRule(scoped, db, "", "*.other.io", true) || mayWriteAlertRule(scoped, db, "", "", true) {
+		t.Error("création d'une règle")
+	}
+	if !mayWriteAlertRule(scoped, db, "in", "*.corp.io", true) || mayWriteAlertRule(scoped, db, "out", "*.corp.io", true) ||
+		mayWriteAlertRule(scoped, db, "in", "*.other.io", true) || mayWriteAlertRule(scoped, db, "global", "*.corp.io", true) {
+		t.Error("remplacement : l'ancien et le nouveau domaine sont jugés")
+	}
+	if !mayWriteAlertRule(scoped, db, "in", "", false) || mayWriteAlertRule(scoped, db, "out", "", false) || mayWriteAlertRule(scoped, db, "global", "", false) {
+		t.Error("suppression")
+	}
+	// Un accès sans critère, ou l'absence d'appelant, ne restreint rien.
+	open := restrictedRequest(t, "/", rbac.Perimeter{}, levels)
+	if !mayWriteAlertRule(open, db, "global", "", true) || !mayManageCert(open, "x.any.io") {
+		t.Error("accès sans critère")
+	}
+	if !mayManageCert(httptest.NewRequest(http.MethodGet, "/", nil), "x.any.io") || !mayWriteAlertRule(httptest.NewRequest(http.MethodGet, "/", nil), db, "", "", true) {
+		t.Error("sans appelant")
+	}
+	// Déléguer exige domains:delegate.
+	delegator := restrictedRequest(t, "/", rbac.Perimeter{}, levels)
+	delegator = delegator.WithContext(rbac.WithCaller(delegator.Context(), &rbac.Caller{UserID: "u", Role: "user",
+		Accesses: []rbac.TeamAccess{{Levels: levels, Permissions: []string{"domains:delegate"}}}}))
+	if !mayDelegate(delegator, domainRequest{DelegatedToEdgeID: "e2"}) {
+		t.Error("domains:delegate ouvre la délégation")
+	}
+}
+
+// La surface applicative se juge par proxy sous les permissions du service surface : lire, apprendre, et la case enforce.
+func TestSurfaceIsJudgedPerProxyUnderItsOwnPermissions(t *testing.T) {
+	prod := router.Route{ID: "1", Host: "a.corp.io", Labels: map[string]string{"env": "prod"}}
+	test := router.Route{ID: "2", Host: "b.corp.io", Labels: map[string]string{"env": "test"}}
+	rbac.SetRouteSource(func(context.Context) ([]router.Route, error) { return []router.Route{prod, test}, nil })
+	t.Cleanup(func() { rbac.SetRouteSource(nil) })
+
+	access := func(levels map[string]string, permissions ...string) surfaceAccess {
+		return surfaceAccess{role: "user", routes: routeIndex{}, grants: []rbac.TeamAccess{{
+			Levels: levels, Permissions: permissions, Perimeter: rbac.Perimeter{Labels: map[string]string{"env": "prod"}}}}}
+	}
+	learner := access(map[string]string{"surface": "learn"})
+	reader := access(map[string]string{"surface": "read"})
+	enforcer := access(map[string]string{"surface": "learn"}, "surface:enforce")
+
+	allow := func(a surfaceAccess, r router.Route, perm string) error {
+		a.routes = routeIndex{strings.ToLower(r.Host): &r, r.ID: &r}
+		return a.checkPermission(r.Host, perm)
+	}
+	if allow(reader, prod, "surface:read") != nil || allow(reader, prod, "surface:learn") != ErrSurfaceOutOfScope {
+		t.Error("lecture seule : voit le proxy, ne peut pas apprendre")
+	}
+	if allow(learner, prod, "surface:learn") != nil || allow(learner, prod, "surface:enforce") != ErrSurfaceOutOfScope {
+		t.Error("apprentissage sans la case enforce")
+	}
+	if allow(enforcer, prod, "surface:enforce") != nil {
+		t.Error("la case enforce")
+	}
+	if allow(learner, test, "surface:read") != ErrSurfaceNotFound {
+		t.Error("un proxy hors périmètre est introuvable")
 	}
 }
