@@ -40,6 +40,10 @@ func SurfaceList(ctx context.Context, db *sql.DB, edge *prismedge.Source, edgePa
 	if err != nil {
 		return nil, err
 	}
+	access := newSurfaceAccess(ctx, db)
+	for i := range gws {
+		gws[i].Proxies = access.visibleSummaries(gws[i].Proxies)
+	}
 	return withMeta(map[string]any{"gateways": gws}, meta), nil
 }
 
@@ -48,6 +52,9 @@ func SurfaceList(ctx context.Context, db *sql.DB, edge *prismedge.Source, edgePa
 func SurfaceReport(ctx context.Context, db *sql.DB, edge *prismedge.Source, edgeParam, route string) (map[string]any, error) {
 	if edge == nil {
 		return nil, errNoGatewayToReplay
+	}
+	if err := checkSurface(ctx, db, route, false); err != nil {
+		return nil, err
 	}
 	gws, meta, err := edge.SurfaceReport(ctx, gatewayName(ctx, db, edgeParam), route)
 	if err != nil {
@@ -62,6 +69,9 @@ func SurfaceProposals(ctx context.Context, db *sql.DB, edge *prismedge.Source, e
 	if edge == nil {
 		return nil, errNoGatewayToReplay
 	}
+	if err := checkSurface(ctx, db, route, false); err != nil {
+		return nil, err
+	}
 	gws, meta, err := edge.SurfaceProposals(ctx, gatewayName(ctx, db, edgeParam), route)
 	if err != nil {
 		return nil, err
@@ -75,6 +85,9 @@ func SurfaceOpenAPI(ctx context.Context, db *sql.DB, edge *prismedge.Source, edg
 	if edge == nil {
 		return nil, errNoGatewayToReplay
 	}
+	if err := checkSurface(ctx, db, route, false); err != nil {
+		return nil, err
+	}
 	gws, meta, err := edge.SurfaceOpenAPI(ctx, gatewayName(ctx, db, edgeParam), route, lowSupport)
 	if err != nil {
 		return nil, err
@@ -87,6 +100,9 @@ func SurfaceReset(ctx context.Context, db *sql.DB, edge *prismedge.Source, edgeP
 	if edge == nil {
 		return nil, errNoGatewayToReplay
 	}
+	if err := checkSurface(ctx, db, route, true); err != nil {
+		return nil, err
+	}
 	gws, meta, err := edge.SurfaceReset(ctx, gatewayName(ctx, db, edgeParam), route)
 	if err != nil {
 		return nil, err
@@ -97,7 +113,7 @@ func SurfaceReset(ctx context.Context, db *sql.DB, edge *prismedge.Source, edgeP
 func (h *SecurityHandler) getSurface(w http.ResponseWriter, r *http.Request) {
 	out, err := SurfaceList(r.Context(), h.DB, h.Edge, r.URL.Query().Get("edge"))
 	if err != nil {
-		secJSONErr(w, err, http.StatusBadGateway)
+		secJSONErr(w, err, surfaceStatus(err))
 		return
 	}
 	jsonOK(w, out)
@@ -111,7 +127,7 @@ func (h *SecurityHandler) getSurfaceReport(w http.ResponseWriter, r *http.Reques
 	}
 	out, err := SurfaceReport(r.Context(), h.DB, h.Edge, r.URL.Query().Get("edge"), route)
 	if err != nil {
-		secJSONErr(w, err, http.StatusBadGateway)
+		secJSONErr(w, err, surfaceStatus(err))
 		return
 	}
 	jsonOK(w, out)
@@ -125,7 +141,7 @@ func (h *SecurityHandler) getSurfaceProposals(w http.ResponseWriter, r *http.Req
 	}
 	out, err := SurfaceProposals(r.Context(), h.DB, h.Edge, r.URL.Query().Get("edge"), route)
 	if err != nil {
-		secJSONErr(w, err, http.StatusBadGateway)
+		secJSONErr(w, err, surfaceStatus(err))
 		return
 	}
 	jsonOK(w, out)
@@ -139,7 +155,7 @@ func (h *SecurityHandler) getSurfaceOpenAPI(w http.ResponseWriter, r *http.Reque
 	}
 	out, err := SurfaceOpenAPI(r.Context(), h.DB, h.Edge, r.URL.Query().Get("edge"), route, r.URL.Query().Get("include_low_support") == "1")
 	if err != nil {
-		secJSONErr(w, err, http.StatusBadGateway)
+		secJSONErr(w, err, surfaceStatus(err))
 		return
 	}
 	jsonOK(w, out)
@@ -153,7 +169,7 @@ func (h *SecurityHandler) resetSurface(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := SurfaceReset(r.Context(), h.DB, h.Edge, r.URL.Query().Get("edge"), route)
 	if err != nil {
-		secJSONErr(w, err, http.StatusBadGateway)
+		secJSONErr(w, err, surfaceStatus(err))
 		return
 	}
 	jsonOK(w, out)

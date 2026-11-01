@@ -41,7 +41,7 @@ func surfaceHandler(t *testing.T) (*SecurityHandler, *logapitest.Gateway, *logap
 func surfCall(t *testing.T, h *SecurityHandler, method, target string) (int, map[string]any) {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(method, target, nil))
+	h.ServeHTTP(rec, adminReq(t, h, method, target, nil))
 	var out map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
 	return rec.Code, out

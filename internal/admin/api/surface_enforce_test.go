@@ -61,7 +61,7 @@ func post(t *testing.T, h *SecurityHandler, path string, body any) (int, Enforce
 	var buf bytes.Buffer
 	_ = json.NewEncoder(&buf).Encode(body)
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, &buf))
+	h.ServeHTTP(rec, adminReq(t, h, http.MethodPost, path, &buf))
 	var res EnforceResult
 	_ = json.Unmarshal(rec.Body.Bytes(), &res)
 	return rec.Code, res

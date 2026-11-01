@@ -167,9 +167,20 @@ func (h *ProxiesHandler) updateFiles(w http.ResponseWriter, r *http.Request, id 
 	route.ID = id
 	route.UpdatedAt = time.Now()
 	userID := auth.UserIDFromContext(r.Context())
+	existing, existsErr := h.fetchProd(r.Context(), id)
+	// La config reçue et le proxy qu'elle remplace doivent être dans le périmètre : sinon une config de son domaine prendrait la place du proxy d'un autre.
 	if !rbac.CanWriteProxy(r.Context(), h.DB, userID, &route) {
 		writeErr(w, r, http.StatusForbidden, "api.err.out_of_scope")
 		return
+	}
+	if existsErr == nil {
+		var replaced router.Route
+		_ = json.Unmarshal(existing.Config, &replaced)
+		replaced.ID = id
+		if !rbac.CanWriteProxy(r.Context(), h.DB, userID, &replaced) {
+			writeErr(w, r, http.StatusForbidden, "api.err.out_of_scope")
+			return
+		}
 	}
 	cfg, missing := h.restoreSecrets(r.Context(), id, body.Config)
 	if len(missing) > 0 {
@@ -180,7 +191,7 @@ func (h *ProxiesHandler) updateFiles(w http.ResponseWriter, r *http.Request, id 
 	enabled := true
 	if body.Enabled != nil {
 		enabled = *body.Enabled
-	} else if existing, err := h.fetchProd(r.Context(), id); err == nil {
+	} else if existsErr == nil {
 		enabled = existing.Enabled
 	}
 	prod, err := h.publishAll(r.Context(), id, route.Host, enabled, json.RawMessage(cfgJSON), userID)

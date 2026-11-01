@@ -131,6 +131,9 @@ func strSlice(v any) []string {
 // derniers (consigné à l'audit), jamais le premier.
 func EnforceSurface(ctx context.Context, db *sql.DB, edge *prismedge.Source, w ProxyConfigWriter, actor, edgeParam, route string, req EnforceRequest) (EnforceResult, error) {
 	res := EnforceResult{Route: route, DryRun: req.DryRun, BlockReasons: []string{}, Blockers: []string{}, Warnings: []string{}, Impact: []EnforceImpact{}}
+	if err := checkSurface(ctx, db, route, true); err != nil {
+		return res, err
+	}
 	reasons, err := normalizeReasons(req.Reasons)
 	if err != nil {
 		return res, err
@@ -236,6 +239,9 @@ func forceableBlockers(rep *surface.Report, reasons []string, res *EnforceResult
 // RelaxSurface remet le contrôle openapi du proxy en detect : plus rien n'est refusé, les violations restent comptées.
 func RelaxSurface(ctx context.Context, db *sql.DB, w ProxyConfigWriter, actor, route string) (EnforceResult, error) {
 	res := EnforceResult{Route: route, BlockReasons: []string{}, Blockers: []string{}, Warnings: []string{}, Impact: []EnforceImpact{}, Mode: "detect"}
+	if err := checkSurface(ctx, db, route, true); err != nil {
+		return res, err
+	}
 	id, err := w.MutateProxyConfig(ctx, route, actor, func(cfg map[string]any) error {
 		oa, _ := cfg["openapi"].(map[string]any)
 		if oa == nil || oa["enabled"] != true {
@@ -282,6 +288,8 @@ func stringsToAny(in []string) []any {
 // EnforceStatus traduit l'erreur d'un passage en block en code HTTP : un refus des garde-fous est un conflit (409), pas une panne.
 func EnforceStatus(err error) int {
 	switch {
+	case errors.Is(err, ErrSurfaceNotFound), errors.Is(err, ErrSurfaceOutOfScope):
+		return surfaceStatus(err)
 	case errors.Is(err, errEnforceRefused):
 		return http.StatusConflict
 	case errors.Is(err, errNoGatewayToReplay):

@@ -35,6 +35,9 @@ func SurfaceSuggestions(ctx context.Context, db *sql.DB, edge *prismedge.Source,
 	if edge == nil {
 		return nil, errNoGatewayToReplay
 	}
+	if err := checkSurface(ctx, db, route, false); err != nil {
+		return nil, err
+	}
 	gws, meta, err := edge.SurfaceReport(ctx, gatewayName(ctx, db, edgeParam), route)
 	if err != nil {
 		return nil, err
@@ -93,6 +96,9 @@ type AcceptResult struct {
 // réécrit pas sans perdre sa mise en forme.
 func AcceptSurface(ctx context.Context, db *sql.DB, edge *prismedge.Source, w ProxyConfigWriter, actor, edgeParam, route string, req AcceptRequest) (AcceptResult, error) {
 	res := AcceptResult{Route: route, DryRun: req.DryRun, Added: []AcceptedPath{}, Skipped: []AcceptSkipped{}, Blockers: []string{}, Warnings: []string{}}
+	if err := checkSurface(ctx, db, route, true); err != nil {
+		return res, err
+	}
 	if edge == nil {
 		return res, errNoGatewayToReplay
 	}
@@ -211,7 +217,7 @@ func (h *SecurityHandler) getSurfaceSuggestions(w http.ResponseWriter, r *http.R
 	}
 	out, err := SurfaceSuggestions(r.Context(), h.DB, h.Edge, r.URL.Query().Get("edge"), route)
 	if err != nil {
-		secJSONErr(w, err, http.StatusBadGateway)
+		secJSONErr(w, err, surfaceStatus(err))
 		return
 	}
 	jsonOK(w, out)

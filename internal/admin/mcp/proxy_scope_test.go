@@ -138,3 +138,21 @@ func TestContainerToolsRefuseARouteOutsideTheScope(t *testing.T) {
 		t.Fatalf("dans le périmètre : %v", err)
 	}
 }
+
+// Les outils de surface suivent le périmètre : lecture et réécriture d'un proxy d'un autre domaine sont refusées avant tout appel de passerelle.
+func TestSurfaceToolsRefuseAProxyOutsideTheScope(t *testing.T) {
+	h := setupMCPDB(t)
+	foreign := createAs(t, h, "secret.autre.io")
+	r := requestAs(t, h, "scoped", "user", "*.example.com")
+
+	for name, call := range map[string]func() (any, error){
+		"get_proxy_surface":           func() (any, error) { return h.toolGetProxySurface(r, map[string]any{"proxy": foreign}) },
+		"get_proxy_surface_proposals": func() (any, error) { return h.toolGetProxySurfaceProposals(r, map[string]any{"proxy": foreign}) },
+		"get_proxy_surface_openapi":   func() (any, error) { return h.toolGetProxySurfaceOpenAPI(r, map[string]any{"proxy": foreign}) },
+		"reset_proxy_surface":         func() (any, error) { return h.toolResetProxySurface(r, map[string]any{"proxy": foreign}) },
+	} {
+		if _, err := call(); err == nil || !strings.Contains(err.Error(), "introuvable") {
+			t.Errorf("%s hors périmètre : %v", name, err)
+		}
+	}
+}

@@ -44,7 +44,7 @@ func postAccept(t *testing.T, h *SecurityHandler, query string, body any) (int, 
 	var buf bytes.Buffer
 	_ = json.NewEncoder(&buf).Encode(body)
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/security/surface/accept"+query, &buf))
+	h.ServeHTTP(rec, adminReq(t, h, http.MethodPost, "/api/v1/security/surface/accept"+query, &buf))
 	var res AcceptResult
 	_ = json.Unmarshal(rec.Body.Bytes(), &res)
 	return rec.Code, res
@@ -61,7 +61,7 @@ func sugg(key, conf, method, path string) surface.Suggestion {
 func TestSuggestionsAreReadFromTheProfile(t *testing.T) {
 	h, _, _ := acceptFixture(t, []surface.Suggestion{sugg("unknown_path GET /nouveau/{int}", "high", "GET", "/nouveau/{int}")}, policyJSON)
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/security/surface/suggestions?route=p1", nil))
+	h.ServeHTTP(rec, adminReq(t, h, http.MethodGet, "/api/v1/security/surface/suggestions?route=p1", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
@@ -73,7 +73,7 @@ func TestSuggestionsAreReadFromTheProfile(t *testing.T) {
 		t.Errorf("suggestions : %+v", out)
 	}
 	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/security/surface/suggestions", nil))
+	h.ServeHTTP(rec, adminReq(t, h, http.MethodGet, "/api/v1/security/surface/suggestions", nil))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("sans route : %d", rec.Code)
 	}

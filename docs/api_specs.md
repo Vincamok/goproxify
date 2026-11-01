@@ -296,7 +296,7 @@ Détail complet d'un proxy.
 
 ### `PUT /api/v1/proxies/:domain`
 
-Met à jour un proxy manuel (interdit sur `source: "label"`).
+Met à jour un proxy manuel (interdit sur `source: "label"`). Le droit d'écriture est exigé sur le proxy remplacé **et** sur la config reçue (`403` sinon, Admin `0.241.3`) : on ne peut pas écraser le proxy d'un autre domaine avec une config de son domaine.
 
 ### `DELETE /api/v1/proxies/:domain`
 
@@ -1402,6 +1402,8 @@ Les scores cumulés et les fenêtres d'erreurs 4xx et de déclenchements `rate` 
 ### `GET /api/v1/security/threat-references`
 
 *(Admin `0.194.0`, Edge `0.108.0`)* Ce que chaque passerelle a appris pour la note commune d'Ephor. Paramètre optionnel `edge=<id ou nom>`. Réponse : `{ "gateways": [{ "node_id", "node_name", "references": [{ "route", "hour", "median", "threshold", "samples", "ready", "since", "updated" }], "profiles", "asn": { "version", "v4_ranges", "v6_ranges" }, "tls_table" }] }`, plus `partial` et `unreachable` si une passerelle n'a pas répondu (`503` si aucune n'est enregistrée). `hour` est l'heure du jour en UTC ; `median` et `threshold` sont en requêtes par minute et par IP ; `ready` dit si la référence compte (au moins 30 minutes observées pour l'heure et 24 h d'ancienneté de la route) ; elle ne contient aucune IP. Même réponse que l'outil MCP `get_ephor_references`. La passerelle l'expose en `GET /internal/v1/ephor/references`.
+
+**Périmètre (Admin `0.241.3`).** Tous les endpoints `…/security/surface…` appliquent les grants de l'utilisateur au proxy visé (paramètre `route`, identifiant ou hôte), comme `GET /proxies` : un compte limité à un domaine ne voit dans la liste que ses proxys, `404` pour un proxy qu'il ne voit pas, `403` pour une écriture (`reset`, `accept`, `enforce`, `relax`, simulation comprise) sans droit d'écriture. Un admin sans grant a accès à tout.
 
 ### `GET /api/v1/security/surface`
 
