@@ -170,7 +170,7 @@ function _pbCollectCondition(condType) {
     condition.ban_count = parseInt(document.getElementById('re-ban-count')?.value || '20', 10);
     condition.ban_window = document.getElementById('re-ban-window')?.value || '1h';
   } else if (condType === 'engine_silent') {
-    condition.engine_type = document.getElementById('re-engine-type')?.value || 'fail2ban';
+    condition.engine_type = document.getElementById('re-engine-type')?.value || 'fleet';
     condition.silent_minutes = parseInt(document.getElementById('re-silent-min')?.value || '10', 10);
   } else if (condType === 'proxy_error_rate') {
     condition.error_rate_threshold = parseFloat(document.getElementById('re-err-rate')?.value || '20');

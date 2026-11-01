@@ -46,6 +46,7 @@ var messagesES = map[string]string{
 
 	"api.err.method":      "método no permitido",
 	"api.err.internal":    "error interno",
+	"api.err.no_edge":     "ninguna pasarela conectada",
 	"api.err.json":        "JSON no válido",
 	"api.err.json_body":   "cuerpo JSON no válido",
 	"api.err.not_found":   "no encontrado",

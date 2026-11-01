@@ -88,14 +88,23 @@ func operatePermission(r *http.Request) (string, bool) {
 			return "alert_channels:read", true
 		}
 	case has("/api/v1/certs"):
+		rest := strings.TrimPrefix(strings.TrimPrefix(path, "/api/v1/certs"), "/")
+		// Jetons de récupération : ils exposent le certificat et sa clé (case certs:export_key) ; cibles de déploiement :
+		// elles exécutent (webhook, ssh_exec) — case certs:deploy, en lecture comme en écriture.
+		if segments := strings.Split(rest, "/"); len(segments) >= 2 {
+			switch segments[1] {
+			case "pull-tokens":
+				return "certs:export_key", true
+			case "deploy-targets":
+				return "certs:deploy", true
+			}
+		}
 		if read {
 			return readPermission(r)
 		}
-		rest := strings.TrimPrefix(strings.TrimPrefix(path, "/api/v1/certs"), "/")
 		if rest == "" || rest == "import" || (r.Method == http.MethodDelete && !strings.Contains(rest, "/")) {
 			return "certs:manage", true
 		}
-		// Cibles de déploiement et jetons de récupération : exécution ou exposition, réservés aux administrateurs.
 	case has("/api/v1/domains"):
 		if read {
 			return "domains:read", true
@@ -192,6 +201,21 @@ func securityPermission(r *http.Request) (string, bool) {
 	case "ip-trace":
 		if isRead(r) {
 			return "netsec:analyse", true
+		}
+	case "waf-config":
+		return readOrManage(r, "engines:read", "engines:tune")
+	case "threat-config":
+		switch {
+		case len(parts) == 1:
+			return readOrManage(r, "engines:read", "engines:tune")
+		case parts[1] == "suggestions" && isRead(r):
+			return "engines:read", true
+		case (parts[1] == "simulate" || parts[1] == "calibrate") && r.Method == http.MethodPost:
+			return "engines:simulate", true
+		}
+	case "threat-references":
+		if isRead(r) {
+			return "engines:read", true
 		}
 	case "surface":
 		// Surface applicative : les handlers jugent chaque proxy (périmètre) ; la garde ne ferme que les comptes sans accès.

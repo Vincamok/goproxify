@@ -815,8 +815,8 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/api/v1/snippets/", gatedOperatorReads(snippetsH))
 	mux.Handle("/api/v1/error-page-templates", adminOnly(errorPagesH))
 	mux.Handle("/api/v1/error-page-templates/", adminOnly(errorPagesH))
-	mux.Handle("/api/v1/portal-page-templates", gatedAll(portalPermission, portalPagesH))
-	mux.Handle("/api/v1/portal-page-templates/", gatedAll(portalPermission, portalPagesH))
+	mux.Handle("/api/v1/portal-page-templates", gatedAll(portalPermission, api.ScopePortal(s.db, portalPermission)(portalPagesH)))
+	mux.Handle("/api/v1/portal-page-templates/", gatedAll(portalPermission, api.ScopePortal(s.db, portalPermission)(portalPagesH)))
 	pluginReposH := &api.PluginReposHandler{DB: s.db, Log: s.log, Plugins: pluginsH}
 	mux.Handle("/api/v1/plugin-repos", adminOnly(pluginReposH))
 	mux.Handle("/api/v1/plugin-repos/", adminOnly(pluginReposH))
@@ -827,8 +827,8 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/api/v1/auth-provider-types", adminOnly(api.AuthProviderTypesHandler{}))
 	mux.Handle("/api/v1/auth-providers", adminOnly(authProvidersH))
 	mux.Handle("/api/v1/auth-providers/", adminOnly(authProvidersH))
-	mux.Handle("/api/v1/portal", gatedAll(portalPermission, portalH))
-	mux.Handle("/api/v1/portal/", gatedAll(portalPermission, portalH))
+	mux.Handle("/api/v1/portal", gatedAll(portalPermission, api.ScopePortal(s.db, portalPermission)(portalH)))
+	mux.Handle("/api/v1/portal/", gatedAll(portalPermission, api.ScopePortal(s.db, portalPermission)(portalH)))
 	mcpAccessH := &api.McpAccessHandler{DB: s.db, Log: s.log}
 	mux.Handle("/api/v1/mcp-access/", adminOnly(mcpAccessH))
 	mux.Handle("/api/v1/certs", gatedOperate(certsH))
@@ -836,6 +836,11 @@ func (s *Server) Start(ctx context.Context) error {
 		path := strings.TrimPrefix(r.URL.Path, "/api/v1/certs/")
 		parts := strings.SplitN(path, "/", 3)
 		if len(parts) >= 2 && (parts[1] == "deploy-targets" || parts[1] == "pull-tokens") {
+			// Déploiement (exécute) et jetons de récupération (exposent) : permission du catalogue, sur un certificat du périmètre.
+			if permission, _ := operatePermission(r); !api.CertAllowed(r, permission, parts[0]) {
+				http.Error(w, "hors de votre périmètre", http.StatusForbidden)
+				return
+			}
 			certDeployH.ServeHTTP(w, r)
 		} else {
 			certsH.ServeHTTP(w, r)

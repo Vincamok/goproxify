@@ -268,7 +268,8 @@ func parseLogsParams(r *http.Request) logs.SearchParams { return logsParamsFromV
 // scopedParams lit les filtres de la requête et y ajoute la restriction d'hôtes de l'appelant (ADR 0022) : un compte
 // qui n'a pas la permission reçoit 403 ; un accès sans critère voit tous les hôtes ; un accès à périmètre ne voit que
 // les hôtes qu'il couvre. Les lignes sans hôte (événements de processus) ne sont visibles que de qui a un accès aux logs
-// système sans critère. La source passerelle ne se filtre pas à la source : elle est refusée à un accès à périmètre.
+// système sans critère. La source passerelle (`source=edge`) ne se filtre pas à la source : un accès restreint est servi
+// par le volume de logs de l'Admin, qui reçoit les logs des passerelles et se filtre en SQL.
 func (h *LogsHandler) scopedParams(w http.ResponseWriter, r *http.Request, permission string) (logs.SearchParams, bool) {
 	p := parseLogsParams(r)
 	caller := rbac.CallerFrom(r.Context())
@@ -285,15 +286,12 @@ func (h *LogsHandler) scopedParams(w http.ResponseWriter, r *http.Request, permi
 	if vis.All() {
 		restrict.Patterns = []string{"?*"}
 	} else {
-		if sourceIsEdge(r) {
-			http.Error(w, "source=edge réservée aux accès sans périmètre", http.StatusForbidden)
-			return p, false
-		}
 		restrict.Hosts, restrict.Patterns = vis.Hosts(), vis.Patterns()
 	}
-	if vis.All() && sourceIsEdge(r) && !system.All() {
-		http.Error(w, "source=edge réservée aux accès aux logs système", http.StatusForbidden)
-		return p, false
+	if sourceIsEdge(r) {
+		q := r.URL.Query()
+		q.Del("source")
+		r.URL.RawQuery = q.Encode()
 	}
 	p.Restrict = restrict
 	return p, true

@@ -143,3 +143,64 @@ func TestSecurityIsBoundedToThePerimeter(t *testing.T) {
 		t.Errorf("vue globale pour l'accès sans critère : %d", code)
 	}
 }
+
+// Les réglages d'un moteur se bornent à une passerelle visible ; passer en block exige la case engines:enforce.
+func TestEngineSettingsAreBoundedAndBlockNeedsTheBox(t *testing.T) {
+	store := archstore.New(t.TempDir())
+	cluster := []byte(`{"cluster":true,"cluster_group":"paris-lan"}`)
+	if err := store.Upsert(archstore.NodeEntry{ID: "e1", Role: "edge", Name: "lan-1", Config: cluster, RBACRole: "viewer",
+		Scopes: []archstore.ScopeEntry{{ID: "s1", Type: "domain", Value: "*.corp.io"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Upsert(archstore.NodeEntry{ID: "e2", Role: "edge", Name: "net-1", RBACRole: "viewer"}); err != nil {
+		t.Fatal(err)
+	}
+	rbac.SetGroupSource(rbac.ArchitectureGroups{Store: store})
+	rbac.SetRouteSource(func(context.Context) ([]router.Route, error) { return nil, nil })
+	t.Cleanup(func() { rbac.SetGroupSource(rbac.ArchitectureGroups{}); rbac.SetRouteSource(nil) })
+	db, err := admindb.Open(filepath.Join(t.TempDir(), "e.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	resolve := func(r *http.Request) (string, bool) {
+		if r.Method == http.MethodGet {
+			return "engines:read", true
+		}
+		return "engines:tune", true
+	}
+	h := ScopeSecurity(db, resolve)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	tuner := &rbac.Caller{UserID: "u", Role: "user", Accesses: []rbac.TeamAccess{{
+		Levels: map[string]string{"engines": "tune"}, Perimeter: rbac.Perimeter{Group: rbac.GroupCriterion{Name: "paris-lan"}}}}}
+	enforcer := &rbac.Caller{UserID: "e", Role: "user", Accesses: []rbac.TeamAccess{{
+		Levels: map[string]string{"engines": "tune"}, Permissions: []string{"engines:enforce"}, Perimeter: rbac.Perimeter{Group: rbac.GroupCriterion{Name: "paris-lan"}}}}}
+
+	call := func(c *rbac.Caller, method, target, body string) int {
+		r := httptest.NewRequest(method, target, strings.NewReader(body))
+		r = r.WithContext(rbac.WithCaller(r.Context(), c))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	for _, c := range []struct {
+		name, method, target, body string
+		who                        *rbac.Caller
+		want                       int
+	}{
+		{"lire les réglages de sa passerelle", "GET", "/api/v1/security/waf-config?edge=lan-1", "", tuner, 204},
+		{"lire la configuration globale", "GET", "/api/v1/security/waf-config", "", tuner, 403},
+		{"lire les réglages d'une autre passerelle", "GET", "/api/v1/security/threat-config?edge=net-1", "", tuner, 403},
+		{"régler en detect", "PUT", "/api/v1/security/waf-config?edge=lan-1", `{"enabled":true,"mode":"detect"}`, tuner, 204},
+		{"passer en block sans la case", "PUT", "/api/v1/security/waf-config?edge=lan-1", `{"enabled":true,"mode":"block"}`, tuner, 403},
+		{"un signal en block dans un sous-objet", "PUT", "/api/v1/security/threat-config?edge=lan-1", `{"mode":"detect","decoy":{"mode":"block"}}`, tuner, 403},
+		{"aucun mode : le défaut d'Ephor est block", "PUT", "/api/v1/security/threat-config?edge=lan-1", `{"enabled":true}`, tuner, 403},
+		{"passer en block avec la case", "PUT", "/api/v1/security/waf-config?edge=lan-1", `{"enabled":true,"mode":"block"}`, enforcer, 204},
+		{"la case ne sort pas du périmètre", "PUT", "/api/v1/security/waf-config?edge=net-1", `{"mode":"block"}`, enforcer, 403},
+		{"références", "GET", "/api/v1/security/threat-references", "", tuner, 204},
+	} {
+		if got := call(c.who, c.method, c.target, c.body); got != c.want {
+			t.Errorf("%s : %d, attendu %d", c.name, got, c.want)
+		}
+	}
+}

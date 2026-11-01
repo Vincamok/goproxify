@@ -72,6 +72,8 @@ func TestBanTechnique(t *testing.T) {
 	cases := []struct{ src, reason, key, label string }{
 		{"threat", "threat: path", "path", "Chemin sensible (scan)"},
 		{"threat", "threat: rate", "rate", "Débit excessif"},
+		{"threat", "threat: seuil auth-fail", "threshold", "Seuils"},
+		{"threat", "threat: enumeration", "enumeration", "Énumération"},
 		{"fleet", "Seuils multi-passerelles : 12 erreurs en 60s", "errors", "Trop d'erreurs HTTP"},
 		{"crowdsec", "crowdsecurity/http-probing", "crowdsecurity/http-probing", "crowdsecurity/http-probing"},
 		{"native", "", "unknown", "Non précisé"},

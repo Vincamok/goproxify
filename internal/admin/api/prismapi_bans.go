@@ -31,6 +31,8 @@ var ephorTechniqueLabels = map[string]string{
 	"custom_path":  "Chemin personnalisé",
 	"decoy":        "Leurre touché",
 	"unknown_host": "Hôte inconnu",
+	"enumeration":  "Énumération",
+	"tls_fp":       "Empreinte TLS",
 	"rate":         "Débit excessif",
 }
 
@@ -55,6 +57,9 @@ func banTechnique(source, reason string) (key, label string) {
 	switch source {
 	case "threat":
 		key = strings.TrimSpace(strings.TrimPrefix(reason, "threat:"))
+		if strings.HasPrefix(key, "seuil ") {
+			return "threshold", "Seuils"
+		}
 		if l, ok := ephorTechniqueLabels[key]; ok {
 			return key, l
 		}

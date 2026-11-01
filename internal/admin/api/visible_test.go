@@ -67,9 +67,9 @@ func TestLogsAreRestrictedToTheHostsOfThePerimeter(t *testing.T) {
 		t.Fatalf("sans logs:read : ok=%v code=%d", ok, w.Code)
 	}
 	w = httptest.NewRecorder()
-	r = restrictedRequest(t, "/api/v1/logs?source=edge", byLabel, map[string]string{"logs": "read"}, prodAndTest...)
-	if _, ok := h.scopedParams(w, r, "logs:read"); ok || w.Code != http.StatusForbidden {
-		t.Fatalf("source=edge à périmètre : ok=%v code=%d", ok, w.Code)
+	r = restrictedRequest(t, "/api/v1/logs?source=edge&level=error", byLabel, map[string]string{"logs": "read"}, prodAndTest...)
+	if p, ok := h.scopedParams(w, r, "logs:read"); !ok || p.Restrict == nil || sourceIsEdge(r) || p.Level != "error" || r.URL.Query().Get("level") != "error" {
+		t.Fatalf("source=edge à périmètre : servie par le volume de l'Admin, filtre conservé : ok=%v edge=%v", ok, sourceIsEdge(r))
 	}
 	// Export : permission distincte.
 	w = httptest.NewRecorder()
@@ -224,5 +224,21 @@ func TestSurfaceIsJudgedPerProxyUnderItsOwnPermissions(t *testing.T) {
 	}
 	if allow(learner, test, "surface:read") != ErrSurfaceNotFound {
 		t.Error("un proxy hors périmètre est introuvable")
+	}
+}
+
+// Déploiement et jetons de récupération : la case du catalogue, sur un certificat du périmètre.
+func TestCertDeploymentBoxesAreJudgedOnTheCertificateName(t *testing.T) {
+	r := restrictedRequest(t, "/api/v1/certs/app.corp.io/deploy-targets", rbac.Perimeter{Domain: "*.corp.io"}, nil)
+	r = r.WithContext(rbac.WithCaller(r.Context(), &rbac.Caller{UserID: "u", Role: "user", Accesses: []rbac.TeamAccess{{
+		Perimeter: rbac.Perimeter{Domain: "*.corp.io"}, Permissions: []string{"certs:deploy"}}}}))
+	if !CertAllowed(r, "certs:deploy", "app.corp.io") || CertAllowed(r, "certs:deploy", "app.other.io") {
+		t.Error("déploiement : seulement sous un nom du périmètre")
+	}
+	if CertAllowed(r, "certs:export_key", "app.corp.io") {
+		t.Error("la case de jetons de récupération n'est pas cochée")
+	}
+	if !CertAllowed(httptest.NewRequest(http.MethodGet, "/", nil), "certs:deploy", "x.any.io") {
+		t.Error("sans appelant, rien n'est restreint")
 	}
 }

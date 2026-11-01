@@ -46,6 +46,7 @@ var messagesFR = map[string]string{
 
 	"api.err.method":      "méthode non supportée",
 	"api.err.internal":    "erreur interne",
+	"api.err.no_edge":     "aucune passerelle connectée",
 	"api.err.json":        "JSON invalide",
 	"api.err.json_body":   "corps JSON invalide",
 	"api.err.not_found":   "introuvable",

@@ -50,6 +50,7 @@ var messagesEN = map[string]string{
 	// Common Admin API errors
 	"api.err.method":      "method not allowed",
 	"api.err.internal":    "internal error",
+	"api.err.no_edge":     "no gateway connected",
 	"api.err.json":        "invalid JSON",
 	"api.err.json_body":   "invalid JSON body",
 	"api.err.not_found":   "not found",

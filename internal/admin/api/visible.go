@@ -164,3 +164,10 @@ func mayWriteAlertRule(r *http.Request, db *sql.DB, id, newGlob string, hasNew b
 	_ = json.Unmarshal([]byte(scopeJSON), &scope)
 	return v.Pattern(scope.DomainGlob)
 }
+
+// CertAllowed dit si l'appelant a la permission du catalogue sur le certificat de ce nom : le nom doit couvrir un hôte
+// de son périmètre. Un administrateur, un accès sans critère et l'absence d'appelant passent.
+func CertAllowed(r *http.Request, permission, name string) bool {
+	v, restricted := visibility(r, permission)
+	return !restricted || v.CertName(name)
+}

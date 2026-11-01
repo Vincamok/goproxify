@@ -69,6 +69,25 @@ func ScopeSecurity(db *sql.DB, resolve rbac.GatePermission) func(http.Handler) h
 					return
 				}
 				next.ServeHTTP(w, r)
+			case len(parts) >= 1 && (parts[0] == "waf-config" || parts[0] == "threat-config") && strings.HasPrefix(permission, "engines:"):
+				// Réglages d'un moteur : par passerelle ou groupe (?edge=) ; sans ?edge= c'est la configuration globale, aux
+				// accès sans critère. Passer un signal en block exige en plus la case engines:enforce.
+				edge := strings.TrimSpace(r.URL.Query().Get("edge"))
+				if edge == "" || !(scopeVisible(ns, edge, "") || ns.GroupNamed(edge)) {
+					http.Error(w, "passerelle visible requise (?edge=) : la configuration globale est réservée aux accès sans périmètre", http.StatusForbidden)
+					return
+				}
+				if r.Method == http.MethodPut {
+					body, _ := io.ReadAll(r.Body)
+					r.Body = io.NopCloser(bytes.NewReader(body))
+					if enginePutBlocks(body) && caller.Filter("engines:enforce").None() {
+						http.Error(w, "passer un signal en block exige la case engines:enforce", http.StatusForbidden)
+						return
+					}
+				}
+				next.ServeHTTP(w, r)
+			case len(parts) == 1 && parts[0] == "threat-references" && r.Method == http.MethodGet:
+				next.ServeHTTP(w, r)
 			default:
 				deny()
 			}
@@ -94,4 +113,38 @@ func banRowVisible(r *http.Request, db *sql.DB, ns rbac.NodeScope, id string) bo
 		return true // introuvable : le handler répond 404, rien à protéger
 	}
 	return scopeVisible(ns, scope, edge)
+}
+
+// enginePutBlocks dit si une configuration de moteur envoyée en PUT peut faire bloquer des clients : une valeur « block »
+// n'importe où, ou aucun « mode » à la racine (le défaut d'Ephor est block). Le critère est volontairement large : un
+// compte sans la case engines:enforce ne règle que des moteurs en detect.
+func enginePutBlocks(body []byte) bool {
+	var cfg map[string]any
+	if json.Unmarshal(body, &cfg) != nil {
+		return true
+	}
+	if _, hasMode := cfg["mode"]; !hasMode {
+		return true
+	}
+	return containsBlock(cfg)
+}
+
+func containsBlock(v any) bool {
+	switch x := v.(type) {
+	case string:
+		return x == "block"
+	case []any:
+		for _, e := range x {
+			if containsBlock(e) {
+				return true
+			}
+		}
+	case map[string]any:
+		for _, e := range x {
+			if containsBlock(e) {
+				return true
+			}
+		}
+	}
+	return false
 }

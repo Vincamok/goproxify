@@ -46,6 +46,7 @@ var messagesDE = map[string]string{
 
 	"api.err.method":      "Methode nicht erlaubt",
 	"api.err.internal":    "interner Fehler",
+	"api.err.no_edge":     "kein Gateway verbunden",
 	"api.err.json":        "ungültiges JSON",
 	"api.err.json_body":   "ungültiger JSON-Körper",
 	"api.err.not_found":   "nicht gefunden",

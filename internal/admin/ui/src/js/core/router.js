@@ -83,7 +83,29 @@ window.addEventListener('resize', () => {
 });
 
 // ── Navigation principale ──────────────────────────────────────────────────
+// Pages réservées aux administrateurs, ou à qui porte l'une des permissions du catalogue (state.user.granted) : une page
+// forcée par l'URL ne montre pas de zéros trompeurs quand l'API refuse (403).
+function pageNeeds(page) {
+  // Les vues de synthèse agrègent la sécurité réseau ; la surface applicative a ses propres pages.
+  if (['security', 'edge-security', 'security-posture', 'edge-security-posture'].includes(page)) return ['netsec:read'];
+  if (/^(edge-)?security/.test(page) || page === 'rules-store') return ['netsec:read', 'surface:read'];
+  if (/^automation/.test(page)) return ['automation:read'];
+  if (/^(edge-)?portal/.test(page)) return ['portal_requests:read', 'portal_sessions:read', 'portal_recordings:list', 'portal_catalog:read', 'portal_users:read', 'portal_policies:read', 'portal_audit:read', 'portal_templates:read'];
+  if (page === 'audit') return ['audit:read'];
+  if (['backups', 'import', 'mcp-access', 'auth-providers', 'plugins', 'error-pages', 'tokens'].includes(page)) return [];
+  return null;
+}
+
+function pageAllowed(page) {
+  if (Role.isAdmin()) return true;
+  const needs = pageNeeds(page);
+  if (needs === null) return true;
+  const granted = state.user?.granted || [];
+  return needs.some(p => granted.includes(p));
+}
+
 function navigate(page) {
+  if (!pageAllowed(page)) page = 'dashboard';
   if (typeof stopLogsSSE === 'function') stopLogsSSE();
   // Convention : une page qui démarre un setInterval/timer peut attacher
   // content._cleanup = () => clearInterval(...) pour l'arrêter en quittant

@@ -34,6 +34,8 @@ function bnTime(s) {
 }
 
 const bnExpiry = b => bnTime(b.expires_at);
+// « threat: seuil auth-fail » est un Seuil d'Ephor : la raison dit « Seuils · auth-fail ».
+const bnReason = r => { const m = /^threat:\s*seuil\s+(.+)$/i.exec(r || ''); return m ? 'Seuils · ' + m[1] : (r || ''); };
 const bnEdge = name => _bn.edgeNames.get(name) || name;
 const bnScopeLabel = scope => scope.startsWith('group:') ? t('security.ban_modal.scope_group', { name: scope.slice(6) }) : bnEdge(scope);
 const bnScopeTag = b => b.target_scope
@@ -216,7 +218,7 @@ function bnAnalysisHTML() {
     : bnRankHTML(bnCountBy(_bn.bans, b => b.domain || '(tous les domaines)').slice(0, 6).map(([k, n]) => ({
       label: k, n, color: 'var(--red)',
     })), 'Aucun ban actif.');
-  const reasons = bnRankHTML(_bn.byReason.slice(0, 6).map(r => ({ label: r.reason || 'Inconnue', n: r.count, color: 'var(--yellow)' })), 'Aucune donnée.');
+  const reasons = bnRankHTML(_bn.byReason.slice(0, 6).map(r => ({ label: bnReason(r.reason) || 'Inconnue', n: r.count, color: 'var(--yellow)' })), 'Aucune donnée.');
   return `<div class="bn-grid two">
       ${bnCard('Bans par heure · 48 dernières heures', bnTimelineHTML())}
       ${bnCard('Origine géographique', geo)}
@@ -269,7 +271,7 @@ function bnRowHTML(b) {
     <td class="mono bn-c-ip">${ip}${rec ? ` <span class="tag tag-yellow" title="${rec} bans sur l'historique">×${rec}</span>` : ''}${b.exempt ? ' <span class="tag tag-green" title="Entièrement couvert par la liste blanche : ce ban ne s\'applique pas">Exempté</span>' : ''}</td>
     <td data-label="Source"><span class="tag tag-neutral"><i class="sent-dot" style="background:${bnSrcColor(bnSrc(b))};margin-right:5px"></i>${esc(_secSourceLabel(bnSrc(b)))}</span></td>
     ${admin ? `<td data-label="Passerelle" style="font-size:12px">${b.edge_name ? esc(bnEdge(b.edge_name)) : '<span class="tag tag-neutral">Global</span>'}${bnScopeTag(b)}</td>` : `<td data-label="Domaine" style="color:var(--text2)">${esc(b.domain || '—')}</td>`}
-    <td data-label="Raison" style="color:var(--text2);font-size:12px;max-width:260px" title="${esc(b.reason || '')}">${esc(b.reason || '—')}${banSignalsHTML(b.signals)}${banUserAgentHTML(b.user_agent)}</td>
+    <td data-label="Raison" style="color:var(--text2);font-size:12px;max-width:260px" title="${esc(b.reason || '')}">${esc(bnReason(b.reason) || '—')}${banSignalsHTML(b.signals)}${banUserAgentHTML(b.user_agent)}</td>
     <td data-label="Restant">${bnTtlCell(b)}</td>
     <td class="bn-actions">
       ${bnIcon('prism', `openPrismForBanIP('${ip}')`, 'Voir dans Prism')}
@@ -320,7 +322,7 @@ function bnHistoryTableHTML() {
       <td class="mono bn-c-ip">${esc(b.ip)}</td>
       <td data-label="Source"><span class="tag tag-neutral">${esc(_secSourceLabel(bnSrc(b)))}</span></td>
       ${admin ? `<td data-label="Passerelle" style="font-size:12px">${b.edge_name ? esc(bnEdge(b.edge_name)) : '<span class="tag tag-neutral">Global</span>'}${bnScopeTag(b)}</td>` : `<td data-label="Domaine" style="color:var(--text2)">${esc(b.domain || '—')}</td>`}
-      <td data-label="Raison" style="color:var(--text2);font-size:12px">${esc(b.reason || '—')}${banSignalsHTML(b.signals)}${banUserAgentHTML(b.user_agent)}</td>
+      <td data-label="Raison" style="color:var(--text2);font-size:12px">${esc(bnReason(b.reason) || '—')}${banSignalsHTML(b.signals)}${banUserAgentHTML(b.user_agent)}</td>
       <td data-label="Expiré le" style="font-size:11px">${fmtDate(b.expires_at)}</td>
       <td data-label="Créé le" style="font-size:11px;color:var(--text3)">${fmtDate(b.created_at)}</td></tr>`).join('')}</tbody></table></div>`;
 }

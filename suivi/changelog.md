@@ -7,9 +7,48 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ## [Unreleased]
 
+### Corrigé
+
+- **Plus aucune notion de Fail2Ban : les bans des Seuils s'affichent comme des bans d'Ephor, raison « Seuils » (Admin 0.256.1, Edge 0.147.2)** : suite de l'[ADR 0020](../docs/adr/0020-reference-saisonniere-seuils-et-visibilite-amont.md), étape 2.c.
+  - **Raisons** : un ban d'un Seuil d'Ephor (`threat: seuil auth-fail`) se lit « Seuils · auth-fail » dans la liste des bans et dans les raisons fréquentes ; ses signaux (`threshold:auth-fail`, `enumeration`) ont un libellé lisible dans l'explication du ban ; la ventilation par technique de Prism les regroupe sous « Seuils », avec « Énumération » et « Empreinte TLS ».
+  - **Restes du Fail2Ban natif retirés** : le paquet `internal/edge/fail2ban` et `f2b_config.go`, que la synchronisation depuis Harness avait laissés (elle ne propage pas les suppressions) ; le choix par défaut `fail2ban` du moteur silencieux dans l'éditeur de playbooks devient `fleet` ; le README en français nomme Ephor et ses Seuils.
+  - Les anciennes lignes de ban dont la source est `fail2ban` (posées avant le renommage) restent affichées telles quelles dans une base existante, sans migration (le projet n'est pas déployé). Pour les ranger sous Ephor : `UPDATE security_bans SET source='threat' WHERE source='fail2ban'; UPDATE security_ban_history SET source='threat' WHERE source='fail2ban';`
+
 ### Ajouté
 
-- **Page d'accueil : « Trois rôles, un seul binaire » explique la sécurité et les pannes (Landing 0.9.0)** : sous le tableau des composants, deux séries de six cartes (français, anglais, espagnol, allemand). **Pourquoi les séparer est sûr** : clés propres à chaque rôle (le secret racine reste chez l'Admin), canal Admin → passerelle signé en HMAC-SHA256 et révocable par nœud, jeton d'enrôlement des Agents à usage unique (24 h) puis HMAC renouvelé chaque heure, chiffrement au repos par une clé propre à la machine, rotation sans interruption, éviction d'un membre d'un groupe HA. **Quand un rôle est en panne ou perdu** : Admin injoignable (ce qui continue, ce qui est suspendu : configuration, approbation d'un Agent, émission de certificat, ajout ou remplacement d'une passerelle), passerelle ou Agent arrêté, Admin perdu et reconstruit par le launcher, resynchronisation automatique au retour, logs rejoués depuis un curseur. Un renvoi vers la section Autonomie ferme le bloc.
+- **Les réglages du WAF et d'Ephor s'ouvrent aux accès à périmètre, par passerelle ou groupe (Admin 0.256.0)** : [ADR 0022](../docs/adr/0022-modele-de-droits-niveaux-et-perimetres.md), livraison 4, dixième partie. Ils étaient réservés aux administrateurs.
+  - **Permissions** : lecture, suggestions de seuils et références (`engines:read`) ; simulation et calibrage, en lecture seule (`engines:simulate`) ; modification (`engines:tune`). `?edge=` doit désigner une passerelle ou un groupe visible : la configuration globale (sans `?edge=`) reste aux accès sans critère.
+  - **Case `engines:enforce`** : une configuration envoyée en `PUT` qui contient la valeur `block` n'importe où, ou aucun `mode` à la racine (le défaut d'Ephor est `block`), exige la case ; sans elle un compte ne règle que des moteurs en `detect`. Le critère est volontairement large (fermé par défaut).
+  - Restent aux administrateurs : la flotte, CrowdSec, les objectifs de service, la configuration de l'analyse de vulnérabilités, la surveillance des domaines, l'inventaire, les rejets, la réputation TLS, la référence de trafic.
+  - Vérifié par des tests : table de permissions, lecture et écriture sur sa passerelle, configuration globale et autre passerelle refusées, block sans la case, block caché dans un sous-objet, mode absent, case qui ne sort pas du périmètre.
+
+### Ajouté
+
+- **Cibles de déploiement et jetons de récupération des certificats sous leurs cases du catalogue, mesure du filtrage des logs, README (Admin 0.255.0, Webapp 0.16.2)** :
+  - **Certificats** : `/certs/{domaine}/deploy-targets` (elles exécutent un webhook ou `ssh_exec`) exige la case `certs:deploy`, lecture comprise ; `/certs/{domaine}/pull-tokens` (jetons qui exposent le certificat et sa clé) la case `certs:export_key` ; dans les deux cas sur un certificat dont le nom couvre un hôte du périmètre. Ces cases ne sont pas dans le niveau Gestion. Les écritures de ces sous-routes étaient jusqu'ici aux administrateurs.
+  - **Mesure** : sur 3 millions de lignes de logs (50 domaines, un à 60 % des lignes, un très rare), une recherche restreinte à un hôte populaire, rare ou à dix hôtes rend sa page en moins d'une milliseconde ; les facettes sur l'hôte populaire (1,8 million de lignes) prennent 240 ms. Aucun `INDEXED BY` nécessaire à cette échelle (ADR 0022, question ouverte levée).
+  - **Interface** : les en-têtes « Canaux » et « Priorité » du tableau des règles d'alerte s'affichaient en clés brutes (`alerts.col.channels`, `common.priority`) ; ils sont traduits dans les quatre langues.
+  - **README** : le modèle de droits (périmètre, niveau par service, cases sensibles, profils) figure dans la liste des fonctions.
+
+### Ajouté
+
+- **Le portail Access est borné au périmètre de l'accès, objet par objet (Admin 0.254.0)** : [ADR 0022](../docs/adr/0022-modele-de-droits-niveaux-et-perimetres.md), livraison 4, neuvième partie. Il exigeait un accès sans critère, parce que ses handlers chargent les objets par identifiant sans vérifier leur passerelle : un simple filtre sur `?edge=` aurait laissé lire ou modifier l'objet d'une autre passerelle en changeant l'identifiant.
+  - **Garde** (`api.ScopePortal`) : une passerelle ou un groupe visible en `?edge=` est obligatoire pour toute liste, création, politique, audit, enregistrement, session, activation et poussée ; la portée en base de tout objet désigné par son identifiant (utilisateur, groupe, destination, groupe de destinations, demande d'accès) doit être visible, même si `?edge=` désigne une passerelle visible ; la portée portée par le corps (`home_edge`, `edge_name`, `edge`) ne peut pas sortir du périmètre (on ne déplace pas un utilisateur ni une destination vers une autre passerelle).
+  - **Modèles de pages** (globaux) : accès sans critère. Un accès sans critère et un administrateur voient tout.
+  - Vérifié par un test de bout en bout : liste sur sa passerelle et sur son groupe, sans passerelle, sur une autre passerelle ; objet d'un autre groupe désigné par son identifiant malgré une passerelle visible ; déplacement par le corps ; création sur une autre passerelle ; demandes d'accès ; politique et enregistrements ; modèles ; accès sans critère.
+  - Reste : la séparation des tâches sur les demandes d'accès (elles viennent d'utilisateurs du portail, non de comptes de la plateforme).
+
+### Corrigé
+
+- **Parcours de l'interface des accès d'équipe sur un Admin neuf : quatre défauts corrigés (Admin 0.253.0, Webapp 0.16.1)** : l'éditeur d'accès et la session d'un compte membre ont été exercés pour la première fois dans le navigateur, sur un Admin lancé avec son propre fichier de configuration et ses propres données. L'éditeur fonctionne (profil, périmètre, grille, enregistrement, liste des accès) ; sont corrigés :
+  - **Logs vides pour un accès à périmètre** : la page des logs demande `source=edge` par défaut, que l'Admin refusait (`403`) à un accès restreint. Sa requête est maintenant servie par le volume de logs de l'Admin, filtré en SQL sur ses hôtes, avec les mêmes filtres.
+  - **Pages sans droit** : une page forcée par l'URL (`#audit`, `#automation`, `#portal`, `#backups`…) affichait des zéros trompeurs (par exemple « Score de sécurité 100/100 ») quand l'API répondait `403`. Un compte non administrateur sans la permission du catalogue correspondante est renvoyé au tableau de bord.
+  - **Message brut** : l'aperçu d'un périmètre sans passerelle affichait `api.err.no_edge` ; le message est traduit dans les quatre langues.
+  - **Aide périmée** : le texte « Modèle de droits » de la page Utilisateurs décrivait encore les accès « type / valeur + mode lecture ou écriture » ; il décrit périmètre et niveau par service.
+
+### Ajouté
+
+- **Page d'accueil : « Trois rôles, un seul binaire » explique la sécurité et les cas graves (Landing 0.9.0)** : sous le tableau des composants, une série de six cartes **Pourquoi les séparer est sûr** (clés propres à chaque rôle, le secret racine restant chez l'Admin ; canal Admin → passerelle signé en HMAC-SHA256 et révocable par nœud ; jeton d'enrôlement des Agents à usage unique (24 h) puis HMAC renouvelé chaque heure ; chiffrement au repos par une clé propre à la machine ; rotation sans interruption ; éviction d'un membre d'un groupe HA) et trois cartes **Et quand ça tourne mal** (Admin perdu et reconstruit par le launcher, resynchronisation automatique au retour, logs rejoués depuis un curseur), en français, anglais, espagnol et allemand. Les pannes simples restent dans la section Autonomie, dont la ligne Admin précise désormais ce qui s'arrête (émission ou renouvellement d'un certificat, approbation d'un Agent, ajout ou remplacement d'une passerelle).
 - **La sécurité réseau est bornée au périmètre de l'accès (Admin 0.252.0)** : [ADR 0022](../docs/adr/0022-modele-de-droits-niveaux-et-perimetres.md), livraison 4, septième partie. Elle exigeait un accès sans critère ; un accès à périmètre (groupe de passerelles, par nom ou attributs, ou proxys couverts) l'ouvre maintenant sur ses passerelles.
   - **Listes** : bannissements, menaces et CVE ne montrent que les lignes dont la passerelle ou la portée (`target_scope`, nom de passerelle ou `group:<nom>`) est visible.
   - **Actions** : bannir exige une portée visible ; débannir, modifier un ban et changer le statut d'une CVE se jugent sur la portée de l'objet (`403` hors périmètre).

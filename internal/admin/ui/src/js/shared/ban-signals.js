@@ -2,6 +2,8 @@
 // (ADR 0011). Fournie par l'API sous `signals: [{ name, points, value }]` ; absente des bans manuels et des autres sources.
 
 function banSignalLabel(name) {
+  // Un Seuil d'Ephor porte son nom dans le signal : « threshold:auth-fail ».
+  if (typeof name === 'string' && name.startsWith('threshold:')) return t('bansig.threshold') + ' · ' + name.slice(10);
   const key = 'bansig.' + name;
   const label = t(key);
   return label === key ? name : label;

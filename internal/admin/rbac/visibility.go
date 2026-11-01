@@ -289,7 +289,7 @@ func (c *Caller) HasAnyAccess() bool {
 
 // perimeterAwareServices jugent eux-mêmes chaque objet contre le périmètre de l'appelant : la garde sans critère les laisse
 // passer dès que la permission est portée, quel que soit le périmètre.
-var perimeterAwareServices = []string{"surface", "netsec"}
+var perimeterAwareServices = []string{"surface", "netsec", "engines", "portal_requests", "portal_sessions", "portal_recordings", "portal_catalog", "portal_users", "portal_policies", "portal_audit", "portal_templates"}
 
 func perimeterAware(permission string) bool {
 	p, ok := PermissionByID(permission)
