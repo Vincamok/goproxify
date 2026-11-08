@@ -111,6 +111,24 @@ func TestRedirectHTTPSHonorsForwardedProtoOnlyFromTrustedPeers(t *testing.T) {
 	}
 }
 
+// Cloudflare Tunnel vers le port HTTP de la passerelle : cloudflared pose X-Forwarded-Proto: https et CF-Connecting-IP. Depuis une
+// adresse locale la requête passe sans boucle ; depuis une adresse publique non listée, le tunnel n'est pas cru.
+func TestRedirectHTTPSBehindCloudflareTunnel(t *testing.T) {
+	s, _ := redirectGateway(t, &router.Route{ID: "r1", Host: "secure.test", TLSEnabled: true, RedirectHTTPS: true})
+	hdr := map[string]string{"X-Forwarded-Proto": "https", "CF-Connecting-IP": "198.51.100.77", "X-Forwarded-For": "198.51.100.77"}
+
+	if rec := call(s, http.MethodGet, "http://secure.test/", "172.18.0.4", false, hdr); rec.Code != http.StatusOK {
+		t.Errorf("cloudflared dans le réseau Docker : %d, attendu 200 (pas de boucle)", rec.Code)
+	}
+	if rec := call(s, http.MethodGet, "http://secure.test/", "203.0.113.40", false, hdr); rec.Code != http.StatusPermanentRedirect {
+		t.Errorf("cloudflared public non listé : %d, attendu 308", rec.Code)
+	}
+	edgelog.SetTrustedProxies([]string{"203.0.113.40"})
+	if rec := call(s, http.MethodGet, "http://secure.test/", "203.0.113.40", false, hdr); rec.Code != http.StatusOK {
+		t.Errorf("cloudflared public listé dans GPX_TRUSTED_PROXIES : %d, attendu 200", rec.Code)
+	}
+}
+
 // Le challenge http-01 doit rester joignable en clair : la redirection l'envoyait vers un HTTPS dont le certificat n'existe pas encore.
 func TestACMEHTTP01IsServedBeforeRoutingAndRedirect(t *testing.T) {
 	s, _ := redirectGateway(t, &router.Route{ID: "r1", Host: "secure.test", TLSEnabled: true, RedirectHTTPS: true})

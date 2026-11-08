@@ -660,6 +660,8 @@ La passerelle et l'Admin ne lisent `CF-Connecting-IP`, `X-Forwarded-For` et `X-R
 
 Le réglage s'applique de la même façon à l'Admin (Admin `0.257.0`) : limiteur de connexion, journal d'audit et allowlist d'IP du MCP. Avant, ces trois-là lisaient `X-Forwarded-For` sans consulter ce réglage : un appelant d'Internet franchissait l'allowlist du MCP, ouverte par défaut aux réseaux privés, en écrivant `X-Forwarded-For: 10.0.0.1`, et pouvait inscrire l'adresse de son choix au journal d'audit.
 
+Derrière un tunnel Cloudflare (`cloudflared`), voir [cloudflare-tunnel.md](cloudflare-tunnel.md) : le tunnel est un proxy de confiance s'il est sur la même machine ou le même réseau Docker, sinon il faut le lister.
+
 Les plages privées ne sont de toute façon pas bannies par Ephor ni par les bans manuels : un poste du LAN qui attaque la passerelle n'est pas bloqué par adresse, quel que soit ce réglage.
 
 Le labo de tests vérifie le comportement avec `tests/lab/run-security.sh --strict-ip` (voir [tests-lab.md](tests-lab.md)).

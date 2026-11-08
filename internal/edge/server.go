@@ -25,6 +25,7 @@ import (
 	"github.com/vincamok/goproxify/internal/edge/bansdb"
 	edgecache "github.com/vincamok/goproxify/internal/edge/cache"
 	edgecrowdsec "github.com/vincamok/goproxify/internal/edge/crowdsec"
+	"github.com/vincamok/goproxify/internal/edge/destsync"
 	"github.com/vincamok/goproxify/internal/edge/errorpages"
 	"github.com/vincamok/goproxify/internal/edge/geoip"
 	"github.com/vincamok/goproxify/internal/edge/lastua"
@@ -112,6 +113,7 @@ type Server struct {
 	quicPort       atomic.Int32 // port UDP de HTTP/3 une fois le serveur démarré (0 : non démarré) ; annoncé par Alt-Svc
 	wsHub          *edgews.Hub
 	portal         *portal.Service
+	destSync       *destsync.Runner              // sources de destinations du portail (ADR 0024) ; actif sur le membre qui héberge le portail
 	portalRepl     *portalReplicator             // réplication du portail vers les pairs du groupe HA
 	agentRepl      agentReplicator               // réplication des HMAC d'Agents vers les pairs du groupe HA
 	agentGen       agentGenerations              // dernière génération d'état complet acceptée par (Agent, source, scope)
@@ -253,6 +255,7 @@ func New(cfg *config.EdgeConfig) (*Server, error) {
 	s.portal = portal.NewService(log.Logger())
 	s.portalRepl = &portalReplicator{}
 	s.portal.SetStoreChangeHook(s.schedulePortalReplicaPush)
+	s.destSync = destsync.NewRunner(s.reportDestInventory)
 
 	// Token store local — source de vérité pour l'auth de l'API interne.
 	tokensPath := "/etc/goproxify/edge-tokens.db"
@@ -453,6 +456,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// Sync pools discovery depuis les passerelles pairs (LB cross-passerelle)
 	s.startPeerSyncLoop(ctx)
 	go s.surfaceStatusLoop(ctx)
+	s.destSync.Start(ctx)
 	// Écouteurs TCP/UDP des routes L4 : suivent la table, et se rouvrent après un redémarrage sans l'Admin.
 	s.table.SetOnChange(s.scheduleL4Sync)
 	s.scheduleL4Sync()

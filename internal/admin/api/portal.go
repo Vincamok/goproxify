@@ -13,6 +13,7 @@ import (
 
 	adminauth "github.com/vincamok/goproxify/internal/admin/auth"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
+	"github.com/vincamok/goproxify/internal/edge/destsync"
 	"github.com/vincamok/goproxify/internal/edge/portal"
 )
 
@@ -44,6 +45,9 @@ type PortalConfig struct {
 	HAStandby     bool     `json:"ha_standby,omitempty"`      // calculé : réplique sans écouter (nœud sans portail)
 	HASessionMode string   `json:"ha_session_mode,omitempty"` // sticky (défaut) | shared
 	HAKey         string   `json:"ha_key,omitempty"`          // poussé aux passerelles, jamais renvoyé à l'UI
+
+	// Sources de destinations (ADR 0024) : calculées à la poussée, secrets compris ; jamais lues du client ni renvoyées à l'UI.
+	DestSources []destsync.SourceConfig `json:"dest_sources"`
 }
 
 // PortalPusher pousse la config portail vers une passerelle précis.
@@ -72,6 +76,14 @@ func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasPrefix(r.URL.Path, destGroupsPath) {
 		h.handleDestGroups(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, destSourcesPath) {
+		h.handleDestSources(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, destCandidatesPath) {
+		h.handleDestCandidates(w, r)
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/v1/portal/destinations") {
@@ -155,7 +167,7 @@ func (h *PortalHandler) put(w http.ResponseWriter, r *http.Request) {
 	}
 	// Champs calculés ou secrets : jamais acceptés du client.
 	cfg.HAGroup, cfg.HAMembers, cfg.HAStandby, cfg.HAKey = "", nil, false, ""
-	cfg.Grants = nil
+	cfg.Grants, cfg.DestSources = nil, nil
 	prev := loadPortalConfig(h.DB, scope)
 	cfg.Policy = prev.Policy // ne se modifie que par /portal/policy
 	if cfg.Views == nil {

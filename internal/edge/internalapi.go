@@ -23,6 +23,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	edgecrowdsec "github.com/vincamok/goproxify/internal/edge/crowdsec"
+	"github.com/vincamok/goproxify/internal/edge/destsync"
 	"github.com/vincamok/goproxify/internal/edge/errorpages"
 	"github.com/vincamok/goproxify/internal/edge/metrics"
 	"github.com/vincamok/goproxify/internal/edge/portal"
@@ -87,6 +88,8 @@ func (s *Server) startInternalAPI() error {
 	mux.HandleFunc("DELETE /internal/v1/waf/behavior/profiles/{ip}", s.handleWAFBehaviorDeleteProfile)
 	mux.HandleFunc("POST /internal/v1/settings", s.handlePushSettings)
 	mux.HandleFunc("POST /internal/v1/portal", s.handlePushPortal)
+	mux.HandleFunc("POST /internal/v1/portal/dest-sources/test", s.handleDestSourceTest)
+	mux.HandleFunc("POST /internal/v1/portal/dest-sources/{id}/sync", s.handleDestSourceSync)
 	mux.HandleFunc("GET /internal/v1/portal/recordings", s.handlePortalRecordingsList)
 	mux.HandleFunc("GET /internal/v1/portal/sessions/{id}/watch", s.handlePortalSessionWatch)
 	mux.HandleFunc("GET /internal/v1/portal/recordings/{id}", s.handlePortalRecordingGet)
@@ -977,6 +980,9 @@ type portalPushPayload struct {
 	Users                []portal.SyncedUser    `json:"users"`
 	Grants               []portal.AccessGrant   `json:"grants"`
 	Policy               portal.Policy          `json:"policy"`
+	// DestSources : sources de destinations (ADR 0024), secrets compris, gardées dans la copie locale chiffrée.
+	// Absent (Admin plus ancien) : les sources en place ne changent pas ; liste vide : elles sont toutes retirées.
+	DestSources []destsync.SourceConfig `json:"dest_sources"`
 
 	// Haute disponibilité : voir portal.Config.
 	HAGroup       string   `json:"ha_group"`
@@ -1052,6 +1058,7 @@ func (s *Server) applyPortalPayload(payload portalPushPayload) {
 			}
 		}
 	}
+	s.applyDestSources(payload)
 	s.ensurePortalPublicRoute()
 }
 

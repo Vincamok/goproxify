@@ -251,7 +251,7 @@ Full reference → **[docs/cli.md](docs/cli.md)**
 ### Admin (Control Plane)
 
 - **Web UI + REST API** — CRUD proxies, snippets, tokens, users; three skins (Flat, Industry DS, Console), light or dark, each with its own accent colours
-- **GoProxify Access** — destination catalogue (global / per-Edge view), invite users by email (SMTP), tags, Access HTML templates, portal options per Edge
+- **GoProxify Access** — destination catalogue (global / per-Edge view), invite users by email (SMTP), tags, Access HTML templates, portal options per Edge; **destination sources**: the gateway reads a platform's API (Proxmox VE first) and offers its VMs and containers as destinations, once you publish them
 - **User API tokens (PAT)** — `gpx_pat_*` self-service with scopes (`proxies:read`, `certs:write`, …) for scripts and MCP clients, each issued for the REST API, for MCP or for both (enforced server-side); a read scope never allows a write; distinct from Edge/Agent pairing tokens
 - **MCP server** — JSON-RPC 2.0 + SSE; **PAT-only** authentication (no session JWT); every tool and resource requires the scope of its REST equivalent, plus the admin role where the REST route is admin-only — a tool without a declared scope is refused
 - **Terraform provider** — [`integrations/terraform-provider-goproxify`](integrations/terraform-provider-goproxify): proxies, bans (optionally scoped to a gateway or HA group), ban whitelist and IP profiles as code, with import and drift detection (not yet published on the Terraform Registry)
@@ -355,6 +355,7 @@ See `.env.example` for the full list.
 | [CLI](docs/cli.md) | Full reference for all commands and options |
 | [Detailed architecture](docs/architecture.md) | Data flows, technical decisions |
 | [Inter-Edge delegation](docs/delegation.md) | Passthrough vs Terminate modes, client IP, prerequisites |
+| [Cloudflare Tunnel](docs/cloudflare-tunnel.md) | Running behind `cloudflared`: client IP, HTTPS redirect, certificates, limits |
 | [Features](docs/fonctionnalites.md) | Product capability catalogue |
 | [Skills](SKILLS.md) | Everything the tool can do, by goal, with recipes |
 | [API specifications](docs/api_specs.md) | Full REST contract |

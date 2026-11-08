@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/vincamok/goproxify/internal/edge/destsync"
 	"github.com/vincamok/goproxify/internal/edge/router"
 	"github.com/vincamok/goproxify/internal/edge/siem"
 )
@@ -108,6 +109,7 @@ const (
 	TypePortalAudit           = "portal_audit"
 	TypePortalLive            = "portal_live"           // instantané des connexions pontées en cours
 	TypePortalAccessRequest   = "portal_access_request" // demande d'accès temporaire d'un utilisateur du portail
+	TypePortalDestInventory   = "portal_dest_inventory" // inventaire d'une source de destinations du portail, à chaque passage (payload : PortalDestInventoryPayload)
 	TypeThreatBan             = "threat_ban"            // IP bannie par le moteur de détection automatique
 	TypeCrowdSecDecisions     = "crowdsec_decisions"    // décisions CrowdSec passerelle→Admin (agrégation)
 	TypeWAFReloaded           = "waf_reloaded"          // Confirmation passerelle → Admin : règles WAF appliquées
@@ -398,6 +400,14 @@ type SurfaceProxyPayload struct {
 type SurfaceSuggestionsPayload struct {
 	NodeName string                `json:"node_name"`
 	Proxies  []SurfaceProxyPayload `json:"proxies"`
+}
+
+// PortalDestInventoryPayload : ce qu'une source de destinations a vu à son dernier passage (ADR 0024). C'est un état, pas un
+// journal : un envoi perdu pendant une coupure est remplacé par le passage suivant. Un passage en erreur (OK faux) ne porte
+// aucune machine et l'Admin n'en retire rien.
+type PortalDestInventoryPayload struct {
+	NodeName string `json:"node_name"`
+	destsync.Inventory
 }
 
 // EdgeHeartbeatPayload est envoyé par passerelle → Admin toutes les 30 s.

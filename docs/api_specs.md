@@ -1616,6 +1616,28 @@ Groupes de destinations du catalogue, propres à une passerelle (ou à son group
 
 Supprimer une destination (`DELETE /api/v1/portal/destinations/{id}`) la retire de ses groupes.
 
+### Sources de destinations Access — `/api/v1/portal/dest-sources` et `/api/v1/portal/dest-candidates`
+
+Une source interroge l'API d'une plateforme (Proxmox VE…) **depuis la passerelle** et remonte ses machines comme *candidates* ; rien n'est visible des utilisateurs avant publication ([ADR 0024](adr/0024-sources-de-destinations-du-portail-access.md)). Comme les autres objets du portail, une source est rattachée à une passerelle ou à son groupe HA (`?edge=`).
+
+| Méthode | Chemin | Description |
+|---------|--------|-------------|
+| `GET` | `/api/v1/portal/dest-sources/types` | Types disponibles : manifestes (`type`, `label`, `fields[]` avec `key`, `label`, `kind`, `secret`, `required`, `help`, `default`) |
+| `GET` | `/api/v1/portal/dest-sources?edge=` | Sources : `id`, `edge_name`, `type`, `name`, `config` (**secrets masqués**), `interval_s`, `enabled`, `extra_tags`, `auto_publish`, `status` (`""`, `ok`, `error`), `status_msg`, `last_sync_at`, `machine_count`, `candidates` (nombre par état) |
+| `POST` | `/api/v1/portal/dest-sources` | Crée une source : `edge_name`, `type`, `name`, `config` (validée par le manifeste : champs requis, clés inconnues refusées), `interval_s` (défaut 300, minimum 60), `enabled`, `extra_tags`, `auto_publish` (défaut `false`). `201` ; `400` configuration invalide ; `409` nom déjà pris sur la passerelle |
+| `GET` `PUT` `DELETE` | `/api/v1/portal/dest-sources/{id}` | Lecture (secrets masqués), modification, suppression. `PUT` : un secret laissé vide ou égal au masque est **conservé** ; le type et la passerelle ne changent pas (`400`). `DELETE` retire la source et ses candidates, **pas** les destinations déjà publiées |
+| `POST` | `/api/v1/portal/dest-sources/test` | Fait lire le fournisseur **par la passerelle** avec la configuration donnée, sans rien enregistrer : `edge_name`, `type`, `config`, `source_id` (facultatif : reprend les secrets masqués d'une source existante). Réponse `{ok, error, count, machines[]}` (aperçu de 20 machines) |
+| `POST` | `/api/v1/portal/dest-sources/{id}/sync` | Demande un passage immédiat. `202` ; `409` si la source ne tourne sur aucune passerelle joignable |
+| `GET` | `/api/v1/portal/dest-candidates?edge=&state=&source=` | Machines découvertes : `id`, `source_id`, `source_name`, `external_id`, `name`, `host`, `port`, `tags`, `running`, `detail`, `state` (`new`, `published`, `ignored`, `missing`), `destination_id`, `first_seen`, `last_seen` |
+| `POST` | `/api/v1/portal/dest-candidates/{id}/publish` | Publie une machine (`new` ou `ignored`) : devient une destination `ssh` du catalogue. Corps facultatif `{name, host, port, tags}` (adresse obligatoire si le fournisseur n'en donne pas : `400`). Étiquettes = celles du fournisseur + `extra_tags` de la source + `tags`. `409` si déjà publiée |
+| `POST` | `/api/v1/portal/dest-candidates/publish` | Publication en lot : `{ids[], tags[]}` → `{published, skipped[{id, reason}]}` |
+| `POST` | `/api/v1/portal/dest-candidates/{id}/ignore` · `/restore` | Écarte une machine `new` de la file · la remet (`204` ; `409` si l'état ne convient pas) |
+| `DELETE` | `/api/v1/portal/dest-candidates/{id}` | Retire une candidate non publiée de la file (`409` si publiée : supprimer sa destination) |
+
+**Rapprochement.** À chaque passage réussi, la passerelle remet l'inventaire complet de la source (message WebSocket `portal_dest_inventory`) : une machine inconnue devient candidate ; une machine publiée dont le fournisseur change le nom, l'adresse ou le port est suivie par sa destination, sauf champ corrigé à la main ; une machine publiée absente passe en `missing` et **sa destination est désactivée** (jamais supprimée, réactivée si la machine revient) ; une machine jamais publiée qui disparaît quitte la file. Un passage en erreur (`status: error`) ne modifie ni candidate ni destination. Supprimer une destination remet sa machine dans la file (`new`).
+
+**Droits.** Lecture des sources et des candidates : `portal_catalog:read` ; publier, ignorer, rétablir, demander une synchronisation : `portal_catalog:manage` ; créer, modifier, supprimer ou tester une source : permission explicite `portal_catalog:sources` (elle manipule des identifiants d'API). Scopes de jeton : `portal:read` / `portal:write`.
+
 ### Accès temporaires — `/api/v1/portal/access-requests`
 
 Un utilisateur du portail demande l'accès à une destination qu'il ne voit pas (motif obligatoire, durée de 5 à 480 minutes) ; la passerelle transmet la demande à l'Admin, qui prévient par email les comptes admin et superadmin si le SMTP est configuré. Un administrateur l'approuve ou la refuse. L'accès approuvé est poussé à la passerelle (à tous les membres d'un groupe HA) et expire tout seul.

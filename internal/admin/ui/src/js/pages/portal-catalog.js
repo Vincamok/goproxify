@@ -127,11 +127,7 @@ async function renderPortalCatalogPage(ctx) {
         return `<button type="button" class="chip" data-edge="${esc(nn)}" style="cursor:pointer;${active ? 'border-color:var(--accent);color:var(--accent)' : ''}">${esc(c.display_name || nn)}</button>`;
       }).join('') : '';
 
-      document.getElementById('topbar-actions').innerHTML = tab === 'groups'
-        ? `<button class="btn btn-primary" id="pc-add-group">${esc(t('pdgroups.new') || 'Nouveau groupe de destinations')}</button>`
-        : `<button class="btn btn-primary" id="pc-add">${esc(t('pcatalog.add') || 'Nouvelle destination')}</button>`;
-
-      content.innerHTML = `
+      const headHTML = () => `
         <div style="margin-bottom:16px">
           <h1 style="margin:0 0 4px;font-size:22px;font-family:var(--font-heading);font-weight:600">
             ${esc(t('pcatalog.title') || 'Catalogue Access')}
@@ -145,7 +141,39 @@ async function renderPortalCatalogPage(ctx) {
         <div style="display:flex;gap:8px;margin-bottom:14px">
           ${tabBtn('dests', t('pcatalog.tab_dests') || 'Destinations', filtered().length)}
           ${tabBtn('groups', t('pcatalog.tab_groups') || 'Groupes', filteredGroups().length)}
-        </div>
+          ${tabBtn('sources', t('psrc.tab'), '')}
+        </div>`;
+
+      if (tab === 'sources') {
+        // Sources de destinations (ADR 0024) : page propre, qui charge ses données.
+        document.getElementById('topbar-actions').innerHTML = `<button class="btn btn-primary" id="pc-add-source">${esc(t('psrc.add'))}</button>`;
+        content.innerHTML = `${headHTML()}
+          ${isAdmin ? `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:14px">
+            <button type="button" class="chip" data-edge="" style="cursor:pointer;${!window._pcFilter.edge ? 'border-color:var(--accent);color:var(--accent)' : ''}">${esc(t('pcatalog.all_edges') || 'Tous')}</button>
+            ${chips}</div>` : ''}
+          <div id="ps-host"></div>`;
+        content.querySelectorAll('[data-tab]').forEach(btn => { btn.onclick = () => { window._pcTab = btn.getAttribute('data-tab'); render(); }; });
+        content.querySelectorAll('[data-edge]').forEach(btn => { btn.onclick = () => { window._pcFilter.edge = btn.getAttribute('data-edge') || ''; render(); }; });
+        const sctx = {
+          isAdmin, edges,
+          edgeFilter: () => (isAdmin ? window._pcFilter.edge : edgeName),
+          scopeEdge: () => (isAdmin ? (window._pcFilter.edge || (edges[0] && (edges[0].node_name || edges[0].id)) || '') : edgeName),
+          state: window._pcSourcesState,
+        };
+        PortalSources.mount(document.getElementById('ps-host'), sctx).then(() => {
+          window._pcSourcesState = sctx.state;
+          const add = document.getElementById('pc-add-source');
+          if (add) add.onclick = () => sctx.onAdd && sctx.onAdd();
+        });
+        return;
+      }
+
+      document.getElementById('topbar-actions').innerHTML = tab === 'groups'
+        ? `<button class="btn btn-primary" id="pc-add-group">${esc(t('pdgroups.new') || 'Nouveau groupe de destinations')}</button>`
+        : `<button class="btn btn-primary" id="pc-add">${esc(t('pcatalog.add') || 'Nouvelle destination')}</button>`;
+
+      content.innerHTML = `
+        ${headHTML()}
         <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;align-items:center">
           <input class="input" id="pc-q" placeholder="${esc(t('pcatalog.search') || 'Rechercher…')}" value="${esc(window._pcFilter.q)}" style="max-width:220px"/>
           ${tab === 'groups' ? '' : `<select class="input" id="pc-kind" style="max-width:140px">

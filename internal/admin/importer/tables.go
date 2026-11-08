@@ -43,6 +43,8 @@ var backupTables = []string{
 	"portal_users",
 	"portal_groups",
 	"portal_dest_groups",
+	"portal_dest_sources",
+	"portal_dest_candidates",
 	"automation_silences",
 	"flow_versions",
 	"portal_page_templates",

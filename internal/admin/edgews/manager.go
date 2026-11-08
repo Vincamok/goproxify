@@ -524,6 +524,8 @@ func (m *Manager) HandleEdgeMessage(msg edgeWS.Message) {
 		}
 	case edgeWS.TypePortalSendEmailOTP:
 		m.handlePortalSendEmailOTP(msg.Payload)
+	case edgeWS.TypePortalDestInventory:
+		m.handlePortalDestInventory(msg.Payload)
 	case edgeWS.TypePortalAccessRequest:
 		m.handlePortalAccessRequest(msg.Payload)
 	case edgeWS.TypePortalLive:

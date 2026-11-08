@@ -133,6 +133,9 @@ Yes in **Passthrough** mode (TCP tunnel). Switch to **Terminate** if you need th
 **Q: Terminate returns 502 / "no certificate" on the target Edge?**
 The entry Edge must reconnect in HTTPS with the **SNI = domain** (not the endpoint IP). This is expected behavior since the SNI vhost fix; redeploy the entry Edge and re-push the delegations. Also verify that the entry Edge has the domain's certificate (token scopes).
 
+**Q: Does GoProxify work behind a Cloudflare Tunnel (`cloudflared`)?**
+Yes for HTTP(S), WebSocket, the WAF/Ephor and `redirect_https`: point the tunnel at the Edge HTTP port. Client IP is read from `CF-Connecting-IP` when `cloudflared` is a trusted proxy (same machine or Docker network by default; otherwise add it to `GPX_TRUSTED_PROXIES`). Per-route mTLS, HTTP/3 and TCP/UDP routes do not work through a tunnel. Setup, limits and possible follow-ups: [cloudflare-tunnel.md](cloudflare-tunnel.md).
+
 **Q: Entry Edge vs domain rights?**
 The entry Edge defines **who receives traffic** (routing / delegation / ACME). **Rights** (who receives routes and certificates) are managed via the Edge token's **domain scopes** — the two are independent.
 

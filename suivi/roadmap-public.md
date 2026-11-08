@@ -90,6 +90,8 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 - [x] **Portail Access en onglets** (Synthèse, Destinations, Utilisateurs, Modèles, Audit, Réglages) — livré
 - [x] **Portail Access : refonte visuelle, thèmes et entrées dédiées** (`/prestataire`, `presta.domaine.fr`… : thème, auth, utilisateurs, groupes et destinations par entrée ; 7 thèmes réglés côté Admin) — livré
 - [x] **Portail Access : groupes de destinations** (Catalogue Access › Groupes ; une entrée offre toutes les machines de ses groupes ; API, CLI, MCP) — livré
+- [x] **Portail Access : sources de destinations, Proxmox VE** (la passerelle interroge l'API de la plateforme et propose ses VM/LXC comme destinations, à valider avant publication ; Catalogue Access › Sources ; API, CLI, MCP ; ADR 0024) — livré
+- [ ] **Portail Access : autres sources de destinations** (vCenter, Incus/LXD, libvirt, Hetzner, DigitalOcean, Scaleway, AWS EC2, Tailscale, NetBird, NetBox : un fichier par fournisseur sur le cadre livré) — prévu
 - [x] **Portail Access : sessions en direct** (lister, terminer ; API, CLI, MCP) — livré
 - [x] **Portail Access : accès temporaires avec approbation** (demande depuis le portail, onglet Approbations, expiration automatique ; API, CLI, MCP) — livré
 - [x] **Portail Access : politiques d'accès** (plages horaires, IP autorisées, déconnexion sur inactivité ; onglet Politiques, API, CLI, MCP) — livré
@@ -121,6 +123,8 @@ Vue allégée pour la communauté. Le détail interne n’est pas publié.
 
 ### Fonctionnalités à venir
 
+- [x] **Guide Cloudflare Tunnel** : fonctionnement de la passerelle derrière `cloudflared` documenté et testé (IP client, redirection HTTPS), limites connues (mTLS par route, HTTP/3, L4) ([docs/cloudflare-tunnel.md](../docs/cloudflare-tunnel.md))
+- [ ] **Compatibilité Cloudflare plus poussée** (prévu, non engagé) : mot-clé `cloudflare` dans `GPX_TRUSTED_PROXIES`, Agent derrière un tunnel (`/ws/agent` seul), certificat client transmis par Cloudflare pour le mTLS par route, SSO par Cloudflare Access, détection de l'IP du tunnel dans l'Admin
 - [x] **Apprentissage de la surface d'un proxy, étape 1 : observer et rapporter** ([ADR 0016](../docs/adr/0016-apprentissage-de-la-surface-d-un-proxy.md)) : mode `learn` par proxy ; la passerelle apprend les méthodes, gabarits de chemin, types de contenu, tailles, paramètres et clients du trafic légitime (IP suspectes et requêtes en échec exclues), sans rien bloquer ; profil chiffré en local, fusionné entre les membres d'un groupe HA, rapport et convergence dans l'Admin, la CLI et le MCP (Admin `0.197.0`, Edge `0.111.0`)
 - [x] **Apprentissage de la surface, étape 2 : réglages proposés et justifiés** (ADR 0016) : `max_body_size`, `rate_limit`, `geo_ip`, `ip_filter`, `cors` proposés à partir du profil, avec ce qu'ils auraient refusé, leurs limites et la commande qui les pose ; rien n'est appliqué (Admin `0.198.0`, Edge `0.112.0`)
 - [x] **Apprentissage de la surface, étape 3 : politique positive générée, en detect** (ADR 0016) : spécification OpenAPI produite à partir du profil pour le contrôle `openapi` existant (mode detect, chemins inconnus comptés), violations visibles dans le rapport, signal Ephor `surface_violation` ; rien n'est appliqué sans enregistrer le proxy (Admin `0.199.0`, Edge `0.113.0`)

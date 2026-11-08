@@ -148,8 +148,15 @@ func portalPermission(r *http.Request) (string, bool) {
 	switch parts[0] {
 	case "users", "groups":
 		return readOrManage(r, "portal_users:read", "portal_users:manage")
-	case "destinations", "destination-groups":
+	case "destinations", "destination-groups", "dest-candidates":
 		return readOrManage(r, "portal_catalog:read", "portal_catalog:manage")
+	case "dest-sources":
+		// Lire les sources (secrets masqués) et demander un passage relèvent du catalogue ; les créer, les modifier, les
+		// supprimer et les essayer exigent la permission explicite : ils manipulent des identifiants d'API.
+		if isRead(r) || (len(parts) == 3 && parts[2] == "sync") {
+			return readOrManage(r, "portal_catalog:read", "portal_catalog:manage")
+		}
+		return "portal_catalog:sources", true
 	case "policy":
 		return readOrManage(r, "portal_policies:read", "portal_policies:manage")
 	case "audit":

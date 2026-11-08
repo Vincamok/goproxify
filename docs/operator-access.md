@@ -63,6 +63,17 @@ Ils sont visibles dans les logs d'accès et utilisables dans les règles RBAC.
 
 Filtrer par tag dans la vue Users : champ de recherche libre.
 
+## Sources de destinations (Proxmox…)
+
+Plutôt que de saisir chaque machine, **Catalogue Access › Sources** relie le portail à une plateforme : la passerelle interroge son API à intervalle régulier (5 min par défaut, 60 s au minimum) et liste ses machines. Premier fournisseur : **Proxmox VE** (VM, conteneurs LXC, et au choix les nœuds).
+
+1. **Côté Proxmox**, créer un utilisateur et un jeton d'API **en lecture seule** (rôle `PVEAuditor` sur `/`, séparation de privilèges décochée ou rôle donné au jeton). Le certificat auto-signé de Proxmox se colle dans « CA certificate » ; à défaut, cocher « Do not verify the TLS certificate ».
+2. **Ajouter la source** : passerelle, type, URL (`https://pve.example.com:8006`), identifiant et secret du jeton, filtres facultatifs (pool, étiquette, machines en marche seulement). Le bouton **Tester** lit Proxmox *depuis la passerelle* : c'est d'elle que le réseau doit le joindre.
+3. **Publier** : les machines arrivent dans « À publier », invisibles des utilisateurs. Publier une machine (ou la sélection) en fait une destination SSH du catalogue ; ses étiquettes Proxmox, celles de la source et celles saisies à la publication décident ensuite qui la voit (filtrage par tags, comme toute destination). Une machine dont Proxmox ne donne pas l'adresse (agent invité absent, DHCP) se publie en saisissant l'adresse.
+4. **Ensuite** : la destination suit Proxmox (renommage, changement d'adresse) sauf champ corrigé à la main. Une machine qui disparaît de Proxmox est **désactivée**, pas supprimée, et réactivée si elle revient. Une panne de l'API Proxmox ne change rien au catalogue.
+
+La publication automatique (« Publish discovered machines automatically ») est désactivée par défaut : activée, toute machine découverte avec une adresse devient visible sans validation. Droit requis pour créer, modifier, supprimer ou tester une source : `portal_catalog:sources` (elle porte des identifiants d'API) ; publier relève de `portal_catalog:manage`.
+
 ## Supervision
 
 - Logs d'accès : Admin → **Logs** → filtre `source=access`

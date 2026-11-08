@@ -621,6 +621,7 @@ var tools = []map[string]any{
 
 func init() {
 	tools = append(tools, portalTools()...)
+	tools = append(tools, portalDestSourceTools()...)
 	tools = append(tools, infraTools()...)
 	tools = append(tools, rightsTools()...)
 }
@@ -1048,8 +1049,10 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 		result, toolErr = h.toolRevokeInternalCert(r, certID)
 	default:
 		var ok bool
-		if result, toolErr, ok = h.callAutomationTool(r, p.Name, p.Arguments); !ok {
-			return errResp(req.ID, -32601, "outil inconnu: "+p.Name)
+		if result, ok, toolErr = h.callPortalDestSourceTool(r, p.Name, p.Arguments); !ok {
+			if result, toolErr, ok = h.callAutomationTool(r, p.Name, p.Arguments); !ok {
+				return errResp(req.ID, -32601, "outil inconnu: "+p.Name)
+			}
 		}
 	}
 

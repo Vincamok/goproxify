@@ -1348,6 +1348,18 @@ goproxify access destination-groups create -edge <nom> -name <n> [-description <
 goproxify access destination-groups update -id <uuid> -name <n> [-description <d>] [-targets <id-dest>,<id-dest>]
 goproxify access destination-groups delete -id <uuid>
 
+goproxify access sources types
+goproxify access sources list     [-edge <nom>]
+goproxify access sources create   -edge <nom> -type proxmox -name <n> (-json '{"url":…}' | -config-file <fichier.json> | -set url=https://pve.example.com:8006,token_id=audit@pve!gpx,token_secret=…) [-interval <s>] [-tags a,b] [-auto-publish true]
+goproxify access sources update   -id <uuid> [-name <n>] [-json … | -config-file … | -set …] [-enabled true|false] [-auto-publish true|false] [-tags a,b]
+goproxify access sources test     -edge <nom> -type proxmox (-json … | -config-file … | -set …) [-id <uuid>]
+goproxify access sources sync     -id <uuid>
+goproxify access sources delete   -id <uuid>
+goproxify access candidates list    [-edge <nom>] [-state new|published|ignored|missing] [-source <uuid>]
+goproxify access candidates publish -ids <id>,<id> [-tags a,b]
+goproxify access candidates ignore  -id <uuid>
+goproxify access candidates restore -id <uuid>
+
 goproxify access policy get           -edge <nom>
 goproxify access policy set           -edge <nom> [-hours true -days 1,2,3,4,5 -start 07:00 -end 20:00 -tz Europe/Paris -ip <cidr,…> -idle <min> -record true -retention <jours>]
 goproxify access recordings list     -edge <nom>

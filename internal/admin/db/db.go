@@ -877,6 +877,45 @@ func migrate(db *sql.DB) error {
 			expires_at   TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_portal_access_requests_edge ON portal_access_requests (edge_name, status)`,
+		// Sources de destinations du portail (ADR 0024) : la configuration d'une source (secrets scellés) et les machines
+		// qu'elle a vues. Les dates sont du texte écrit par sqltime.Format.
+		`CREATE TABLE IF NOT EXISTS portal_dest_sources (
+			id             TEXT PRIMARY KEY,
+			edge_name      TEXT NOT NULL,
+			type           TEXT NOT NULL,
+			name           TEXT NOT NULL,
+			config_enc     TEXT NOT NULL DEFAULT '',
+			interval_s     INTEGER NOT NULL DEFAULT 0,
+			enabled        INTEGER NOT NULL DEFAULT 1,
+			extra_tags_json TEXT NOT NULL DEFAULT '[]',
+			auto_publish   INTEGER NOT NULL DEFAULT 0,
+			status         TEXT NOT NULL DEFAULT '',
+			status_msg     TEXT NOT NULL DEFAULT '',
+			last_sync_at   TEXT NOT NULL DEFAULT '',
+			machine_count  INTEGER NOT NULL DEFAULT 0,
+			created_at     TEXT NOT NULL DEFAULT '',
+			updated_at     TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_portal_dest_sources_edge ON portal_dest_sources (edge_name)`,
+		`CREATE TABLE IF NOT EXISTS portal_dest_candidates (
+			id          TEXT PRIMARY KEY,
+			source_id   TEXT NOT NULL,
+			edge_name   TEXT NOT NULL,
+			external_id TEXT NOT NULL,
+			name        TEXT NOT NULL DEFAULT '',
+			host        TEXT NOT NULL DEFAULT '',
+			port        INTEGER NOT NULL DEFAULT 22,
+			tags_json   TEXT NOT NULL DEFAULT '[]',
+			running     INTEGER NOT NULL DEFAULT 0,
+			detail_json TEXT NOT NULL DEFAULT '{}',
+			state       TEXT NOT NULL DEFAULT 'new',
+			dest_id     TEXT NOT NULL DEFAULT '',
+			first_seen  TEXT NOT NULL DEFAULT '',
+			last_seen   TEXT NOT NULL DEFAULT '',
+			UNIQUE (source_id, external_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_portal_dest_candidates_edge ON portal_dest_candidates (edge_name, state)`,
+		`CREATE INDEX IF NOT EXISTS idx_portal_dest_candidates_dest ON portal_dest_candidates (dest_id)`,
 		`CREATE TABLE IF NOT EXISTS portal_page_templates (
 			page_key   TEXT PRIMARY KEY,
 			name       TEXT NOT NULL DEFAULT '',

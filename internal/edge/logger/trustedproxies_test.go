@@ -72,6 +72,47 @@ func TestRealIPWildcardKeepsLegacy(t *testing.T) {
 	}
 }
 
+// Cloudflare Tunnel : cloudflared transmet CF-Connecting-IP et X-Forwarded-For. Sur la même machine ou le même réseau Docker, son
+// adresse est privée donc crue par défaut ; ailleurs, elle doit être listée, sinon le visiteur prend l'adresse du tunnel.
+func TestRealIPBehindCloudflareTunnel(t *testing.T) {
+	t.Cleanup(func() { SetTrustedProxies(nil) })
+
+	req := func(peer string) *http.Request {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.RemoteAddr = peer + ":51234"
+		r.Header.Set("CF-Connecting-IP", "198.51.100.77")
+		r.Header.Set("X-Forwarded-For", "198.51.100.77")
+		return r
+	}
+
+	SetTrustedProxies(nil)
+	for _, peer := range []string{"127.0.0.1", "172.18.0.4", "10.0.0.8"} {
+		if got := RealIP(req(peer)); got != "198.51.100.77" {
+			t.Errorf("cloudflared local %s : RealIP = %q", peer, got)
+		}
+	}
+	if got := RealIP(req("203.0.113.40")); got != "203.0.113.40" {
+		t.Errorf("cloudflared public non listé : RealIP = %q, attendu l'adresse du tunnel", got)
+	}
+
+	SetTrustedProxies([]string{"203.0.113.40"})
+	if got := RealIP(req("203.0.113.40")); got != "198.51.100.77" {
+		t.Errorf("cloudflared public listé : RealIP = %q", got)
+	}
+
+	// CF-Connecting-IP prime sur X-Forwarded-For, qu'un client peut avoir pré-rempli avant Cloudflare.
+	r := req("172.18.0.4")
+	r.Header.Set("X-Forwarded-For", "6.6.6.6, 198.51.100.77")
+	if got := RealIP(r); got != "198.51.100.77" {
+		t.Errorf("CF-Connecting-IP doit primer : RealIP = %q", got)
+	}
+
+	SetTrustedProxies([]string{"none"})
+	if got := RealIP(req("172.18.0.4")); got != "172.18.0.4" {
+		t.Errorf("none : cloudflared privé n'est plus cru, RealIP = %q", got)
+	}
+}
+
 // GPX_TRUSTED_PROXIES=none retire les défauts (loopback, réseaux privés) : sur un LAN dont les postes ne sont pas fiables,
 // un poste ne choisit plus l'adresse que la passerelle lui attribue.
 func TestTrustedProxiesNoneDropsPrivateDefaults(t *testing.T) {

@@ -53,6 +53,7 @@ func BuildPortalPayload(db *sql.DB, g GroupResolver, edgeName string) PortalConf
 
 	cfg.Views = resolveViewsForPush(db, scope, cfg.Views)
 	cfg.Grants = listActiveGrants(db, grantEdges)
+	cfg.DestSources = destSourcesForPush(db, scope)
 	// L'activation est une propriété du nœud (wizard : config.portal). Un nœud qui n'héberge pas le
 	// portail reçoit quand même la config du groupe, en attente, pour être prêt à prendre le relais.
 	if g != nil {
@@ -162,6 +163,8 @@ func MigratePortalGroups(ctx context.Context, db *sql.DB, g GroupResolver, log *
 			}
 			_, _ = db.ExecContext(ctx, `UPDATE portal_users SET home_edge=? WHERE home_edge=?`, scope, ref)
 			_, _ = db.ExecContext(ctx, `UPDATE portal_dest_groups SET edge_name=? WHERE edge_name=?`, scope, ref)
+			_, _ = db.ExecContext(ctx, `UPDATE portal_dest_sources SET edge_name=? WHERE edge_name=?`, scope, ref)
+			_, _ = db.ExecContext(ctx, `UPDATE portal_dest_candidates SET edge_name=? WHERE edge_name=?`, scope, ref)
 		}
 		// des membres qui déclaraient la même destination : on n'en garde qu'une
 		if res, err := db.ExecContext(ctx, `DELETE FROM portal_destinations WHERE edge_name=? AND rowid NOT IN (

@@ -74,8 +74,9 @@ var toolPermissionGroups = []struct {
 	{"automation:run", "run_flow cancel_flow_run replay_flow_run"},
 	{"automation:approve", "decide_flow_run"},
 
-	{"portal_catalog:read", "list_portal_destinations preview_portal_destinations list_portal_destination_groups"},
-	{"portal_catalog:manage", "create_portal_destination update_portal_destination delete_portal_destination create_portal_destination_group update_portal_destination_group delete_portal_destination_group"},
+	{"portal_catalog:read", "list_portal_destinations preview_portal_destinations list_portal_destination_groups list_portal_dest_source_types list_portal_dest_sources list_portal_dest_candidates"},
+	{"portal_catalog:manage", "create_portal_destination update_portal_destination delete_portal_destination create_portal_destination_group update_portal_destination_group delete_portal_destination_group sync_portal_dest_source publish_portal_dest_candidates ignore_portal_dest_candidate restore_portal_dest_candidate"},
+	{"portal_catalog:sources", "create_portal_dest_source update_portal_dest_source delete_portal_dest_source test_portal_dest_source"},
 	{"portal_users:read", "list_portal_users list_portal_groups"},
 	{"portal_users:manage", "invite_portal_user create_portal_group update_portal_group delete_portal_group update_portal_user delete_portal_user resend_portal_invite"},
 	{"portal_audit:read", "list_portal_audit"},

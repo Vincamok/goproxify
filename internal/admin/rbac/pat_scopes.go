@@ -128,10 +128,13 @@ var mcpTools = []string{
 	"get_proxy_surface", "get_app_inventory", "get_entry_rejections", "get_traffic_reference", "get_tls_reputation", "get_domain_watch", "get_proxy_surface_proposals", "get_proxy_surface_openapi", "get_proxy_surface_suggestions", "reset_proxy_surface", "enforce_proxy_surface", "accept_proxy_surface_suggestions", "relax_proxy_surface",
 	"create_flow", "update_flow", "set_flow_enabled", "delete_flow", "run_flow", "simulate_flow", "restore_flow_version", "detach_flow", "update_flow_params", "decide_flow_run", "cancel_flow_run", "replay_flow_run", "install_flow_template", "create_silence", "delete_silence", "import_automation",
 	"get_portal_config", "list_portal_destinations", "preview_portal_destinations", "list_portal_destination_groups",
+	"list_portal_dest_source_types", "list_portal_dest_sources", "list_portal_dest_candidates",
 	"list_portal_users", "list_portal_groups", "list_portal_audit", "list_portal_sessions", "terminate_portal_session", "list_portal_access_requests", "decide_portal_access_request", "get_portal_policy", "set_portal_policy", "list_portal_recordings", "delete_portal_recording", "list_portal_templates", "get_portal_template",
 	"update_portal_config", "push_portal",
 	"create_portal_destination", "update_portal_destination", "delete_portal_destination",
 	"create_portal_destination_group", "update_portal_destination_group", "delete_portal_destination_group",
+	"create_portal_dest_source", "update_portal_dest_source", "delete_portal_dest_source", "test_portal_dest_source", "sync_portal_dest_source",
+	"publish_portal_dest_candidates", "ignore_portal_dest_candidate", "restore_portal_dest_candidate",
 	"invite_portal_user", "create_portal_group", "update_portal_group", "delete_portal_group", "update_portal_user", "delete_portal_user", "resend_portal_invite",
 	"upsert_portal_template", "delete_portal_template", "push_portal_templates",
 }
@@ -284,11 +287,14 @@ func ToolRequiredScope(tool string) string {
 		"create_flow", "update_flow", "set_flow_enabled", "delete_flow", "run_flow", "simulate_flow", "restore_flow_version", "detach_flow", "update_flow_params", "decide_flow_run", "cancel_flow_run", "replay_flow_run", "install_flow_template", "create_silence", "delete_silence", "import_automation":
 		return ScopeSecurityWrite
 	case "get_portal_config", "list_portal_destinations", "preview_portal_destinations", "list_portal_destination_groups",
+		"list_portal_dest_source_types", "list_portal_dest_sources", "list_portal_dest_candidates",
 		"list_portal_users", "list_portal_groups", "list_portal_audit", "list_portal_sessions", "list_portal_access_requests", "get_portal_policy", "list_portal_recordings", "list_portal_templates", "get_portal_template":
 		return ScopePortalRead
 	case "update_portal_config", "push_portal",
 		"create_portal_destination", "update_portal_destination", "delete_portal_destination",
 		"create_portal_destination_group", "update_portal_destination_group", "delete_portal_destination_group",
+		"create_portal_dest_source", "update_portal_dest_source", "delete_portal_dest_source", "test_portal_dest_source", "sync_portal_dest_source",
+		"publish_portal_dest_candidates", "ignore_portal_dest_candidate", "restore_portal_dest_candidate",
 		"invite_portal_user", "create_portal_group", "update_portal_group", "delete_portal_group", "update_portal_user", "delete_portal_user", "resend_portal_invite",
 		"terminate_portal_session", "decide_portal_access_request", "set_portal_policy", "delete_portal_recording", "upsert_portal_template", "delete_portal_template", "push_portal_templates":
 		return ScopePortalWrite

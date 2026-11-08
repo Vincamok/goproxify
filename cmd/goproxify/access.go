@@ -27,6 +27,10 @@ func runAccess() {
 		runAccessGroups()
 	case "destination-groups":
 		runAccessDestGroups()
+	case "sources":
+		runAccessSources()
+	case "candidates":
+		runAccessCandidates()
 	case "recordings":
 		runAccessRecordings()
 	case "policy":
@@ -57,6 +61,8 @@ Ressources :
   users          Utilisateurs Access (invite SMTP, groupes)
   groups         Groupes Access (droits sur les entrées du portail)
   destination-groups  Groupes de destinations (machines offertes ensemble par une entrée)
+  sources        Sources de destinations (Proxmox… : la passerelle liste les machines d'une plateforme)
+  candidates     Machines découvertes par les sources (publier, ignorer)
   sessions       Connexions Access en cours (lister, observer, terminer)
   requests       Demandes d'accès temporaire (lister, approuver, refuser, révoquer)
   policy         Politique d'accès (plages horaires, IP autorisées, inactivité)
@@ -75,6 +81,12 @@ Exemples :
   goproxify access destination-groups create -edge edge-a -name Web -targets <id-dest>,<id-dest>
   goproxify access destination-groups update -id <uuid> -name Web -targets <id-dest>
   goproxify access destination-groups delete -id <uuid>
+  goproxify access sources types
+  goproxify access sources test -edge edge-a -type proxmox -set url=https://pve.example.com:8006,token_id=audit@pve!gpx,token_secret=...
+  goproxify access sources create -edge edge-a -type proxmox -name pve -config-file pve.json -tags proxmox
+  goproxify access sources sync -id <uuid>
+  goproxify access candidates list -edge edge-a -state new
+  goproxify access candidates publish -ids <id>,<id> -tags prod
   goproxify access users list -edge edge-a
   goproxify access users invite -email user@ex.com -home-edge edge-a -tags prod
   goproxify access users update -id <uuid> -status disabled

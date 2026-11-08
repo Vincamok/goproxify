@@ -230,6 +230,8 @@ func (h *PortalHandler) deleteDestination(w http.ResponseWriter, r *http.Request
 	res, err := h.DB.Exec(`DELETE FROM portal_destinations WHERE id=?`, id)
 	if err == nil && edge != "" {
 		removeDestFromGroups(h.DB, edge, id)
+		// La machine d'une source dont on supprime la destination retourne dans la file : à republier ou à ignorer.
+		_, _ = h.DB.Exec(`UPDATE portal_dest_candidates SET state='new', dest_id='' WHERE dest_id=?`, id)
 	}
 	if err != nil {
 		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
