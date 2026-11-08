@@ -38,5 +38,6 @@ Après **tout** changement (feature, bugfix, refacto), vérifier et mettre à jo
 9. **`internal/landing/ui/index.html`** — mettre à jour si la feature mérite d'être mise en avant
 10. **Moteur CLI** (`cmd/goproxify/`) — ajouter subcommandes si nouvelle ressource API exposée
 11. **Moteur MCP** (`internal/admin/mcp/server.go`) — ajouter outils si nouvelle ressource interrogeable par IA
+12. **Droits** — toute route, tout outil MCP et toute commande CLI déclarent leur service et leur permission, au catalogue `internal/admin/rbac/catalog.go` (services, niveaux, permissions explicites, critères de périmètre ; nouveau service = nouvelle entrée), dans `internal/admin/rights.go` (routes), `internal/admin/rbac/catalog_tools.go` (outils MCP) et `cmd/goproxify/rights.go` (commandes), avec le descripteur de ressource et les étiquettes éventuelles ; `go test ./internal/admin/... ./cmd/goproxify/...` échoue à l'oubli ([ADR 0022](docs/adr/0022-modele-de-droits-niveaux-et-perimetres.md))
 
 Cette règle est **non-négociable** : ne pas clore une tâche sans avoir fait ce audit.

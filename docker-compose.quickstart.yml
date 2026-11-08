@@ -63,8 +63,10 @@ services:
       # ── Optionnel ──────────────────────────────────────────────────────────
       - GPX_SERVER_API_PORT=9443
       - GPX_ENGINE_LOG_LEVEL=${LOG_LEVEL:-info}
-      # URL publique de l'Admin (liens pages d'erreur → Logs). Sinon auto-mémorisée à la 1re connexion UI.
+      # URL publique de l'Admin : lien « Log ID » des pages d'erreur. Vide = aucun lien (rien n'est déduit des connexions).
       - GPX_ADMIN_PUBLIC_URL=${GPX_ADMIN_PUBLIC_URL:-}
+      # Proxies dont X-Forwarded-For est cru (CSV d'IP/CIDR) ; les réseaux privés le sont par défaut, « none » retire ce défaut.
+      - GPX_TRUSTED_PROXIES=${GPX_TRUSTED_PROXIES:-}
 
       # Scanner CVE : true pour backends Docker/LAN privés (RFC1918). Défaut false (anti-SSRF).
       - GPX_VULNSCAN_ALLOW_PRIVATE=${GPX_VULNSCAN_ALLOW_PRIVATE:-false}

@@ -201,7 +201,7 @@ Référence complète → **[docs/cli.md](docs/cli.md)**
 - Rechargement de configuration à chaud, zéro interruption de connexion
 - Load balancing (Round Robin, Weighted, adaptatif CPU/mem/IO + failover + gateway inter-Cores), Circuit Breaker, Retry
 - Rate limiting, filtrage IP/CIDR, Géo-IP, **WAF OWASP CRS-4** (13 jeux de règles : SQLi, XSS, LFI, RCE, PHP, SSRF, Scanner, Java/Log4Shell, RFI, NodeJS, HTTP Smuggling, Fichiers sensibles, Fuites de réponse), headers de sécurité HTTP
-- **Moteur de règles automatiques** — conditions (CVE critique, pic de bans, moteur silencieux, taux d'erreur, IP récidiviste) → actions (désactiver proxy, bannir IP, alerte, mode strict Fail2Ban)
+- **Moteur de règles automatiques** — conditions (CVE critique, pic de bans, moteur silencieux, taux d'erreur, IP récidiviste) → actions (désactiver proxy, bannir IP, alerte, mode strict qui durcit Ephor)
 - Authentification Basic, Forward Auth, JWT par route
 - Access log JSON asynchrone, métriques Prometheus, tracing OpenTelemetry
 - **GoProxify Access** — portail opérateur sur le Core : terminal web + `ssh` UUID vers VMs/`sshd` et conteneurs Docker (`docker exec` via Agent) ; coffre login SSH + secrets ; 2FA ; sessions TTL
@@ -209,7 +209,7 @@ Référence complète → **[docs/cli.md](docs/cli.md)**
 ### Admin (Control Plane)
 
 - **Interface web + API REST** — CRUD proxies, snippets, tokens, utilisateurs
-- **GoProxify Access** — catalogue destinations (vue globale / par Core), invite users par email (SMTP), tags, templates HTML Access, options portail par Core
+- **GoProxify Access** — catalogue destinations (vue globale / par Core), invite users par email (SMTP), tags, templates HTML Access, options portail par Core ; **sources de destinations** : la passerelle lit l'API d'une plateforme (Proxmox VE en premier) et propose ses VM et conteneurs comme destinations, une fois que vous les publiez
 - **Tokens API utilisateur (PAT)** — `gpx_pat_*` self-service à scopes (`proxies:read`, …) pour scripts et clients MCP ; distincts des tokens d'appairage Core/Agent
 - **Serveur MCP** — JSON-RPC 2.0 + SSE ; authentification **PAT uniquement** (pas de JWT de session)
 - **Wizard architecture** — toile hôtes + palette, multi-Core/HA, tickets QR / `curl|bash` pour intégrer un hôte
@@ -285,7 +285,7 @@ Voir `.env.example` pour la liste complète.
 | Configuration | Variables d'environnement `GPX_*` + JSON optionnel |
 | Discovery | Docker Engine API via socket Unix (lecture seule) |
 | Métriques | Prometheus `/metrics`, OpenTelemetry (OTLP) |
-| Sécurité | WAF OWASP CRS-4 (13 jeux de règles, inspection requête + réponse), Sentinel comportemental, Fail2Ban natif, CrowdSec, **Moteur de règles automatiques**, Rate limiting, Géo-IP, JWT ECDSA P-256, HMAC-SHA256 WS |
+| Sécurité | WAF OWASP CRS-4 (13 jeux de règles, inspection requête + réponse), Ephor comportemental (Seuils et référence saisonnière du trafic compris), CrowdSec, **Moteur de règles automatiques**, Rate limiting, Géo-IP, JWT ECDSA P-256, HMAC-SHA256 WS |
 | Déploiement | Binaire unique · Docker Compose · systemd |
 
 ---
@@ -297,7 +297,9 @@ Voir `.env.example` pour la liste complète.
 | [CLI](docs/cli.md) | Référence complète de toutes les commandes et options |
 | [Architecture détaillée](docs/architecture.md) | Flux de données, décisions techniques |
 | [Délégation inter-Cores](docs/delegation.md) | Modes Passthrough vs Terminate, IP client, prérequis |
+| [Cloudflare Tunnel](docs/cloudflare-tunnel.md) | Fonctionner derrière `cloudflared` : IP client, redirection HTTPS, certificats, limites |
 | [Fonctionnalités](docs/fonctionnalites.md) | Catalogue des capacités produit |
+| [Skills](SKILLS.md) | Tout ce que l'outil sait faire, par objectif, avec des recettes (en anglais) |
 | [Spécifications API](docs/api_specs.md) | Contrat REST complet |
 | [MCP](docs/mcp.md) | Serveur MCP — outils, auth PAT, clients Claude/Cursor |
 | [Schéma de configuration](docs/config_schema.json) | Schéma JSON des proxies |
@@ -307,7 +309,7 @@ Voir `.env.example` pour la liste complète.
 | [Roadmap publique](suivi/roadmap-public.md) | Jalons haut niveau |
 | [Contributing](CONTRIBUTING.md) | PR, tests, DCO |
 | [Code of Conduct](CODE_OF_CONDUCT.md) | Contributor Covenant |
-| [Sécurité](docs/security.md) | WAF, Sentinel, bans, timeouts, vulnscan — référence complète des moteurs de sécurité |
+| [Sécurité](docs/security.md) | WAF, Ephor, bans, timeouts, vulnscan — référence complète des moteurs de sécurité |
 | [Signalement de vulnérabilités](SECURITY.md) | Responsible disclosure |
 | [Licence](LICENSE) | Apache License 2.0 |
 | [NOTICE](NOTICE) | Copyright et notices tierces |

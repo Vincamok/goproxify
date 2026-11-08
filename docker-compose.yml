@@ -67,9 +67,11 @@ services:
       # ── Optionnel ──────────────────────────────────────────────────────────
       - GPX_SERVER_API_PORT=9443
       - GPX_ENGINE_LOG_LEVEL=${LOG_LEVEL:-info}
-      # URL publique de l'Admin (liens pages d'erreur → Logs). Sinon auto-mémorisée à la 1re connexion UI.
+      # URL publique de l'Admin : lien « Log ID » des pages d'erreur. Vide = aucun lien (rien n'est déduit des connexions).
       # Préférer https://… derrière un reverse-proxy TLS (M10).
       - GPX_ADMIN_PUBLIC_URL=${GPX_ADMIN_PUBLIC_URL:-}
+      # Proxies dont X-Forwarded-For est cru (CSV d'IP/CIDR) ; les réseaux privés le sont par défaut, « none » retire ce défaut.
+      - GPX_TRUSTED_PROXIES=${GPX_TRUSTED_PROXIES:-}
       # TLS natif Admin (optionnel) — chemins fichiers montés dans le conteneur
       - GPX_ADMIN_TLS_CERT=${GPX_ADMIN_TLS_CERT:-}
       - GPX_ADMIN_TLS_KEY=${GPX_ADMIN_TLS_KEY:-}
@@ -146,6 +148,8 @@ services:
 
       # ── Optionnel ──────────────────────────────────────────────────────────
       - GPX_ENGINE_LOG_LEVEL=${LOG_LEVEL:-info}
+      # Proxies dont X-Forwarded-For est cru (CSV d'IP/CIDR) ; les réseaux privés le sont par défaut, « none » retire ce défaut.
+      - GPX_TRUSTED_PROXIES=${GPX_TRUSTED_PROXIES:-}
       # GeoIP : voir geoip.* dans services/edge/config.json (surcharge env optionnelle)
       # - GPX_GEOIP_AUTO_DOWNLOAD=false
       # - GPX_GEOIP_DB_PATH=/etc/goproxify/geoip/GeoLite2-Country.mmdb
