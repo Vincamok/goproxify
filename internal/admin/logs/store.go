@@ -956,6 +956,8 @@ type IPErasure struct {
 	GeoCache   int64 `json:"geoip_cache_deleted"`
 	// IPCounters compte les compteurs d'erreurs par IP que les passerelles ont envoyés pour les Seuils multi-passerelles.
 	IPCounters int64 `json:"ip_counters_deleted"`
+	// AttackDossiers compte les dossiers du référentiel des attaques (ADR 0023) construits pour cette IP.
+	AttackDossiers int64 `json:"attack_dossiers_deleted"`
 	// AuditIP compte les entrées d'audit dont l'adresse a été vidée : l'entrée (qui a fait quoi, quand)
 	// reste, seule l'IP de l'acteur disparaît.
 	AuditIP int64 `json:"audit_ip_cleared"`
@@ -978,8 +980,13 @@ func (s *Store) EraseIP(ip string) (IPErasure, error) {
 		{"security_bans", &out.Bans},
 		{"geoip_cache", &out.GeoCache},
 		{"edge_ip_errors", &out.IPCounters},
+		{"attack_dossiers", &out.AttackDossiers},
 	} {
 		res, err := s.db.Exec(`DELETE FROM `+t.table+` WHERE ip IN (?, ?)`, ip, canon)
+		// Les tables du référentiel des attaques (ADR 0023) sont créées par son paquet : absentes d'une base qui ne l'a jamais chargé.
+		if err != nil && t.table == "attack_dossiers" && strings.Contains(err.Error(), "no such table") {
+			continue
+		}
 		if err != nil {
 			return out, err
 		}

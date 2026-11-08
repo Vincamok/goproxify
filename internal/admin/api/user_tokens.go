@@ -35,6 +35,7 @@ type userTokenRow struct {
 	ID         string     `json:"id"`
 	Label      string     `json:"label"`
 	Prefix     string     `json:"prefix"`
+	Audience   string     `json:"audience"`
 	Scopes     []string   `json:"scopes"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
 	Revoked    bool       `json:"revoked"`
@@ -64,6 +65,8 @@ func (h *UserTokensHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.list(w, r, userID)
 	case r.Method == http.MethodPost && path == "":
 		h.create(w, r, userID)
+	case r.Method == http.MethodDelete && path != "" && r.URL.Query().Get("purge") == "1":
+		h.purge(w, r, userID, path)
 	case r.Method == http.MethodDelete && path != "":
 		h.revoke(w, r, userID, path)
 	default:
@@ -79,20 +82,25 @@ func (h *UserTokensHandler) listAvailableScopes(w http.ResponseWriter, r *http.R
 	}
 	catalog := rbac.ScopeCatalog()
 	type item struct {
-		ID          string `json:"id"`
-		Description string `json:"description"`
-		Available   bool   `json:"available"`
+		ID          string   `json:"id"`
+		Description string   `json:"description"`
+		Available   bool     `json:"available"`
+		Tools       []string `json:"tools"`
 	}
 	out := make([]item, 0, len(catalog))
 	for _, c := range catalog {
-		out = append(out, item{ID: c.ID, Description: c.Description, Available: availSet[c.ID]})
+		tools := rbac.ToolsForScope(c.ID)
+		if tools == nil {
+			tools = []string{}
+		}
+		out = append(out, item{ID: c.ID, Description: c.Description, Available: availSet[c.ID], Tools: tools})
 	}
 	jsonOK(w, out)
 }
 
 func (h *UserTokensHandler) list(w http.ResponseWriter, r *http.Request, userID string) {
 	rows, err := h.DB.QueryContext(r.Context(), `
-		SELECT id, label, token_prefix, expires_at, revoked, last_used_at, created_at
+		SELECT id, label, token_prefix, audience, expires_at, revoked, last_used_at, created_at
 		FROM user_api_tokens
 		WHERE user_id = ?
 		ORDER BY created_at DESC`, userID)
@@ -110,7 +118,7 @@ func (h *UserTokensHandler) list(w http.ResponseWriter, r *http.Request, userID 
 		var t userTokenRow
 		var revoked int
 		var expires, lastUsed sql.NullTime
-		if err := rows.Scan(&t.ID, &t.Label, &t.Prefix, &expires, &revoked, &lastUsed, &t.CreatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.Label, &t.Prefix, &t.Audience, &expires, &revoked, &lastUsed, &t.CreatedAt); err != nil {
 			continue
 		}
 		t.Revoked = revoked == 1
@@ -145,6 +153,7 @@ func (h *UserTokensHandler) loadScopes(r *http.Request, tokenID string) []string
 
 type createUserTokenReq struct {
 	Label     string   `json:"label"`
+	Audience  string   `json:"audience"` // "api", "mcp" ou "both" (défaut)
 	Scopes    []string `json:"scopes"`
 	ExpiresAt *string  `json:"expires_at"` // RFC3339 ou null
 }
@@ -165,6 +174,15 @@ func (h *UserTokensHandler) create(w http.ResponseWriter, r *http.Request, userI
 		return
 	}
 
+	audience := strings.TrimSpace(req.Audience)
+	if audience == "" {
+		audience = adminauth.PATAudienceBoth
+	}
+	if !adminauth.IsPATAudience(audience) {
+		http.Error(w, "usage inconnu: "+audience, http.StatusBadRequest)
+		return
+	}
+
 	seen := map[string]bool{}
 	var scopes []string
 	for _, s := range req.Scopes {
@@ -178,6 +196,10 @@ func (h *UserTokensHandler) create(w http.ResponseWriter, r *http.Request, userI
 		}
 		if !rbac.UserCanHoldScope(r.Context(), h.DB, userID, s) {
 			http.Error(w, "scope non autorisé pour votre compte: "+s, http.StatusForbidden)
+			return
+		}
+		if audience == adminauth.PATAudienceMCP && len(rbac.ToolsForScope(s)) == 0 {
+			http.Error(w, "scope sans outil MCP: "+s, http.StatusBadRequest)
 			return
 		}
 		seen[s] = true
@@ -215,9 +237,9 @@ func (h *UserTokensHandler) create(w http.ResponseWriter, r *http.Request, userI
 	defer tx.Rollback() //nolint:errcheck
 
 	_, err = tx.ExecContext(r.Context(), `
-		INSERT INTO user_api_tokens (id, user_id, label, token_hash, token_prefix, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		id, userID, label, hash, prefix, sqltime.Nullable(expiresAt))
+		INSERT INTO user_api_tokens (id, user_id, label, token_hash, token_prefix, expires_at, audience)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, userID, label, hash, prefix, sqltime.Nullable(expiresAt), audience)
 	if err != nil {
 		h.Log.Error("user_tokens: insert", "err", err)
 		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
@@ -242,6 +264,7 @@ func (h *UserTokensHandler) create(w http.ResponseWriter, r *http.Request, userI
 		"id":         id,
 		"label":      label,
 		"prefix":     prefix,
+		"audience":   audience,
 		"scopes":     scopes,
 		"token":      plain, // une seule fois
 		"expires_at": expiresAt,
@@ -250,6 +273,48 @@ func (h *UserTokensHandler) create(w http.ResponseWriter, r *http.Request, userI
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(resp) //nolint:errcheck
+}
+
+// purge supprime définitivement un token déjà révoqué ou expiré (un token actif se révoque d'abord : sa suppression
+// directe ferait disparaître la trace d'un accès encore ouvert).
+func (h *UserTokensHandler) purge(w http.ResponseWriter, r *http.Request, userID, id string) {
+	var revoked int
+	var expires sql.NullTime
+	err := h.DB.QueryRowContext(r.Context(),
+		`SELECT revoked, expires_at FROM user_api_tokens WHERE id = ? AND user_id = ?`, id, userID).Scan(&revoked, &expires)
+	if err == sql.ErrNoRows {
+		writeErr(w, r, http.StatusNotFound, "api.err.token_not_found")
+		return
+	}
+	if err != nil {
+		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
+		return
+	}
+	if revoked == 0 && !(expires.Valid && !expires.Time.After(time.Now().UTC())) {
+		http.Error(w, "token actif : révoquez-le avant de le supprimer", http.StatusConflict)
+		return
+	}
+	tx, err := h.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
+		return
+	}
+	defer tx.Rollback() //nolint:errcheck
+	if _, err := tx.ExecContext(r.Context(), `DELETE FROM user_api_token_scopes WHERE token_id = ?`, id); err != nil {
+		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
+		return
+	}
+	if _, err := tx.ExecContext(r.Context(), `DELETE FROM user_api_tokens WHERE id = ? AND user_id = ?`, id, userID); err != nil {
+		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
+		return
+	}
+	_ = admindb.WriteAudit(h.DB, userID, "delete", "user_api_token:"+id, "")
+	h.notifyChange()
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *UserTokensHandler) revoke(w http.ResponseWriter, r *http.Request, userID, id string) {

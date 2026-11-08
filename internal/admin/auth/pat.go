@@ -53,19 +53,45 @@ func IsPATToken(token string) bool {
 	return strings.HasPrefix(token, PATPrefix)
 }
 
+// Public d'un PAT : l'API REST, le serveur MCP ou les deux.
+const (
+	PATAudienceAPI  = "api"
+	PATAudienceMCP  = "mcp"
+	PATAudienceBoth = "both"
+)
+
+// ErrPATAudience : le PAT est valide mais réservé à l'autre public (API REST ou MCP).
+var ErrPATAudience = errors.New("ce token n'est pas autorisé pour cet usage")
+
+// IsPATAudience indique si la valeur fait partie des publics connus.
+func IsPATAudience(a string) bool {
+	return a == PATAudienceAPI || a == PATAudienceMCP || a == PATAudienceBoth
+}
+
+// PATServes indique si un PAT de ce public sert l'usage demandé ("api" ou "mcp").
+func PATServes(audience, usage string) bool {
+	return audience == PATAudienceBoth || audience == usage
+}
+
 // LookupPAT résout un PAT valide (non révoqué, non expiré) et retourne userID, tokenID, scopes.
 func LookupPAT(ctx context.Context, db *sql.DB, plain string) (userID, tokenID string, scopes []string, err error) {
+	return lookupPAT(ctx, db, plain, "")
+}
+
+// lookupPAT refuse, avant toute trace d'usage, un PAT dont le public ne couvre pas `usage` ("" = sans contrainte).
+func lookupPAT(ctx context.Context, db *sql.DB, plain, usage string) (userID, tokenID string, scopes []string, err error) {
 	if !IsPATToken(plain) {
 		return "", "", nil, errors.New("pas un PAT")
 	}
 	hash := HashPAT(plain)
 	var expires sql.NullTime
 	var revoked int
+	var audience string
 	// La jointure sur users : le jeton d'un compte supprimé ne doit plus ouvrir aucune porte (rien ne le révoquait).
 	err = db.QueryRowContext(ctx, `
-		SELECT t.id, t.user_id, t.revoked, t.expires_at
+		SELECT t.id, t.user_id, t.revoked, t.expires_at, t.audience
 		FROM user_api_tokens t JOIN users u ON u.id = t.user_id
-		WHERE t.token_hash = ?`, hash).Scan(&tokenID, &userID, &revoked, &expires)
+		WHERE t.token_hash = ?`, hash).Scan(&tokenID, &userID, &revoked, &expires, &audience)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("PAT inconnu")
 	}
@@ -74,6 +100,9 @@ func LookupPAT(ctx context.Context, db *sql.DB, plain string) (userID, tokenID s
 	}
 	if expires.Valid && !expires.Time.After(time.Now().UTC()) {
 		return "", "", nil, errors.New("PAT expiré")
+	}
+	if usage != "" && !PATServes(audience, usage) {
+		return "", "", nil, ErrPATAudience
 	}
 	rows, err := db.QueryContext(ctx,
 		`SELECT scope FROM user_api_token_scopes WHERE token_id = ? ORDER BY scope`, tokenID)
@@ -110,6 +139,10 @@ func RequireAuth(secret string, db *sql.DB) func(http.Handler) http.Handler {
 				return
 			}
 			ctx, err := authenticateBearer(r.Context(), secret, db, tokenStr)
+			if errors.Is(err, ErrPATAudience) {
+				http.Error(w, "Ce token est réservé au MCP", http.StatusForbidden)
+				return
+			}
 			if err != nil {
 				http.Error(w, "Token invalide", http.StatusUnauthorized)
 				return
@@ -132,7 +165,11 @@ func RequirePAT(db *sql.DB) func(http.Handler) http.Handler {
 				http.Error(w, "MCP : un token API utilisateur (gpx_pat_*) est requis", http.StatusUnauthorized)
 				return
 			}
-			userID, patID, scopes, err := LookupPAT(r.Context(), db, tokenStr)
+			userID, patID, scopes, err := lookupPAT(r.Context(), db, tokenStr, PATAudienceMCP)
+			if errors.Is(err, ErrPATAudience) {
+				http.Error(w, "Ce token est réservé à l'API REST", http.StatusForbidden)
+				return
+			}
 			if err != nil {
 				http.Error(w, "Token invalide", http.StatusUnauthorized)
 				return
@@ -148,7 +185,7 @@ func RequirePAT(db *sql.DB) func(http.Handler) http.Handler {
 
 func authenticateBearer(ctx context.Context, secret string, db *sql.DB, tokenStr string) (context.Context, error) {
 	if IsPATToken(tokenStr) {
-		userID, patID, scopes, err := LookupPAT(ctx, db, tokenStr)
+		userID, patID, scopes, err := lookupPAT(ctx, db, tokenStr, PATAudienceAPI)
 		if err != nil {
 			return nil, err
 		}

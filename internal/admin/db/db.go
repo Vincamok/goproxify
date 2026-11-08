@@ -638,7 +638,8 @@ func migrate(db *sql.DB) error {
 			expires_at   DATETIME,
 			revoked      INTEGER NOT NULL DEFAULT 0,
 			last_used_at DATETIME,
-			created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+			audience     TEXT NOT NULL DEFAULT 'both'
 		)`,
 		`CREATE TABLE IF NOT EXISTS user_api_token_scopes (
 			token_id TEXT NOT NULL,
@@ -651,6 +652,8 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("migration user_api_tokens : %w", err)
 		}
 	}
+	// Public d'un PAT : API REST, MCP ou les deux (les jetons existants gardent leur double usage).
+	db.Exec(`ALTER TABLE user_api_tokens ADD COLUMN audience TEXT NOT NULL DEFAULT 'both'`) //nolint:errcheck
 
 	// Lien snapshot → planification (rétention indépendante par planning).
 	db.Exec(`ALTER TABLE backup_snapshots ADD COLUMN schedule_id TEXT NOT NULL DEFAULT ''`)                                //nolint:errcheck

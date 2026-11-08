@@ -11,10 +11,10 @@ import (
 	"html/template"
 	"net/url"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/vincamok/goproxify/internal/httpx"
 	"github.com/vincamok/goproxify/internal/i18n"
 )
 
@@ -29,10 +29,11 @@ var (
 	adminBaseURL string
 )
 
-// SetAdminBaseURL enregistre l'origine publique de l'Admin (trim du slash final).
+// SetAdminBaseURL enregistre l'origine publique de l'Admin (trim du slash final). Ce qui n'est pas une origine http(s)
+// est refusé (adresse vide) : la valeur finit dans un href de pages servies sur l'origine des sites proxifiés.
 func SetAdminBaseURL(u string) {
 	adminBaseMu.Lock()
-	adminBaseURL = strings.TrimRight(strings.TrimSpace(u), "/")
+	adminBaseURL = httpx.CleanOrigin(u)
 	adminBaseMu.Unlock()
 }
 

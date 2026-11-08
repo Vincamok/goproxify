@@ -530,6 +530,7 @@ func (d *Discovery) routePayload(key string, ann map[string]string, host, backen
 		"backends":     []string{backendURL},
 		"tls_enabled":  spec.TLS,
 		"passthrough":  spec.Passthrough,
+		"redirect_https": spec.RedirectHTTPS,
 		"source":       "k8s",
 		"container_id": "k8s:" + key,
 		"agent_name":   d.cfg.Identity.NodeName,

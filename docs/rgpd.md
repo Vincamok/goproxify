@@ -15,6 +15,7 @@
 | WAF rule matches (categories only, no payload) | Passerelle (access log) | Admin SQLite | 90 days |
 | Banned IP + ban reason + expiry, ban history | Passerelle / Admin | Admin SQLite (`security_bans`, `security_ban_history`, IP in clear) | History and expired bans: 365 days (`retention_ban_days`); an active ban is kept until it expires |
 | GeoIP cache of observed IPs (country, city, coordinates) | Admin | Admin SQLite (`geoip_cache`, IP in clear) | Same as access logs (`retention_access_days`) |
+| Attack-reference dossier of a banned IP (probed path templates, statuses, WAF categories, signals, User-Agent, profile; ADR 0023) | Admin | Admin SQLite (`attack_dossiers`, IP in clear) | Same as the ban history (365 days); included in the subject access export (`attack_dossiers`) and erased with the IP (`attack_dossiers_deleted`). The reference entries derived from it hold no IP, host or parameter value |
 | Client errors per IP and per minute (4xx except 404), for the cross-gateway thresholds | Edge → Admin | Local log database on the Edge (`ip_errors`) + Admin SQLite (`edge_ip_errors`), IP in clear; never sent for an anonymised or pseudonymised IP | 48 hours on the Edge, 24 hours on the Admin |
 | Domain names sent to external services by the opt-in domain watch (certificate transparency log, DNS resolver) | Admin → external | Not stored outside the Admin's own findings table (`domain_watch`: domain, check, serial, issuer); the names are domains you declared, no personal data about visitors | Disabled by default; findings kept as a history (no expiry yet) |
 | Admin user email + bcrypt password hash | Admin | Admin SQLite | Until deleted |
@@ -121,10 +122,10 @@ DELETE /api/v1/logs/by-ip/{ip}
 
 Removes all log entries of the given IP, **including pseudonymised entries**: each one carries a keyed fingerprint of the real IP (`ip_hmac`, HMAC-SHA256), so the Admin finds them without decrypting the logs. IPv6 is matched whatever its notation. Entries pseudonymised before Admin `0.70.5` get their fingerprint in the background at the next start.
 
-The erasure also covers what the Admin keeps about that IP **outside the logs**, all stored in clear: the bans (`security_bans`), the ban history (`security_ban_history`) and the GeoIP cache entry (`geoip_cache`: country, city, coordinates). The response counts each one:
+The erasure also covers what the Admin keeps about that IP **outside the logs**, all stored in clear: the bans (`security_bans`), the ban history (`security_ban_history`), the attack-reference dossiers (`attack_dossiers`) and the GeoIP cache entry (`geoip_cache`: country, city, coordinates). The response counts each one:
 
 ```json
-{ "deleted": 12, "bans_deleted": 1, "ban_history_deleted": 3, "geoip_cache_deleted": 1, "ip_counters_deleted": 2, "audit_ip_cleared": 2, "ip": "203.0.113.42" }
+{ "deleted": 12, "bans_deleted": 1, "ban_history_deleted": 3, "geoip_cache_deleted": 1, "attack_dossiers_deleted": 1, "ip_counters_deleted": 2, "audit_ip_cleared": 2, "ip": "203.0.113.42" }
 ```
 
 Deleting a ban also lifts it on the gateways, like an unban, including bans a gateway set itself. The IP is matched whatever its notation (IPv6). `audit_ip_cleared` counts the audit entries whose address was blanked: the entry (who did what, when) stays, only the actor's IP goes.

@@ -54,11 +54,14 @@ func listChannels(t *testing.T, h *ChannelsHandler) []map[string]any {
 func TestChannels_CreateValidates(t *testing.T) {
 	h := newChannelsHandler(t)
 	for name, body := range map[string]string{
-		"type inconnu": `{"name":"x","type":"carrier-pigeon","config":{}}`,
-		"champ requis": `{"name":"x","type":"slack","config":{}}`,
-		"requis vide":  `{"name":"x","type":"gotify","config":{"url":"https://g","token":" "}}`,
-		"clé inconnue": `{"name":"x","type":"slack","config":{"webhook_url":"https://h","webhok":"typo"}}`,
-		"sans nom":     `{"type":"slack","config":{"webhook_url":"https://h"}}`,
+		"type inconnu":    `{"name":"x","type":"carrier-pigeon","config":{}}`,
+		"champ requis":    `{"name":"x","type":"slack","config":{}}`,
+		"requis vide":     `{"name":"x","type":"gotify","config":{"url":"https://g","token":" "}}`,
+		"clé inconnue":    `{"name":"x","type":"slack","config":{"webhook_url":"https://h","webhok":"typo"}}`,
+		"sans nom":        `{"type":"slack","config":{"webhook_url":"https://h"}}`,
+		"url sans schéma": `{"name":"x","type":"webhook","config":{"url":"hooks.example.fr/x"}}`,
+		"schéma non http": `{"name":"x","type":"webhook","config":{"url":"ftp://hooks.example.fr/x"}}`,
+		"slack sans hôte": `{"name":"x","type":"slack","config":{"webhook_url":"https://"}}`,
 	} {
 		if rec := chCall(h, http.MethodPost, "/api/v1/alert-channels", body); rec.Code != http.StatusBadRequest {
 			t.Errorf("%s : code %d (attendu 400)", name, rec.Code)

@@ -111,6 +111,7 @@ func BootstrapEdge(path string) error {
 		"network": map[string]any{
 			"http_port":         envIntOr("GPX_NETWORK_HTTP_PORT", 80),
 			"https_port":        envIntOr("GPX_NETWORK_HTTPS_PORT", 443),
+			"quic_port":         envIntOr("GPX_NETWORK_QUIC_PORT", envIntOr("GPX_NETWORK_HTTPS_PORT", 443)), // HTTP/3 (UDP) suit le port HTTPS par défaut
 			"internal_api_port": envIntOr("GPX_NETWORK_INTERNAL_API_PORT", 8000),
 			"bind_address":      "0.0.0.0",
 			"api_host":          envOr("GPX_NETWORK_API_HOST", nodeName),

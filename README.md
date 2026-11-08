@@ -252,7 +252,7 @@ Full reference → **[docs/cli.md](docs/cli.md)**
 
 - **Web UI + REST API** — CRUD proxies, snippets, tokens, users; three skins (Flat, Industry DS, Console), light or dark, each with its own accent colours
 - **GoProxify Access** — destination catalogue (global / per-Edge view), invite users by email (SMTP), tags, Access HTML templates, portal options per Edge
-- **User API tokens (PAT)** — `gpx_pat_*` self-service with scopes (`proxies:read`, `certs:write`, …) for scripts and MCP clients; a read scope never allows a write; distinct from Edge/Agent pairing tokens
+- **User API tokens (PAT)** — `gpx_pat_*` self-service with scopes (`proxies:read`, `certs:write`, …) for scripts and MCP clients, each issued for the REST API, for MCP or for both (enforced server-side); a read scope never allows a write; distinct from Edge/Agent pairing tokens
 - **MCP server** — JSON-RPC 2.0 + SSE; **PAT-only** authentication (no session JWT); every tool and resource requires the scope of its REST equivalent, plus the admin role where the REST route is admin-only — a tool without a declared scope is refused
 - **Terraform provider** — [`integrations/terraform-provider-goproxify`](integrations/terraform-provider-goproxify): proxies, bans (optionally scoped to a gateway or HA group), ban whitelist and IP profiles as code, with import and drift detection (not yet published on the Terraform Registry)
 - **Infrastructure view & architecture editor** — live flow schema (Internet → Edges → Agents) with a node detail panel and a "to handle" bar; in-place editing (drag-and-drop palette, host cards, changes flagged with their impact, review before save), multi-Edge/HA, QR tickets / `curl|bash` to integrate a host
@@ -319,7 +319,7 @@ See `.env.example` for the full list.
 | `GPX_SECURITY_JWT_SECRET` | Admin | JWT signing key (required) |
 | `GPX_PAIRING_SECRET` | Admin / Edge / Agent | Shared secret for automatic pairing (HMAC WebSocket) |
 | `GPX_EDGE_TOKEN` | Edge | Explicit token (alternative to shared secret) |
-| `GPX_TRUSTED_PROXIES` | Edge / Admin | CSV of IPs/CIDRs of trusted front proxies (e.g. Cloudflare ranges) whose `X-Forwarded-For` / `CF-Connecting-IP` / `X-Real-IP` are honored. Loopback and private ranges are always trusted; `*` trusts everything (legacy, spoofable). |
+| `GPX_TRUSTED_PROXIES` | Edge / Admin | CSV of IPs/CIDRs of trusted front proxies (e.g. Cloudflare ranges) whose `X-Forwarded-For` / `CF-Connecting-IP` / `X-Real-IP` are honored. Loopback and private ranges are trusted by default; `none` removes that default so that only the other entries are trusted (`none` alone: the connection's own address always wins — use it when LAN hosts are not trusted); `*` trusts everything (legacy, spoofable). Applies to rate-limit, bans, IP filters, the Admin login limiter, the audit log and the MCP IP allowlist. |
 | `GPX_IDENTITY_EDGE_NODE_NAME` | Admin | Edge hostname/IP reachable by Admin (`http://<value>:8000`) |
 | `GPX_CONTROL_PLANE_EDGE_ENDPOINT` | Agent | Edge URL as seen by Agent (`http://<edge>:8000`) |
 | `GPX_ENGINE_LOG_LEVEL` | All | Log level (`debug`/`info`/`warn`/`error`) |
@@ -336,14 +336,14 @@ See `.env.example` for the full list.
 | Language | Go 1.25 — single static binary, zero runtime dependency |
 | Protocols | HTTP/1.1, HTTP/2, HTTP/3 QUIC (quic-go), TCP/UDP L4 |
 | **Control plane** | **Persistent WebSocket `nhooyr.io/websocket` — Admin→Edge(WS), Agent→Edge(WS)** |
-| TLS | SSL termination + SNI Passthrough, ACME DNS-01 wildcard (33 DNS providers), HTTP-01, TLS-ALPN-01 |
+| TLS | SSL termination + SNI Passthrough, ACME DNS-01 wildcard (33 DNS providers), HTTP-01, TLS-ALPN-01, optional per-route HTTP→HTTPS redirect |
 | Admin persistence | CGO-free SQLite (`modernc.org/sqlite`) — config, users, tokens — Raft HA option |
 | Edge persistence | Proxies: **YAML** files (`proxies/*.yaml`, `proxies-revisions/*.yaml`) · AES-256-GCM local cache (certs) |
 | Configuration | `GPX_*` environment variables + optional JSON |
 | Discovery | Docker Engine API via Unix socket, Portainer, Kubernetes, Consul, Nomad, etcd v3, Amazon ECS |
 | Plugins | WebAssembly via `wazero` (no CGO) |
 | Metrics | Prometheus on the Edge internal API (`:8000/metrics`, bearer token; public `/metrics` only with `GPX_METRICS_PUBLIC=1`), OpenTelemetry (OTLP) |
-| Security | OWASP CRS-4 WAF (13 rule sets, request + response inspection), behavioral Ephor (thresholds and a seasonal traffic reference included), CrowdSec, **automation flows** (rules, schedules, playbooks with approval), step-by-step **IP / CIDR trace** over long periods, rate limiting, Geo-IP, ECDSA P-256 JWT, HMAC-SHA256 WS, CVE scanner with KEV/EPSS enrichment and configurable remediation SLA |
+| Security | OWASP CRS-4 WAF (13 rule sets, request + response inspection), behavioral Ephor (thresholds and a seasonal traffic reference included), CrowdSec, **automation flows** (rules, schedules, playbooks with approval), step-by-step **IP / CIDR trace** over long periods, **attack reference** (what banned IPs actually did, kept as normalised entries with no IP), rate limiting, Geo-IP, ECDSA P-256 JWT, HMAC-SHA256 WS, CVE scanner with KEV/EPSS enrichment and configurable remediation SLA |
 | Deployment | Single binary · Docker Compose · systemd |
 
 ---
@@ -356,6 +356,7 @@ See `.env.example` for the full list.
 | [Detailed architecture](docs/architecture.md) | Data flows, technical decisions |
 | [Inter-Edge delegation](docs/delegation.md) | Passthrough vs Terminate modes, client IP, prerequisites |
 | [Features](docs/fonctionnalites.md) | Product capability catalogue |
+| [Skills](SKILLS.md) | Everything the tool can do, by goal, with recipes |
 | [API specifications](docs/api_specs.md) | Full REST contract |
 | [MCP](docs/mcp.md) | MCP server — tools, PAT auth, Claude/Cursor clients |
 | [Config schema](docs/config_schema.json) | JSON schema for proxies |

@@ -139,6 +139,7 @@ type agentContainerPayload struct {
 	Backends     []string `json:"backends"`
 	TLSEnabled   bool     `json:"tls_enabled"`
 	Passthrough  bool     `json:"passthrough"`
+	RedirectHTTPS bool    `json:"redirect_https"`
 	Source       string   `json:"source"`
 	ContainerID  string   `json:"container_id"`
 	Image        string   `json:"image"`
@@ -453,6 +454,9 @@ func (s *Server) applyAgentRoute(in *agentContainerPayload) (int, string) {
 		if p.TLSEnabled {
 			rt.TLSEnabled = true
 		}
+		if p.RedirectHTTPS {
+			rt.RedirectHTTPS = true
+		}
 		if p.Passthrough {
 			rt.TLSPassthrough = true
 		}
@@ -556,6 +560,7 @@ func (s *Server) applyAgentRoute(in *agentContainerPayload) (int, string) {
 		Backends:       backends,
 		TLSEnabled:     p.TLSEnabled,
 		TLSPassthrough: p.Passthrough,
+		RedirectHTTPS:  p.RedirectHTTPS,
 		AgentName:      p.AgentName,
 		LB:             router.LBAdaptive,
 	}

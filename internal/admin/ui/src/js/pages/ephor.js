@@ -305,6 +305,7 @@ window.sentAcceptTLS = async function(ja4) {
 
 async function sentLoadReferences() {
   if (_sent.loadingRefs) return;
+  if (_sent.refs !== null && _sent.sugg !== null && _sent.traffic !== null && _sent.tlsrep !== null) return;
   _sent.loadingRefs = true;
   if (_sent.refs === null) {
     try { _sent.refs = await api('GET', `/security/threat-references${window._secEdgeQ || ''}`); } catch { _sent.refs = false; }

@@ -5,6 +5,8 @@ package logs
 
 import (
 	"database/sql"
+	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/vincamok/goproxify/internal/ipcrypt"
@@ -30,6 +32,15 @@ type (
 		Reason    string `json:"reason,omitempty"`
 		Source    string `json:"source"`
 		CreatedAt string `json:"created_at"`
+	}
+	// SubjectDossier : le dossier du référentiel des attaques (ADR 0023) bâti après un ban de cette IP ; Data est le
+	// résumé tel que stocké (chemins sondés sous forme de gabarits, statuts, profil).
+	SubjectDossier struct {
+		BannedAt string          `json:"banned_at"`
+		Source   string          `json:"source"`
+		Profile  string          `json:"profile"`
+		Requests int             `json:"requests"`
+		Data     json.RawMessage `json:"data"`
 	}
 	SubjectGeo struct {
 		CountryCode string  `json:"country_code"`
@@ -70,6 +81,7 @@ type IPExport struct {
 	GatewaysMissing []string `json:"gateways_missing,omitempty"`
 	Bans          []SubjectBan      `json:"bans"`
 	BanHistory    []SubjectBanEvent `json:"ban_history"`
+	AttackDossiers []SubjectDossier `json:"attack_dossiers"`
 	GeoIP         *SubjectGeo       `json:"geoip,omitempty"`
 	Audit         []SubjectAudit    `json:"audit"`
 }
@@ -186,6 +198,25 @@ func (s *Store) ExportIP(ip string) (IPExport, error) {
 		out.BanHistory = append(out.BanHistory, b)
 	}
 	rows.Close()
+
+	out.AttackDossiers = []SubjectDossier{}
+	rows, err = s.db.Query(`SELECT banned_at, source, profile, requests, data FROM attack_dossiers WHERE ip IN (?, ?) ORDER BY banned_at`, ip, canon)
+	switch {
+	case err == nil:
+		for rows.Next() {
+			var d SubjectDossier
+			var data string
+			if err := rows.Scan(&d.BannedAt, &d.Source, &d.Profile, &d.Requests, &data); err != nil {
+				rows.Close()
+				return out, err
+			}
+			d.Data = json.RawMessage(data)
+			out.AttackDossiers = append(out.AttackDossiers, d)
+		}
+		rows.Close()
+	case !strings.Contains(err.Error(), "no such table"):
+		return out, err
+	}
 
 	var g SubjectGeo
 	err = s.db.QueryRow(`SELECT country_code, country_name, city, region, COALESCE(lat,0), COALESCE(lon,0), COALESCE(cached_at,'') FROM geoip_cache WHERE ip IN (?, ?) LIMIT 1`, ip, canon).

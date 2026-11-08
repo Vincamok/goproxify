@@ -27,6 +27,7 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/acme"
 	"github.com/vincamok/goproxify/internal/admin/alerting"
 	"github.com/vincamok/goproxify/internal/admin/api"
+	"github.com/vincamok/goproxify/internal/admin/attackref"
 	"github.com/vincamok/goproxify/internal/admin/analytics"
 	"github.com/vincamok/goproxify/internal/admin/logs"
 	"github.com/vincamok/goproxify/internal/admin/siemcfg"
@@ -63,6 +64,8 @@ type AgentInfo struct {
 // Handler implémente http.Handler pour le endpoint MCP.
 type Handler struct {
 	DB     *sql.DB
+	// AttackRef (optionnel) : référentiel des attaques (ADR 0023).
+	AttackRef *attackref.Miner
 	Log    *slog.Logger
 	Pusher RoutePusher // optionnel — push vers les passerelles après create/delete/update
 	// Access (optionnel) — push config / templates portail vers les passerelles.
@@ -261,6 +264,7 @@ var tools = []map[string]any{
 			req("host", "string", "Domaine (ex: app.example.com)"),
 			req("backend", "string", "URL du backend (ex: http://10.0.0.5:3000)"),
 			opt("tls_enabled", "boolean", "Active HTTPS (défaut: false)"),
+			opt("redirect_https", "boolean", "Redirige le HTTP clair vers HTTPS (308) ; sans effet sans tls_enabled (défaut: false)"),
 			opt("type", "string", "Type de route: http (défaut), tcp, udp"),
 			opt("lb", "string", "Load balancing: round_robin (défaut), weighted, adaptive"),
 			opt("name", "string", "Nom du proxy, lu par les périmètres de droits (défaut : son domaine)"),
@@ -305,6 +309,7 @@ var tools = []map[string]any{
 			opt("host", "string", "Nouveau domaine"),
 			opt("backend", "string", "Nouvelle URL backend (remplace la liste backends)"),
 			opt("tls_enabled", "boolean", "Active ou désactive HTTPS"),
+			opt("redirect_https", "boolean", "Active ou désactive la redirection du HTTP clair vers HTTPS (308)"),
 			opt("lb", "string", "Load balancing: round_robin, weighted, adaptive"),
 			opt("enabled", "boolean", "Active ou désactive la route"),
 			opt("name", "string", "Nom du proxy, lu par les périmètres de droits (vide = retirer, le domaine sert alors de nom)"),
@@ -871,6 +876,16 @@ func (h *Handler) handleToolsCall(req rpcRequest, r *http.Request) rpcResponse {
 		result, toolErr = h.toolDeletePortalTemplate(r, p.Arguments)
 	case "push_portal_templates":
 		result, toolErr = h.toolPushPortalTemplates(r)
+	case "get_attack_ref_summary":
+		result, toolErr = h.toolAttackRefSummary(r)
+	case "list_attack_ref_entries":
+		result, toolErr = h.toolAttackRefEntries(r, p.Arguments)
+	case "list_attack_ref_dossiers":
+		result, toolErr = h.toolAttackRefDossiers(r, p.Arguments)
+	case "set_attack_ref_entry_status":
+		result, toolErr = h.toolAttackRefSetStatus(r, p.Arguments)
+	case "run_attack_ref_mining":
+		result, toolErr = h.toolAttackRefRun()
 	case "trace_ip":
 		result, toolErr = h.toolTraceIP(r, p.Arguments)
 	case "preview_security_ban":
@@ -1137,6 +1152,7 @@ func (h *Handler) toolCreateProxy(r *http.Request, args map[string]any) (any, er
 	host, _ := args["host"].(string)
 	backend, _ := args["backend"].(string)
 	tlsEnabled, _ := args["tls_enabled"].(bool)
+	redirectHTTPS, _ := args["redirect_https"].(bool)
 	rtype, _ := args["type"].(string)
 	lb, _ := args["lb"].(string)
 	if host == "" || backend == "" {
@@ -1173,6 +1189,7 @@ func (h *Handler) toolCreateProxy(r *http.Request, args map[string]any) (any, er
 		"backends":    []map[string]any{{"url": backend, "weight": 1}},
 		"lb":          lb,
 		"tls_enabled": tlsEnabled,
+		"redirect_https": redirectHTTPS,
 		"updated_at":  now,
 	}
 	identity.apply(cfg)
@@ -1369,6 +1386,10 @@ func (h *Handler) toolUpdateProxy(r *http.Request, args map[string]any) (any, er
 			return nil, err
 		}
 		cfg["backends"] = []map[string]any{{"url": backend, "weight": 1}}
+		changed = true
+	}
+	if v, ok := args["redirect_https"].(bool); ok {
+		cfg["redirect_https"] = v
 		changed = true
 	}
 	if tls, ok := args["tls_enabled"].(bool); ok {

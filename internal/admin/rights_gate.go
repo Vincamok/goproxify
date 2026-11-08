@@ -202,6 +202,8 @@ func securityPermission(r *http.Request) (string, bool) {
 		if isRead(r) {
 			return "netsec:analyse", true
 		}
+	case "attack-ref":
+		return readOrManage(r, "attack_ref:read", "attack_ref:write")
 	case "waf-config":
 		return readOrManage(r, "engines:read", "engines:tune")
 	case "threat-config":

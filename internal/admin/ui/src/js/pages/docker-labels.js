@@ -157,6 +157,10 @@ window.openDockerLabelsModal = async function(opts = {}) {
               <span><span class="lbl-option-title">${t('dockerlbl.passthrough')}</span><span class="lbl-option-hint">${t('dockerlbl.passthrough_hint')}</span></span>
               <label class="toggle"><input type="checkbox" id="lbl-passthrough" onchange="genLabels()"><span class="toggle-slider"></span></label>
             </div>
+            <div class="lbl-option" id="lbl-redirect-https-group">
+              <span><span class="lbl-option-title">${t('dockerlbl.redirect_https')}</span><span class="lbl-option-hint">${t('dockerlbl.redirect_https_hint')}</span></span>
+              <label class="toggle"><input type="checkbox" id="lbl-redirect-https" onchange="genLabels()"><span class="toggle-slider"></span></label>
+            </div>
             <div class="lbl-option" id="lbl-logs-group">
               <span><span class="lbl-option-title">${t('dockerlbl.log_fwd')}</span><span class="lbl-option-hint">${t('dockerlbl.log_fwd_hint')}</span></span>
               <label class="toggle"><input type="checkbox" id="lbl-logs" onchange="genLabels()"><span class="toggle-slider"></span></label>
@@ -640,6 +644,7 @@ function mapProxyToLabelPrefill(p) {
     tls: !!(cfg.tls_enabled || cfg.tls_passthrough || type === 'https'),
     https: /^https:/i.test(beUrl) || !!cfg.https,
     passthrough: !!cfg.tls_passthrough,
+    redirectHttps: !!cfg.redirect_https,
     logs: logsOn,
     rlEnabled: !!(rl && (Number(rps) > 0 || cfg.rate_limit)),
     rps: Number(rps) || 10,
@@ -707,6 +712,7 @@ function applyLabelPrefill(pre) {
   setChk('lbl-tls', pre.tls);
   setChk('lbl-https', pre.https);
   setChk('lbl-passthrough', pre.passthrough);
+  setChk('lbl-redirect-https', pre.redirectHttps);
   setChk('lbl-logs', pre.logs);
 
   setChk('lbl-rl-enabled', pre.rlEnabled || pre.rps > 0);
@@ -893,6 +899,7 @@ window.genLabels = function() {
   const tls   = document.getElementById('lbl-tls')?.checked;
   const https = document.getElementById('lbl-https')?.checked;
   const passthrough = document.getElementById('lbl-passthrough')?.checked;
+  const redirectHttps = document.getElementById('lbl-redirect-https')?.checked;
   const logs  = document.getElementById('lbl-logs')?.checked;
   const rlOn  = document.getElementById('lbl-rl-enabled')?.checked;
   const rps   = parseFloat(document.getElementById('lbl-rps')?.value) || 0;
@@ -993,6 +1000,7 @@ spec:
     if (tls) labels.push(`goproxify.tls=true`);
     if (https) labels.push(`goproxify.https=true`);
     if (passthrough) labels.push(`goproxify.passthrough=true`);
+    if (redirectHttps && tls) labels.push(`goproxify.redirect_https=true`);
   }
   if (backend) labels.push(`goproxify.backend=${backend}`);
   if (ip) labels.push(`goproxify.ip=${ip}`);

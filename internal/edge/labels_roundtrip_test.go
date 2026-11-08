@@ -33,7 +33,7 @@ func routeFromLabels(t *testing.T, g *labels.Generated) (*router.Route, *labels.
 	}
 	payload := map[string]any{
 		"host": spec.Host, "aliases": spec.Aliases, "paths": spec.Paths, "route_type": spec.Type,
-		"backends": []string{spec.BackendURL}, "tls_enabled": spec.TLS, "passthrough": spec.Passthrough,
+		"backends": []string{spec.BackendURL}, "tls_enabled": spec.TLS, "passthrough": spec.Passthrough, "redirect_https": spec.RedirectHTTPS,
 		"source": "docker", "container_id": "c1", "role": spec.Role,
 	}
 	docker.AttachSecurityPayload(payload, spec)
@@ -51,7 +51,7 @@ func routeFromLabels(t *testing.T, g *labels.Generated) (*router.Route, *labels.
 	if errs := discoverySecurityErrors(&p, "", nil); len(errs) > 0 {
 		t.Fatalf("la passerelle refuse les labels : %v", errs)
 	}
-	rt := &router.Route{Host: p.Host, Aliases: p.Aliases, TLSEnabled: p.TLSEnabled, TLSPassthrough: p.Passthrough}
+	rt := &router.Route{Host: p.Host, Aliases: p.Aliases, TLSEnabled: p.TLSEnabled, TLSPassthrough: p.Passthrough, RedirectHTTPS: p.RedirectHTTPS}
 	for _, u := range p.Backends {
 		rt.Backends = append(rt.Backends, router.Backend{URL: u})
 	}
@@ -64,7 +64,7 @@ func richRoute() *router.Route {
 	t := true
 	return &router.Route{
 		ID: "r1", Host: "app.example.fr", Aliases: []string{"www.example.fr"}, Type: router.RouteHTTP,
-		Backends: []router.Backend{{URL: "https://app:8443", Weight: 1}}, TLSEnabled: true,
+		Backends: []router.Backend{{URL: "https://app:8443", Weight: 1}}, TLSEnabled: true, RedirectHTTPS: true,
 		PreserveHost: &t, Websocket: &t, RequestID: &t, HttpVersion: "2",
 		StripPrefix: "/api", PathRewrite: "/api→/v2/api",
 		ConnectTimeout: 5 * time.Second, ResponseTimeout: 30 * time.Second, SendTimeout: 10 * time.Second,
@@ -111,6 +111,9 @@ func TestGeneratedLabelsRebuildTheRoute(t *testing.T) {
 	}
 	if len(got.Backends) != 1 || got.Backends[0].URL != orig.Backends[0].URL {
 		t.Fatalf("backend : %+v", got.Backends)
+	}
+	if !got.RedirectHTTPS {
+		t.Fatal("redirect_https perdu")
 	}
 	if !got.TLSEnabled {
 		t.Fatal("tls perdu")

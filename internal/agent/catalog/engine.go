@@ -401,6 +401,7 @@ func (e *Engine) build(insts []Instance) (map[string]desired, []map[string]any) 
 			"backends":     []string{in.Backend},
 			"tls_enabled":  spec.TLS,
 			"passthrough":  spec.Passthrough,
+			"redirect_https": spec.RedirectHTTPS,
 			"source":       e.source,
 			"container_id": id,
 			"agent_name":   e.agentName,

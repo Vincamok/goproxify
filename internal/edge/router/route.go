@@ -40,6 +40,9 @@ type Route struct {
 	// TLS
 	TLSEnabled     bool   `json:"tls_enabled"`
 	TLSPassthrough bool   `json:"tls_passthrough"`           // SNI passthrough sans déchiffrement
+	// RedirectHTTPS : une requête en clair sur une route TLS reçoit un 308 vers la même adresse en HTTPS (sauf le challenge ACME
+	// http-01). Sans effet si la route n'a pas tls_enabled. Un X-Forwarded-Proto: https d'un proxy de confiance compte comme HTTPS.
+	RedirectHTTPS bool `json:"redirect_https,omitempty"`
 	CertName       string `json:"cert_name"`                 // clé dans CertStore
 	TLSSkipVerify  bool   `json:"tls_skip_verify,omitempty"` // ignorer le certificat backend auto-signé
 	// nil (absent) = conserver le Host original (défaut, comme nginx) ; false = envoyer le host du backend

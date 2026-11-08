@@ -274,3 +274,53 @@ func TestJWTRevokedByTokensValidAfter(t *testing.T) {
 		t.Errorf("RevokeSessions doit poser la date courante : %d", v)
 	}
 }
+
+// Un jeton réservé à l'API REST n'ouvre pas /mcp, un jeton réservé au MCP n'ouvre pas l'API REST ; « both » ouvre les deux.
+// Le refus tombe avant last_used_at : un usage refusé ne doit pas passer pour un usage.
+func TestPATAudienceSeparatesAPIAndMCP(t *testing.T) {
+	db, err := admindb.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO users (id, email, password_hash, role) VALUES ('ua', 'ua@test.local', 'x', 'admin')`); err != nil {
+		t.Fatal(err)
+	}
+	tokens := map[string]string{}
+	for _, aud := range []string{"api", "mcp", "both"} {
+		plain := auth.GeneratePAT()
+		tokens[aud] = plain
+		if _, err := db.Exec(`INSERT INTO user_api_tokens (id, user_id, label, token_hash, token_prefix, audience) VALUES (?,?,?,?,?,?)`,
+			"p-"+aud, "ua", aud, auth.HashPAT(plain), auth.PATPreview(plain), aud); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	call := func(mw func(http.Handler) http.Handler, token string) int {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/x", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		mw(ok).ServeHTTP(rec, req)
+		return rec.Code
+	}
+	rest, mcp := auth.RequireAuth("secret", db), auth.RequirePAT(db)
+	for aud, wantREST := range map[string]int{"api": 200, "mcp": 403, "both": 200} {
+		if got := call(rest, tokens[aud]); got != wantREST {
+			t.Errorf("API REST avec un token %q : %d, attendu %d", aud, got, wantREST)
+		}
+	}
+	for aud, wantMCP := range map[string]int{"api": 403, "mcp": 200, "both": 200} {
+		if got := call(mcp, tokens[aud]); got != wantMCP {
+			t.Errorf("MCP avec un token %q : %d, attendu %d", aud, got, wantMCP)
+		}
+	}
+	var used int
+	db.QueryRow(`SELECT COUNT(*) FROM user_api_tokens WHERE audience='mcp' AND last_used_at IS NOT NULL`).Scan(&used) //nolint:errcheck
+	if used != 1 {
+		t.Errorf("le token MCP n'a été utilisé qu'une fois avec succès (sur /mcp) : last_used_at posé sur %d ligne(s)", used)
+	}
+	db.QueryRow(`SELECT COUNT(*) FROM user_api_tokens WHERE audience='api' AND last_used_at IS NOT NULL`).Scan(&used) //nolint:errcheck
+	if used != 1 {
+		t.Errorf("le token API n'a été utilisé qu'une fois avec succès (sur l'API) : last_used_at posé sur %d ligne(s)", used)
+	}
+}

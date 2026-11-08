@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -146,6 +147,13 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Challenge ACME http-01 posé par l'Admin : avant bans, détection et routage, qui n'ont aucune raison de le refuser (le CA
+	// valide depuis des adresses inconnues) ni de le rediriger vers un HTTPS dont le certificat n'existe pas encore. Un token
+	// inconnu n'est pas intercepté.
+	if s.certStore != nil && s.serveACMEChallenge(w, r) {
+		return
+	}
+
 	host := r.Host
 	// Enlever le port si présent
 	if h, _, err := net.SplitHostPort(host); err == nil {
@@ -217,6 +225,20 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 			s.threatEngine.NoteUnknownHost(remoteIP, cleanName(r.Host))
 		}
 		s.rejectUnknownHost(w)
+		return
+	}
+
+	// HTTP/3 : un client n'en apprend l'existence que par l'Alt-Svc d'une réponse reçue en HTTPS (le serveur QUIC l'ajoute à ses
+	// propres réponses, trop tard pour qui n'y est pas encore). Pas pour une route mTLS : QUIC ne vérifie pas de certificat client.
+	if r.TLS != nil && r.ProtoMajor < 3 && (route.MTLS == nil || !route.MTLS.Enabled) {
+		if p := s.quicPort.Load(); p > 0 {
+			w.Header().Set("Alt-Svc", fmt.Sprintf(`h3=":%d"; ma=86400`, p))
+		}
+	}
+
+	// Route TLS configurée pour refuser le clair : tout se joue en HTTPS, rien de la requête n'atteint le reste de la chaîne.
+	if route.RedirectHTTPS && route.TLSEnabled && !isSecureRequest(r) {
+		s.redirectToHTTPS(w, r)
 		return
 	}
 
@@ -538,6 +560,43 @@ func banSource(reason string) string {
 		}
 	}
 	return "other"
+}
+
+// isSecureRequest dit si le client est arrivé en HTTPS : TLS terminé ici, ou annoncé par un proxy de confiance qui l'a terminé
+// devant la passerelle (X-Forwarded-Proto). L'en-tête d'un pair qui n'est pas de confiance ne compte pas.
+func isSecureRequest(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	if !edgelog.TrustedPeer(r) {
+		return false
+	}
+	proto, _, _ := strings.Cut(r.Header.Get("X-Forwarded-Proto"), ",")
+	return strings.EqualFold(strings.TrimSpace(proto), "https")
+}
+
+// redirectToHTTPS renvoie le client vers la même adresse en HTTPS. 308 garde la méthode et le corps ; la durée de cache est bornée
+// pour qu'une route qui cesse de rediriger ne reste pas redirigée dans les navigateurs.
+func (s *Server) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
+	host := r.Host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	port := 443
+	if s.cfg != nil && s.cfg.Network.HTTPSPort != 0 {
+		port = s.cfg.Network.HTTPSPort
+	}
+	authority := host
+	switch {
+	case port != 443:
+		authority = net.JoinHostPort(host, strconv.Itoa(port))
+	case strings.Contains(host, ":"):
+		authority = "[" + host + "]"
+	}
+	w.Header().Set("Location", "https://"+authority+r.URL.RequestURI())
+	w.Header().Set("Cache-Control", "max-age=3600")
+	w.WriteHeader(http.StatusPermanentRedirect)
 }
 
 // serveACMEChallenge répond au challenge http-01 posé par l'Admin. Un token inconnu est

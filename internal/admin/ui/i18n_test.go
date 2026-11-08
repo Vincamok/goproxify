@@ -175,6 +175,24 @@ func TestAccountPageIsFullyTranslated(t *testing.T) {
 			}
 		}
 	}
+	// Clés construites par la page des tokens API (usage, filtres, types de scope, groupes de scopes).
+	dynamic := map[string][]string{
+		"account.pat_aud_":      {"api", "mcp", "both"},
+		"account.pat_aud_hint_": {"api", "mcp", "both"},
+		"account.pat_f_":        {"all", "active", "expired", "revoked", "unused", "stale", "expiring"},
+		"account.pat_k_":        {"all", "read", "write", "selected", "delete", "gdpr"},
+		"account.pat_grp_": {"proxies", "nodes", "alerts", "metrics", "backups", "users", "snippets", "domains", "certs",
+			"logs", "teams", "audit", "security", "import", "pairing", "portal", "gdpr"},
+	}
+	for prefix, suffixes := range dynamic {
+		for _, s := range suffixes {
+			for lang, block := range blocks {
+				if !strings.Contains(block, "'"+prefix+s+"':") {
+					t.Errorf("clé %q absente de la langue %s", prefix+s, lang)
+				}
+			}
+		}
+	}
 	accent := regexp.MustCompile(`[àâçéèêëîïôûùü]`)
 	for i, line := range strings.Split(string(b), "\n") {
 		if idx := strings.Index(line, "//"); idx >= 0 {

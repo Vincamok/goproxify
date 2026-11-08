@@ -20,6 +20,7 @@ const (
 	LabelTLS             = "goproxify.tls"           // "true" active la terminaison TLS
 	LabelHTTPS           = "goproxify.https"         // "true" = backend en HTTPS
 	LabelPassthrough     = "goproxify.passthrough"   // "true" = SSL passthrough
+	LabelRedirectHTTPS = "goproxify.redirect_https" // "true" = le HTTP clair est redirigé (308) vers HTTPS ; sans effet sans goproxify.tls
 	LabelRateLimit       = "goproxify.rate_limit"    // "100/s" ou "100/s:50"
 	LabelRateLimitRPS    = "goproxify.rate_limit.rps"   // alias générateur UI
 	LabelRateLimitBurst  = "goproxify.rate_limit.burst" // optionnel
@@ -121,6 +122,7 @@ type ProxySpec struct {
 	BackendURL  string
 	TLS         bool
 	Passthrough bool
+	RedirectHTTPS bool
 
 	RateLimit string
 	IPFilter  string
@@ -280,6 +282,7 @@ func ParseLabelsMulti(containerID, containerName, image, networkID string, label
 		BackendURL:  backendURL,
 		TLS:         boolLabel(labels, LabelTLS),
 		Passthrough: boolLabel(labels, LabelPassthrough),
+		RedirectHTTPS: boolLabel(labels, LabelRedirectHTTPS),
 
 		RateLimit: resolveRateLimitLabel(labels),
 		IPFilter:  labels[LabelIPFilter],

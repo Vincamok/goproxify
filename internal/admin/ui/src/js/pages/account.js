@@ -367,59 +367,194 @@ pages['api-tokens'] = async function() {
     return;
   }
 
-  const available = (scopes || []).filter(s => s.available);
+  const available = (scopes || []).filter(s => s.available)
+    .map(s => ({ ...s, tools: s.tools || [], grp: s.id.split(':')[0] }));
+  const DAY = 86400000;
+  const $ = id => document.getElementById(id);
+  const pt = (k, v) => t(`account.pat_${k}`, v);
+  const ui = { q: '', f: 'all', aud: 'all', col: 'created', dir: 'desc', sel: new Set(), open: new Set(), last: null };
+
+  const audOf = k => k.audience || 'both';
+  const serves = (k, usage) => audOf(k) === 'both' || audOf(k) === usage;
+  const stateOf = k => k.revoked ? 'revoked' : (k.expires_at && new Date(k.expires_at) < new Date() ? 'expired' : 'active');
+  const activeIds = () => tokens.filter(k => stateOf(k) === 'active').map(k => k.id);
+  const inactiveIds = () => tokens.filter(k => stateOf(k) !== 'active').map(k => k.id);
+  const FILTERS = {
+    all: () => true,
+    active: k => stateOf(k) === 'active',
+    expired: k => stateOf(k) === 'expired',
+    revoked: k => stateOf(k) === 'revoked',
+    unused: k => stateOf(k) === 'active' && !k.last_used_at,
+    stale: k => stateOf(k) === 'active' && Date.now() - new Date(k.last_used_at || k.created_at) > 90 * DAY,
+    expiring: k => stateOf(k) === 'active' && !!k.expires_at && new Date(k.expires_at) - Date.now() < 30 * DAY,
+  };
+  const SORT = {
+    label: k => (k.label || '').toLowerCase(),
+    aud: k => audOf(k),
+    status: k => ({ active: 0, expired: 1, revoked: 2 })[stateOf(k)],
+    expires: k => k.expires_at ? new Date(k.expires_at).getTime() : Infinity,
+    used: k => k.last_used_at ? new Date(k.last_used_at).getTime() : -1,
+    created: k => new Date(k.created_at).getTime(),
+  };
+
+  const chip = (on, label, n, fn) =>
+    `<button type="button" class="chip${on ? ' active' : ''}" onclick="${fn}">${label}${n == null ? '' : ` <span style="opacity:.7;font-variant-numeric:tabular-nums">${n}</span>`}</button>`;
+  const audTag = a => `<span class="tag ${a === 'mcp' ? 'tag-accent' : a === 'api' ? 'tag-blue' : 'tag-neutral'}">${esc(pt('aud_' + a))}</span>`;
 
   async function refresh() {
     tokens = await api('GET', '/me/tokens').catch(() => []);
-    render();
+    paint();
   }
 
-  function render() {
-    const rows = (tokens || []).map(tok => {
-      const status = tok.revoked
-        ? `<span class="tag tag-neutral">${t('account.pat_revoked')}</span>`
-        : (tok.expires_at && new Date(tok.expires_at) < new Date()
-          ? `<span class="tag tag-neutral">${t('account.pat_expired')}</span>`
-          : `<span class="tag tag-green">${t('account.pat_status_active')}</span>`);
-      const exp = tok.expires_at ? fmtDate(tok.expires_at) : t('account.pat_never');
-      const used = tok.last_used_at ? fmtDate(tok.last_used_at) : '—';
-      const scopeTags = (tok.scopes || []).map(s =>
-        `<span class="tag tag-neutral" style="font-family:monospace;font-size:10px;font-weight:500;white-space:nowrap">${esc(s)}</span>`
-      ).join('');
-      return `<tr>
-        <td style="min-width:120px;max-width:180px;vertical-align:top">
-          <strong>${esc(tok.label)}</strong>
-          <div style="font-size:11px;opacity:0.55;font-family:monospace;word-break:break-all">${esc(tok.prefix)}</div>
-        </td>
-        <td style="vertical-align:top">
-          <div style="display:flex;flex-wrap:wrap;gap:4px;max-width:420px">${scopeTags || '—'}</div>
-        </td>
-        <td style="white-space:nowrap;vertical-align:top">${status}</td>
-        <td style="font-size:12px;white-space:nowrap;vertical-align:top">${esc(exp)}</td>
-        <td style="font-size:12px;white-space:nowrap;vertical-align:top">${esc(used)}</td>
-        <td style="white-space:nowrap;vertical-align:top">
-          ${!tok.revoked ? `<button class="btn btn-sm btn-danger" onclick="revokeApiToken('${esc(tok.id)}')">${t('account.pat_revoke')}</button>` : ''}
-        </td>
-      </tr>`;
-    }).join('') || `<tr><td colspan="6" style="opacity:0.5">${t('account.pat_empty')}</td></tr>`;
-
-    content.innerHTML = `
-      <div style="margin-bottom:20px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
-        <div>
-          <h1 style="margin:0 0 4px;font-size:28px;font-family:var(--font-heading);font-weight:600;">${t('account.pat_page_title')}</h1>
-          <p style="margin:0;opacity:0.65;font-size:14px;">${t('account.pat_page_sub')}</p>
-        </div>
-        <button class="btn btn-primary" onclick="createApiTokenModal()">${t('account.pat_new')}</button>
-      </div>
-      <div class="card" style="overflow-x:auto">
-        <table class="table" style="width:100%;table-layout:auto">
-          <thead><tr>
-            <th>${t('account.pat_col_label')}</th><th>${t('account.pat_col_scopes')}</th><th>${t('account.pat_col_status')}</th><th>${t('account.pat_col_expires')}</th><th>${t('account.pat_col_last_used')}</th><th></th>
-          </tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>`;
+  function visible() {
+    const words = ui.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const list = tokens.filter(k => {
+      if (!FILTERS[ui.f](k)) return false;
+      if (ui.aud !== 'all' && !serves(k, ui.aud)) return false;
+      const hay = [k.label, k.prefix, audOf(k), ...(k.scopes || [])].join(' ').toLowerCase();
+      return words.every(w => hay.includes(w));
+    });
+    const val = SORT[ui.col];
+    list.sort((a, b) => {
+      const x = val(a), y = val(b);
+      const c = x < y ? -1 : x > y ? 1 : 0;
+      return ui.dir === 'asc' ? c : -c;
+    });
+    return list;
   }
+
+  function chipsHTML() {
+    const stat = Object.keys(FILTERS).map(f => {
+      const n = tokens.filter(FILTERS[f]).length;
+      if (f !== 'all' && !n && ui.f !== f) return '';
+      return chip(ui.f === f, pt('f_' + f), n, `patFilter('${f}')`);
+    }).join('');
+    const aud = ['all', 'api', 'mcp'].map(a =>
+      chip(ui.aud === a, a === 'all' ? t('account.pat_f_all') : pt('aud_' + a),
+        a === 'all' ? tokens.length : tokens.filter(k => serves(k, a)).length, `patAud('${a}')`)).join('');
+    return `${stat}<span style="font-size:11px;color:var(--text3);margin-left:8px">${t('account.pat_col_usage')}</span>${aud}`;
+  }
+
+  function sortTh(col, label) {
+    const on = ui.col === col;
+    return `<th onclick="patSort('${col}')" style="cursor:pointer;user-select:none;white-space:nowrap${on ? ';color:var(--accent)' : ''}">${label}${on ? (ui.dir === 'asc' ? ' &uarr;' : ' &darr;') : ''}</th>`;
+  }
+
+  function rowHTML(k) {
+    const st = stateOf(k);
+    const status = st === 'revoked' ? `<span class="tag tag-neutral">${t('account.pat_revoked')}</span>`
+      : st === 'expired' ? `<span class="tag tag-neutral">${t('account.pat_expired')}</span>`
+      : `<span class="tag tag-green">${t('account.pat_status_active')}</span>`;
+    const exp = k.expires_at ? fmtDate(k.expires_at) : t('account.pat_never');
+    const used = k.last_used_at ? fmtDate(k.last_used_at) : '—';
+    const all = k.scopes || [];
+    const open = ui.open.has(k.id);
+    const shown = open ? all : all.slice(0, 6);
+    const scopeTags = shown.map(s =>
+      `<span class="tag tag-neutral" style="font-family:monospace;font-size:10px;font-weight:500;white-space:nowrap">${esc(s)}</span>`).join('');
+    const more = all.length > 6
+      ? `<button type="button" class="tag tag-neutral" style="cursor:pointer;border:0" data-id="${esc(k.id)}" onclick="patToggleScopes(this.dataset.id)">${open ? '&minus;' : '+' + (all.length - 6)}</button>` : '';
+    const sel = ui.sel.has(k.id);
+    return `<tr style="${st !== 'active' ? 'opacity:.6;' : ''}${sel ? 'background:color-mix(in srgb,var(--accent) 8%,transparent)' : ''}">
+      <td style="width:28px;vertical-align:top"><input type="checkbox" ${sel ? 'checked' : ''} data-id="${esc(k.id)}" onclick="patPick(event,this.dataset.id)" aria-label="${esc(t('account.pat_select_row', { label: k.label }))}"></td>
+      <td style="min-width:120px;max-width:180px;vertical-align:top">
+        <strong>${esc(k.label)}</strong>
+        <div style="font-size:11px;opacity:0.55;font-family:monospace;word-break:break-all">${esc(k.prefix)}</div>
+      </td>
+      <td style="vertical-align:top;white-space:nowrap">${audTag(audOf(k))}</td>
+      <td style="vertical-align:top">
+        <div style="display:flex;flex-wrap:wrap;gap:4px;max-width:420px">${scopeTags || '—'}${more}</div>
+      </td>
+      <td style="white-space:nowrap;vertical-align:top">${status}</td>
+      <td style="font-size:12px;white-space:nowrap;vertical-align:top">${esc(exp)}</td>
+      <td style="font-size:12px;white-space:nowrap;vertical-align:top">${esc(used)}</td>
+      <td style="font-size:12px;white-space:nowrap;vertical-align:top;opacity:.7">${esc(fmtDate(k.created_at))}</td>
+      <td style="white-space:nowrap;vertical-align:top">
+        ${st === 'active'
+          ? `<button class="btn btn-sm btn-danger" data-id="${esc(k.id)}" onclick="revokeApiToken(this.dataset.id)">${t('account.pat_revoke')}</button>`
+          : `<button class="btn btn-sm btn-ghost" data-id="${esc(k.id)}" onclick="patDeleteOne(this.dataset.id)">${t('account.pat_delete')}</button>`}
+      </td>
+    </tr>`;
+  }
+
+  function bodyHTML(list) {
+    if (!list.length) {
+      return `<div class="empty" style="padding:30px 20px"><p>${tokens.length ? t('account.pat_no_match') : t('account.pat_empty')}</p></div>`;
+    }
+    const selectable = list;
+    const allOn = selectable.length > 0 && selectable.every(k => ui.sel.has(k.id));
+    return `<table class="table" style="width:100%;table-layout:auto">
+      <thead><tr>
+        <th style="width:28px"><input type="checkbox" id="pat-all" ${allOn ? 'checked' : ''} ${selectable.length ? '' : 'disabled'} onchange="patPickAll(this.checked)" aria-label="${esc(t('account.pat_select_all'))}"></th>
+        ${sortTh('label', t('account.pat_col_label'))}${sortTh('aud', t('account.pat_col_usage'))}<th>${t('account.pat_col_scopes')}</th>${sortTh('status', t('account.pat_col_status'))}${sortTh('expires', t('account.pat_col_expires'))}${sortTh('used', t('account.pat_col_last_used'))}${sortTh('created', t('account.pat_col_created'))}<th></th>
+      </tr></thead>
+      <tbody>${list.map(rowHTML).join('')}</tbody>
+    </table>`;
+  }
+
+  function paint() {
+    const alive = new Set(tokens.map(k => k.id));
+    [...ui.sel].forEach(id => { if (!alive.has(id)) ui.sel.delete(id); });
+    const list = visible();
+    const selectable = list;
+    const toolbar = $('pat-toolbar');
+    if (!toolbar) return;
+    toolbar.style.display = tokens.length ? '' : 'none';
+    $('pat-chips').innerHTML = chipsHTML();
+
+    const pending = selectable.filter(k => !ui.sel.has(k.id)).length;
+    const filtered = ui.q || ui.f !== 'all' || ui.aud !== 'all';
+    $('pat-count').innerHTML = (list.length === tokens.length
+      ? t('account.pat_count_all', { n: tokens.length })
+      : t('account.pat_count_some', { shown: list.length, total: tokens.length }))
+      + (filtered && pending ? ` <button type="button" class="btn btn-ghost btn-sm" onclick="patPickAll(true)">${t('account.pat_select_matching', { n: pending })}</button>` : '')
+      + (inactiveIds().length ? ` <button type="button" class="btn btn-ghost btn-sm" onclick="patPurgeInactive()">${t('account.pat_purge_inactive', { n: inactiveIds().length })}</button>` : '');
+
+    const nActive = [...ui.sel].filter(id => activeIds().includes(id)).length;
+    const nInactive = ui.sel.size - nActive;
+    $('pat-bulk').innerHTML = ui.sel.size
+      ? `<div class="bn-bulk"><b>${t('account.pat_selected', { n: ui.sel.size })}</b>
+          <span style="margin-left:auto;display:flex;gap:6px;align-items:center">
+            ${nActive ? `<button type="button" class="btn btn-sm btn-danger" onclick="patBulkRevoke()">${t('account.pat_bulk_revoke_n', { n: nActive })}</button>` : ''}
+            ${nInactive ? `<button type="button" class="btn btn-sm btn-danger" onclick="patDeleteSelected()">${t('account.pat_bulk_delete_n', { n: nInactive })}</button>` : ''}
+            <button type="button" class="btn btn-ghost btn-sm" onclick="patClearSel()">${t('common.cancel')}</button>
+          </span></div>`
+      : '';
+
+    $('pat-body').innerHTML = bodyHTML(list);
+    const all = $('pat-all');
+    if (all) {
+      const n = selectable.filter(k => ui.sel.has(k.id)).length;
+      all.indeterminate = n > 0 && n < selectable.length;
+    }
+  }
+
+  window.patSearch = v => { ui.q = v; paint(); };
+  window.patFilter = f => { ui.f = f; paint(); };
+  window.patAud = a => { ui.aud = a; paint(); };
+  window.patSort = col => {
+    if (ui.col === col) ui.dir = ui.dir === 'asc' ? 'desc' : 'asc';
+    else { ui.col = col; ui.dir = ['used', 'created'].includes(col) ? 'desc' : 'asc'; }
+    paint();
+  };
+  window.patToggleScopes = id => { ui.open.has(id) ? ui.open.delete(id) : ui.open.add(id); paint(); };
+  window.patPick = (e, id) => {
+    const on = e.target.checked;
+    const ids = visible().map(k => k.id);
+    if (e.shiftKey && ui.last && ids.includes(ui.last) && ids.includes(id)) {
+      const a = ids.indexOf(ui.last), b = ids.indexOf(id);
+      ids.slice(Math.min(a, b), Math.max(a, b) + 1).forEach(x => on ? ui.sel.add(x) : ui.sel.delete(x));
+    } else {
+      on ? ui.sel.add(id) : ui.sel.delete(id);
+    }
+    ui.last = id;
+    paint();
+  };
+  window.patPickAll = on => {
+    visible().forEach(k => on ? ui.sel.add(k.id) : ui.sel.delete(k.id));
+    paint();
+  };
+  window.patClearSel = () => { ui.sel.clear(); paint(); };
 
   window.revokeApiToken = function(id) {
     confirm_(t('account.pat_revoke_confirm'), async () => {
@@ -431,35 +566,193 @@ pages['api-tokens'] = async function() {
     });
   };
 
+  // Révocation (token actif) et suppression définitive (token révoqué ou expiré) : même DELETE, `?purge=1` pour supprimer.
+  let batch = { ids: [], purge: false };
+  function confirmBatch(ids, purge) {
+    if (!ids.length) return;
+    batch = { ids, purge };
+    modal((purge ? t('account.pat_delete_title') : t('account.pat_bulk_title')),
+      `<p style="margin:0;font-size:13.5px;opacity:.8">${esc(purge ? t('account.pat_delete_confirm', { n: ids.length }) : t('account.pat_bulk_confirm', { n: ids.length }))}</p>`,
+      `<button class="btn btn-secondary" onclick="closeModal()">${t('common.cancel')}</button>
+       <button class="btn btn-danger" onclick="patBatchGo()">${purge ? t('account.pat_delete') : t('account.pat_revoke')}</button>`);
+  }
+  window.patBulkRevoke = () => confirmBatch([...ui.sel].filter(id => activeIds().includes(id)), false);
+  window.patDeleteSelected = () => confirmBatch([...ui.sel].filter(id => inactiveIds().includes(id)), true);
+  window.patDeleteOne = id => confirmBatch([id], true);
+  window.patPurgeInactive = () => confirmBatch(inactiveIds(), true);
+  window.patBatchGo = async function() {
+    closeModal();
+    const { ids, purge } = batch;
+    const suffix = purge ? '?purge=1' : '';
+    let ok = 0, ko = 0;
+    for (let i = 0; i < ids.length; i += 5) {
+      const res = await Promise.allSettled(ids.slice(i, i + 5).map(id => api('DELETE', `/me/tokens/${id}${suffix}`)));
+      res.forEach(r => r.status === 'fulfilled' ? ok++ : ko++);
+    }
+    ids.forEach(id => ui.sel.delete(id));
+    toast(ko ? t('account.pat_bulk_partial', { ok, ko }) : (purge ? t('account.pat_deleted_toast', { n: ok }) : t('account.pat_bulk_done', { n: ok })), ko ? 'error' : 'success');
+    await refresh();
+  };
+
+  // ── Création : usage (API / MCP), recherche, filtres et sélection de masse des scopes
+  const m = { q: '', kind: 'all', aud: 'api', sel: new Set(), open: new Set() };
+  const kindOf = id => id.endsWith(':read') ? 'read' : 'write';
+  const grpLabel = g => { const k = 'account.pat_grp_' + g; const v = t(k); return v === k ? g : v; };
+  const pool = () => m.aud === 'mcp' ? available.filter(s => s.tools.length) : available;
+  const hay = s => s._hay || (s._hay = [s.id, s.description, grpLabel(s.grp), ...s.tools].join(' ').toLowerCase());
+  const scopeTag = s => {
+    if (kindOf(s.id) === 'read') return `<span class="tag tag-neutral">${t('account.pat_k_read')}</span>`;
+    if (s.grp === 'gdpr') return `<span class="tag tag-red">${t('account.pat_k_gdpr')}</span>`;
+    if (s.id.endsWith(':delete')) return `<span class="tag tag-red">${t('account.pat_k_delete')}</span>`;
+    return `<span class="tag tag-yellow">${t('account.pat_k_write')}</span>`;
+  };
+
+  function matching() {
+    const words = m.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    return pool().filter(s => {
+      if (m.kind === 'read' && kindOf(s.id) !== 'read') return false;
+      if (m.kind === 'write' && kindOf(s.id) === 'read') return false;
+      if (m.kind === 'selected' && !m.sel.has(s.id)) return false;
+      const h = hay(s);
+      return words.every(w => h.includes(w));
+    });
+  }
+
+  function scopeItemHTML(s) {
+    const open = m.open.has(s.id);
+    const tools = m.aud !== 'api' && s.tools.length;
+    return `<div style="padding:6px 10px 6px 28px;border-bottom:1px solid var(--border)">
+      <div style="display:flex;align-items:flex-start;gap:8px">
+        <label style="display:flex;align-items:flex-start;gap:8px;flex:1;min-width:0;cursor:pointer;font-size:13px">
+          <input type="checkbox" data-id="${esc(s.id)}" ${m.sel.has(s.id) ? 'checked' : ''} onchange="patScopeToggle(this.dataset.id,this.checked)" style="margin-top:3px">
+          <span style="min-width:0"><code>${esc(s.id)}</code> ${scopeTag(s)}<div style="opacity:.6;font-size:12px">${esc(s.description || '')}</div></span>
+        </label>
+        ${tools ? `<button type="button" class="btn btn-ghost btn-sm" style="white-space:nowrap" data-id="${esc(s.id)}" onclick="patToolsToggle(this.dataset.id)">${t('account.pat_tools_count', { n: s.tools.length })}</button>` : ''}
+      </div>
+      ${tools && open ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin:6px 0 0 24px">${s.tools.map(x => `<span class="tag tag-neutral" style="font-family:monospace;font-size:10px">${esc(x)}</span>`).join('')}</div>` : ''}
+    </div>`;
+  }
+
+  function paintScopes() {
+    const list = matching();
+    const pl = pool();
+    const nRead = pl.filter(s => kindOf(s.id) === 'read').length;
+    $('pat-kinds').innerHTML = [['all', pl.length], ['read', nRead], ['write', pl.length - nRead], ['selected', m.sel.size]]
+      .map(([k, n]) => chip(m.kind === k, pt('k_' + k), n, `patKind('${k}')`)).join('');
+
+    const wn = [...m.sel].filter(id => kindOf(id) !== 'read').length;
+    $('pat-ssum').textContent = t('account.pat_sel_count', { n: m.sel.size, total: pl.length })
+      + (wn ? ' · ' + t('account.pat_write_count', { n: wn }) : '');
+    $('pat-sactions').innerHTML = list.length
+      ? `<button type="button" class="btn btn-ghost btn-sm" onclick="patSelVisible(true)">${t('account.pat_sel_visible', { n: list.length })}</button>
+         <button type="button" class="btn btn-ghost btn-sm" onclick="patSelVisible(false)">${t('account.pat_unsel_visible')}</button>` : '';
+
+    const groups = [];
+    list.forEach(s => {
+      let g = groups.find(x => x.id === s.grp);
+      if (!g) groups.push(g = { id: s.grp, items: [] });
+      g.items.push(s);
+    });
+    const box = $('pat-slist');
+    const top = box.scrollTop;
+    box.innerHTML = groups.map(g => {
+      const on = g.items.filter(s => m.sel.has(s.id)).length;
+      return `<div style="position:sticky;top:0;z-index:1;display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg3);border-bottom:1px solid var(--border);font-size:12px;font-weight:600">
+        <input type="checkbox" data-grp="${esc(g.id)}" ${on === g.items.length ? 'checked' : ''} onchange="patGroupToggle(this.dataset.grp,this.checked)" aria-label="${esc(grpLabel(g.id))}">
+        <span>${esc(grpLabel(g.id))}</span><span style="opacity:.55;font-weight:400">${on}/${g.items.length}</span></div>`
+        + g.items.map(scopeItemHTML).join('');
+    }).join('') || `<p style="opacity:.6;padding:12px;margin:0">${pl.length ? t('account.pat_no_scope_match') : t('account.pat_no_scopes')}</p>`;
+    box.querySelectorAll('input[data-grp]').forEach(cb => {
+      const g = groups.find(x => x.id === cb.dataset.grp);
+      const on = g.items.filter(s => m.sel.has(s.id)).length;
+      cb.indeterminate = on > 0 && on < g.items.length;
+    });
+    box.scrollTop = top;
+  }
+
+  window.patScopeSearch = v => { m.q = v; paintScopes(); };
+  window.patKind = k => { m.kind = k; paintScopes(); };
+  window.patScopeToggle = (id, on) => { on ? m.sel.add(id) : m.sel.delete(id); paintScopes(); };
+  window.patGroupToggle = (g, on) => {
+    matching().filter(s => s.grp === g).forEach(s => on ? m.sel.add(s.id) : m.sel.delete(s.id));
+    paintScopes();
+  };
+  window.patSelVisible = on => { matching().forEach(s => on ? m.sel.add(s.id) : m.sel.delete(s.id)); paintScopes(); };
+  window.patToolsToggle = id => { m.open.has(id) ? m.open.delete(id) : m.open.add(id); paintScopes(); };
+  window.patPreset = p => {
+    m.sel.clear();
+    pool().forEach(s => { if (p === 'all' || (p === 'read' && kindOf(s.id) === 'read')) m.sel.add(s.id); });
+    m.kind = 'all';
+    m.q = '';
+    const input = $('pat-sq');
+    if (input) input.value = '';
+    paintScopes();
+  };
+  window.patAudience = a => {
+    m.aud = a;
+    const ok = new Set(pool().map(s => s.id));
+    [...m.sel].forEach(id => { if (!ok.has(id)) m.sel.delete(id); });
+    $('pat-aud-hint').textContent = pt('aud_hint_' + a);
+    paintScopes();
+  };
+  window.patExpiryIn = days => {
+    const el = $('pat-expires');
+    if (!el) return;
+    if (!days) { el.value = ''; return; }
+    const d = new Date(Date.now() + days * DAY), p = n => String(n).padStart(2, '0');
+    el.value = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+
   window.createApiTokenModal = function() {
-    const checks = available.map(s => `
-      <label style="display:flex;align-items:flex-start;gap:8px;margin:6px 0;font-size:13px;cursor:pointer">
-        <input type="checkbox" class="pat-scope" value="${esc(s.id)}" style="margin-top:3px">
-        <span><code>${esc(s.id)}</code><div style="opacity:0.6;font-size:12px">${esc(s.description || '')}</div></span>
-      </label>`).join('') || `<p style="opacity:0.6">${t('account.pat_no_scopes')}</p>`;
+    m.q = ''; m.kind = 'all'; m.aud = 'api'; m.sel.clear(); m.open.clear();
+    const audOpts = ['api', 'mcp', 'both'].map(a =>
+      `<label class="seg-opt"><input type="radio" name="pat-aud" value="${a}" ${a === m.aud ? 'checked' : ''} onchange="patAudience(this.value)">${esc(pt('aud_' + a))}</label>`).join('');
+    const expChips = [[30, t('account.pat_exp_30')], [90, t('account.pat_exp_90')], [365, t('account.pat_exp_365')], [0, t('account.pat_never')]]
+      .map(([d, label]) => `<button type="button" class="chip" style="cursor:pointer" onclick="patExpiryIn(${d})">${esc(label)}</button>`).join('');
 
     const body = `
       <div class="field"><label>${t('account.pat_label')}</label>
         <input class="input" id="pat-label" placeholder="${esc(t('account.pat_label_ph'))}">
       </div>
+      <div class="field"><label>${t('account.pat_col_usage')}</label>
+        <div class="seg">${audOpts}</div>
+        <div id="pat-aud-hint" style="font-size:11px;opacity:0.65;margin-top:6px">${pt('aud_hint_' + m.aud)}</div>
+      </div>
       <div class="field"><label>${t('account.pat_expires')}</label>
         <input class="input" id="pat-expires" type="datetime-local">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${expChips}</div>
         <div style="font-size:11px;opacity:0.55;margin-top:4px">${t('account.pat_expires_hint')}</div>
       </div>
       <div class="field"><label>${t('account.pat_scopes')}</label>
-        <div style="max-height:240px;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:8px 10px">${checks}</div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <input id="pat-sq" class="input" placeholder="${esc(t('account.pat_scope_search_ph'))}" oninput="patScopeSearch(this.value)">
+          <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+            <span id="pat-kinds" style="display:inline-flex;gap:6px;flex-wrap:wrap"></span>
+            <span style="margin-left:auto;display:inline-flex;gap:6px;flex-wrap:wrap">
+              <button type="button" class="btn btn-ghost btn-sm" onclick="patPreset('read')">${t('account.pat_preset_read')}</button>
+              <button type="button" class="btn btn-ghost btn-sm" onclick="patPreset('all')">${t('account.pat_preset_all')}</button>
+              <button type="button" class="btn btn-ghost btn-sm" onclick="patPreset('none')">${t('account.pat_preset_none')}</button>
+            </span>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--text2)">
+            <span id="pat-ssum"></span>
+            <span id="pat-sactions" style="margin-left:auto;display:inline-flex;gap:6px"></span>
+          </div>
+          <div id="pat-slist" style="max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:6px"></div>
+        </div>
       </div>`;
     const footer = `<button class="btn btn-primary" onclick="submitApiToken()">${t('common.create')}</button>`;
-    modal(t('account.pat_new_modal'), body, footer);
+    modal(t('account.pat_new_modal'), body, footer, true);
+    paintScopes();
   };
 
   window.submitApiToken = async function() {
     const label = document.getElementById('pat-label')?.value?.trim();
     const expEl = document.getElementById('pat-expires')?.value;
-    const selected = [...document.querySelectorAll('.pat-scope:checked')].map(el => el.value);
+    const selected = [...m.sel];
     if (!label) { toast(t('account.pat_label_required'), 'error'); return; }
     if (!selected.length) { toast(t('account.pat_scope_required'), 'error'); return; }
-    const payload = { label, scopes: selected };
+    const payload = { label, audience: m.aud, scopes: selected };
     if (expEl) {
       payload.expires_at = new Date(expEl).toISOString();
     }
@@ -479,7 +772,26 @@ pages['api-tokens'] = async function() {
     } catch(e) { toast(e.message, 'error'); }
   };
 
-  render();
+  content.innerHTML = `
+    <div style="margin-bottom:20px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div>
+        <h1 style="margin:0 0 4px;font-size:28px;font-family:var(--font-heading);font-weight:600;">${t('account.pat_page_title')}</h1>
+        <p style="margin:0;opacity:0.65;font-size:14px;">${t('account.pat_page_sub')}</p>
+      </div>
+      <button class="btn btn-primary" onclick="createApiTokenModal()">${t('account.pat_new')}</button>
+    </div>
+    <div class="card blueprint" style="padding:0">
+      <div id="pat-toolbar" class="sec-bans-toolbar" style="padding-top:12px">
+        <div class="sec-bans-toolbar-row">
+          <input id="pat-search" class="input search-input" placeholder="${esc(t('account.pat_search_ph'))}" oninput="patSearch(this.value)" style="max-width:300px">
+          <span id="pat-count" class="sec-bans-count" style="margin-left:auto"></span>
+        </div>
+        <div class="sec-bans-toolbar-row" id="pat-chips"></div>
+      </div>
+      <div id="pat-bulk"></div>
+      <div id="pat-body" style="overflow-x:auto"></div>
+    </div>`;
+  paint();
 };
 
 // ── Helpers WebAuthn base64

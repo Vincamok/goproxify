@@ -17,14 +17,26 @@ import (
 
 // QUICServer expose le proxy via HTTP/3 (QUIC / UDP).
 type QUICServer struct {
-	srv *http3.Server
+	srv  *http3.Server
+	port int
 }
 
-// Start démarre le serveur HTTP/3 sur UDP.
-func (q *QUICServer) Start(cfg *config.EdgeConfig, handler http.Handler, certStore *edgetls.CertStore) error {
-	addr := fmt.Sprintf("%s:%d", cfg.Network.BindAddress, cfg.Network.QUICPort)
+// Port est le port UDP sur lequel le serveur écoute (celui que l'en-tête Alt-Svc annonce) ; 0 avant le démarrage.
+func (q *QUICServer) Port() int { return q.port }
 
+// Start démarre le serveur HTTP/3 sur UDP. Sans port QUIC configuré, il suit le port HTTPS : la configuration générée au
+// premier démarrage n'en contient pas, et le serveur écoutait alors sur un port éphémère, injoignable sur 443/udp.
+func (q *QUICServer) Start(cfg *config.EdgeConfig, handler http.Handler, certStore *edgetls.CertStore) error {
 	quicPort := cfg.Network.QUICPort
+	if quicPort == 0 {
+		quicPort = cfg.Network.HTTPSPort
+	}
+	if quicPort == 0 {
+		quicPort = 443
+	}
+	q.port = quicPort
+	addr := fmt.Sprintf("%s:%d", cfg.Network.BindAddress, quicPort)
+
 	altSvcHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Alt-Svc", fmt.Sprintf(`h3=":%d"; ma=86400`, quicPort))
 		handler.ServeHTTP(w, r)

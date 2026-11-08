@@ -206,12 +206,11 @@ func (h *Handler) toolCreateAlertChannel(r *http.Request, args map[string]any) (
 	if name == "" || typ == "" || cfg == nil {
 		return nil, fmt.Errorf("name, type et config sont requis")
 	}
-	man, ok := channels.ManifestOf(typ)
-	if !ok {
+	if _, ok := channels.ManifestOf(typ); !ok {
 		return nil, fmt.Errorf("type de canal inconnu : %q (types : %s)", typ, strings.Join(channels.Types(), ", "))
 	}
 	cfgMap, _ := cfg.(map[string]any)
-	if err := man.Validate(cfgMap); err != nil {
+	if err := channels.ValidateConfig(typ, cfgMap); err != nil {
 		return nil, fmt.Errorf("config invalide : %w", err)
 	}
 	cfgJSON, err := json.Marshal(cfg)

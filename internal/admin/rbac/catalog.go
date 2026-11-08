@@ -157,6 +157,8 @@ var Services = []Service{
 	{ID: "engines", Label: "Moteurs adaptatifs (WAF, Ephor)", Group: GroupSecurity, Nature: NatureResource, Criteria: byGateway,
 		Levels:    []Level{lvl("read", "Lecture", ScopeAuditRead), lvl("simulate", "Simulation", ScopeLogsRead), lvl("tune", "Réglage", ScopeSecurityWrite)},
 		Explicits: []Explicit{exp("engines:enforce", "Passage d'un signal en block", ScopeSecurityWrite)}},
+	{ID: "attack_ref", Label: "Référentiel des attaques", Group: GroupSecurity, Nature: NaturePlatform,
+		Levels: []Level{lvl("read", "Lecture (dossiers par IP bannie, entrées)", ScopeAuditRead), platformWrite(ScopeSecurityWrite)}},
 	{ID: "snippets", Label: "Snippets et détecteurs", Group: GroupSecurity, Nature: NaturePlatform,
 		Levels: []Level{lvl("read", "Lecture", ScopeSnippetsRead), platformWrite(ScopeSnippetsWrite)}},
 	{ID: "ip_profiles", Label: "Profils IP", Group: GroupSecurity, Nature: NaturePlatform,

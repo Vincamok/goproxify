@@ -1068,6 +1068,8 @@ goproxify security cve sla set -file <sla.json> [-admin-url …] [-token …]
 
 **`security trace`** (`-scope asn` : tout l'ASN de l'adresse, ou `-asn AS16276` sans adresse ; sans saisir de CIDR, grâce à la base ASN) — reconstitue tout ce qu'une IP ou un CIDR a fait : synthèse (requêtes, bloquées, IP distinctes, épisodes, bans/débans, détections, bans en cours, profils IP) puis les étapes (épisodes d'activité, bans, débans, détections) avec leur date. `-from` / `-to` acceptent une date `AAAA-MM-JJ` ou RFC3339 (défaut : 30 derniers jours) ; les étapes sont du plus récent au plus ancien, `-order asc` pour l'ordre chronologique ; un ban affiche le `User-Agent` qui l'a provoqué sur la ligne suivante ; `-limit` / `-offset` paginent (500 étapes par défaut) ; `-json` renvoie la réponse brute de `GET /api/v1/security/ip-trace`. Exemple : `goproxify security trace -target 198.51.100.0/24 -from 2026-01-01`. Les requêtes remontent aussi loin que la rétention des logs d'accès.
 
+**`security attack-ref`** *(Admin `0.259.0`, ADR 0023)* — référentiel des attaques : ce que les IP bannies ont fait, et les entrées normalisées retenues parce que plusieurs IP bannies les ont utilisées et que les visiteurs ne les demandent pas. Aucun effet sur le trafic. `summary` (dossiers par profil, entrées par état et famille, état du mineur) ; `entries [-kind path|ua] [-family <f>] [-status candidate|rejected] [-limit N] [-offset N]` (chaque entrée : IP bannies distinctes, jours, passages, lift — « non mesuré » pour un User-Agent) ; `dossiers [-ip <ip>] [-profile <p>] [-days N] [-limit N] [-offset N]` (profil et nombre de chemins par IP) ; `reject -kind path|ua -value <valeur>` et `restore …` (une entrée rejetée ne revient pas au recalcul) ; `run` (lance un passage du mineur en arrière-plan). `-json` renvoie la réponse brute de `/api/v1/security/attack-ref`. Exemple : `goproxify security attack-ref entries -family config_leak`.
+
 **`security cve inventory`** *(Admin `0.208.0`)* — affiche, par passerelle, les applications reconnues derrière les proxies (produit, version, identifiant CPE, image du conteneur ou réponses du backend lues avant `hide_server`) : ce que le scanner de vulnérabilités cherche dans NVD. `-proxy` limite à un proxy (identifiant ou hôte), `-edge` à une passerelle.
 
 `security cve inventory -gaps` *(Admin `0.210.0`)* n'affiche que le rapport de couverture : les produits, images et logiciels que la recherche de CVE ne traite pas, avec la raison (`no_version`, `no_cpe`, `unknown`), la preuve et les proxys. **`security cve cpe`** lit (`get`) ou remplace (`set -file`) les identifiants CPE donnés par l'administrateur à ces produits :
@@ -1273,12 +1275,16 @@ goproxify me passwd -current <mdp-actuel> -password <nouveau-mdp> [-admin-url �
 
 goproxify me tokens list   [-admin-url …] [-token …]
 goproxify me tokens scopes [-admin-url …] [-token …]
-goproxify me tokens create -label <nom> -scopes <s1,s2,…> [-expires <RFC3339>] [-admin-url …] [-token …]
+goproxify me tokens create -label <nom> -scopes <s1,s2,…> [-audience api|mcp|both] [-expires <RFC3339>] [-admin-url …] [-token …]
 goproxify me tokens revoke <id> [-admin-url …] [-token …]
+goproxify me tokens delete <id> [-admin-url …] [-token …]
+goproxify me tokens purge  [-admin-url …] [-token …]
 ```
 
-`tokens scopes` liste les scopes disponibles pour votre compte (dépend de votre rôle).
-`tokens create` affiche la valeur du token une seule fois à la création.
+`tokens delete` supprime définitivement un token déjà révoqué ou expiré (un token actif se révoque d'abord) ; `tokens purge` supprime d'un coup tous vos tokens révoqués ou expirés (Admin `0.261.0`).
+`tokens list` montre l'usage de chaque token (`api`, `mcp` ou `both`).
+`tokens scopes` liste les scopes disponibles pour votre compte (dépend de votre rôle), avec le nombre d'outils MCP de chacun.
+`tokens create` affiche la valeur du token une seule fois à la création. `-audience` (Admin `0.260.0`) dit où il sert : `api` (API REST et CLI), `mcp` (serveur MCP) ou `both` (défaut) ; un token `mcp` n'accepte que des scopes qui couvrent des outils MCP.
 
 Utilisée avec un PAT, une commande d'écriture exige le scope `:write` de sa ressource, un scope de lecture ne suffit pas : `certs:write` pour `cert` et `internal-ca`, `domains:write` pour `domain`, `alerts:write` pour `alert` (canaux, règles, `alert ack`), `logs:write` pour `logs delete` (`gdpr:reveal` pour `logs reveal-ip`), `security:write` pour `automation` (lectures : `audit:read`, compte admin). Voir le tableau complet dans [api_specs.md](api_specs.md#scope-pat-exigé-par-route). Depuis Admin `0.70.0`, un token créé avant doit être recréé avec ces scopes.
 
@@ -1288,7 +1294,8 @@ Exemples :
 goproxify me get
 goproxify me tokens list
 goproxify me tokens scopes
-goproxify me tokens create -label "CI pipeline" -scopes "proxies:read,logs:read"
+goproxify me tokens create -label "CI pipeline" -scopes "proxies:read,logs:read" -audience api
+goproxify me tokens create -label "Claude Desktop" -scopes "proxies:read,nodes:read" -audience mcp
 goproxify me tokens create -label "tmp" -scopes "proxies:read" -expires 2026-12-31T23:59:59Z
 goproxify me tokens revoke <id>
 ```

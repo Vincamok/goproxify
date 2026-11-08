@@ -22,8 +22,11 @@ ARG BUILD_TIME=unknown
 
 COPY . .
 
+# Plafonne les compilations paralleles : sur un runner a beaucoup de coeurs mais memoire
+# limitee, le noyau tue go build (Killed).
+ARG GO_BUILD_PROCS=2
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build \
+    go build -p ${GO_BUILD_PROCS} \
     -ldflags="-s -w \
       -X 'main.VersionAdmin=${VERSION_ADMIN}' \
       -X 'main.VersionEdge=${VERSION_EDGE}' \
@@ -32,7 +35,8 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
       -X 'main.VersionLanding=${VERSION_LANDING}' \
       -X 'main.GitCommit=${GIT_COMMIT}' \
       -X 'main.BuildTime=${BUILD_TIME}'" \
-    -o /goproxify ./cmd/goproxify
+    -o /goproxify ./cmd/goproxify \
+    && go clean -cache -modcache
 
 # Stage 2 : Image minimale. Aucun service résident : le launcher installe puis s'arrête,
 # et --rm supprime son conteneur. Il monte le socket Docker le temps de l'installation seulement.

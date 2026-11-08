@@ -49,7 +49,7 @@ var commandDeclarations = map[string]commandRights{
 	"hosts":         needs("infra:read", "enrol:create"),
 	"bootstrap":     needs("enrol:create"),
 	"automation":    needs("automation:read", "automation:edit", "automation:run", "automation:approve"),
-	"security":      needs("netsec:read", "netsec:analyse", "netsec:respond", "bans:import", "engines:read", "engines:simulate", "engines:tune", "surface:read", "surface:learn", "surface:enforce", "domain_watch:read", "proxies:read"),
+	"security":      needs("netsec:read", "netsec:analyse", "netsec:respond", "bans:import", "engines:read", "engines:simulate", "engines:tune", "surface:read", "surface:learn", "surface:enforce", "domain_watch:read", "proxies:read", "attack_ref:read", "attack_ref:write"),
 	"proxy":         needs("proxies:read", "proxies:operate", "proxies:manage", "dashboard:read"),
 	"cert":          needs("certs:read", "certs:manage", "certs:deploy"),
 	"architecture":  needs("infra:read", "architecture:write"),

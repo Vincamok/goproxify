@@ -42,7 +42,7 @@ Un échange a un **type**. Chaque type a son schéma, sa règle de consensus et 
 | `ban` | IP, motif normalisé (`scan`, `bruteforce`, `waf`, `ddos`…), gravité, durée suggérée | Consensus de N installations distinctes dans une fenêtre |
 | `unban` | IP bannie à tort (faux positif) et motif | Fait retomber le score de consensus ; un seuil de contestations retire la publication |
 | `range` | CIDR ou ASN agrégé issu de plusieurs `ban` | Le collecteur agrège lui-même au-delà d'un seuil d'IP distinctes dans une plage ; jamais proposé directement par une installation |
-| `signature` | User-Agent ou chemin scanné | Version suivante : plus sensible à valider (un motif trop large bloque du trafic légitime) ; chaque signature passe par un mode « détection seule » avant d'être appliquée |
+| `signature` | User-Agent, chemin scanné, famille d'empreinte TLS, forme de charge ; produites par le référentiel local de l'[ADR 0023](0023-referentiel-des-attaques.md) | Version suivante : plus sensible à valider (un motif trop large bloque du trafic légitime) ; chaque signature passe par un mode « détection seule » avant d'être appliquée, et une liste de protection renforcée la filtre à la réception |
 
 Échanges :
 

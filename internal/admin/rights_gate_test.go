@@ -133,6 +133,8 @@ func TestPortalSecurityAndAutomationPermissions(t *testing.T) {
 		{"POST", "/api/v1/security/bans/whitelist", "netsec:respond"},
 		{"POST", "/api/v1/security/bans/import", "bans:import"},
 		{"GET", "/api/v1/security/ip-trace", "netsec:analyse"},
+		{"GET", "/api/v1/security/attack-ref/dossiers", "attack_ref:read"},
+		{"POST", "/api/v1/security/attack-ref/run", "attack_ref:write"},
 		{"POST", "/api/v1/security/vulnscan", "netsec:analyse"},
 		{"PUT", "/api/v1/security/vulnscan/config", "unmapped"},
 		{"PATCH", "/api/v1/security/cves/c1", "netsec:respond"},

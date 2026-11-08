@@ -36,11 +36,11 @@ Les PAT (`gpx_pat_*`) sont créés en self-service. Ils authentifient l’API RE
 
 ### `GET /api/v1/me/tokens`
 
-Liste les PAT de l’utilisateur connecté (métadonnées ; pas de secret). Session JWT uniquement.
+Liste les PAT de l’utilisateur connecté (métadonnées ; pas de secret) : `{ id, label, prefix, audience, scopes[], expires_at?, revoked, last_used_at?, created_at }`. Session JWT uniquement.
 
 ### `GET /api/v1/me/tokens/scopes`
 
-Catalogue des scopes avec indicateur `available` selon le rôle courant.
+Catalogue des scopes : `{ id, description, available, tools[] }`. `available` dépend du rôle courant ; `tools` liste les outils MCP couverts par le scope (vide pour un scope sans outil MCP, par exemple `gdpr:export`).
 
 ### `POST /api/v1/me/tokens`
 
@@ -50,6 +50,7 @@ Crée un PAT. Le secret en clair n’est retourné qu’une fois.
 ```json
 {
   "label": "Claude Desktop",
+  "audience": "mcp",
   "scopes": ["proxies:read", "nodes:read"],
   "expires_at": "2027-01-01T00:00:00Z"
 }
@@ -57,11 +58,15 @@ Crée un PAT. Le secret en clair n’est retourné qu’une fois.
 
 `expires_at` est optionnel (RFC3339). Scopes bornés aux droits du compte.
 
-**Réponse 201 :** inclut `token` (`gpx_pat_…`).
+`audience` (*Admin `0.260.0`*) dit où le token sert : `api` (API REST seulement), `mcp` (`/mcp` seulement) ou `both` (défaut si absent, comme pour les tokens créés avant). Un token refusé pour son usage reçoit **403** (`Ce token est réservé au MCP` sur l'API REST, `Ce token est réservé à l'API REST` sur `/mcp`) avant toute mise à jour de `last_used_at`. Un `audience` inconnu, ou un scope sans outil MCP sur un token `mcp`, donne 400.
+
+**Réponse 201 :** inclut `token` (`gpx_pat_…`) et `audience`.
 
 ### `DELETE /api/v1/me/tokens/:id`
 
-Révoque immédiatement le PAT.
+Révoque immédiatement le PAT (il reste dans la liste, marqué révoqué).
+
+Avec `?purge=1` (*Admin `0.261.0`*), supprime définitivement un PAT **déjà révoqué ou expiré**, scopes compris : **204**. Un PAT actif donne **409** (le révoquer d'abord), le PAT d'un autre compte ou inconnu **404**. La suppression est inscrite au journal d'audit (`delete user_api_token:<id>`).
 
 ### Scope PAT exigé par route
 
@@ -791,7 +796,7 @@ Liste des canaux. Les champs `secret` du manifeste sont remplacés par `••�
 
 ### `POST /api/v1/alert-channels`
 
-Corps : `{ "name", "type", "config", "enabled" }`. `400` si le type est inconnu, si un champ requis manque ou est vide, ou si `config` contient une clé absente du manifeste. Les canaux déjà enregistrés ne sont jamais revalidés.
+Corps : `{ "name", "type", "config", "enabled" }`. `400` si le type est inconnu, si un champ requis manque ou est vide, si `config` contient une clé absente du manifeste, ou si `url` / `webhook_url` n'est pas une URL http(s) avec un hôte (Admin `0.256.2`). Les canaux déjà enregistrés ne sont jamais revalidés.
 
 ### `PUT /api/v1/alert-channels/{id}`
 
@@ -927,9 +932,17 @@ Liste les passerelles et Agents enregistrés avec leur état. Un Agent connu de 
 ]
 ```
 
+### En-têtes de sécurité des réponses (Admin `0.258.0`)
+
+Toutes les réponses de l'Admin portent `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: same-origin`, `Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()` et `Content-Security-Policy: frame-ancestors 'none'; base-uri 'self'; object-src 'none'` ; `Strict-Transport-Security: max-age=31536000` s'y ajoute quand l'Admin sert lui-même le TLS. Les réponses sous `/api/` portent `Cache-Control: no-store`. Voir [security.md](security.md#en-têtes-de-sécurité-de-ladmin).
+
+### Réglage de route `redirect_https` (Edge `0.149.0`)
+
+Champ booléen de la configuration d'un proxy (`POST` et `PUT /api/v1/proxies`, outils MCP `create_proxy` et `update_proxy`, label Docker `goproxify.redirect_https`). Avec `tls_enabled: true`, une requête en clair reçoit `308` vers la même adresse en HTTPS ; le challenge ACME http-01 et un `X-Forwarded-Proto: https` venu d'un proxy de confiance ne sont pas redirigés. Sans effet sans `tls_enabled`. Voir [security.md](security.md#redirection-http-vers-https).
+
 ### `GET /api/v1/nodes/live`
 
-État temps réel de la topologie : santé, débit et risque de chaque passerelle et Agent. Scope PAT : `nodes:read`. L'UI (Infrastructure → Topologie) l'interroge toutes les 5 s.
+État temps réel de la topologie : santé, débit et risque de chaque passerelle et Agent. Scope PAT : `nodes:read`. L'UI (Infrastructure → Topologie) l'interroge toutes les 5 s. `cpu_pct` et `mem_pct` sont ceux de l'hôte, déclarés par l'Agent à chaque heartbeat (30 s) ; depuis l'Agent `0.27.1`, `cpu_pct` est l'usage moyen depuis le heartbeat précédent et non un relevé de 200 ms.
 
 **Réponse 200 :**
 ```json
@@ -1272,6 +1285,22 @@ Réponse : `target` (normalisé), `kind` (`ip` ou `cidr`), `from`, `to`, `total_
 *(Admin `0.207.0`, Edge `0.121.0`)* Le parcours est rendu **du plus récent au plus ancien** par défaut (`order=asc` pour l'ordre chronologique). Une étape `ban` d'un ban automatique porte `user_agent`, le client qui l'a provoqué (voir `GET /security/bans`), pour comprendre l'événement sans ouvrir les logs.
 
 Un ban ou déban recoupant la cible compte dans le parcours (un ban sur un `/24` apparaît pour une IP qu'il contient, et inversement). Les requêtes ne remontent pas plus loin que la rétention des logs d'accès ; les IP pseudonymisées ou tronquées ne sont pas retrouvées. Équivalents : `goproxify security trace`, outil MCP `trace_ip`.
+
+### `/api/v1/security/attack-ref`
+
+*(Admin `0.259.0`, ADR 0023, étape 1)* Référentiel des attaques : ce que les IP bannies par un moteur automatique ont fait, et les entrées normalisées retenues parce qu'elles discriminent les attaquants des visiteurs. **Aucun effet sur le trafic.** Droits : service `attack_ref` (`read` pour les `GET`, `write` pour les `POST`) ; scopes de jeton `audit:read` et `security:write`. Réservé aux accès sans critère de périmètre. `503` si le référentiel est indisponible.
+
+| Route | Rôle |
+|---|---|
+| `GET /api/v1/security/attack-ref/summary` | `summary` (`dossiers`, `profiles`, `entries_by_status`, `entries_by_family`, `last_dossier_at`), `miner` (`running`, `last_run_at`, `last_result` : `dossiers_built`, `skipped`, `entries`, `dropped`, `errors`, `degraded`) et `config` (seuils : `min_ips`, `min_days`, `min_lift`, `max_clean_ok`, `lookback_days`, `sources`) |
+| `GET …/entries` | `entries` et `total`. Paramètres : `kind` (`path` ou `ua`), `family`, `status` (`candidate` ou `rejected`), `limit` (200, max 1000), `offset`. Une entrée : `kind`, `value`, `family`, `distinct_ips`, `days`, `hits`, `clean_hits` (passages d'IP non bannies), `lift` (`-1` : non mesurable, cas des User-Agent), `first_seen`, `last_seen`, `status`, `origin` (`local`), `sample` (un chemin réel, borné) |
+| `GET …/dossiers` | `dossiers` et `total`, du plus récent au plus ancien. Paramètres : `ip`, `profile` (`exploiter`, `bruteforcer`, `enumerator`, `scanner`, `crawler_abusif`, `unclassified`), `days`, `limit` (100, max 500), `offset`. Un dossier : `ip`, `banned_at`, `source`, `reason`, `user_agent`, `ua_family`, `signals`, `requests`, `distinct_paths`, `statuses`, `methods`, `waf`, `paths` (méthode, gabarit, famille, passages, statuts, valeurs distinctes, exemple), `profiles` (profil et raison), `families` |
+| `POST …/entries/status` | Corps `{"kind","value","status"}` avec `status` = `rejected` (l'entrée ne revient pas au recalcul) ou `candidate`. `400` pour un autre état, `404` pour une entrée inconnue |
+| `POST …/run` | Lance un passage du mineur en arrière-plan (`202`, `started: false` si un passage tourne déjà) |
+
+Une entrée n'est retenue que si au moins `min_ips` IP bannies distinctes l'ont utilisée sur `min_days` jours **et** que les visiteurs ne la demandent pas (lift ≥ `min_lift`, moins de `max_clean_ok` réponses réussies d'IP non bannies). Les gabarits de chemin remplacent les valeurs (`{int}`, `{uuid}`, `{date}`, `{hex}`, `{token}`, `{var}`) ; ni IP, ni hôte, ni valeur de paramètre dans une entrée.
+
+---
 
 ### `GET /api/v1/security/cves`
 
@@ -1778,7 +1807,7 @@ Remplace l'allowlist. Corps : `{ backends: string[] }` — chaque entrée est un
 
 ### `GET /api/v1/mcp-access/tokens`
 
-Liste tous les PAT actifs (non révoqués) sur l'instance, tous porteurs confondus, avec leurs scopes — la vue "quels utilisateurs peuvent utiliser le MCP". Réponse : tableau `{ id, label, owner_email, scopes[], expires_at?, last_used_at?, created_at }`. La gestion (création/révocation) reste self-service sur `/api/v1/me/tokens` — un PAT est personnel.
+Liste tous les PAT actifs (non révoqués) utilisables sur le MCP (`audience` `mcp` ou `both`) sur l'instance, tous porteurs confondus, avec leurs scopes — la vue "quels utilisateurs peuvent utiliser le MCP". Les tokens réservés à l'API REST n'y figurent pas. Réponse : tableau `{ id, label, owner_email, scopes[], expires_at?, last_used_at?, created_at }`. La gestion (création/révocation) reste self-service sur `/api/v1/me/tokens` — un PAT est personnel.
 
 ### `GET /api/v1/mcp-access/scopes`
 

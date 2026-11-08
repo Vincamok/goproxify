@@ -47,6 +47,7 @@ type PATEntry struct {
 	Label       string   `yaml:"label"`
 	TokenHash   string   `yaml:"token_hash"`   // SHA-256 du secret en clair
 	TokenPrefix string   `yaml:"token_prefix"` // aperçu non secret
+	Audience    string   `yaml:"audience,omitempty"` // api, mcp ou both (vide = both)
 	Scopes      []string `yaml:"scopes"`
 	ExpiresAt   string   `yaml:"expires_at,omitempty"` // RFC3339
 }
@@ -133,9 +134,9 @@ func (s *UserStore) LoadIntoDB(ctx context.Context, db *sql.DB) error {
 	if patCount == 0 {
 		for _, p := range archive.PATs {
 			db.ExecContext(ctx, //nolint:errcheck
-				`INSERT OR IGNORE INTO user_api_tokens(id, user_id, label, token_hash, token_prefix, expires_at)
-				 VALUES(?,?,?,?,?,?)`,
-				p.ID, p.UserID, p.Label, p.TokenHash, p.TokenPrefix, nullableStr(sqltime.Text(p.ExpiresAt)))
+				`INSERT OR IGNORE INTO user_api_tokens(id, user_id, label, token_hash, token_prefix, audience, expires_at)
+				 VALUES(?,?,?,?,?,?,?)`,
+				p.ID, p.UserID, p.Label, p.TokenHash, p.TokenPrefix, patAudienceOrBoth(p.Audience), nullableStr(sqltime.Text(p.ExpiresAt)))
 			for _, sc := range p.Scopes {
 				db.ExecContext(ctx, //nolint:errcheck
 					`INSERT OR IGNORE INTO user_api_token_scopes(token_id, scope) VALUES(?,?)`,
@@ -228,7 +229,7 @@ func (s *UserStore) buildFromDB(ctx context.Context, db *sql.DB) (*UsersArchive,
 	}
 
 	prows, err := db.QueryContext(ctx,
-		`SELECT id, user_id, label, token_hash, token_prefix,
+		`SELECT id, user_id, label, token_hash, token_prefix, audience,
 		        COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', expires_at), '')
 		 FROM user_api_tokens
 		 WHERE revoked=0
@@ -241,7 +242,7 @@ func (s *UserStore) buildFromDB(ctx context.Context, db *sql.DB) (*UsersArchive,
 	patIdx := map[string]int{}
 	for prows.Next() {
 		var p PATEntry
-		if prows.Scan(&p.ID, &p.UserID, &p.Label, &p.TokenHash, &p.TokenPrefix, &p.ExpiresAt) == nil {
+		if prows.Scan(&p.ID, &p.UserID, &p.Label, &p.TokenHash, &p.TokenPrefix, &p.Audience, &p.ExpiresAt) == nil {
 			patIdx[p.ID] = len(archive.PATs)
 			archive.PATs = append(archive.PATs, p)
 		}
@@ -369,4 +370,11 @@ func (s *UserStore) writeLocked(archive *UsersArchive) error {
 		return fmt.Errorf("archstore/users: rename: %w", err)
 	}
 	return nil
+}
+
+func patAudienceOrBoth(a string) string {
+	if a == "" {
+		return "both"
+	}
+	return a
 }

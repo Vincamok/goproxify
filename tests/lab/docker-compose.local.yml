@@ -1,26 +1,31 @@
 # =============================================================================
-# GOPROXIFY — Labo local jetable (Admin + Passerelle + lab-sim + runner), sans aucune dépendance à la production
+# GOPROXIFY — Labo local jetable (Admin + Passerelle + backends + runners), sans aucune dépendance à la production
 #
-# Pour valider la suite fonctionnelle (features.sh) ou le trafic réaliste sur un build précis, sans toucher
-# à une stack réelle. Réseau Docker dédié, aucun port publié.
+# Admin et passerelle sont COMPILÉS depuis les sources du dépôt : les tests portent sur le code courant.
+# Réseau Docker dédié, aucun port publié, identifiants valables dans ce labo seulement.
 #
-#   docker compose -f tests/lab/docker-compose.local.yml up -d --build   # --build : passerelle compilée depuis les sources
+# Usage courant (voir les scripts) :
+#   tests/lab/run-security.sh      suite de sécurité + rapport horodaté
+#   tests/lab/run-load.sh          tests de charge + rapport horodaté
+#
+# À la main :
+#   docker compose -f tests/lab/docker-compose.local.yml up -d --build
 #   docker compose -f tests/lab/docker-compose.local.yml exec lab-tools bash /lab/scripts/features.sh seed
-#   docker compose -f tests/lab/docker-compose.local.yml exec lab-tools bash /lab/scripts/features.sh run [sections]
 #   docker compose -f tests/lab/docker-compose.local.yml down -v
 #
 # Notes :
 #   - Le nom de nœud de la passerelle (GPX_IDENTITY_EDGE_NODE_NAME) doit être résolvable par l'Admin : c'est le nom du service.
-#   - Les identifiants ci-dessous n'existent que dans ce labo jetable.
-#   - Les scripts sont copiés avec fins de ligne LF au démarrage (un checkout Windows peut les avoir en CRLF).
-#   - k6 : docker run --rm --network goproxify-lab_default --add-host lab-realistic.lab.test:<IP de goproxify-edge> \
-#       -v "$PWD/tests/lab/load:/scripts" -v "$PWD/tests/lab/results:/results" -u root -e SHOP_RATE=10 grafana/k6 run /scripts/realistic.js
+#   - lab-tools et lab-k6 sont permanents (docker compose exec) ; run-*.sh y recopient scripts/ avec fins de ligne LF
+#     avant chaque passage (un checkout Windows les a en CRLF).
 # =============================================================================
 name: goproxify-lab
 
 services:
   goproxify-admin:
-    image: ${GOPROXIFY_REGISTRY:-ghcr.io/vincamok/goproxify}/admin:${GOPROXIFY_ADMIN_TAG:-preview}
+    image: goproxify-lab-admin:local
+    build:
+      context: ../..
+      dockerfile: services/admin/Dockerfile
     command: ["admin"]
     environment:
       - GPX_SECURITY_JWT_SECRET=lab-jwt-secret-not-for-production-32b
@@ -29,6 +34,10 @@ services:
       - GPX_FIRST_ADMIN_PASSWORD=Lab-Local-12345!
       - GPX_IDENTITY_EDGE_NODE_NAME=goproxify-edge
       - GPX_ENGINE_LOG_LEVEL=info
+      # mini-base ip2asn fournie par run-security.sh : bans par ASN testables hors ligne (AS de documentation 64496 et 64497)
+      - GPX_ASN_DB_PATH=/fixtures/ip2asn-lab.tsv.gz
+      - GPX_TRUSTED_PROXIES=${GPX_TRUSTED_PROXIES:-}
+    volumes: ["./fixtures:/fixtures:ro"]
 
   goproxify-edge:
     image: goproxify-lab-edge:local
@@ -40,6 +49,16 @@ services:
       - GPX_PAIRING_SECRET=lab-pairing-secret-not-for-production-x
       - GPX_IDENTITY_EDGE_NODE_NAME=goproxify-edge
       - GPX_ENGINE_LOG_LEVEL=info
+      - GPX_TRUSTED_PROXIES=${GPX_TRUSTED_PROXIES:-}
+      # compteurs gpx_threat_* lisibles par les tests (tarpit, leurres, défi) : jamais sur une passerelle réelle
+      - GPX_METRICS_PUBLIC=1
+    volumes: ["./fixtures:/fixtures:ro"]
+
+  lab-backend:
+    image: golang:1.22-alpine
+    working_dir: /app
+    volumes: ["./backend:/app:ro"]
+    entrypoint: ["sh", "-c", "go run /app/main.go"]
 
   lab-sim:
     image: golang:1.22-alpine
@@ -49,7 +68,7 @@ services:
 
   lab-tools:
     image: alpine:3.20
-    volumes: ["./scripts:/src:ro"]
+    volumes: ["./scripts:/src:ro", "./fixtures:/fixtures"]
     entrypoint:
       - sh
       - -c
@@ -62,3 +81,19 @@ services:
       LAB_ADMIN_URL: http://goproxify-admin:9443
       LAB_ADMIN_EMAIL: lab@lab.test
       LAB_ADMIN_PASSWORD: Lab-Local-12345!
+      LAB_SIM_HOST: ${LAB_SIM_HOST:-lab-sim}
+      LAB_ROUTE_WAIT: ${LAB_ROUTE_WAIT:-40}
+
+  lab-k6:
+    image: grafana/k6:latest
+    user: root
+    volumes:
+      - ./scripts:/src:ro
+      - ./load:/scripts:ro
+      - ./results:/results
+    entrypoint:
+      - sh
+      - -c
+      - |
+        tr -d '\r' < /src/hosts.sh > /hosts.sh
+        exec sleep infinity

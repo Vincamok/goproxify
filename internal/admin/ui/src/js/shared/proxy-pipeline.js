@@ -154,8 +154,8 @@
   });
   item('backendopts', 'back', 'Vers le backend', '#p-preserve-host', {
     kw: 'host certificat auto-signé proxmox passthrough ssl',
-    on: () => ck('p-skip-verify') || ck('p-passthrough'),
-    short: () => [ck('p-skip-verify') && 'Certificat ignoré', ck('p-passthrough') && 'Passthrough'].filter(Boolean).join(' · '),
+    on: () => ck('p-skip-verify') || ck('p-passthrough') || ck('p-redirect-https'),
+    short: () => [ck('p-skip-verify') && 'Certificat ignoré', ck('p-passthrough') && 'Passthrough', ck('p-redirect-https') && 'Redirection HTTPS'].filter(Boolean).join(' · '),
     sum() { return [ck('p-preserve-host') && 'Host conservé', this.short()].filter(Boolean).join(' · ') || 'Options par défaut' },
   });
   item('timeouts', 'back', 'Timeouts backend', '#p-connect-timeout', {

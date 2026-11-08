@@ -629,6 +629,41 @@ gpx_backpressure_rejected_total{host, reason}   # queue_full | timeout | cancele
 
 ---
 
+## Redirection HTTP vers HTTPS
+
+Une route `tls_enabled` est servie en HTTPS **et**, par défaut, en clair sur le port 80. `redirect_https` (réglage de la route, case « Rediriger le HTTP vers HTTPS » du formulaire, label Docker `goproxify.redirect_https=true`, paramètre `redirect_https` des outils MCP `create_proxy` et `update_proxy`) fait répondre `308` à toute requête en clair, vers la même adresse en HTTPS : la méthode et le corps sont conservés, le port HTTPS configuré est repris s'il n'est pas 443, et la durée de cache de la redirection est bornée à une heure pour qu'une route qui cesse de rediriger ne reste pas redirigée dans les navigateurs. Sans effet sur une route sans TLS ou en passthrough.
+
+- **Le challenge ACME http-01 passe avant** (`/.well-known/acme-challenge/<token>` d'un token posé par l'Admin), même sur une route qui redirige et même pour un hôte inconnu : le certificat n'existe pas encore, un renvoi vers HTTPS ferait échouer la validation. Un token inconnu suit le chemin ordinaire.
+- **Derrière un répartiteur qui termine le TLS**, la requête arrive en clair : `X-Forwarded-Proto: https` est cru, mais seulement d'un proxy de confiance ([IP client et proxies de confiance](#ip-client-et-proxies-de-confiance)), sinon un client pourrait l'écrire pour échapper à la redirection. Sans cela on boucle.
+- **Pas de redirection ouverte** : la cible reprend l'hôte de la requête, déjà reconnu comme celui d'une route, jamais le chemin (`//evil.example`, `/\evil.example` restent des chemins).
+- La redirection passe après les bans, le profil IP et Ephor, avant l'authentification, le WAF et le reste de la chaîne de la route.
+
+## En-têtes de sécurité de l'Admin
+
+L'Admin pose sur toutes ses réponses `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: same-origin`, `Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()` et une `Content-Security-Policy` limitée à `frame-ancestors 'none'; base-uri 'self'; object-src 'none'` (pas d'intégration dans le cadre d'un autre site, pas de détournement de `<base>`, pas d'`<object>`). `Strict-Transport-Security` s'y ajoute quand l'Admin sert lui-même le TLS (`GPX_ADMIN_TLS_CERT`) ; derrière un proxy, c'est à lui de l'annoncer. Les réponses de `/api/` portent `Cache-Control: no-store`. Un gestionnaire qui pose lui-même l'un de ces en-têtes garde la main.
+
+La politique ne contient ni `script-src` ni `style-src` : l'interface repose sur environ 1 100 gestionnaires d'événements en ligne (`onclick="…"`) et des milliers d'attributs `style=`, qu'une telle directive casserait, et qu'avec `'unsafe-inline'` elle ne protégerait plus contre l'injection de script. Une politique stricte demande de supprimer ces gestionnaires d'abord.
+
+## IP client et proxies de confiance
+
+La passerelle et l'Admin ne lisent `CF-Connecting-IP`, `X-Forwarded-For` et `X-Real-IP` que si la connexion vient d'un **proxy de confiance** ; sinon l'adresse du pair fait foi et un client ne peut pas choisir la sienne. Par défaut sont de confiance le loopback et les réseaux privés (10/8, 172.16/12, 192.168/16, fc00::/7), ce qui convient derrière un répartiteur de charge ou une passerelle Docker.
+
+`GPX_TRUSTED_PROXIES` (CSV d'IP et de CIDR) **ajoute** des proxies à ces défauts. Trois valeurs particulières :
+
+| Valeur | Effet |
+|---|---|
+| `none` | retire les défauts : seules les autres entrées sont crues ; seul, `none` ne fait confiance à aucun proxy |
+| `none,192.168.1.1` | seul `192.168.1.1` est cru |
+| `*` | tout croire (ancien comportement, falsifiable) |
+
+**À régler quand la passerelle est directement exposée à un réseau privé dont les postes ne sont pas tous fiables** (LAN d'entreprise, Wi-Fi, VLAN partagé). Avec les défauts, n'importe lequel de ces postes écrit `X-Forwarded-For: 203.0.113.9` et choisit l'adresse vue par le rate-limit, les filtres IP et les bans. Avec `none`, il reste lui-même. Contrepartie : derrière un répartiteur de charge ou un proxy qui vit sur un réseau privé, listez-le (`none,10.0.0.5`), sinon toutes les requêtes semblent venir de lui.
+
+Le réglage s'applique de la même façon à l'Admin (Admin `0.257.0`) : limiteur de connexion, journal d'audit et allowlist d'IP du MCP. Avant, ces trois-là lisaient `X-Forwarded-For` sans consulter ce réglage : un appelant d'Internet franchissait l'allowlist du MCP, ouverte par défaut aux réseaux privés, en écrivant `X-Forwarded-For: 10.0.0.1`, et pouvait inscrire l'adresse de son choix au journal d'audit.
+
+Les plages privées ne sont de toute façon pas bannies par Ephor ni par les bans manuels : un poste du LAN qui attaque la passerelle n'est pas bloqué par adresse, quel que soit ce réglage.
+
+Le labo de tests vérifie le comportement avec `tests/lab/run-security.sh --strict-ip` (voir [tests-lab.md](tests-lab.md)).
+
 ## Gestion des bans
 
 Les bans sont centralisés dans l'Admin et propagés aux passerelles via WebSocket.
@@ -734,6 +769,18 @@ Bouncer LAPI en mode stream : les décisions CrowdSec sont poussées en temps r�
 La chronologie va du **plus récent au plus ancien** (bouton « Plus ancien d'abord » pour l'inverser). Quand le ban en cours ou l'étape de ban vient d'Ephor ou du WAF, la trace affiche aussi **pourquoi** : les signaux qui l'ont causé, avec leurs points et la valeur observée, et le **User-Agent** que la passerelle a vu en dernier pour l'IP — celui du client qui a provoqué le ban. Cela vaut pour tous les bans automatiques d'une passerelle : Ephor et WAF (Seuils compris), plugins de détection, règles automatiques. Les bans manuels, importés ou CrowdSec n'en ont pas (aucune requête vue par la passerelle). La page Bans l'affiche aussi sous la raison du ban.
 
 API : `GET /api/v1/security/ip-trace` ; CLI : `goproxify security trace` ; MCP : `trace_ip`.
+
+### Référentiel des attaques
+
+*(Admin `0.259.0`, [ADR 0023](adr/0023-referentiel-des-attaques.md), étape 1)* Une IP bannie est le meilleur moment pour apprendre : on sait que ce qu'elle a fait était hostile. **Sécurité › Référentiel** garde de chaque ban automatique ce qu'elle a fait, et en tire des entrées qui servent à reconnaître d'autres attaques. **Rien n'est appliqué au trafic** : cette étape lit et propose, elle ne bloque rien.
+
+- **Dossier par IP bannie.** Environ une heure après un ban posé par un moteur qui détecte seul (Ephor, WAF, `fail2ban`, moteur de règles), l'Admin relit les lignes d'accès de l'IP (24 h avant le ban, 1 h après) et en garde un résumé : gabarits de chemins sondés avec leurs statuts, méthodes, catégories WAF déclenchées, signaux du ban, User-Agent. Un **profil** est attribué par des règles que le dossier permet de vérifier : `exploiter` (catégories WAF d'injection ou d'exécution), `bruteforcer` (au moins 8 `POST` sur une même route de connexion ou en 401/403), `enumerator` (au moins 30 requêtes sur 10 valeurs distinctes d'un même gabarit), `scanner` (au moins 10 chemins distincts, 70 % de 4xx), `crawler_abusif` (200 requêtes réussies ou plus, sans autre profil). Les bans manuels, de plage, d'adresse privée, ou suivis d'un déban autre que l'expiration, n'en font pas : ils n'enseignent rien. Les IP pseudonymisées ou tronquées n'ont pas de lignes à relire.
+- **Entrées.** Des gabarits de chemins (`/users/{int}` ; un segment qui ressemble à un identifiant, une date, un jeton ou une adresse électronique devient une variable, les séquences `..` sont gardées) et des User-Agent d'outils offensifs connus (`sqlmap/1.x`, `nuclei`…), classés par famille (`config_leak`, `cms_probe`, `admin_panel_probe`, `exploit_cve`, `sqli`, `lfi`, `scanner_generic`…). Une entrée n'est retenue que si **toutes** ces conditions tiennent : au moins 5 IP bannies distinctes l'ont utilisée, sur au moins 2 jours ; le **lift** (part du trafic banni qui la contient ÷ part du trafic des autres) est d'au moins 50 ; moins de 3 réponses réussies d'IP non bannies ; elle n'est ni dans la liste de protection (`/`, `/robots.txt`, `/favicon.ico`, `/sitemap.xml`, `/.well-known/*`, `/health*`, `/api`, `/static/*`…) ni un gabarit d'une seule variable. Elle porte ses preuves et **jamais d'IP, d'hôte ni de valeur de paramètre**.
+- **Limites.** Le lift d'un User-Agent n'est pas mesurable (les lignes d'accès des passerelles ne le portent pas) : `-1`, et il ne pourra pas être promu tant qu'il ne l'est pas. Un site qui répond 200 à n'importe quel chemin (application monopage sans 404) voit peu d'entrées : la condition sur les réponses réussies d'IP non bannies les écarte, ce qui est le sens prudent. Seuils jamais calibrés sur de vrais logs (ADR 0023, questions ouvertes). Si les passerelles ne répondent pas toutes, les entrées de chemin ne sont pas recalculées.
+- **Décider.** Une entrée se **rejette** (elle ne revient pas au recalcul) ou se rétablit depuis la page. Un passage tourne dix minutes après le démarrage, puis chaque heure (`GPX_ATTACKREF=off` l'arrête), ou sur demande.
+- **RGPD.** Un dossier contient l'IP en clair : conservé 365 jours (comme l'historique des bans), inclus dans l'export d'accès (`attack_dossiers`), effacé avec l'IP (`attack_dossiers_deleted`). Les entrées ne contiennent aucune donnée personnelle.
+
+API : `GET /api/v1/security/attack-ref/{summary,entries,dossiers}`, `POST …/entries/status`, `POST …/run` ; CLI : `goproxify security attack-ref` ; MCP : `get_attack_ref_summary`, `list_attack_ref_entries`, `list_attack_ref_dossiers`, `set_attack_ref_entry_status`, `run_attack_ref_mining`. Droits : service `attack_ref` (`read`, `write`).
 
 ---
 
@@ -1071,6 +1118,19 @@ gpx_bans_active_total
 Les logs d'accès incluent les décisions WAF (`waf_matches`, `waf_score`) sur chaque requête. Les refus d'un plugin de détection comme Coraza y figurent aussi (catégorie = nom du plugin) et peuvent bannir l'IP sous la source `plugin:<nom>` (voir [plugins.md](plugins.md#plugins-de-détection)). La page **Prism** permet d'analyser le trafic par IP, code HTTP et domaine, avec accès direct aux bans depuis la table des IPs.
 
 ---
+
+## mTLS par route et HTTP/3
+
+**mTLS par route.** Une route avec `mtls.enabled` fait demander un certificat client à la poignée de main TLS, d'après le nom (SNI) de la connexion : la configuration TLS de base est copiée pour cette seule connexion, les autres routes ne sont pas touchées. Autorité : `ca_cert_pem` ou `ca_cert_file` (le fichier est relu quand il change).
+
+- `require_client_cert: true` : sans certificat, ou avec un certificat d'une autre autorité, expiré ou sans l'usage « authentification client », la **poignée de main échoue** (le client voit une erreur TLS, pas une page). Une autorité illisible ferme la connexion plutôt que de servir la route sans vérification (le contrôle HTTP de la route répond en outre `503`).
+- `require_client_cert: false` : la connexion est servie sans certificat ; un certificat présenté est vérifié par la route, et un certificat invalide reçoit `401`.
+- `allowed_sans` : un certificat valide dont aucun SAN ne correspond reçoit `403`.
+- `subject_header` : reçoit le sujet du certificat vérifié ; la valeur envoyée par le client est toujours écrasée.
+
+Avant Edge `0.149.1` le TLS ne demandait jamais de certificat client : une route qui l'exigeait répondait `401` même à un client valide, et une route à certificat facultatif ne lisait jamais celui qu'on lui présentait.
+
+**HTTP/3.** Le serveur QUIC écoute en UDP sur `network.quic_port`, qui suit le port HTTPS (443) quand il n'est pas fixé (`GPX_NETWORK_QUIC_PORT` à la génération de la configuration). Les réponses HTTPS (TCP) portent `Alt-Svc: h3=":443"; ma=86400`, par quoi un client apprend que HTTP/3 existe ; elles n'en portent pas en clair (un client l'ignorerait), tant que QUIC n'est pas démarré, ni sur une route mTLS : QUIC ne porte pas de certificat client, une route qui l'exige répond `401` à une requête QUIC. Bans, profils IP, Ephor, WAF et le reste de la chaîne s'appliquent comme en TCP. Avant Edge `0.149.1` la configuration générée au premier démarrage ne fixait pas le port QUIC : le serveur écoutait sur un port UDP éphémère, injoignable sur `443/udp`, et aucune réponse TCP n'annonçait HTTP/3.
 
 ## Locations et casse du chemin
 

@@ -69,3 +69,36 @@ func TestRenderFrenchAcceptLanguage(t *testing.T) {
 		t.Fatal("attendu label Hôte")
 	}
 }
+
+// Une origine Admin qui n'est pas http(s) ne doit jamais devenir un href : javascript://x/%0aalert(1) s'exécute au clic,
+// sur l'origine du site proxifié.
+func TestSetAdminBaseURLRefusesNonHTTPOrigins(t *testing.T) {
+	defer SetAdminBaseURL("")
+	for _, bad := range []string{
+		"javascript://x.example/%0aalert(1)", "data:text/html,<script>1</script>", "ftp://admin.example", "//admin.example",
+		"https://user:pass@admin.example", "https://admin.example/?next=//evil.example", "https://admin.example/#x", "admin.example", "https://",
+	} {
+		SetAdminBaseURL(bad)
+		if got := GetAdminBaseURL(); got != "" {
+			t.Errorf("SetAdminBaseURL(%q) a conservé %q", bad, got)
+		}
+		if html := Render(502, "api.example.com", "req-1", "en"); strings.Contains(html, "gpx_page=logs") {
+			t.Errorf("la page d'erreur contient un lien Admin pour %q", bad)
+		}
+	}
+}
+
+func TestSetAdminBaseURLKeepsValidOrigins(t *testing.T) {
+	defer SetAdminBaseURL("")
+	for in, want := range map[string]string{
+		"https://admin.example:9443":  "https://admin.example:9443",
+		"https://admin.example:9443/": "https://admin.example:9443",
+		"http://203.0.113.90:9443":    "http://203.0.113.90:9443",
+		"https://example.fr/admin/":   "https://example.fr/admin",
+	} {
+		SetAdminBaseURL(in)
+		if got := GetAdminBaseURL(); got != want {
+			t.Errorf("SetAdminBaseURL(%q) = %q, attendu %q", in, got, want)
+		}
+	}
+}

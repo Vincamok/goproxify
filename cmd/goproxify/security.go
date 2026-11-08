@@ -24,6 +24,8 @@ func runSecurity() {
 		runSecurityThreat()
 	case "bans":
 		runSecurityBans()
+	case "attack-ref":
+		runSecurityAttackRef()
 	case "trace":
 		runSecurityTrace()
 	case "waf":
@@ -51,6 +53,7 @@ Sous-commandes :
   threat   Config du moteur Ephor (threat engine global)
   bans     Gestion des IPs bannies
   trace    Parcours complet d'une IP ou d'un CIDR (requêtes, détections, bans)
+  attack-ref  Référentiel des attaques : ce que font les IP bannies, entrées normalisées (aucun effet sur le trafic)
   waf      Config WAF d'un proxy
   waf-engine  Interrupteur du WAF d'une passerelle (coupe ou rétablit le WAF de tous ses proxies)
   (règles, planifications et playbooks : goproxify automation)

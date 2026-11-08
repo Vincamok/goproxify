@@ -47,5 +47,39 @@
   {"host": "lab-sec-tls.lab.test", "config": {
     "tls_enabled": true, "sticky_cookie": "LABSID",
     "headers": {"hsts": true, "hsts_max_age": 31536000, "x_frame_options": "DENY"},
-    "backends": [{"url": "http://lab-sim:9001", "weight": 1}, {"url": "http://lab-sim:9002", "weight": 1}]}}
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}, {"url": "http://lab-sim:9002", "weight": 1}]}},
+
+  {"host": "lab-sec-redirect.lab.test", "config": {
+    "tls_enabled": true, "redirect_https": true,
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}]}}
+,
+
+  {"host": "lab-sec-wl.lab.test", "config": {
+    "tls_enabled": false, "ephor_whitelist": ["198.51.100.120"],
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}]}},
+
+  {"host": "lab-sec-ipfilter.lab.test", "config": {
+    "tls_enabled": false, "ip_filter": {"mode": "allow", "cidrs": ["198.51.100.160/28"]},
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}]}},
+
+  {"host": "lab-sec-ipdeny.lab.test", "config": {
+    "tls_enabled": false, "ip_filter": {"mode": "deny", "cidrs": ["198.51.100.176/28"]},
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}]}},
+
+  {"host": "lab-sec-geo.lab.test", "config": {
+    "tls_enabled": false, "geo_ip": {"db_path": "/fixtures/GeoIP2-Country-Test.mmdb", "mode": "deny", "countries": ["GB"]},
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}]}}
+,
+
+  {"host": "lab-sec-mtls.lab.test", "config": {
+    "tls_enabled": true,
+    "mtls": {"enabled": true, "ca_cert_file": "/fixtures/mtls/ca.pem", "require_client_cert": true,
+             "allowed_sans": ["lab-client.lab.test"], "subject_header": "X-Client-Subject"},
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}]}},
+
+  {"host": "lab-sec-mtls-opt.lab.test", "config": {
+    "tls_enabled": true,
+    "mtls": {"enabled": true, "ca_cert_file": "/fixtures/mtls/ca.pem", "require_client_cert": false,
+             "subject_header": "X-Client-Subject"},
+    "backends": [{"url": "http://lab-sim:9001", "weight": 1}]}}
 ]

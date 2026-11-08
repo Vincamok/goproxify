@@ -4,14 +4,14 @@ Le serveur MCP (Model Context Protocol) de Goproxify expose l'Administration à 
 
 **Endpoint :** `https://<admin-host>:9443/mcp`  
 **Protocole :** MCP `2025-03-26`, JSON-RPC 2.0 over HTTP  
-**Authentification :** `Authorization: Bearer <gpx_pat_…>` — token API utilisateur (PAT) créé depuis **Paramètres → Mes tokens API**. Le JWT de session UI n’est **pas** accepté sur `/mcp`.  
+**Authentification :** `Authorization: Bearer <gpx_pat_…>` — token API utilisateur (PAT) créé depuis **Paramètres → Mes tokens API**, avec l'usage **MCP** (ou **API + MCP**). Le JWT de session UI n’est **pas** accepté sur `/mcp`, ni un token créé pour l'usage **API** seul (403, Admin `0.260.0`) ; inversement, un token **MCP** seul est refusé par l'API REST.  
 **SSE (streaming) :** `GET /mcp/sse` — keepalive toutes les 15 s
 
 Les scopes du PAT (`proxies:read`, `nodes:read`, …) bornent les outils MCP ; l’autorisation effective est toujours l’intersection avec les droits actuels du compte.
 
 **Allowlist IP :** la page **Accès → Accès MCP** (`/mcp-access`, admin uniquement) permet de restreindre `/mcp` à une liste d'IP/CIDR sources (`GET`/`PUT /api/v1/mcp-access/allowed-ips`). Liste vide (défaut) = pas de restriction. Le contrôle s'applique **avant** l'authentification PAT — une requête hors liste reçoit un 403 immédiat, PAT valide ou non.
 
-**Vue d'ensemble admin :** la même page affiche la liste des utilisateurs porteurs d'un PAT actif sur l'instance (tous porteurs confondus) avec leurs scopes, ainsi que le catalogue de scopes et les outils MCP que chacun couvre, pour référence. C'est une vue en lecture seule côté scopes — la création et le choix des scopes d'un PAT restent self-service depuis **Paramètres → Mes tokens API**.
+**Vue d'ensemble admin :** la même page affiche la liste des utilisateurs porteurs d'un PAT actif utilisable sur le MCP (usage `mcp` ou `both`, tous porteurs confondus) avec leurs scopes, ainsi que le catalogue de scopes et les outils MCP que chacun couvre, pour référence. C'est une vue en lecture seule côté scopes — la création et le choix des scopes d'un PAT restent self-service depuis **Paramètres → Mes tokens API**.
 
 ### Contrôle d'accès des outils
 
@@ -79,7 +79,7 @@ Les noms sont séparés par des virgules, sans tenir compte de la casse ; param�
 
 ## Connexion depuis Claude Desktop
 
-1. Connectez-vous à l’Admin → **Paramètres → Mes tokens API** → créez un token avec les scopes nécessaires.
+1. Connectez-vous à l’Admin → **Paramètres → Mes tokens API** → créez un token d'usage **MCP** avec les scopes nécessaires (la liste ne propose que les scopes qui couvrent des outils MCP).
 2. Copiez le secret `gpx_pat_…` (affiché une seule fois).
 3. Ajoutez le bloc suivant dans `claude_desktop_config.json` :
 
@@ -214,6 +214,7 @@ Crée une nouvelle route proxy (HTTP, TCP ou UDP). Le `backend` doit appartenir 
 | `host`        | string  | ✓      | Domaine cible (ex : `app.example.com`)                 |
 | `backend`     | string  | ✓      | URL du backend (ex : `http://10.0.0.5:3000`)          |
 | `tls_enabled` | boolean | —      | Active HTTPS (défaut : `false`)                        |
+| `redirect_https` | boolean | —   | Redirige le HTTP clair vers HTTPS (`308`) ; sans effet sans `tls_enabled` (défaut : `false`) |
 | `type`        | string  | —      | `http` (défaut), `tcp`, `udp`                          |
 | `lb`          | string  | —      | `round_robin` (défaut), `weighted`, `adaptive`         |
 | `name`        | string  | —      | Nom du proxy, lu par les périmètres de droits (défaut : son domaine ; 128 caractères au plus) |
@@ -236,6 +237,7 @@ Met à jour un proxy existant (champs partiels).
 | `host`        | string  | —      | Nouveau domaine                                |
 | `backend`     | string  | —      | Remplace la liste `backends` par une URL       |
 | `tls_enabled` | boolean | —      | Active ou désactive HTTPS                      |
+| `redirect_https` | boolean | —   | Active ou désactive la redirection du HTTP clair vers HTTPS (`308`) |
 | `lb`          | string  | —      | `round_robin`, `weighted`, `adaptive`          |
 | `enabled`     | boolean | —      | Active ou désactive la route                   |
 | `name`        | string  | —      | Nom du proxy pour les périmètres de droits ; vide = le retirer (le domaine sert alors de nom) |
@@ -1499,6 +1501,22 @@ Parcours complet d'une IP ou d'un CIDR sur une longue période : requêtes d'acc
 Réponse : `summary` (totaux sur toute la période, activité par jour, tops) et `steps` (voir `GET /api/v1/security/ip-trace` dans `docs/api_specs.md`). Les requêtes remontent aussi loin que la rétention des logs d'accès ; les IP pseudonymisées ou tronquées (RGPD) ne sont pas retrouvées. Chaque étape `ban` (et chaque ban en cours) porte `user_agent`, le client qui a provoqué le ban. Équivalent CLI : `goproxify security trace`.
 
 **Scope :** `logs:read` + rôle admin
+
+---
+
+## Référentiel des attaques
+
+*(Admin `0.259.0`, ADR 0023, étape 1)* Ce que les IP bannies ont fait et les entrées normalisées qui en sont tirées. Aucun effet sur le trafic. Équivalent REST : `/api/v1/security/attack-ref` (voir `docs/api_specs.md`) ; CLI : `goproxify security attack-ref`.
+
+| Outil | Paramètres | Scope | Rôle |
+|---|---|---|---|
+| `get_attack_ref_summary` | — | `audit:read` | Dossiers par profil, entrées par état et famille, état du mineur, seuils |
+| `list_attack_ref_entries` | `kind`, `family`, `status`, `limit`, `offset` | `audit:read` | Chemins sondés et User-Agent d'outils retenus, avec preuves (IP bannies distinctes, jours, passages, passages d'IP non bannies, lift ; `-1` : non mesurable) |
+| `list_attack_ref_dossiers` | `ip`, `profile`, `days`, `limit`, `offset` | `audit:read` | Dossier par IP bannie : chemins sondés avec statuts, catégories WAF, signaux, profil et raison |
+| `set_attack_ref_entry_status` | `kind`, `value`, `status` (`rejected` ou `candidate`) | `security:write` | Rejette une entrée (elle ne revient pas au recalcul) ou la rétablit |
+| `run_attack_ref_mining` | — | `security:write` | Lance un passage du mineur en arrière-plan (`started: false` s'il tourne déjà) |
+
+Permissions du catalogue : `attack_ref:read` et `attack_ref:write`. Un accès d'équipe n'ouvre pas ces outils : ils restent réservés aux administrateurs (comme `trace_ip`).
 
 ---
 

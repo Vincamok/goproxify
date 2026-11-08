@@ -13,6 +13,8 @@ package channels
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/vincamok/goproxify/internal/modules"
@@ -113,6 +115,30 @@ func strSlice(cfg map[string]any, k string) []string {
 			}
 		}
 		return out
+	}
+	return nil
+}
+
+// ValidateConfig complète Manifest.Validate pour les champs URL des canaux : sans schéma http(s) et
+// sans hôte, l'enregistrement passait et chaque envoi échouait ensuite en « URL refusée ».
+// Pas de résolution DNS ici : l'adresse n'est contrôlée qu'à l'envoi.
+func ValidateConfig(typ string, cfg map[string]any) error {
+	man, ok := ManifestOf(typ)
+	if !ok {
+		return fmt.Errorf("type de canal inconnu : %q", typ)
+	}
+	if err := man.Validate(cfg); err != nil {
+		return err
+	}
+	for _, k := range []string{"url", "webhook_url"} {
+		raw := strings.TrimSpace(str(cfg, k))
+		if raw == "" {
+			continue
+		}
+		u, err := url.Parse(raw)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+			return fmt.Errorf("%s : URL http(s) attendue (ex. https://hooks.example.fr/…)", k)
+		}
 	}
 	return nil
 }

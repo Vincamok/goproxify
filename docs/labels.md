@@ -20,6 +20,7 @@ Pour un proxy déjà créé dans l'Admin, **Proxies › ⋯ › Labels** (ou `go
 | `goproxify.tls` | `"true"` | Active la terminaison TLS (HTTPS public → HTTP interne). |
 | `goproxify.https` | `"true"` | Le backend écoute en HTTPS. |
 | `goproxify.passthrough` | `"true"` | SSL passthrough (la passerelle ne déchiffre pas). |
+| `goproxify.redirect_https` | `"true"` | Une requête en clair reçoit un `308` vers la même adresse en HTTPS ; sans effet sans `goproxify.tls`. Le challenge ACME http-01 reste servi en clair. |
 | `goproxify.ip` | `"10.0.1.5"` | Surcharge l'IP auto-détectée du conteneur. |
 
 ---

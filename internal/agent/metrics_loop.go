@@ -28,17 +28,13 @@ func metricsLoop(ctx context.Context, client *agentdocker.Client, agentName stri
 	ticker := time.NewTicker(metricsInterval)
 	defer ticker.Stop()
 
+	cpu := telemetry.NewCPUSampler()
 	send := func() {
 		if !ws.IsActive() {
 			return
 		}
-		var hostCPU, hostMem float64
-		if prev, err := telemetry.ReadCPUStat(); err == nil {
-			time.Sleep(150 * time.Millisecond)
-			if cur, err := telemetry.ReadCPUStat(); err == nil {
-				hostCPU = telemetry.CPUUsagePct(prev, cur)
-			}
-		}
+		hostCPU := cpu.Sample()
+		var hostMem float64
 		if mem, err := telemetry.ReadMemStat(); err == nil {
 			hostMem = mem.UsagePct()
 		}

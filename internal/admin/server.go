@@ -26,6 +26,7 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/api"
 	"github.com/vincamok/goproxify/internal/admin/archstore"
 	"github.com/vincamok/goproxify/internal/admin/asn"
+	"github.com/vincamok/goproxify/internal/admin/attackref"
 	"github.com/vincamok/goproxify/internal/admin/audit"
 	"github.com/vincamok/goproxify/internal/admin/auth"
 	"github.com/vincamok/goproxify/internal/admin/automation"
@@ -486,10 +487,20 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	domainWatcher.Start(ctx)
 	prismSrc := &prismedge.Source{DB: s.db}
+	var attackRefMiner *attackref.Miner
+	if err := attackref.Migrate(s.db); err != nil {
+		s.log.Warn("attackref: tables indisponibles", "err", err)
+	} else {
+		attackRefMiner = &attackref.Miner{Store: &attackref.Store{DB: s.db}, Traffic: attackref.EdgeTraffic{Source: &prismedge.Source{DB: s.db}}, Cfg: attackref.DefaultConfig()}
+		if os.Getenv("GPX_ATTACKREF") != "off" {
+			go attackRefMiner.Loop(ctx, 10*time.Minute, time.Hour)
+		}
+	}
 	securityH := &api.SecurityHandler{
 		Proxies:      proxiesH,
 		DB:           s.db,
 		Edge:         prismSrc,
+		AttackRef:    attackRefMiner,
 		Log:          s.log,
 		Store:        security.New(s.db),
 		Fleet:        fleetEngine,
@@ -764,14 +775,9 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/internal/v1/security/cves", auth.RequireBearerToken(s.db)(http.HandlerFunc(s.handleInternalCVEs)))
 
 	// Middleware d'accès : JWT session UI ou PAT utilisateur ; scopes PAT appliqués ensuite.
-	// Les sessions UI (JWT) mémorisent l'origine publique pour les liens des pages d'erreur passerelle.
+	// L'origine publique de l'Admin ne s'apprend plus des sessions : voir explicitAdminPublicURL.
 	protected := func(h http.Handler) http.Handler {
-		return auth.RequireAuth(jwtSecret, s.db)(rbac.EnforcePATScope(s.db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if auth.AuthKindFromContext(r.Context()) == auth.AuthKindJWT {
-				s.maybeRememberPublicURL(r)
-			}
-			h.ServeHTTP(w, r)
-		})))
+		return auth.RequireAuth(jwtSecret, s.db)(rbac.EnforcePATScope(s.db)(h))
 	}
 	adminOnly := func(h http.Handler) http.Handler { return protected(rbac.RequireAdmin(s.db)(h)) }
 	// Lecture pour tout authentifié ; mutations réservées admin (ou operator), JWT comme PAT.
@@ -982,7 +988,7 @@ func (s *Server) Start(ctx context.Context) error {
 		SIEMStatus:   manager.SIEMStatus,
 		ArchStore:    archStore,
 		DNSProviders: acmeProviderStore,
-		DB:           s.db, Log: s.log, Pusher: manager,
+		DB:           s.db, Log: s.log, Pusher: manager, AttackRef: attackRefMiner,
 		Access: manager, AccessTemplates: manager,
 		ResolvePublicURL: bootstrapH.ResolvePublicURL,
 		Hosts:            hostsH,
@@ -1023,7 +1029,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/internal/v1/events", auth.RequireBearerToken(s.db)(nodeEventsH))
 
 	addr := fmt.Sprintf("%s:%d", s.cfg.Server.ListenAddr, s.cfg.Server.APIPort)
-	var handler http.Handler = limitRequestBodies(s.logMiddleware(mux))
+	var handler http.Handler = securityHeaders(limitRequestBodies(s.logMiddleware(mux)))
 	if s.haManager != nil {
 		handler = s.haManager.ForwardOrHandle(handler)
 	}
@@ -1059,7 +1065,7 @@ func (s *Server) Start(ctx context.Context) error {
 		localAddr := fmt.Sprintf("0.0.0.0:%d", s.cfg.Server.LocalPort)
 		localSrv := httpx.Harden(&http.Server{
 			Addr:         localAddr,
-			Handler:      limitRequestBodies(s.logMiddleware(mux)), // sans HA forward
+			Handler:      securityHeaders(limitRequestBodies(s.logMiddleware(mux))), // sans HA forward
 			ReadTimeout:  30 * time.Second,
 			WriteTimeout: 30 * time.Second,
 		})

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/vincamok/goproxify/internal/edge/metrics"
+	"github.com/vincamok/goproxify/internal/edge/middleware"
 	"github.com/vincamok/goproxify/internal/edge/router"
 	edgetls "github.com/vincamok/goproxify/internal/edge/tls"
 	"github.com/vincamok/goproxify/internal/edge/tlsfp"
@@ -217,6 +218,12 @@ func (l *sniListener) hello(conn net.Conn, src string) {
 	if c := l.ech.Config(); c != nil {
 		cfg = c
 	}
+	cfg, ok := l.tlsConfigFor(sni, cfg)
+	if !ok {
+		l.reject(RejectHandshake, addrIP(conn.RemoteAddr()), sni, "")
+		conn.Close()
+		return
+	}
 	tlsConn := tls.Server(peeked, cfg)
 	if fp != nil && l.fps != nil {
 		l.fps.Store(tlsConn, fp)
@@ -224,6 +231,28 @@ func (l *sniListener) hello(conn net.Conn, src string) {
 	l.tracks.Store(tlsConn, &tlsConnTrack{})
 	go l.measureHandshake(tlsConn, sni, addrIP(conn.RemoteAddr()), fp)
 	l.deliver(helloResult{conn: tlsConn})
+}
+
+// tlsConfigFor choisit la configuration TLS d'une connexion d'après le nom demandé : la configuration de base, ou, pour une route mTLS,
+// une copie qui demande un certificat client. Sans cette demande à la poignée de main, le serveur ne reçoit jamais de certificat et
+// le contrôle de la route ne voit rien à vérifier : une route qui exige un certificat refusait aussi les clients valides, et une
+// route à certificat facultatif ne lisait jamais celui qu'on lui présentait. ok=false : refuser la connexion (autorité illisible sur
+// une route qui exige un certificat : mieux vaut fermer que servir sans vérification).
+func (l *sniListener) tlsConfigFor(sni string, base *tls.Config) (cfg *tls.Config, ok bool) {
+	route, found := l.table.ByHost(sni)
+	if !found || route.MTLS == nil || !route.MTLS.Enabled {
+		return base, true
+	}
+	mc, err := middleware.TLSConfigWithClientAuth(route.MTLS)
+	if err != nil {
+		if l.log != nil {
+			l.log.Error("mtls: autorité illisible", "route", route.ID, "exigé", route.MTLS.RequireClientCert, "err", err)
+		}
+		return base, !route.MTLS.RequireClientCert
+	}
+	cfg = base.Clone()
+	cfg.ClientAuth, cfg.ClientCAs = mc.ClientAuth, mc.ClientCAs
+	return cfg, true
 }
 
 // reject compte un rejet à l'entrée, par raison (étiquette de métrique), et le garde dans le classement.

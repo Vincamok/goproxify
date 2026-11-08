@@ -109,6 +109,7 @@ type Server struct {
 	httpsSrv       *http.Server
 	intSrv         *http.Server // API interne :8000
 	quicSrv        *edgequic.QUICServer
+	quicPort       atomic.Int32 // port UDP de HTTP/3 une fois le serveur démarré (0 : non démarré) ; annoncé par Alt-Svc
 	wsHub          *edgews.Hub
 	portal         *portal.Service
 	portalRepl     *portalReplicator             // réplication du portail vers les pairs du groupe HA
@@ -848,7 +849,11 @@ func copyConn(dst, src net.Conn, buf []byte) {
 
 func (s *Server) startQUIC() error {
 	s.quicSrv = &edgequic.QUICServer{}
-	return s.quicSrv.Start(s.cfg, tracing.Middleware(requestIDMiddleware(s.accessLog.Middleware(s.httpMux()))), s.certStore)
+	if err := s.quicSrv.Start(s.cfg, tracing.Middleware(requestIDMiddleware(s.accessLog.Middleware(s.httpMux()))), s.certStore); err != nil {
+		return err
+	}
+	s.quicPort.Store(int32(s.quicSrv.Port()))
+	return nil
 }
 
 // syncHealthChecks aligne les sondes actives sur la table de routes courante.

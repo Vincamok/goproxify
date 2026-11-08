@@ -4,11 +4,9 @@
 package admin
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -18,6 +16,7 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/edgews"
 	"github.com/vincamok/goproxify/internal/admin/logs"
 	edgelog "github.com/vincamok/goproxify/internal/edge/logger"
+	"github.com/vincamok/goproxify/internal/httpx"
 )
 
 // --- Middleware & helpers -------------------------------------------------
@@ -128,7 +127,7 @@ func (s *Server) runtimeSettings() edgews.Settings {
 		TracingEndpoint: s.cfg.App.TracingEndpoint,
 		LogLevel:        s.cfg.EdgeDefaults.LogLevel,
 		LogFormat:       s.cfg.EdgeDefaults.LogFormat,
-		AdminPublicURL:  s.resolveAdminPublicURL(),
+		AdminPublicURL:  explicitAdminPublicURL(),
 	}
 	if v := admindb.GetSetting(s.db, "logs.ip_anonymize", ""); v != "" {
 		anon := v == "true"
@@ -141,64 +140,43 @@ func (s *Server) runtimeSettings() edgews.Settings {
 	return settings
 }
 
-// resolveAdminPublicURL retourne l'origine publique de l'Admin (env > settings > webauthn).
-func (s *Server) resolveAdminPublicURL() string {
-	if u := strings.TrimRight(strings.TrimSpace(os.Getenv("GPX_ADMIN_PUBLIC_URL")), "/"); u != "" {
-		return u
-	}
-	if u := strings.TrimRight(admindb.GetSetting(s.db, "admin.public_url", ""), "/"); u != "" {
-		return u
-	}
-	return strings.TrimRight(admindb.GetSetting(s.db, "mfa.webauthn.origin", ""), "/")
+// cleanOrigin ne garde que l'origine http(s) bien formée (voir httpx.CleanOrigin).
+var cleanOrigin = httpx.CleanOrigin
+
+// explicitAdminPublicURL est l'origine de l'Admin que l'opérateur a déclarée (GPX_ADMIN_PUBLIC_URL). C'est la seule poussée
+// aux passerelles pour le lien des pages d'erreur publiques : cette adresse apparaît dans des pages servies à n'importe
+// quel visiteur, elle ne se déduit donc jamais d'une requête (Host et X-Forwarded-Host sont choisis par l'appelant).
+func explicitAdminPublicURL() string {
+	return cleanOrigin(os.Getenv("GPX_ADMIN_PUBLIC_URL"))
 }
 
-// publicOriginFromRequest déduit http(s)://host depuis la requête navigateur.
+// resolveAdminPublicURL retourne l'origine publique de l'Admin pour les liens d'enrôlement (env > origine WebAuthn).
+func (s *Server) resolveAdminPublicURL() string {
+	if u := explicitAdminPublicURL(); u != "" {
+		return u
+	}
+	return cleanOrigin(admindb.GetSetting(s.db, "mfa.webauthn.origin", ""))
+}
+
+// publicOriginFromRequest déduit http(s)://host depuis la requête, pour un lien montré à l'appelant lui-même (enrôlement).
+// Un schéma autre que http/https est ignoré et un hôte qui n'en est pas un (identifiants, chemin, espace) rend "".
 func publicOriginFromRequest(r *http.Request) string {
-	host := strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))
+	host, _, _ := strings.Cut(r.Header.Get("X-Forwarded-Host"), ",")
+	host = strings.TrimSpace(host)
 	if host == "" {
 		host = strings.TrimSpace(r.Host)
 	}
-	if host == "" {
+	if host == "" || strings.ContainsAny(host, "/?#@\\ \t") {
 		return ""
 	}
-	proto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))
-	if proto == "" {
+	proto := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")))
+	if proto != "http" && proto != "https" {
+		proto = "http"
 		if r.TLS != nil {
 			proto = "https"
-		} else {
-			proto = "http"
 		}
 	}
-	origin := proto + "://" + host
-	if _, err := url.ParseRequestURI(origin); err != nil {
-		return ""
-	}
-	return strings.TrimRight(origin, "/")
-}
-
-// maybeRememberPublicURL mémorise l'origine vue par le navigateur et la pousse aux passerelles.
-// Ignoré si GPX_ADMIN_PUBLIC_URL est défini (override explicite).
-func (s *Server) maybeRememberPublicURL(r *http.Request) {
-	if os.Getenv("GPX_ADMIN_PUBLIC_URL") != "" {
-		return
-	}
-	origin := publicOriginFromRequest(r)
-	if origin == "" {
-		return
-	}
-	cur := strings.TrimRight(admindb.GetSetting(s.db, "admin.public_url", ""), "/")
-	if cur == origin {
-		return
-	}
-	if err := admindb.SetSetting(s.db, "admin.public_url", origin); err != nil {
-		s.log.Debug("admin.public_url: persistance échouée", "err", err)
-		return
-	}
-	s.log.Info("admin.public_url mémorisée depuis la session UI", "url", origin)
-	if s.wsManager != nil {
-		settings := s.runtimeSettings()
-		s.wsManager.PushSettings(context.Background(), settings)
-	}
+	return cleanOrigin(proto + "://" + host)
 }
 
 func parseLevel(level string) slog.Level {

@@ -244,7 +244,7 @@ mux.Handle("/mcp",  auth.RequirePAT(s.db)(mcpH))
 mux.Handle("/mcp/", auth.RequirePAT(s.db)(mcpH))
 ```
 
-Le middleware `RequirePAT` n’accepte que les tokens utilisateur `gpx_pat_*` (créés via `/api/v1/me/tokens`). Un JWT de session UI est refusé sur `/mcp`. `/mcp` n'est protégé que par `RequirePAT` : ni `EnforcePATScope` ni `RequireAdmin`. `handleToolsCall` (et `handleResourcesRead`, via `resourceTools`) appelle donc `denyTool`, qui joue le rôle des deux middlewares de la route REST équivalente :
+Le middleware `RequirePAT` n’accepte que les tokens utilisateur `gpx_pat_*` (créés via `/api/v1/me/tokens`) dont l'usage (`audience`) couvre le MCP (`mcp` ou `both`) : un token `api` reçoit un 403 avant que `last_used_at` soit posé, comme `RequireAuth` en donne un à un token `mcp` sur l'API REST. Un JWT de session UI est refusé sur `/mcp`. `/mcp` n'est protégé que par `RequirePAT` : ni `EnforcePATScope` ni `RequireAdmin`. `handleToolsCall` (et `handleResourcesRead`, via `resourceTools`) appelle donc `denyTool`, qui joue le rôle des deux middlewares de la route REST équivalente :
 
 1. `rbac.ToolRequiredScope` vide → refus (`outil sans scope déclaré`), le contrôle échoue fermé ;
 2. `rbac.EffectiveHasScope` (scopes PAT ∩ droits actuels du compte) → sinon `scope insuffisant: <scope>` ;

@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"testing"
 )
@@ -68,5 +69,47 @@ func TestRealIPWildcardKeepsLegacy(t *testing.T) {
 	req.Header.Set("X-Real-IP", "9.9.9.9")
 	if got := RealIP(req); got != "9.9.9.9" {
 		t.Fatalf("RealIP = %q", got)
+	}
+}
+
+// GPX_TRUSTED_PROXIES=none retire les défauts (loopback, réseaux privés) : sur un LAN dont les postes ne sont pas fiables,
+// un poste ne choisit plus l'adresse que la passerelle lui attribue.
+func TestTrustedProxiesNoneDropsPrivateDefaults(t *testing.T) {
+	t.Cleanup(func() { SetTrustedProxies(nil) })
+
+	req := func(peer string) *http.Request {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.RemoteAddr = peer + ":4242"
+		r.Header.Set("X-Forwarded-For", "1.2.3.4")
+		r.Header.Set("X-Real-IP", "5.6.7.8")
+		return r
+	}
+
+	SetTrustedProxies(nil)
+	if got := RealIP(req("192.168.1.50")); got != "1.2.3.4" {
+		t.Fatalf("par défaut un pair privé est cru, RealIP = %q", got)
+	}
+
+	SetTrustedProxies([]string{"none"})
+	for _, peer := range []string{"192.168.1.50", "10.0.0.2", "172.20.0.3", "127.0.0.1", "203.0.113.9"} {
+		if got := RealIP(req(peer)); got != peer {
+			t.Errorf("none : pair %s, RealIP = %q, attendu l'adresse du pair", peer, got)
+		}
+	}
+
+	SetTrustedProxies([]string{"none", "192.168.1.1", "10.9.0.0/16"})
+	if got := RealIP(req("192.168.1.1")); got != "1.2.3.4" {
+		t.Errorf("none + entrée explicite : pair listé, RealIP = %q", got)
+	}
+	if got := RealIP(req("10.9.4.4")); got != "1.2.3.4" {
+		t.Errorf("none + CIDR explicite : pair du réseau listé, RealIP = %q", got)
+	}
+	if got := RealIP(req("192.168.1.50")); got != "192.168.1.50" {
+		t.Errorf("none + entrée explicite : pair privé non listé, RealIP = %q", got)
+	}
+
+	SetTrustedProxies([]string{"NONE"})
+	if got := RealIP(req("10.0.0.2")); got != "10.0.0.2" {
+		t.Errorf("none insensible à la casse : RealIP = %q", got)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 )
 
 func runMe() {
@@ -89,8 +90,10 @@ goproxify me passwd -current <mdp-actuel> -password <nouveau-mdp> [-admin-url �
 
 goproxify me tokens list   [-admin-url …] [-token …]
 goproxify me tokens scopes [-admin-url …] [-token …]
-goproxify me tokens create -label <nom> -scopes <s1,s2,…> [-expires <RFC3339>] [-admin-url …] [-token …]
+goproxify me tokens create -label <nom> -scopes <s1,s2,…> [-audience api|mcp|both] [-expires <RFC3339>] [-admin-url …] [-token …]
 goproxify me tokens revoke <id> [-admin-url …] [-token …]
+goproxify me tokens delete <id> [-admin-url …] [-token …]
+goproxify me tokens purge  [-admin-url …] [-token …]
 `)
 	default:
 		fmt.Fprintf(os.Stderr, "sous-commande me inconnue : %q\n", sub)
@@ -118,12 +121,13 @@ func runMeTokens() {
 			fmt.Println("(aucun token)")
 			return
 		}
-		fmt.Printf("%-36s  %-25s  %-15s  %-20s  %s\n", "ID", "LABEL", "PRÉFIXE", "EXPIRATION", "SCOPES")
-		fmt.Println(strings.Repeat("-", 110))
+		fmt.Printf("%-36s  %-25s  %-15s  %-6s  %-20s  %s\n", "ID", "LABEL", "PRÉFIXE", "USAGE", "EXPIRATION", "SCOPES")
+		fmt.Println(strings.Repeat("-", 118))
 		for _, t := range tokens {
 			id, _ := t["id"].(string)
 			label, _ := t["label"].(string)
 			prefix, _ := t["prefix"].(string)
+			audience, _ := t["audience"].(string)
 			expires, _ := t["expires_at"].(string)
 			if expires == "" {
 				expires = "permanent"
@@ -143,7 +147,7 @@ func runMeTokens() {
 					scopes = scopes[:37] + "…"
 				}
 			}
-			fmt.Printf("%-36s  %-25s  %-15s  %-20s  %s\n", id, label, prefix, expires, scopes)
+			fmt.Printf("%-36s  %-25s  %-15s  %-6s  %-20s  %s\n", id, label, prefix, audience, expires, scopes)
 		}
 
 	case "scopes":
@@ -153,17 +157,25 @@ func runMeTokens() {
 			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
 			os.Exit(1)
 		}
-		var scopes []string
+		var scopes []struct {
+			ID        string   `json:"id"`
+			Available bool     `json:"available"`
+			Tools     []string `json:"tools"`
+		}
 		if _, err := client.DoJSON("GET", "/api/v1/me/tokens/scopes", nil, &scopes); err != nil {
 			fmt.Fprintf(os.Stderr, "me tokens scopes : %v\n", err)
 			os.Exit(1)
 		}
-		if len(scopes) == 0 {
-			fmt.Println("(aucun scope disponible)")
-			return
-		}
+		n := 0
 		for _, s := range scopes {
-			fmt.Println(s)
+			if !s.Available {
+				continue
+			}
+			n++
+			fmt.Printf("%-18s  %d outil(s) MCP\n", s.ID, len(s.Tools))
+		}
+		if n == 0 {
+			fmt.Println("(aucun scope disponible)")
 		}
 
 	case "create":
@@ -171,7 +183,7 @@ func runMeTokens() {
 		label := flagValue(args, "-label", "")
 		scopesStr := flagValue(args, "-scopes", "")
 		if label == "" || scopesStr == "" {
-			fmt.Fprintln(os.Stderr, "usage: goproxify me tokens create -label <nom> -scopes <s1,s2,…> [-expires <RFC3339>]")
+			fmt.Fprintln(os.Stderr, "usage: goproxify me tokens create -label <nom> -scopes <s1,s2,…> [-audience api|mcp|both] [-expires <RFC3339>]")
 			os.Exit(1)
 		}
 		scopes := strings.Split(scopesStr, ",")
@@ -184,6 +196,9 @@ func runMeTokens() {
 		}
 		if exp := flagValue(args, "-expires", ""); exp != "" {
 			payload["expires_at"] = exp
+		}
+		if aud := flagValue(args, "-audience", ""); aud != "" {
+			payload["audience"] = aud
 		}
 		client, err := newAdminClient(args)
 		if err != nil {
@@ -220,6 +235,61 @@ func runMeTokens() {
 			os.Exit(1)
 		}
 		fmt.Printf("Token %s révoqué.\n", id)
+
+	case "delete":
+		args := parseFlags(os.Args[4:])
+		id := firstPositional(os.Args[4:], args)
+		if id == "" {
+			fmt.Fprintln(os.Stderr, "usage: goproxify me tokens delete <id>")
+			os.Exit(1)
+		}
+		client, err := newAdminClient(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+			os.Exit(1)
+		}
+		if _, err := client.DoJSON("DELETE", "/api/v1/me/tokens/"+url.PathEscape(id)+"?purge=1",
+			nil, nil, 200, 204); err != nil {
+			fmt.Fprintf(os.Stderr, "me tokens delete : %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Token %s supprimé.\n", id)
+
+	case "purge":
+		args := parseFlags(os.Args[4:])
+		client, err := newAdminClient(args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "erreur : %v\n", err)
+			os.Exit(1)
+		}
+		var tokens []struct {
+			ID        string `json:"id"`
+			Revoked   bool   `json:"revoked"`
+			ExpiresAt string `json:"expires_at"`
+		}
+		if _, err := client.DoJSON("GET", "/api/v1/me/tokens", nil, &tokens); err != nil {
+			fmt.Fprintf(os.Stderr, "me tokens purge : %v\n", err)
+			os.Exit(1)
+		}
+		n := 0
+		for _, t := range tokens {
+			expired := false
+			if t.ExpiresAt != "" {
+				if at, err := time.Parse(time.RFC3339, t.ExpiresAt); err == nil && !at.After(time.Now()) {
+					expired = true
+				}
+			}
+			if !t.Revoked && !expired {
+				continue
+			}
+			if _, err := client.DoJSON("DELETE", "/api/v1/me/tokens/"+url.PathEscape(t.ID)+"?purge=1",
+				nil, nil, 200, 204); err != nil {
+				fmt.Fprintf(os.Stderr, "me tokens purge : %s : %v\n", t.ID, err)
+				continue
+			}
+			n++
+		}
+		fmt.Printf("%d token(s) révoqué(s) ou expiré(s) supprimé(s).\n", n)
 
 	default:
 		fmt.Fprintf(os.Stderr, "sous-commande me tokens inconnue : %q\n", sub)

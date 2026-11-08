@@ -134,3 +134,41 @@ func TestIPReferenceHidesTheIP(t *testing.T) {
 		}
 	}
 }
+
+func TestEraseIPRemovesAttackDossiers(t *testing.T) {
+	s, db, _ := newRGPDStore(t)
+	if _, err := db.Exec(`CREATE TABLE attack_dossiers (ip TEXT NOT NULL, banned_at TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY (ip, banned_at))`); err != nil {
+		t.Fatal(err)
+	}
+	for _, ip := range []string{"203.0.113.5", "203.0.113.5", "203.0.113.6"} {
+		if _, err := db.Exec(`INSERT OR IGNORE INTO attack_dossiers VALUES (?, datetime('now', ?), '{}')`, ip, "-"+ip[len(ip)-1:]+" hours"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err := s.EraseIP("203.0.113.5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var left int
+	db.QueryRow(`SELECT COUNT(*) FROM attack_dossiers`).Scan(&left) //nolint:errcheck
+	if res.AttackDossiers != 1 || left != 1 {
+		t.Errorf("effacés = %d, restants = %d (un dossier de l'autre IP doit rester)", res.AttackDossiers, left)
+	}
+}
+
+func TestSubjectExportIncludesAttackDossiers(t *testing.T) {
+	s, db, _ := newRGPDStore(t)
+	exp, err := s.ExportIP("203.0.113.5")
+	if err != nil || exp.AttackDossiers == nil || len(exp.AttackDossiers) != 0 {
+		t.Fatalf("sans table : %+v %v", exp.AttackDossiers, err)
+	}
+	if _, err := db.Exec(`CREATE TABLE attack_dossiers (ip TEXT NOT NULL, banned_at TEXT NOT NULL, source TEXT NOT NULL DEFAULT '', profile TEXT NOT NULL DEFAULT '', requests INTEGER NOT NULL DEFAULT 0, data TEXT NOT NULL, PRIMARY KEY (ip, banned_at))`); err != nil {
+		t.Fatal(err)
+	}
+	db.Exec(`INSERT INTO attack_dossiers VALUES ('203.0.113.5', '2026-11-01 10:00:00', 'fail2ban', 'scanner', 12, '{"paths":[]}')`) //nolint:errcheck
+	db.Exec(`INSERT INTO attack_dossiers VALUES ('203.0.113.6', '2026-11-01 10:00:00', 'fail2ban', 'scanner', 3, '{}')`)             //nolint:errcheck
+	exp, err = s.ExportIP("203.0.113.5")
+	if err != nil || len(exp.AttackDossiers) != 1 || exp.AttackDossiers[0].Profile != "scanner" || string(exp.AttackDossiers[0].Data) != `{"paths":[]}` {
+		t.Errorf("dossiers exportés : %+v %v", exp.AttackDossiers, err)
+	}
+}

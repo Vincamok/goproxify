@@ -70,7 +70,7 @@ func (g *Generated) Env() []string {
 var handledKeys = map[string]bool{
 	"id": true, "updated_at": true, "agent_name": true, "delegate_api_endpoint": true, "origin": true,
 	"host": true, "aliases": true, "type": true, "backends": true,
-	"tls_enabled": true, "tls_passthrough": true,
+	"tls_enabled": true, "tls_passthrough": true, "redirect_https": true,
 	"preserve_host": true, "websocket": true, "request_id": true, "http_version": true,
 	"strip_prefix": true, "path_rewrite": true,
 	"connect_timeout": true, "response_timeout": true, "send_timeout": true, "max_body_size": true,
@@ -121,6 +121,9 @@ func FromRoute(r *router.Route) *Generated {
 	}
 	if r.TLSEnabled {
 		b.add("tls", "true")
+	}
+	if r.RedirectHTTPS {
+		b.add("redirect_https", "true")
 	}
 	if r.TLSPassthrough {
 		b.add("passthrough", "true")

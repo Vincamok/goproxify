@@ -1,1 +1,5 @@
 results/
+targets/*.env
+!targets/exemple.env
+fixtures/*
+!fixtures/.gitkeep

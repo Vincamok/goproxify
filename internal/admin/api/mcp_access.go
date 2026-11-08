@@ -106,7 +106,7 @@ func (h *McpAccessHandler) tokens(w http.ResponseWriter, r *http.Request) {
 		SELECT t.id, t.label, u.email, t.expires_at, t.last_used_at, t.created_at
 		FROM user_api_tokens t
 		JOIN users u ON u.id = t.user_id
-		WHERE t.revoked = 0
+		WHERE t.revoked = 0 AND t.audience IN ('mcp', 'both')
 		ORDER BY t.created_at DESC`)
 	if err != nil {
 		h.Log.Error("mcp_access: list tokens", "err", err)

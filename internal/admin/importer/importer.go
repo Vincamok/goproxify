@@ -76,6 +76,7 @@ type BackupPAT struct {
 	Label       string   `json:"label"`
 	TokenHash   string   `json:"token_hash"`
 	TokenPrefix string   `json:"token_prefix"`
+	Audience    string   `json:"audience,omitempty"`
 	Scopes      []string `json:"scopes"`
 	ExpiresAt   *string  `json:"expires_at,omitempty"`
 }
@@ -390,8 +391,8 @@ func Apply(db *sql.DB, b *Backup, sel ImportSelection) ImportResult {
 			if overwrite {
 				verb = `INSERT OR REPLACE`
 			}
-			_, err := db.Exec(verb+` INTO user_api_tokens (id, user_id, label, token_hash, token_prefix, expires_at) VALUES (?,?,?,?,?,?)`,
-				id, p.UserID, p.Label, p.TokenHash, p.TokenPrefix, sqlExpiry(p.ExpiresAt))
+			_, err := db.Exec(verb+` INTO user_api_tokens (id, user_id, label, token_hash, token_prefix, audience, expires_at) VALUES (?,?,?,?,?,?,?)`,
+				id, p.UserID, p.Label, p.TokenHash, p.TokenPrefix, patAudienceOrBoth(p.Audience), sqlExpiry(p.ExpiresAt))
 			if err == nil {
 				res.PATs++
 				for _, scope := range p.Scopes {
@@ -628,13 +629,13 @@ func ExportBackup(db *sql.DB) (*Backup, error) {
 	}
 
 	// PATs (user_api_tokens) — exporter les hashes (non-réversibles, comme /etc/shadow)
-	patrows, _ := db.Query(`SELECT id, user_id, label, token_hash, token_prefix, expires_at FROM user_api_tokens WHERE revoked=0 ORDER BY created_at`)
+	patrows, _ := db.Query(`SELECT id, user_id, label, token_hash, token_prefix, audience, expires_at FROM user_api_tokens WHERE revoked=0 ORDER BY created_at`)
 	if patrows != nil {
 		defer patrows.Close()
 		for patrows.Next() {
 			var p BackupPAT
 			var exp sql.NullString
-			patrows.Scan(&p.ID, &p.UserID, &p.Label, &p.TokenHash, &p.TokenPrefix, &exp) //nolint:errcheck
+			patrows.Scan(&p.ID, &p.UserID, &p.Label, &p.TokenHash, &p.TokenPrefix, &p.Audience, &exp) //nolint:errcheck
 			if exp.Valid {
 				s := exp.String
 				p.ExpiresAt = &s
@@ -799,4 +800,11 @@ func normalizeTLSMode(route router.Route) []byte {
 	}
 	out, _ := json.Marshal(m)
 	return out
+}
+
+func patAudienceOrBoth(a string) string {
+	if a == "" {
+		return "both"
+	}
+	return a
 }

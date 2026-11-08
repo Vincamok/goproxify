@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	edgelog "github.com/vincamok/goproxify/internal/edge/logger"
 )
 
 const (
@@ -46,23 +48,13 @@ func loginKey(ip, email string) string {
 	return strings.ToLower(strings.TrimSpace(ip)) + "|" + strings.ToLower(strings.TrimSpace(email))
 }
 
-// limiterIP : l'adresse qui sert de clé aux limiteurs. En-têtes de proxy ignorés sauf si la connexion vient d'une
-// adresse privée ou locale (un proxy ou une passerelle devant l'Admin) ; on retient alors la **dernière** entrée de
-// X-Forwarded-For, celle que le proxy de confiance a ajoutée — la première est écrite par le client et se choisit
-// librement, ce qui rendait le limiteur de connexion contournable en la changeant à chaque requête.
+// limiterIP : l'adresse qui sert de clé aux limiteurs. En-têtes de proxy ignorés sauf si la connexion vient d'un proxy de
+// confiance (GPX_TRUSTED_PROXIES : par défaut les adresses privées ou locales, un proxy ou une passerelle devant l'Admin) ;
+// on retient alors la dernière entrée de X-Forwarded-For qui n'est pas elle-même un proxy de confiance, celle que le proxy a
+// ajoutée — les entrées de gauche sont écrites par le client et se choisissent librement, ce qui rendait le limiteur de
+// connexion contournable en les changeant à chaque requête.
 func limiterIP(r *http.Request) string {
-	remote := clientIP(r.RemoteAddr)
-	ip := net.ParseIP(remote)
-	if ip == nil || !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()) {
-		return remote
-	}
-	if xf := r.Header.Get("X-Forwarded-For"); xf != "" {
-		parts := strings.Split(xf, ",")
-		if last := strings.TrimSpace(parts[len(parts)-1]); net.ParseIP(last) != nil {
-			return last
-		}
-	}
-	return remote
+	return edgelog.RealIP(r)
 }
 
 func clientIP(rRemote string) string {

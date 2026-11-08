@@ -23,15 +23,11 @@ func heartbeatLoop(ctx context.Context, edgeEndpoint func() string, authToken, n
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
+	cpu := telemetry.NewCPUSampler()
 	var send func()
 	send = func() {
-		var cpuPct, memPct float64
-		if prev, err := telemetry.ReadCPUStat(); err == nil {
-			time.Sleep(200 * time.Millisecond)
-			if cur, err := telemetry.ReadCPUStat(); err == nil {
-				cpuPct = telemetry.CPUUsagePct(prev, cur)
-			}
-		}
+		cpuPct := cpu.Sample()
+		var memPct float64
 		if mem, err := telemetry.ReadMemStat(); err == nil {
 			memPct = mem.UsagePct()
 		}

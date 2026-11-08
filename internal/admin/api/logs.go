@@ -608,8 +608,8 @@ func (h *LogsHandler) deleteByIP(w http.ResponseWriter, r *http.Request, ip stri
 
 	// Trace de l'effacement sans réinscrire l'IP effacée en clair (audit et logs système).
 	ref := h.Store.IPReference(ip)
-	detail := fmt.Sprintf("ip=%s deleted=%d bans=%d ban_history=%d geoip_cache=%d audit_ip=%d gateway_log_lines=%d copy_log_lines=%d gateways_pending=%d reason=%q",
-		ref, res.Logs, res.Bans, res.BanHistory, res.GeoCache, res.AuditIP, gwLines, copyLines, gwPending, reason)
+	detail := fmt.Sprintf("ip=%s deleted=%d bans=%d ban_history=%d geoip_cache=%d attack_dossiers=%d audit_ip=%d gateway_log_lines=%d copy_log_lines=%d gateways_pending=%d reason=%q",
+		ref, res.Logs, res.Bans, res.BanHistory, res.GeoCache, res.AttackDossiers, res.AuditIP, gwLines, copyLines, gwPending, reason)
 	_ = admindb.WriteAudit(h.DB, actor, "rgpd_erasure_ip", "logs", detail)
 	h.Store.Write(logs.Entry{
 		Level:     "info",
@@ -623,6 +623,7 @@ func (h *LogsHandler) deleteByIP(w http.ResponseWriter, r *http.Request, ip stri
 		"bans_deleted":        res.Bans,
 		"ban_history_deleted": res.BanHistory,
 		"geoip_cache_deleted": res.GeoCache,
+		"attack_dossiers_deleted": res.AttackDossiers,
 		"audit_ip_cleared":    res.AuditIP,
 		"gateways":            gateways,
 		"copy_deleted":        copyLines,

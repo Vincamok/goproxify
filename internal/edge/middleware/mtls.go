@@ -4,6 +4,7 @@
 package middleware
 
 import (
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
@@ -12,6 +13,8 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/vincamok/goproxify/internal/edge/router"
 )
@@ -68,7 +71,7 @@ func TLSConfigWithClientAuth(cfg *router.MTLSConfig) (*tls.Config, error) {
 	if cfg == nil || !cfg.Enabled {
 		return &tls.Config{MinVersion: tls.VersionTLS12}, nil
 	}
-	pool, err := buildCAPool(cfg)
+	pool, err := clientCAPool(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -139,4 +142,35 @@ func matchWildcard(name, pattern string) bool {
 	}
 	suffix := pattern[1:]
 	return strings.HasSuffix(name, suffix)
+}
+
+// poolEntry garde le pool d'autorités d'une configuration mTLS, avec la date du fichier lu pour en suivre le remplacement.
+type poolEntry struct {
+	mod  time.Time
+	pool *x509.CertPool
+}
+
+var mtlsPools sync.Map // clé (fichier + empreinte du PEM) → *poolEntry
+
+// clientCAPool retourne le pool d'autorités d'une configuration mTLS. Il est appelé à chaque poignée de main sur une route
+// mTLS : le fichier n'est relu que s'il a changé.
+func clientCAPool(cfg *router.MTLSConfig) (*x509.CertPool, error) {
+	key := cfg.CACertFile + "\x00" + fmt.Sprintf("%x", sha256.Sum256([]byte(cfg.CACertPEM)))
+	var mod time.Time
+	if cfg.CACertPEM == "" && cfg.CACertFile != "" {
+		if st, err := os.Stat(cfg.CACertFile); err == nil {
+			mod = st.ModTime()
+		}
+	}
+	if v, ok := mtlsPools.Load(key); ok {
+		if e := v.(*poolEntry); e.mod.Equal(mod) {
+			return e.pool, nil
+		}
+	}
+	pool, err := buildCAPool(cfg)
+	if err != nil {
+		return nil, err
+	}
+	mtlsPools.Store(key, &poolEntry{mod: mod, pool: pool})
+	return pool, nil
 }

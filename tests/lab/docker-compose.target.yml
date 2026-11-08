@@ -1,0 +1,72 @@
+# =============================================================================
+# GOPROXIFY — Labo contre une cible distante (Admin + passerelle déjà en place, par exemple la production du LAN)
+#
+# Rien n'est compilé ni démarré côté cible : seuls tournent ici
+#   - lab-backend et lab-sim, publiés sur l'IP LAN LAB_BACKEND_HOST de CETTE machine, que la passerelle cible doit joindre ;
+#   - lab-tools et lab-k6, les runners, qui visent la passerelle (EDGE_HOST) et l'Admin (LAB_ADMIN_URL) de la cible.
+# Se pilote par run-security.sh --target FICHIER et run-load.sh --target FICHIER (fichier d'après targets/exemple.env).
+#
+# Le port 9999 de lab-sim est son API de contrôle (pannes, jetons de test signés par une clé éphémère) : le JWKS que la passerelle
+# lit y passe. N'autoriser que la passerelle et ce poste (pare-feu) ; ne jamais le publier hors du LAN.
+# =============================================================================
+name: goproxify-lab-target
+
+x-runner-env: &runner-env
+  LAB_TARGET: "1"
+  LAB_ADMIN_URL: ${LAB_ADMIN_URL:?}
+  LAB_ADMIN_TOKEN: ${LAB_ADMIN_TOKEN:?}
+  LAB_ADMIN_INSECURE: ${LAB_ADMIN_INSECURE:-0}
+  EDGE_HOST: ${LAB_EDGE_IP:?}
+  LAB_BACKEND_HOST: ${LAB_BACKEND_HOST:?}
+  LAB_SIM_HOST: ${LAB_BACKEND_HOST:?}
+  LAB_RUNNER_CIDR: ${LAB_RUNNER_CIDR:?}
+  LAB_ALLOW_ACCOUNTS: ${LAB_ALLOW_ACCOUNTS:-0}
+  LAB_ROUTE_WAIT: ${LAB_ROUTE_WAIT:-90}
+
+services:
+  lab-backend:
+    image: golang:1.22-alpine
+    working_dir: /app
+    volumes: ["./backend:/app:ro"]
+    entrypoint: ["sh", "-c", "go run /app/main.go"]
+    ports: ["${LAB_BACKEND_HOST:?}:9000:9000"]
+
+  lab-sim:
+    image: golang:1.22-alpine
+    working_dir: /app
+    volumes: ["./sim:/app:ro"]
+    entrypoint: ["sh", "-c", "go run /app/main.go"]
+    ports:
+      - "${LAB_BACKEND_HOST:?}:9001-9008:9001-9008"
+      - "${LAB_BACKEND_HOST:?}:9999:9999"
+
+  lab-tools:
+    image: alpine:3.20
+    volumes: ["./scripts:/src:ro"]
+    entrypoint:
+      - sh
+      - -c
+      - |
+        apk add --no-cache bash curl jq netcat-openbsd openssl coreutils >/dev/null
+        mkdir -p /lab/scripts
+        for f in /src/*; do tr -d '\r' < "$$f" > "/lab/scripts/$$(basename "$$f")"; done
+        [ "$$LAB_ADMIN_INSECURE" = 1 ] && echo insecure > /root/.curlrc
+        exec sleep infinity
+    environment:
+      <<: *runner-env
+
+  lab-k6:
+    image: grafana/k6:latest
+    user: root
+    volumes:
+      - ./scripts:/src:ro
+      - ./load:/scripts:ro
+      - ./results:/results
+    entrypoint:
+      - sh
+      - -c
+      - |
+        tr -d '\r' < /src/hosts.sh > /hosts.sh
+        exec sleep infinity
+    environment:
+      <<: *runner-env

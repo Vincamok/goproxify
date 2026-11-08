@@ -102,12 +102,11 @@ func (h *ChannelsHandler) create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name et type requis", http.StatusBadRequest)
 		return
 	}
-	man, ok := channels.ManifestOf(body.Type)
-	if !ok {
+	if _, ok := channels.ManifestOf(body.Type); !ok {
 		http.Error(w, "type de canal inconnu : "+body.Type, http.StatusBadRequest)
 		return
 	}
-	if err := man.Validate(body.Config); err != nil {
+	if err := channels.ValidateConfig(body.Type, body.Config); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -152,7 +151,7 @@ func (h *ChannelsHandler) update(w http.ResponseWriter, r *http.Request, id stri
 		var old map[string]any
 		_ = json.Unmarshal([]byte(oldJSON), &old)
 		body.Config = man.KeepSecrets(old, body.Config)
-		if err := man.Validate(body.Config); err != nil {
+		if err := channels.ValidateConfig(typ, body.Config); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}

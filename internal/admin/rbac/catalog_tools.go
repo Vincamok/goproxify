@@ -55,6 +55,8 @@ var toolPermissionGroups = []struct {
 	{"netsec:analyse", "trace_ip preview_security_ban preview_asn_ban"},
 	{"netsec:respond", "create_security_ban delete_security_ban ban_ip unban_ip add_ban_whitelist remove_ban_whitelist ban_asn unban_asn"},
 	{"bans:import", "import_security_bans"},
+	{"attack_ref:read", "get_attack_ref_summary list_attack_ref_entries list_attack_ref_dossiers"},
+	{"attack_ref:write", "set_attack_ref_entry_status run_attack_ref_mining"},
 	{"engines:read", "list_security_engine_types"},
 	{"engines:simulate", "simulate_ephor_config calibrate_ephor get_ephor_references suggest_ephor_thresholds"},
 	{"surface:read", "get_proxy_surface get_proxy_surface_proposals get_proxy_surface_openapi get_proxy_surface_suggestions"},

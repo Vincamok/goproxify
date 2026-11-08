@@ -64,7 +64,12 @@ func Allowed(db *sql.DB, r *http.Request) bool {
 	if db == nil {
 		return true
 	}
-	allowlist := AllowedIPs(db)
+	return matchAllowlist(AllowedIPs(db), r)
+}
+
+// matchAllowlist applique l'allowlist à l'adresse de l'appelant telle que la voit la passerelle de confiance : un en-tête
+// X-Forwarded-For envoyé par un pair qui n'est pas un proxy de confiance ne compte pas.
+func matchAllowlist(allowlist []string, r *http.Request) bool {
 	if len(allowlist) == 0 {
 		return true
 	}

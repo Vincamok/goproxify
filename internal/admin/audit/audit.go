@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	edgelog "github.com/vincamok/goproxify/internal/edge/logger"
 	"github.com/vincamok/goproxify/internal/sqltime"
 )
 
@@ -80,12 +81,11 @@ func resource(typ, id string) string {
 	return typ + ":" + id
 }
 
-// IPFrom extrait l'IP cliente d'une requête HTTP.
+// IPFrom extrait l'IP cliente d'une requête HTTP. Les en-têtes de proxy ne sont lus que si la connexion vient d'un proxy
+// de confiance (GPX_TRUSTED_PROXIES) : sinon n'importe qui, authentifié ou non, inscrirait l'adresse de son choix au
+// journal d'audit et franchirait l'allowlist d'IP du MCP.
 func IPFrom(r *http.Request) string {
-	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		return strings.SplitN(fwd, ",", 2)[0]
-	}
-	return r.RemoteAddr
+	return edgelog.RealIP(r)
 }
 
 // Entry représente une ligne du journal d'audit.

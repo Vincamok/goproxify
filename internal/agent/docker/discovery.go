@@ -439,6 +439,7 @@ func (d *Discovery) payload(spec *ProxySpec) map[string]any {
 		"backends":     []string{spec.BackendURL},
 		"tls_enabled":  spec.TLS,
 		"passthrough":  spec.Passthrough,
+		"redirect_https": spec.RedirectHTTPS,
 		"source":       "docker",
 		"container_id": spec.ContainerID,
 		"image":        spec.Image,

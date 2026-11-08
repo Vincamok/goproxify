@@ -20,6 +20,7 @@ import (
 	"github.com/vincamok/goproxify/internal/admin/crowdsec"
 	"github.com/vincamok/goproxify/internal/admin/domainwatch"
 	"github.com/vincamok/goproxify/internal/admin/asn"
+	"github.com/vincamok/goproxify/internal/admin/attackref"
 	"github.com/vincamok/goproxify/internal/admin/fleet"
 	"github.com/vincamok/goproxify/internal/admin/prismedge"
 	"github.com/vincamok/goproxify/internal/admin/security"
@@ -32,6 +33,8 @@ import (
 // SecurityHandler expose le dashboard sécurité.
 type SecurityHandler struct {
 	DB       *sql.DB
+	// AttackRef : référentiel des attaques (ADR 0023) ; nil = indisponible.
+	AttackRef *attackref.Miner
 	// Edge (optionnel) : trafic récent lu dans les bases de logs des passerelles (aperçus de ban et d'ASN).
 	Edge *prismedge.Source
 	Log      *slog.Logger
@@ -138,6 +141,8 @@ func (h *SecurityHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.timeline(w, r)
 	case r.Method == http.MethodGet && sub == "ip-timeline":
 		h.ipTimeline(w, r)
+	case sub == "attack-ref":
+		h.attackRef(w, r, id)
 	case r.Method == http.MethodGet && sub == "ip-trace":
 		h.ipTrace(w, r)
 	// Seuils multi-passerelles

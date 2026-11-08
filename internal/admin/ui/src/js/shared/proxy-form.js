@@ -845,6 +845,10 @@ window.openProxyModal = async function(id, initialTab, secTab, opts = {}) {
                   <label class="toggle"><input type="checkbox" id="p-passthrough" ${cfg.tls_passthrough?'checked':''}><span class="toggle-slider"></span></label>
                   <span style="font-size:13px;font-weight:500;">SSL Passthrough</span>
                 </label>
+                <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+                  <label class="toggle"><input type="checkbox" id="p-redirect-https" ${cfg.redirect_https?'checked':''}><span class="toggle-slider"></span></label>
+                  <div><div style="font-size:13px;font-weight:500;">Rediriger le HTTP vers HTTPS</div><div style="font-size:11px;color:var(--text3);">308 vers la même adresse ; le challenge ACME http-01 reste en clair</div></div>
+                </label>
               </div>
             </div>
           </div>
@@ -2067,6 +2071,7 @@ window.saveProxy = async function(id, opts = {}) {
     tls_enabled: document.getElementById('p-https')?.checked || false,
     tls_mode: !document.getElementById('p-https')?.checked ? 'none' : (document.getElementById('p-cert').value.trim() ? 'manual' : 'le'),
     tls_passthrough: document.getElementById('p-passthrough').checked,
+    redirect_https: document.getElementById('p-redirect-https')?.checked || false,
     tls_skip_verify: document.getElementById('p-skip-verify')?.checked || false,
     preserve_host: document.getElementById('p-preserve-host')?.checked !== false,
     cert_name: document.getElementById('p-cert').value.trim(),
