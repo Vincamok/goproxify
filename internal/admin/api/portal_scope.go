@@ -23,6 +23,7 @@ var portalScopeTables = map[string][2]string{
 	"destination-groups": {"portal_dest_groups", "edge_name"},
 	"dest-sources":       {"portal_dest_sources", "edge_name"},
 	"dest-candidates":    {"portal_dest_candidates", "edge_name"},
+	"logins":             {"portal_logins", "edge_name"},
 	"access-requests":    {"portal_access_requests", "edge_name"},
 }
 

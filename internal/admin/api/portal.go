@@ -48,6 +48,8 @@ type PortalConfig struct {
 
 	// Sources de destinations (ADR 0024) : calculées à la poussée, secrets compris ; jamais lues du client ni renvoyées à l'UI.
 	DestSources []destsync.SourceConfig `json:"dest_sources"`
+	// Logins préconfigurés (ADR 0025) : calculés à la poussée, secrets scellés pour la passerelle ; jamais lus du client.
+	SharedLogins []portal.SharedLogin `json:"shared_logins"`
 }
 
 // PortalPusher pousse la config portail vers une passerelle précis.
@@ -76,6 +78,10 @@ func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasPrefix(r.URL.Path, destGroupsPath) {
 		h.handleDestGroups(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, loginsPath) {
+		h.handleLogins(w, r)
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, destSourcesPath) {
@@ -167,7 +173,7 @@ func (h *PortalHandler) put(w http.ResponseWriter, r *http.Request) {
 	}
 	// Champs calculés ou secrets : jamais acceptés du client.
 	cfg.HAGroup, cfg.HAMembers, cfg.HAStandby, cfg.HAKey = "", nil, false, ""
-	cfg.Grants, cfg.DestSources = nil, nil
+	cfg.Grants, cfg.DestSources, cfg.SharedLogins = nil, nil, nil
 	prev := loadPortalConfig(h.DB, scope)
 	cfg.Policy = prev.Policy // ne se modifie que par /portal/policy
 	if cfg.Views == nil {

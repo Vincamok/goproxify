@@ -916,6 +916,25 @@ func migrate(db *sql.DB) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_portal_dest_candidates_edge ON portal_dest_candidates (edge_name, state)`,
 		`CREATE INDEX IF NOT EXISTS idx_portal_dest_candidates_dest ON portal_dest_candidates (dest_id)`,
+		// Logins préconfigurés du portail (ADR 0025) : le secret n'y est jamais en clair, il est scellé pour la passerelle.
+		`CREATE TABLE IF NOT EXISTS portal_logins (
+			id              TEXT PRIMARY KEY,
+			edge_name       TEXT NOT NULL,
+			name            TEXT NOT NULL,
+			username        TEXT NOT NULL,
+			secret_sealed   TEXT NOT NULL DEFAULT '',
+			has_password    INTEGER NOT NULL DEFAULT 0,
+			has_key         INTEGER NOT NULL DEFAULT 0,
+			all_users       INTEGER NOT NULL DEFAULT 0,
+			groups_json     TEXT NOT NULL DEFAULT '[]',
+			tags_json       TEXT NOT NULL DEFAULT '[]',
+			dest_ids_json   TEXT NOT NULL DEFAULT '[]',
+			dest_groups_json TEXT NOT NULL DEFAULT '[]',
+			enabled         INTEGER NOT NULL DEFAULT 1,
+			created_at      TEXT NOT NULL DEFAULT '',
+			updated_at      TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_portal_logins_edge ON portal_logins (edge_name)`,
 		`CREATE TABLE IF NOT EXISTS portal_page_templates (
 			page_key   TEXT PRIMARY KEY,
 			name       TEXT NOT NULL DEFAULT '',

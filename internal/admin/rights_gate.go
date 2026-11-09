@@ -150,6 +150,12 @@ func portalPermission(r *http.Request) (string, bool) {
 		return readOrManage(r, "portal_users:read", "portal_users:manage")
 	case "destinations", "destination-groups", "dest-candidates":
 		return readOrManage(r, "portal_catalog:read", "portal_catalog:manage")
+	case "logins":
+		// Les logins préconfigurés portent des secrets scellés : les créer, modifier ou supprimer exige la permission explicite.
+		if isRead(r) {
+			return "portal_catalog:read", true
+		}
+		return "portal_catalog:logins", true
 	case "dest-sources":
 		// Lire les sources (secrets masqués) et demander un passage relèvent du catalogue ; les créer, les modifier, les
 		// supprimer et les essayer exigent la permission explicite : ils manipulent des identifiants d'API.

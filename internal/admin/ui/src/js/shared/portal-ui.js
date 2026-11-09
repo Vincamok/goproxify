@@ -62,6 +62,64 @@ const PortalUI = {
     return String(s || '').split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean);
   },
 
+  // Champ d'étiquettes : une pastille par étiquette (× pour la retirer), un champ pour en ajouter.
+  // Entrée, virgule, point-virgule ou la perte du focus ajoutent ; Retour arrière sur un champ vide retire la dernière.
+  // suggestions : étiquettes déjà connues, proposées à la saisie. Brancher ensuite avec bindTagInput, lire avec tagValues.
+  tagInput(id, tags, opts) {
+    const o = opts || {};
+    const chip = (tg) => `<span class="chip" data-tag="${esc(tg)}">${esc(tg)}<button type="button" class="chip-x" aria-label="${esc(o.removeLabel || 'Remove')} ${esc(tg)}" title="${esc(o.removeLabel || 'Remove')}">×</button></span>`;
+    const sugg = [...new Set((o.suggestions || []).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    return `<div class="tagbox" data-tagbox="${esc(id)}" data-remove="${esc(o.removeLabel || 'Remove')}">${(tags || []).map(chip).join('')}<input class="tagbox-in" type="text" autocomplete="off" list="${esc(id)}-dl" placeholder="${esc(o.placeholder || '')}" aria-label="${esc(o.label || 'Tags')}"/></div>
+      <datalist id="${esc(id)}-dl">${sugg.map((s) => `<option value="${esc(s)}"></option>`).join('')}</datalist>`;
+  },
+  bindTagInput(root, id) {
+    const box = root.querySelector(`.tagbox[data-tagbox="${id}"]`);
+    if (!box) return;
+    const input = box.querySelector('.tagbox-in');
+    const has = (tg) => [...box.querySelectorAll('[data-tag]')].some((c) => c.dataset.tag.toLowerCase() === tg.toLowerCase());
+    const add = (raw) => {
+      for (const tg of PortalUI.split(raw)) {
+        if (has(tg)) continue;
+        const span = document.createElement('span');
+        span.className = 'chip';
+        span.dataset.tag = tg;
+        span.append(tg);
+        const x = document.createElement('button');
+        x.type = 'button';
+        x.className = 'chip-x';
+        x.textContent = '×';
+        x.setAttribute('aria-label', box.dataset.remove + ' ' + tg);
+        x.title = box.dataset.remove;
+        span.append(x);
+        box.insertBefore(span, input);
+      }
+      input.value = '';
+    };
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (input.value.trim()) add(input.value);
+      } else if (e.key === 'Backspace' && !input.value) {
+        box.querySelector('[data-tag]:nth-last-child(2)')?.remove();
+      }
+    });
+    input.addEventListener('input', () => { if (/[,;]/.test(input.value)) add(input.value); });
+    input.addEventListener('blur', () => { if (input.value.trim()) add(input.value); });
+    box.addEventListener('click', (e) => {
+      if (e.target.closest('.chip-x')) e.target.closest('[data-tag]').remove();
+      else input.focus();
+    });
+  },
+  tagValues(root, id) {
+    const box = root.querySelector(`.tagbox[data-tagbox="${id}"]`);
+    if (!box) return [];
+    const out = [...box.querySelectorAll('[data-tag]')].map((c) => c.dataset.tag);
+    for (const tg of PortalUI.split(box.querySelector('.tagbox-in').value)) {
+      if (!out.some((x) => x.toLowerCase() === tg.toLowerCase())) out.push(tg);
+    }
+    return out;
+  },
+
   // Modale. opts : { title, body (HTML), okLabel, width, onOk(overlay) -> Promise, extraButtons (HTML) }.
   modal(opts) {
     const overlay = document.createElement('div');

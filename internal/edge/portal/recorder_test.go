@@ -4,6 +4,7 @@
 package portal
 
 import (
+	"encoding/json"
 	"bytes"
 	"os"
 	"path/filepath"
@@ -94,3 +95,109 @@ func TestRecordingTruncatesAndPurges(t *testing.T) {
 		t.Fatal("store nul: pas d'enregistrement")
 	}
 }
+
+func castKinds(t *testing.T, st *RecordingStore, id string) (kinds []string, inputs string) {
+	t.Helper()
+	cast, err := st.Read(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ln := range strings.Split(strings.TrimSpace(string(cast)), "\n")[1:] {
+		var ev []any
+		if err := json.Unmarshal([]byte(ln), &ev); err != nil {
+			t.Fatalf("ligne illisible %q: %v", ln, err)
+		}
+		kinds = append(kinds, ev[1].(string))
+		if ev[1] == "i" {
+			inputs += ev[2].(string)
+		}
+	}
+	return kinds, inputs
+}
+
+func TestRecordingKeepsNoInputUnlessAsked(t *testing.T) {
+	st, _ := NewRecordingStore(t.TempDir(), "s")
+	rec := st.Start("alice", "srv", "web", "")
+	rec.Output([]byte("$ "))
+	rec.Input([]byte("ls -la\r"))
+	rec.Close()
+	list, _ := st.List()
+	kinds, _ := castKinds(t, st, list[0].ID)
+	if list[0].Input || len(kinds) != 1 || kinds[0] != "o" {
+		t.Fatalf("sans record_input, aucune saisie ne doit être gardée: %+v %v", list[0], kinds)
+	}
+}
+
+func TestRecordingKeepsInputAndMasksSecrets(t *testing.T) {
+	st, _ := NewRecordingStore(t.TempDir(), "s")
+	rec := st.Start("alice", "srv", "ssh", "")
+	rec.CaptureInput()
+	rec.Output([]byte("alice@srv:~$ "))
+	rec.Input([]byte("su"))
+	rec.Input([]byte("do ls\r"))
+	rec.Output([]byte("su\r\n[sudo] password for alice: "))
+	rec.Input([]byte("h"))
+	rec.Input([]byte("unter2"))
+	rec.Input([]byte("\r"))
+	rec.Output([]byte("\r\nfile\r\nalice@srv:~$ "))
+	rec.Input([]byte("echo après\r"))
+	rec.Output([]byte("Enter passphrase for key '/home/a/.ssh/id': "))
+	rec.Input([]byte("abc\x03"))
+	rec.Input([]byte("whoami\r"))
+	rec.Close()
+
+	list, _ := st.List()
+	if !list[0].Input {
+		t.Fatal("la méta doit indiquer que la saisie est enregistrée")
+	}
+	_, inputs := castKinds(t, st, list[0].ID)
+	if strings.Contains(inputs, "hunter2") || strings.Contains(inputs, "abc") || strings.Contains(inputs, "unter") {
+		t.Fatalf("un secret a été enregistré: %q", inputs)
+	}
+	for _, want := range []string{"sudo ls\r", "[masqué]", "echo après\r", "whoami\r"} {
+		if !strings.Contains(inputs, want) {
+			t.Errorf("la saisie %q manque: %q", want, inputs)
+		}
+	}
+	if strings.Count(inputs, "[masqué]") != 2 {
+		t.Errorf("un marqueur par invite attendu: %q", inputs)
+	}
+}
+
+func TestRecordingInputIsNilSafe(t *testing.T) {
+	var rec *Recording
+	rec.CaptureInput()
+	rec.Input([]byte("x"))
+}
+
+func TestPolicyRecordInputNeedsRecording(t *testing.T) {
+	if err := (Policy{RecordInput: true}).Validate(); err == nil {
+		t.Fatal("record_input sans record_sessions doit être refusé")
+	}
+	if err := (Policy{RecordSessions: true, RecordInput: true}).Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTouchRWRecordsWhatTheUserTypes(t *testing.T) {
+	st, _ := NewRecordingStore(t.TempDir(), "s")
+	rec := st.Start("alice", "srv", "web", "")
+	rec.CaptureInput()
+	live := NewLiveRegistry().Track("alice", "srv", "web", "", func() {})
+	defer live.Done()
+	rw := touchRW{ReadWriteCloser: nopRWC{strings.NewReader("pwd\r")}, h: live, rec: rec}
+	buf := make([]byte, 16)
+	if _, err := rw.Read(buf); err != nil {
+		t.Fatal(err)
+	}
+	rec.Close()
+	list, _ := st.List()
+	if _, inputs := castKinds(t, st, list[0].ID); inputs != "pwd\r" {
+		t.Fatalf("saisie enregistrée: %q", inputs)
+	}
+}
+
+type nopRWC struct{ *strings.Reader }
+
+func (nopRWC) Write(p []byte) (int, error) { return len(p), nil }
+func (nopRWC) Close() error                { return nil }

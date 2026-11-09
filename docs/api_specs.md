@@ -1638,6 +1638,21 @@ Une source interroge l'API d'une plateforme (Proxmox VE…) **depuis la passerel
 
 **Droits.** Lecture des sources et des candidates : `portal_catalog:read` ; publier, ignorer, rétablir, demander une synchronisation : `portal_catalog:manage` ; créer, modifier, supprimer ou tester une source : permission explicite `portal_catalog:sources` (elle manipule des identifiants d'API). Scopes de jeton : `portal:read` / `portal:write`.
 
+### Logins préconfigurés Access — `/api/v1/portal/logins`
+
+Comptes partagés (root, deploy…) que les utilisateurs emploient sur les destinations liées, sans voir le secret ([ADR 0025](adr/0025-coffre-du-portail-logins-et-liaisons.md)). Le secret est **scellé pour la passerelle** (ECIES : ECDH P-256 éphémère, HKDF-SHA256 de sel la clé éphémère et d'info `goproxify-portal-login-seal/v1`, AES-256-GCM) avant d'atteindre l'Admin : celui-ci stocke et pousse l'enveloppe telle quelle, ne peut pas l'ouvrir, et **n'en renvoie jamais** (seulement `has_secret`). Un login sans secret scellé existe mais n'est pas poussé.
+
+| Méthode | Chemin | Description |
+|---------|--------|-------------|
+| `GET` | `/api/v1/portal/logins/pubkey?edge=` | Clé publique de scellement de la passerelle (`public_key`, point P-256 non compressé en base64), lue sur la passerelle puis gardée si elle est hors ligne |
+| `GET` | `/api/v1/portal/logins?edge=` | Logins : `id`, `edge_name`, `name`, `username`, `has_secret`, `has_password`, `has_private_key`, `all_users`, `groups`, `tags`, `dest_ids`, `dest_groups`, `enabled` |
+| `POST` | `/api/v1/portal/logins` | Crée un login : `edge_name`, `username` (requis), `name`, `sealed` (enveloppe JSON), `has_password`, `has_private_key`, `all_users`, `groups` (identifiants de groupes Access), `tags`, `dest_ids`, `dest_groups`, `enabled`. `201` ; `400` si `sealed` n'est pas une enveloppe valide (un mot de passe en clair est refusé) ; `409` nom déjà pris sur la passerelle |
+| `GET` `PUT` `DELETE` | `/api/v1/portal/logins/{id}` | Lecture, modification (les champs absents sont conservés ; `sealed` absent conserve le secret, `sealed: ""` le retire ; la passerelle ne change pas), suppression |
+
+À l'envoi à la passerelle, les groupes Access sont développés en identités et les groupes de destinations en identifiants (`shared_logins` de `push_portal`) ; seuls les logins actifs qui ont un secret sont poussés. **Droit d'usage** : `all_users`, ou membre d'un des `groups`, ou porteur d'un des `tags` ; aucun des trois : personne. Supprimer une destination la retire des liaisons directes des logins. **Droits** : lecture `portal_catalog:read` ; créer, modifier, supprimer : permission explicite `portal_catalog:logins`. Scopes de jeton `portal:read` / `portal:write`.
+
+**API du portail utilisateur (passerelle, port du portail).** Le coffre personnel : `GET /api/vault` → `{personal[], shared[], defaults{}}` (logins personnels sans secret, logins préconfigurés employables avec leurs destinations visibles, favoris) ; `POST /api/vault/logins` et `PUT /api/vault/logins/{id}` (`name`, `username`, `password`, `private_key`, `dest_ids`, `clear_password`, `clear_private_key` ; un secret vide est conservé) ; `DELETE /api/vault/logins/{id}` ; `PUT /api/vault/defaults/{destination}` (`{"login": "<origine>:<id>"}`, vide : oublie le favori) ; `GET /api/targets/{destination}/logins` (logins applicables, sans secret). `POST /api/sessions` accepte `login_id` (`shared:<id>` ou `personal:<id>`) ; sans lui, un seul login applicable est employé, le favori si plusieurs, sinon `409 {"error":"login_required","logins":[…]}`. Aucun login lié : `400`. L'ancienne forme `PUT /api/vault/{destination}` est supprimée.
+
 ### Accès temporaires — `/api/v1/portal/access-requests`
 
 Un utilisateur du portail demande l'accès à une destination qu'il ne voit pas (motif obligatoire, durée de 5 à 480 minutes) ; la passerelle transmet la demande à l'Admin, qui prévient par email les comptes admin et superadmin si le SMTP est configuré. Un administrateur l'approuve ou la refuse. L'accès approuvé est poussé à la passerelle (à tous les membres d'un groupe HA) et expire tout seul.
@@ -1665,16 +1680,17 @@ Politique d'accès du portail, enregistrée avec la config de la passerelle (cel
 | `idle_timeout_min` | Ferme une session après N minutes sans saisie de l'utilisateur ; `0` = jamais |
 | `record_sessions` | Enregistre la sortie des terminaux (voir ci-dessous) |
 | `record_retention_days` | Jours de conservation des enregistrements ; `0` ou absent = 90 jours, `-1` = illimitée |
+| `record_input` | Enregistre aussi la saisie au clavier (voir ci-dessous) ; exige `record_sessions` (`400` sinon). Désactivé par défaut |
 
 `400` avec le motif si la politique est invalide. Hors plage horaire ou depuis une adresse non autorisée, la passerelle refuse la connexion au portail, l'ouverture d'une session et la connexion SSH (`403`), et journalise le refus dans l'audit. Les sessions déjà ouvertes ne sont coupées que par l'inactivité. Derrière la passerelle, l'adresse du client est la dernière entrée de `X-Forwarded-For`. Portée `portal:read` pour lire, `portal:write` pour modifier.
 
 ### Enregistrements de sessions — `/api/v1/portal/recordings`
 
-Quand `record_sessions` est actif dans la politique, la passerelle enregistre la sortie du terminal de chaque nouvelle session (SSH, web, Docker) au format asciicast v2. La saisie de l'utilisateur n'est jamais gardée. Les fichiers restent sur la passerelle, chiffrés au repos avec une clé dérivée du secret du portail ; l'Admin les relaie à la demande. Un enregistrement est limité à 8 Mio de sortie (marqué `truncated` au-delà) et n'est écrit qu'à la fin de la session. `record_retention_days` supprime automatiquement les plus anciens (`0` ou absent : 90 jours ; `-1` : conservation illimitée).
+Quand `record_sessions` est actif dans la politique, la passerelle enregistre la sortie du terminal de chaque nouvelle session (SSH, web, Docker) au format asciicast v2. La saisie de l'utilisateur n'est gardée que si `record_input` est actif : elle devient des événements `i` du même fichier (la sortie reste en `o`), et ce qui est tapé après une invite de mot de passe (`password`, `passphrase`, `mot de passe`, code à usage unique…) est remplacé par un événement `[masqué]` jusqu'à Entrée, Ctrl+C ou Ctrl+D. La passerelle ne voit pas si le terminal distant masque la saisie : seule l'invite est reconnue, un secret demandé autrement (`read -s`) peut être enregistré. Les fichiers restent sur la passerelle, chiffrés au repos avec une clé dérivée du secret du portail ; l'Admin les relaie à la demande. Un enregistrement est limité à 8 Mio de sortie (marqué `truncated` au-delà) et n'est écrit qu'à la fin de la session. `record_retention_days` supprime automatiquement les plus anciens (`0` ou absent : 90 jours ; `-1` : conservation illimitée).
 
 | Méthode | Chemin | Description |
 |---------|--------|-------------|
-| `GET` | `/api/v1/portal/recordings?edge=` | `{"recordings":[{id, actor, target_id, facade, remote, started, duration_sec, bytes, truncated}]}`, du plus récent au plus ancien |
+| `GET` | `/api/v1/portal/recordings?edge=` | `{"recordings":[{id, actor, target_id, facade, remote, started, duration_sec, bytes, truncated, input}]}`, du plus récent au plus ancien |
 | `GET` | `/api/v1/portal/recordings/{id}?edge=` | Fichier asciicast (`application/x-asciicast`), lecture journalisée dans l'audit Admin |
 | `DELETE` | `/api/v1/portal/recordings/{id}?edge=` | Suppression définitive (`204`), journalisée |
 

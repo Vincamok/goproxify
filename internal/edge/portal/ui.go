@@ -490,12 +490,17 @@ pre.chain {
   white-space: pre-wrap;
   word-break: break-all;
 }
-#term {
-  height: min(420px, 55vh);
+/* Le cadre (bordure, marge, fond) est sur #termBox ; #term, que xterm.js mesure pour calculer ses lignes, n'a ni bordure ni marge.
+   Sous box-sizing: border-box, une marge sur #term comptait dans la hauteur mesurée : xterm dessinait une ligne de trop et le
+   prompt, dernière ligne, tombait sous le bas du cadre (overflow: hidden). */
+#termBox {
   background: var(--term-bg);
   border: 1px solid var(--term-line);
   border-radius: var(--radius);
   padding: .5rem;
+}
+#term {
+  height: min(420px, 55vh);
   overflow: hidden;
 }
 .auth-hero .panel { max-width: 520px; }
@@ -658,21 +663,37 @@ pre.chain {
       </div>
 
       <div id="tab-vault" class="tab-panel hidden">
-        <p class="hint">Login SSH + mot de passe ou clé — chiffrés côté serveur. Jamais le mail Access.</p>
+        <p class="hint">Un login relie un compte SSH à une ou plusieurs destinations. Mot de passe ou clé sont chiffrés sur la passerelle. Jamais le mail Access.</p>
+        <div id="sharedBlock" class="hidden">
+          <h3 style="margin-top:0;padding-top:0;border:none">Logins préconfigurés</h3>
+          <p class="hint" style="margin-top:-.35rem">Posés par l’administrateur : vous les utilisez sans voir leur secret.</p>
+          <ul class="targets" id="sharedList"></ul>
+        </div>
+        <h3>Mes logins</h3>
+        <ul class="targets" id="vaultList"></ul>
+        <h3 id="vFormTitle">Nouveau login</h3>
+        <input type="hidden" id="vId"/>
         <div class="row tight">
-          <div><label for="vTarget">Cible</label><select id="vTarget"></select></div>
+          <div><label for="vName">Nom</label><input id="vName" placeholder="deploy prod…"/></div>
           <div><label for="vUser">Login SSH</label><input id="vUser" autocomplete="username" placeholder="root, ubuntu…"/></div>
         </div>
         <div class="row tight" style="margin-top:.75rem">
           <div><label for="vPass">Mot de passe</label><input id="vPass" type="password" autocomplete="new-password"/></div>
         </div>
         <div class="tight" style="margin-top:.75rem"><label for="vKey">Clé privée (optionnel)</label><textarea id="vKey" rows="2" placeholder="Si pas de mot de passe"></textarea></div>
+        <div class="tight" style="margin-top:.75rem"><label>Destinations liées</label>
+          <div id="vDests" class="hint" style="max-height:10rem;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:.4rem .6rem"></div></div>
         <div class="actions">
-          <button type="button" class="btn-primary" id="btnVaultSave">Enregistrer dans le coffre</button>
-          <button type="button" class="btn-ghost" id="btnVaultDel">Retirer</button>
+          <button type="button" class="btn-primary" id="btnVaultSave">Enregistrer</button>
+          <button type="button" class="btn-ghost hidden" id="btnVaultCancel">Annuler la modification</button>
         </div>
         <div id="vaultErr" class="err"></div>
-        <ul class="targets" id="vaultList" style="margin-top:.75rem"></ul>
+        <div id="loginPick" class="hidden" style="margin-top:1rem;border:1px solid var(--line);border-radius:8px;padding:.75rem">
+          <strong id="loginPickTitle">Quel login utiliser ?</strong>
+          <ul class="targets" id="loginPickList" style="margin-top:.5rem"></ul>
+          <label style="display:flex;gap:.4rem;align-items:center;margin-top:.5rem"><input type="checkbox" id="loginPickDefault" style="width:auto"/> Toujours utiliser ce login pour cette destination</label>
+          <div class="actions"><button type="button" class="btn-ghost" id="loginPickCancel">Annuler</button></div>
+        </div>
       </div>
 
       <div id="tab-sessions" class="tab-panel hidden">
@@ -689,7 +710,7 @@ pre.chain {
 
       <div id="tab-terminal" class="tab-panel hidden">
         <p class="hint" id="termHint">Ouvrez une cible du catalogue en « Web » pour démarrer un terminal.</p>
-        <div id="term"></div>
+        <div id="termBox"><div id="term"></div></div>
       </div>
 
       <div id="tab-account" class="tab-panel hidden">
@@ -1029,30 +1050,51 @@ $('btnAdd').onclick = async () => {
     $('targetErr').textContent = e.message || String(e);
   }
 };
+function resetVaultForm() {
+  $('vId').value = ''; $('vName').value = ''; $('vUser').value = ''; $('vPass').value = ''; $('vKey').value = '';
+  $('vFormTitle').textContent = 'Nouveau login';
+  $('btnVaultCancel').classList.add('hidden');
+  renderVaultDests([]);
+}
+function renderVaultDests(selected) {
+  const box = $('vDests'); box.innerHTML = '';
+  const sel = {}; (selected || []).forEach(id => { sel[id] = true; });
+  (state.targets || []).filter(t => t.kind !== 'docker').forEach(t => {
+    const lb = document.createElement('label');
+    lb.style.cssText = 'display:flex;gap:.45rem;align-items:center;margin:.15rem 0;font-weight:400';
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.value = t.id; cb.checked = !!sel[t.id]; cb.style.width = 'auto';
+    lb.append(cb, document.createTextNode(t.name + ' (' + t.source + ')'));
+    box.append(lb);
+  });
+  if (!box.children.length) box.textContent = 'Aucune destination SSH visible.';
+}
+function editVaultLogin(l) {
+  $('vId').value = l.id; $('vName').value = l.name || ''; $('vUser').value = l.username || '';
+  $('vPass').value = ''; $('vKey').value = '';
+  $('vPass').placeholder = l.has_password ? 'Laisser vide pour conserver' : '';
+  $('vKey').placeholder = l.has_private_key ? 'Laisser vide pour conserver' : 'Si pas de mot de passe';
+  $('vFormTitle').textContent = 'Modifier « ' + (l.name || l.username) + ' »';
+  $('btnVaultCancel').classList.remove('hidden');
+  renderVaultDests(l.dest_ids);
+  $('vName').focus();
+}
+$('btnVaultCancel').onclick = resetVaultForm;
 $('btnVaultSave').onclick = async () => {
   $('vaultErr').textContent = '';
   try {
-    const id = $('vTarget').value;
-    if (!id) throw new Error('Choisissez une cible');
-    const username = ($('vUser').value || '').trim();
-    const password = $('vPass').value;
-    const private_key = $('vKey').value;
-    if (!username) throw new Error('Login SSH requis (pas votre email Access)');
-    if (!password && !private_key) throw new Error('Mot de passe ou clé privée requis');
-    await api('/api/vault/' + encodeURIComponent(id), {
-      method: 'PUT', body: JSON.stringify({ username, password, private_key })
+    const id = $('vId').value;
+    const body = {
+      name: ($('vName').value || '').trim(),
+      username: ($('vUser').value || '').trim(),
+      password: $('vPass').value,
+      private_key: $('vKey').value,
+      dest_ids: Array.prototype.map.call($('vDests').querySelectorAll('input:checked'), c => c.value),
+    };
+    if (!body.username) throw new Error('Login SSH requis (pas votre email Access)');
+    await api(id ? '/api/vault/logins/' + encodeURIComponent(id) : '/api/vault/logins', {
+      method: id ? 'PUT' : 'POST', body: JSON.stringify(body)
     });
-    $('vPass').value = '';
-    $('vKey').value = '';
-    await refreshVault();
-  } catch (e) { $('vaultErr').textContent = e.message || String(e); }
-};
-$('btnVaultDel').onclick = async () => {
-  $('vaultErr').textContent = '';
-  try {
-    const id = $('vTarget').value;
-    if (!id) throw new Error('Choisissez une cible');
-    await api('/api/vault/' + encodeURIComponent(id), { method: 'DELETE' });
+    resetVaultForm();
     await refreshVault();
   } catch (e) { $('vaultErr').textContent = e.message || String(e); }
 };
@@ -1191,16 +1233,8 @@ async function refreshTargets() {
     const d = await api('/api/targets');
     state.targets = d.targets || [];
     renderCatalog();
-    const sel = $('vTarget');
-    const prev = sel.value;
-    sel.innerHTML = '';
-    state.targets.forEach(t => {
-      const opt = document.createElement('option');
-      opt.value = t.id;
-      opt.textContent = t.name + ' (' + t.source + ')';
-      sel.append(opt);
-    });
-    if (prev) sel.value = prev;
+    const keep = Array.prototype.map.call($('vDests').querySelectorAll('input:checked'), c => c.value);
+    renderVaultDests(keep);
   } catch (e) {
     if ($('vaultErr')) $('vaultErr').textContent = e.message;
   }
@@ -1286,29 +1320,91 @@ $('catalogSearch').addEventListener('input', () => {
 async function refreshVault() {
   try {
     const d = await api('/api/vault');
-    const ul = $('vaultList'); ul.innerHTML = '';
     const byId = {};
-    state.targets.forEach(t => { byId[t.id] = t; });
-    (d.entries || []).forEach(e => {
-      const t = byId[e.target_id];
-      const name = t ? t.name : e.target_id;
+    (state.targets || []).forEach(t => { byId[t.id] = t; });
+    const destNames = (ids) => (ids || []).map(id => (byId[id] ? byId[id].name : id)).join(', ') || 'aucune destination';
+    state.vault = d;
+
+    const sh = $('sharedList'); sh.innerHTML = '';
+    (d.shared || []).forEach(l => {
       const li = document.createElement('li');
-      const flags = [];
-      if (e.username) flags.push('login ' + e.username);
-      if (e.has_password) flags.push('password');
-      if (e.has_private_key) flags.push('clé');
-      li.innerHTML = '<div><strong>' + esc(name) + '</strong><div class="meta">' + esc(flags.join(' · ') || 'vide') + '</div></div>';
+      li.innerHTML = '<div><strong>' + esc(l.name) + '</strong><div class="meta">login ' + esc(l.username) + ' · ' + esc(destNames(l.dest_ids)) + '</div></div>';
+      sh.append(li);
+    });
+    $('sharedBlock').classList.toggle('hidden', !(d.shared || []).length);
+
+    const ul = $('vaultList'); ul.innerHTML = '';
+    (d.personal || []).forEach(l => {
+      const li = document.createElement('li');
+      const flags = ['login ' + l.username];
+      if (l.has_password) flags.push('mot de passe');
+      if (l.has_private_key) flags.push('clé');
+      const info = document.createElement('div');
+      const name = l.name || l.username;
+      info.innerHTML = '<strong>' + esc(name) + '</strong><div class="meta">' + esc(flags.join(' · ')) + ' · ' + esc(destNames(l.dest_ids)) + '</div>';
+      const row = document.createElement('div'); row.className = 'row';
+      const be = document.createElement('button'); be.type = 'button'; be.className = 'btn-ghost'; be.textContent = 'Modifier';
+      be.onclick = () => editVaultLogin(l);
+      const bd = document.createElement('button'); bd.type = 'button'; bd.className = 'btn-ghost'; bd.textContent = 'Retirer';
+      bd.onclick = async () => {
+        $('vaultErr').textContent = '';
+        try { await api('/api/vault/logins/' + encodeURIComponent(l.id), { method: 'DELETE' }); await refreshVault(); }
+        catch (e) { $('vaultErr').textContent = e.message || String(e); }
+      };
+      row.append(be, bd);
+      li.append(info, row);
       ul.append(li);
     });
-    if (!(d.entries || []).length) {
-      ul.innerHTML = '<li style="color:var(--ink-soft);border:none;padding:.35rem 0">Coffre vide.</li>';
+    if (!(d.personal || []).length) {
+      ul.innerHTML = '<li style="color:var(--ink-soft);border:none;padding:.35rem 0">Aucun login. Créez-en un ci-dessous et liez-le à vos destinations.</li>';
     }
   } catch (e) {
     if ($('vaultErr')) $('vaultErr').textContent = e.message;
   }
 }
-async function createSession(t, facade) {
-  const d = await api('/api/sessions', { method: 'POST', body: JSON.stringify({ target_id: t.id, source: t.source, facade }) });
+// Plusieurs logins s'appliquent à la destination : on demande lequel, et on peut le retenir comme favori.
+function askLogin(t, facade, logins) {
+  return new Promise((resolve, reject) => {
+    const box = $('loginPick'), ul = $('loginPickList');
+    ul.innerHTML = '';
+    $('loginPickTitle').textContent = 'Quel login utiliser sur « ' + t.name + ' » ?';
+    $('loginPickDefault').checked = false;
+    const done = () => box.classList.add('hidden');
+    logins.forEach(l => {
+      const li = document.createElement('li');
+      const info = document.createElement('div');
+      info.innerHTML = '<strong>' + esc(l.name) + '</strong><div class="meta">login ' + esc(l.username) + ' · ' + (l.origin === 'shared' ? 'préconfiguré' : 'personnel') + (l.default ? ' · favori' : '') + '</div>';
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'btn-primary'; b.textContent = 'Utiliser';
+      b.onclick = async () => {
+        try {
+          if ($('loginPickDefault').checked) {
+            await api('/api/vault/defaults/' + encodeURIComponent(t.id), { method: 'PUT', body: JSON.stringify({ login: l.ref }) });
+          }
+          done(); resolve(l.ref);
+        } catch (e) { done(); reject(e); }
+      };
+      li.append(info, b);
+      ul.append(li);
+    });
+    $('loginPickCancel').onclick = () => { done(); reject(new Error('Choix du login annulé')); };
+    box.classList.remove('hidden');
+    setTab('vault');
+    box.scrollIntoView({ block: 'nearest' });
+  });
+}
+async function createSession(t, facade, loginRef) {
+  let d;
+  try {
+    d = await api('/api/sessions', { method: 'POST', body: JSON.stringify({ target_id: t.id, source: t.source, facade, login_id: loginRef || '' }) });
+  } catch (e) {
+    let ask = null;
+    try { ask = JSON.parse(e.message); } catch (_) {}
+    if (ask && ask.error === 'login_required' && !loginRef) {
+      const ref = await askLogin(t, facade, ask.logins || []);
+      return createSession(t, facade, ref);
+    }
+    throw e;
+  }
   $('chain').textContent = 'SSH:\n' + d.ssh + '\n\nWeb:\n' + d.web_url + '\n\nUUID (TTL ' + d.ttl_sec + 's, ' + (d.mode || '') + '):\n' + d.uuid;
   setTab(facade === 'web' ? 'terminal' : 'sessions');
   if (facade === 'web') openTerm(d.uuid);
@@ -1327,7 +1423,15 @@ function ensureTerm() {
   state.term.loadAddon(state.fit);
   state.term.open($('term'));
   state.fit.fit();
+  // La machine distante doit connaître la taille du terminal, sinon elle habille sa sortie pour une autre largeur.
+  state.term.onResize(sendTermSize);
   window.addEventListener('resize', () => { try { state.fit.fit(); } catch (_) {} });
+  if (window.ResizeObserver) new ResizeObserver(() => { try { state.fit.fit(); } catch (_) {} }).observe($('termBox'));
+}
+function sendTermSize() {
+  const ws = state.ws;
+  if (!ws || ws.readyState !== 1 || !state.term) return;
+  ws.send('\x00gpx-resize:' + state.term.cols + 'x' + state.term.rows);
 }
 function openTerm(uuid) {
   setTab('terminal');
@@ -1340,7 +1444,7 @@ function openTerm(uuid) {
   const ws = new WebSocket(proto + '//' + location.host + '/api/ws/' + uuid);
   state.ws = ws;
   ws.binaryType = 'arraybuffer';
-  ws.onopen = () => { try { state.fit.fit(); } catch (_) {} };
+  ws.onopen = () => { try { state.fit.fit(); } catch (_) {} sendTermSize(); };
   ws.onmessage = (ev) => {
     if (typeof ev.data === 'string') state.term.write(ev.data);
     else state.term.write(new Uint8Array(ev.data));

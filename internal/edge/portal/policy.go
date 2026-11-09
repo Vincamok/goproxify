@@ -22,6 +22,7 @@ type Policy struct {
 	IdleTimeoutMin      int      `json:"idle_timeout_min,omitempty"`
 	RecordSessions      bool     `json:"record_sessions,omitempty"`       // enregistre la sortie des terminaux
 	RecordRetentionDays int      `json:"record_retention_days,omitempty"` // 0 = 90 jours (défaut), -1 = conservation illimitée
+	RecordInput         bool     `json:"record_input,omitempty"`          // enregistre aussi la saisie au clavier (hors invites de mot de passe) ; exige record_sessions
 }
 
 func parseHM(s string) (int, error) {
@@ -68,7 +69,10 @@ func (p Policy) Validate() error {
 	if p.RecordRetentionDays < -1 || p.RecordRetentionDays > 3650 {
 		return fmt.Errorf("conservation entre 1 et 3650 jours (0 : 90 jours, -1 : illimitée)")
 	}
-	if p.IdleTimeoutMin < 0 || p.IdleTimeoutMin > 1440 {
+	if p.RecordInput && !p.RecordSessions {
+		return fmt.Errorf("la saisie ne s'enregistre qu'avec l'enregistrement des sessions")
+	}
+	if p.IdleTimeoutMin < 0|| p.IdleTimeoutMin > 1440 {
 		return fmt.Errorf("inactivité entre 0 et 1440 minutes")
 	}
 	return nil

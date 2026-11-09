@@ -262,6 +262,28 @@ func (s *Service) SetCatalog(items []CatalogTarget) error {
 	return s.store.SetCatalog(items)
 }
 
+// SetSharedLogins met à jour les logins préconfigurés (push Admin, ADR 0025).
+func (s *Service) SetSharedLogins(items []SharedLogin) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.store == nil {
+		return fmt.Errorf("portal non démarré")
+	}
+	return s.store.SetSharedLogins(items)
+}
+
+// LoginSealPublicKey retourne la clé publique avec laquelle l'Admin (navigateur, CLI) scelle les secrets des logins
+// préconfigurés. Elle dérive de la clé maître du portail, que les membres d'un groupe HA partagent.
+func (s *Service) LoginSealPublicKey() (string, error) {
+	s.mu.Lock()
+	secret := s.masterSecret
+	s.mu.Unlock()
+	if secret == "" {
+		secret = resolveMasterKey()
+	}
+	return LoginSealPublicKey(secret)
+}
+
 // SyncUsers applique la liste Admin (push).
 func (s *Service) SyncUsers(users []SyncedUser) error {
 	s.mu.Lock()
@@ -456,10 +478,15 @@ func (s *Service) recordingStore() *RecordingStore {
 
 // startRecording ouvre l'enregistrement d'une session quand la politique le demande.
 func (s *Service) startRecording(actor, targetID, facade, remote string) *Recording {
-	if !s.Policy().RecordSessions {
+	pol := s.Policy()
+	if !pol.RecordSessions {
 		return nil
 	}
-	return s.recordingStore().Start(actor, targetID, facade, remote)
+	rec := s.recordingStore().Start(actor, targetID, facade, remote)
+	if pol.RecordInput {
+		rec.CaptureInput()
+	}
+	return rec
 }
 
 // ListRecordings retourne les enregistrements de sessions de cette passerelle.

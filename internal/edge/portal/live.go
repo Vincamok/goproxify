@@ -170,7 +170,7 @@ func (r *LiveRegistry) ReapIdle(timeout time.Duration, now time.Time) []LiveSess
 }
 
 // touchChannel signale l'activité de l'utilisateur (données reçues du client SSH) et enregistre
-// la sortie envoyée à son terminal.
+// la sortie envoyée à son terminal, et sa saisie quand la politique le demande.
 type touchChannel struct {
 	ssh.Channel
 	h   *LiveHandle
@@ -181,6 +181,7 @@ func (c touchChannel) Read(p []byte) (int, error) {
 	n, err := c.Channel.Read(p)
 	if n > 0 {
 		c.h.Touch()
+		c.rec.Input(p[:n])
 	}
 	return n, err
 }
@@ -204,8 +205,23 @@ func (c touchRW) Read(p []byte) (int, error) {
 	n, err := c.ReadWriteCloser.Read(p)
 	if n > 0 {
 		c.h.Touch()
+		c.rec.Input(p[:n])
 	}
 	return n, err
+}
+
+// InitialSize et OnResize laissent passer la taille du terminal du navigateur jusqu'au pont SSH.
+func (c touchRW) InitialSize(wait time.Duration) (int, int, bool) {
+	if s, ok := c.ReadWriteCloser.(termSizer); ok {
+		return s.InitialSize(wait)
+	}
+	return 0, 0, false
+}
+
+func (c touchRW) OnResize(fn func(cols, rows int)) {
+	if s, ok := c.ReadWriteCloser.(termSizer); ok {
+		s.OnResize(fn)
+	}
 }
 
 func (c touchRW) Write(p []byte) (int, error) {

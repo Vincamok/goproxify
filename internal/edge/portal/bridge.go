@@ -179,7 +179,16 @@ func BridgeWebSSH(target dialTarget, rw io.ReadWriteCloser) error {
 	}
 	defer session.Close()
 
-	_ = session.RequestPty("xterm-256color", 40, 120, ssh.TerminalModes{})
+	// Le PTY prend la taille du terminal du navigateur, puis la suit : sans cela, la machine distante habille sa sortie pour une
+	// autre largeur et le prompt peut tomber hors de l'écran visible.
+	cols, rows := defaultCols, defaultRows
+	sizer, hasSizer := rw.(termSizer)
+	if hasSizer {
+		if c, r, ok := sizer.InitialSize(initialSizeWait); ok {
+			cols, rows = c, r
+		}
+	}
+	_ = session.RequestPty("xterm-256color", rows, cols, ssh.TerminalModes{})
 	stdin, err := session.StdinPipe()
 	if err != nil {
 		return err
@@ -190,6 +199,9 @@ func BridgeWebSSH(target dialTarget, rw io.ReadWriteCloser) error {
 	}
 	if err := session.Shell(); err != nil {
 		return err
+	}
+	if hasSizer {
+		sizer.OnResize(func(c, r int) { _ = session.WindowChange(r, c) })
 	}
 	go func() { _, _ = io.Copy(stdin, rw); _ = stdin.Close() }()
 	_, err = io.Copy(rw, stdout)

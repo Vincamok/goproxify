@@ -43,7 +43,7 @@ func TestStoreRoundTrip(t *testing.T) {
 
 func TestVaultSealOpen(t *testing.T) {
 	key := DeriveVaultKey("u1", "password123")
-	payload := VaultPayload{"t1": {Password: "secret", PrivateKey: "KEY"}}
+	payload := VaultPayload{Logins: map[string]PersonalLogin{"l1": {ID: "l1", Username: "root", Password: "secret", PrivateKey: "KEY", DestIDs: []string{"t1"}}}}
 	blob, err := SealVault(key, payload)
 	if err != nil {
 		t.Fatal(err)
@@ -52,8 +52,8 @@ func TestVaultSealOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out["t1"].Password != "secret" {
-		t.Fatalf("got %+v", out["t1"])
+	if l := out.Logins["l1"]; l.Password != "secret" || l.PrivateKey != "KEY" || len(l.DestIDs) != 1 {
+		t.Fatalf("got %+v", l)
 	}
 	bad := DeriveVaultKey("u1", "wrong")
 	if _, err := OpenVault(bad, blob); err == nil {

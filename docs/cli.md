@@ -1360,8 +1360,14 @@ goproxify access candidates publish -ids <id>,<id> [-tags a,b]
 goproxify access candidates ignore  -id <uuid>
 goproxify access candidates restore -id <uuid>
 
+goproxify access logins list    [-edge <nom>]
+goproxify access logins pubkey  -edge <nom>
+goproxify access logins create  -edge <nom> -username <u> [-name <n>] [-password-file <f> | -password-stdin true] [-key-file <f>] [-all-users true] [-groups <id>,<id>] [-tags a,b] [-dests <id>,<id>] [-dest-groups <id>] [-enabled true|false]
+goproxify access logins update  -id <uuid> [-username <u>] [-name <n>] [-password-file <f> | -password-stdin true] [-key-file <f>] [-clear-secret true] [-all-users true|false] [-groups …] [-tags …] [-dests …] [-dest-groups …] [-enabled true|false]
+goproxify access logins delete  -id <uuid>
+
 goproxify access policy get           -edge <nom>
-goproxify access policy set           -edge <nom> [-hours true -days 1,2,3,4,5 -start 07:00 -end 20:00 -tz Europe/Paris -ip <cidr,…> -idle <min> -record true -retention <jours>]
+goproxify access policy set           -edge <nom> [-hours true -days 1,2,3,4,5 -start 07:00 -end 20:00 -tz Europe/Paris -ip <cidr,…> -idle <min> -record true -record-input true -retention <jours>]
 goproxify access recordings list     -edge <nom>
 goproxify access recordings get      -edge <nom> -id <uuid> > session.cast
 goproxify access recordings delete   -edge <nom> -id <uuid>

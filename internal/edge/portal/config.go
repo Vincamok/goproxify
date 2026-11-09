@@ -83,13 +83,6 @@ type PersonalTarget struct {
 	Username  string     `json:"username,omitempty"` // login SSH cible (pas secret)
 }
 
-// TargetCreds sont les secrets d'une cible (stockés chiffrés dans le vault).
-type TargetCreds struct {
-	Username   string `json:"username,omitempty"` // login SSH cible (pas l'email Access)
-	Password   string `json:"password,omitempty"`
-	PrivateKey string `json:"private_key,omitempty"`
-}
-
 // UserStatus états d'un compte portail.
 const (
 	UserStatusInvited  = "invited"

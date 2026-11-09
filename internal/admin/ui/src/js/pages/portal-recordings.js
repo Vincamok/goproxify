@@ -69,6 +69,35 @@ function gpxCastTerm() {
   return { feed, text: () => rows.join('\n') };
 }
 
+// Journal de la saisie : les octets tapés rendus lisibles (⏎ Entrée, ⌫ retour arrière, ^C, flèches…).
+function gpxKeyLog() {
+  const arrows = { A: '↑', B: '↓', C: '→', D: '←', H: '⇱', F: '⇲' };
+  const tilde = { 1: '⇱', 2: 'Inser', 3: '⌦', 4: '⇲', 5: '⇞', 6: '⇟' };
+  let out = '';
+  const feed = (s) => {
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (ch === '\x1b') {
+        const n = s[i + 1];
+        if (n === '[' || n === 'O') {
+          let j = i + 2;
+          while (j < s.length && !/[@-~]/.test(s[j])) j++;
+          const body = s.slice(i + 2, j), fin = s[j];
+          out += fin === '~' ? '[' + (tilde[parseInt(body, 10)] || 'Fn') + ']' : (arrows[fin] || '[?]');
+          i = j;
+        } else { out += '⎋'; }
+      } else if (ch === '\r') { out += '⏎\n';
+      } else if (ch === '\n') { if (!out.endsWith('⏎\n')) out += '⏎\n';
+      } else if (ch === '\x7f' || ch === '\b') { out += '⌫';
+      } else if (ch === '\t') { out += '⇥';
+      } else if (ch < ' ') { out += '^' + String.fromCharCode(ch.charCodeAt(0) + 64);
+      } else { out += ch; }
+    }
+    if (out.length > 200000) out = out.slice(-200000);
+  };
+  return { feed, text: () => out };
+}
+
 pages['portal-recordings'] = async function() {
   const edgeName = state.selectedEdge?.node_name || '';
   const content = document.getElementById('content');
@@ -81,7 +110,7 @@ pages['portal-recordings'] = async function() {
   content.innerHTML = `
     <div class="card blueprint" style="padding:16px 18px">
       <div style="font-family:var(--font-heading);font-size:18px;font-weight:700;margin-bottom:4px">Enregistrements de sessions</div>
-      <p class="muted" style="font-size:12px;margin:0 0 12px">Ce que l'utilisateur voit dans son terminal (jamais ce qu'il tape), chiffré sur la passerelle. Activez l'enregistrement dans l'onglet Politiques. Chaque lecture est journalisée.</p>
+      <p class="muted" style="font-size:12px;margin:0 0 12px">Ce que l'utilisateur voit dans son terminal, et ce qu'il tape si la politique l'enregistre (hors mots de passe), chiffré sur la passerelle. Activez l'enregistrement dans l'onglet Politiques. Chaque lecture est journalisée.</p>
       <div id="prec-list" class="muted" style="font-size:12px">…</div>
     </div>`;
 
@@ -99,15 +128,17 @@ pages['portal-recordings'] = async function() {
     for (const ln of lines.slice(1)) {
       try {
         const [tt, kind, data] = JSON.parse(ln);
-        if (kind !== 'o') continue;
+        if (kind !== 'o' && kind !== 'i') continue;
         adj += Math.min(Math.max(0, tt - last), 2);
         last = tt;
-        events.push({ t: adj, d: data });
+        events.push({ t: adj, k: kind, d: data });
       } catch (_) { /* ligne illisible ignorée */ }
     }
     const total = events.length ? events[events.length - 1].t : 0;
     modal(esc(m.actor) + ' → ' + esc(m.target_id),
       `<pre id="prec-screen" style="background:#0b0d12;color:#d8dce8;font:12px/1.35 var(--font-mono, monospace);padding:12px;border-radius:6px;height:380px;overflow:auto;margin:0;white-space:pre"></pre>
+       ${m.input ? `<div style="font-size:11px;margin:10px 0 4px" class="muted">Saisie au clavier</div>
+       <pre id="prec-keys" style="background:#0b0d12;color:#e6c97a;font:12px/1.35 var(--font-mono, monospace);padding:8px 12px;border-radius:6px;height:90px;overflow:auto;margin:0;white-space:pre-wrap;word-break:break-all"></pre>` : ''}
        <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap">
          <button class="btn btn-secondary btn-sm" id="prec-play">Pause</button>
          <input type="range" id="prec-seek" min="0" max="${Math.max(1, Math.round(total * 100))}" value="0" style="flex:1;min-width:140px"/>
@@ -121,25 +152,30 @@ pages['portal-recordings'] = async function() {
     const seek = document.getElementById('prec-seek');
     const btn = document.getElementById('prec-play');
     const timeEl = document.getElementById('prec-time');
-    let term = gpxCastTerm(), idx = 0, clock = 0, playing = true, prev = performance.now();
+    const keysEl = document.getElementById('prec-keys');
+    let term = gpxCastTerm(), keys = gpxKeyLog(), idx = 0, clock = 0, playing = true, prev = performance.now();
     const paint = () => {
       const stick = screen.scrollTop + screen.clientHeight >= screen.scrollHeight - 20;
       screen.textContent = term.text();
       if (stick) screen.scrollTop = screen.scrollHeight;
+      if (keysEl) { keysEl.textContent = keys.text(); keysEl.scrollTop = keysEl.scrollHeight; }
       seek.value = Math.round(clock * 100);
       timeEl.textContent = dur(clock) + ' / ' + dur(total);
     };
     const advance = (to) => {
-      while (idx < events.length && events[idx].t <= to) term.feed(events[idx++].d);
+      while (idx < events.length && events[idx].t <= to) {
+        const e = events[idx++];
+        (e.k === 'i' ? keys : term).feed(e.d);
+      }
       clock = to;
     };
     seek.oninput = () => {
-      term = gpxCastTerm(); idx = 0;
+      term = gpxCastTerm(); keys = gpxKeyLog(); idx = 0;
       advance(seek.value / 100);
       paint();
     };
     btn.onclick = () => {
-      if (!playing && clock >= total) { term = gpxCastTerm(); idx = 0; clock = 0; }
+      if (!playing && clock >= total) { term = gpxCastTerm(); keys = gpxKeyLog(); idx = 0; clock = 0; }
       playing = !playing; prev = performance.now();
       btn.textContent = playing ? 'Pause' : 'Lecture';
     };
@@ -171,7 +207,7 @@ pages['portal-recordings'] = async function() {
           '<td>' + esc(new Date(m.started).toLocaleString()) + '</td>' +
           '<td>' + esc(m.actor) + '</td>' +
           '<td><code>' + esc(m.target_id) + '</code></td>' +
-          '<td>' + esc(m.facade) + '</td>' +
+          '<td>' + esc(m.facade) + (m.input ? ' <span class="muted" title="La saisie au clavier est enregistrée">+ saisie</span>' : '') + '</td>' +
           '<td>' + esc(dur(m.duration_sec)) + '</td>' +
           '<td>' + esc(size(m.bytes)) + '</td>' +
           '<td style="white-space:nowrap"><button class="btn btn-secondary btn-sm" data-play="' + esc(m.id) + '">Rejouer</button> ' +

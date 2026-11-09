@@ -209,7 +209,7 @@ Référence complète → **[docs/cli.md](docs/cli.md)**
 ### Admin (Control Plane)
 
 - **Interface web + API REST** — CRUD proxies, snippets, tokens, utilisateurs
-- **GoProxify Access** — catalogue destinations (vue globale / par Core), invite users par email (SMTP), tags, templates HTML Access, options portail par Core ; **sources de destinations** : la passerelle lit l'API d'une plateforme (Proxmox VE en premier) et propose ses VM et conteneurs comme destinations, une fois que vous les publiez
+- **GoProxify Access** — catalogue destinations (vue globale / par Core), invite users par email (SMTP), tags, templates HTML Access, options portail par Core ; **sources de destinations** : la passerelle lit l'API d'une plateforme (Proxmox VE en premier) et propose ses VM et conteneurs comme destinations, une fois que vous les publiez ; **coffre de logins** liés à une ou plusieurs destinations, personnels ou préconfigurés par un administrateur (comptes partagés dont l'utilisateur ne voit jamais le secret)
 - **Tokens API utilisateur (PAT)** — `gpx_pat_*` self-service à scopes (`proxies:read`, …) pour scripts et clients MCP ; distincts des tokens d'appairage Core/Agent
 - **Serveur MCP** — JSON-RPC 2.0 + SSE ; authentification **PAT uniquement** (pas de JWT de session)
 - **Wizard architecture** — toile hôtes + palette, multi-Core/HA, tickets QR / `curl|bash` pour intégrer un hôte

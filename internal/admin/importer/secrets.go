@@ -228,6 +228,7 @@ func AttachSecrets(db *sql.DB, b *Backup, dirs map[string]string, extra map[stri
 	}
 	sb := SecretBundle{Tables: exportRawTables(db, append(append([]string{}, secretTables...), backupTables...))}
 	pruneNonSecretTables(sb.Tables)
+	unsealNodeColumns(sb.Tables)
 	sb.Files = readDirs(dirs)
 	for name, data := range extra {
 		sb.Files["config/"+name] = data
@@ -326,6 +327,7 @@ func restoreSecrets(db *sql.DB, b *Backup, dirs map[string]string) (rows, files 
 		return 0, 0, nil, err
 	}
 	gwFiles := map[string][]byte{}
+	sealNodeColumns(sb.Tables)
 	order := append(append([]string{}, secretTables...), backupTables...)
 	rows, _ = applyTablesOrdered(db, sb.Tables, order, true, true)
 	// Les tables sans secret ne sont plus recopiées dans la section secrets (elles sont entières dans la

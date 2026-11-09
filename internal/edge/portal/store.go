@@ -39,6 +39,7 @@ type Snapshot struct {
 	Vaults       map[string][]byte           `json:"vaults"`   // userID → blob vault chiffré (clé user)
 	Personal     map[string][]PersonalTarget `json:"personal"` // userID → cibles
 	Catalog      []CatalogTarget             `json:"catalog"`
+	SharedLogins []SharedLogin               `json:"shared_logins,omitempty"` // logins préconfigurés (poussés par l'Admin), secrets scellés
 	AuthSessions map[string]AuthSession      `json:"auth_sessions,omitempty"`
 	Audit        []AuditEvent                `json:"audit,omitempty"`
 	Favorites    map[string][]string         `json:"favorites,omitempty"` // userID → target IDs (non secret)
@@ -171,6 +172,35 @@ func (s *Store) SetCatalog(items []CatalogTarget) error {
 	defer s.mu.Unlock()
 	s.snap.Catalog = items
 	return s.persistLocked()
+}
+
+// SetSharedLogins remplace les logins préconfigurés (push Admin).
+func (s *Store) SetSharedLogins(items []SharedLogin) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.snap.SharedLogins = items
+	return s.persistLocked()
+}
+
+// SharedLogins retourne une copie des logins préconfigurés.
+func (s *Store) SharedLogins() []SharedLogin {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]SharedLogin, len(s.snap.SharedLogins))
+	copy(out, s.snap.SharedLogins)
+	return out
+}
+
+// FindSharedLogin retourne un login préconfiguré.
+func (s *Store) FindSharedLogin(id string) (SharedLogin, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, l := range s.snap.SharedLogins {
+		if l.ID == id {
+			return l, true
+		}
+	}
+	return SharedLogin{}, false
 }
 
 // Catalog retourne une copie du catalogue.

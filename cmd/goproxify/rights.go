@@ -43,7 +43,7 @@ var commandDeclarations = map[string]commandRights{
 	"import":        needs("proxies:import"),
 	"alert":         needs("alerts:read", "alerts:ack", "alerts:rules", "alert_channels:read", "alert_channels:manage"),
 	"status":        needs("infra:read"),
-	"access":        needs("portal_requests:read", "portal_requests:decide", "portal_sessions:read", "portal_sessions:cut", "portal_recordings:list", "portal_recordings:delete", "portal_catalog:read", "portal_catalog:manage", "portal_catalog:sources", "portal_users:read", "portal_users:manage", "portal_policies:read", "portal_policies:manage", "portal_audit:read", "portal_templates:read", "portal_templates:manage"),
+	"access":        needs("portal_requests:read", "portal_requests:decide", "portal_sessions:read", "portal_sessions:cut", "portal_recordings:list", "portal_recordings:delete", "portal_catalog:read", "portal_catalog:manage", "portal_catalog:sources", "portal_catalog:logins", "portal_users:read", "portal_users:manage", "portal_policies:read", "portal_policies:manage", "portal_audit:read", "portal_templates:read", "portal_templates:manage"),
 	"nodes":         needs("infra:read", "infra:classify", "architecture:write", "enrol:create"),
 	"declared":      needs("infra:read", "architecture:write"),
 	"hosts":         needs("infra:read", "enrol:create"),

@@ -364,6 +364,7 @@ func portalTools() []map[string]any {
 				opt("idle_timeout_min", "number", "Fermeture après N minutes sans saisie ; 0 = jamais"),
 				opt("record_sessions", "boolean", "Enregistrer la sortie des terminaux (rejeu dans l'admin)"),
 				opt("record_retention_days", "number", "Jours de conservation des enregistrements ; 0 = 90 jours (défaut), -1 = illimitée"),
+				opt("record_input", "boolean", "Enregistrer aussi la saisie au clavier (sauf après une invite de mot de passe) ; exige record_sessions"),
 			),
 		},
 		{
@@ -797,7 +798,7 @@ func (h *Handler) toolSetPortalPolicy(r *http.Request, args map[string]any) (any
 		return nil, fmt.Errorf("edge requis")
 	}
 	body := map[string]any{}
-	for _, k := range []string{"hours_enabled", "days", "start_time", "end_time", "timezone", "ip_allow", "idle_timeout_min", "record_sessions", "record_retention_days"} {
+	for _, k := range []string{"hours_enabled", "days", "start_time", "end_time", "timezone", "ip_allow", "idle_timeout_min", "record_sessions", "record_retention_days", "record_input"} {
 		if v, ok := args[k]; ok {
 			body[k] = v
 		}

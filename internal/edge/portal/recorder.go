@@ -36,10 +36,12 @@ type RecordingMeta struct {
 	DurationSec float64 `json:"duration_sec"`
 	Bytes       int     `json:"bytes"`
 	Truncated   bool    `json:"truncated,omitempty"`
+	Input       bool    `json:"input,omitempty"` // la saisie au clavier est enregistrée (événements "i")
 }
 
-// RecordingStore range les enregistrements de sessions : sortie du terminal (format asciicast v2),
-// chiffrée au repos avec une clé dérivée du secret du portail. La saisie de l'utilisateur n'est jamais gardée.
+// RecordingStore range les enregistrements de sessions : sortie du terminal (format asciicast v2, événements "o"),
+// chiffrée au repos avec une clé dérivée du secret du portail. La saisie (événements "i") n'est gardée que si la politique
+// le demande (record_input), et jamais pendant une invite de mot de passe.
 type RecordingStore struct {
 	dir string
 	key [32]byte
@@ -65,6 +67,31 @@ type Recording struct {
 	mu        sync.Mutex
 	buf       bytes.Buffer
 	truncated bool
+
+	captureInput bool
+	// tail : fin de la dernière ligne envoyée au terminal (sans retour à la ligne), pour reconnaître une invite de secret.
+	tail []byte
+	// masked : une invite de secret est ouverte, la saisie n'est pas gardée jusqu'à Entrée (ou Ctrl+C / Ctrl+D).
+	masked bool
+}
+
+const maxPromptTail = 512
+
+// secretPromptRe reconnaît la fin d'une invite qui attend un secret (sudo, ssh, mysql, su, passwd, codes à usage unique…).
+// Le PTY distant masque la saisie sans que la passerelle le sache : c'est la seule indication disponible, au mieux.
+var secretPromptRe = regexp.MustCompile(`(?i)(password|passphrase|passcode|mot de passe|mdp|\bpin\b|secret|token|jeton|otp|verification code|code de v[ée]rification)[^\r\n]{0,80}[:?]\s*$`)
+
+var ansiRe = regexp.MustCompile(`\x1b(\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1b]*(\x07|\x1b\\)|[@-Z\\-_])`)
+
+// CaptureInput active l'enregistrement de la saisie ; sûr d'appel sur un pointeur nul.
+func (r *Recording) CaptureInput() {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.captureInput = true
+	r.meta.Input = true
+	r.mu.Unlock()
 }
 
 // Start ouvre l'enregistrement d'une session.
@@ -97,11 +124,57 @@ func (r *Recording) Output(p []byte) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.captureInput {
+		r.trackPrompt(p)
+	}
+	r.add("o", string(p))
+}
+
+// Input ajoute des octets tapés par l'utilisateur. Sans effet si la politique n'enregistre pas la saisie. Ce qui est tapé
+// après une invite de secret n'est jamais gardé : un marqueur le remplace.
+func (r *Recording) Input(p []byte) {
+	if r == nil || len(p) == 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.captureInput {
+		return
+	}
+	if !r.masked && secretPromptRe.Match(ansiRe.ReplaceAll(r.tail, nil)) {
+		r.masked = true
+		r.add("i", "[masqué]")
+	}
+	if r.masked {
+		end := bytes.IndexAny(p, "\r\n\x03\x04")
+		if end < 0 {
+			return
+		}
+		r.masked = false
+		r.tail = r.tail[:0]
+		p = p[end:]
+	}
+	r.add("i", string(p))
+}
+
+// trackPrompt tient à jour la dernière ligne affichée, sans le retour à la ligne.
+func (r *Recording) trackPrompt(p []byte) {
+	if i := bytes.LastIndexByte(p, '\n'); i >= 0 {
+		r.tail = r.tail[:0]
+		p = p[i+1:]
+	}
+	r.tail = append(r.tail, p...)
+	if len(r.tail) > maxPromptTail {
+		r.tail = append(r.tail[:0], r.tail[len(r.tail)-maxPromptTail:]...)
+	}
+}
+
+func (r *Recording) add(kind, data string) {
 	if r.truncated || r.buf.Len() > maxRecordingBytes {
 		r.truncated = true
 		return
 	}
-	line, _ := json.Marshal([]any{time.Since(r.start).Seconds(), "o", string(p)})
+	line, _ := json.Marshal([]any{time.Since(r.start).Seconds(), kind, data})
 	r.buf.Write(line)
 	r.buf.WriteByte('\n')
 }

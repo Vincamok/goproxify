@@ -76,3 +76,18 @@ func (s *Server) handleDestSourceSync(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusAccepted)
 }
+
+// handlePortalLoginPubKey donne à l'Admin la clé publique avec laquelle sceller les secrets des logins préconfigurés du portail
+// (ADR 0025). Tous les membres d'un groupe HA, qui partagent la clé maître du portail, répondent la même.
+func (s *Server) handlePortalLoginPubKey(w http.ResponseWriter, r *http.Request) {
+	if s.portal == nil {
+		http.Error(w, "portail indisponible", http.StatusServiceUnavailable)
+		return
+	}
+	key, err := s.portal.LoginSealPublicKey()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	writeJSON(w, map[string]string{"public_key": key})
+}

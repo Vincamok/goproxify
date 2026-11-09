@@ -60,9 +60,9 @@ Un enregistrement par finalité. Les durées sont les **défauts** d'une install
 |---|---|
 | Finalité | Accès privilégiés tracés aux systèmes internes |
 | Base légale | Intérêt légitime (sécurité) ; information préalable des utilisateurs obligatoire `[à compléter]` |
-| Données | Identité du compte (OIDC/local), cible, durée, journal des connexions. **Enregistrement des sessions** (sortie du terminal, jamais la saisie) : désactivé par défaut |
+| Données | Identité du compte (OIDC/local), cible, durée, journal des connexions. **Enregistrement des sessions** (sortie du terminal ; la saisie au clavier seulement si `record_input` est activé, hors mots de passe) : désactivé par défaut |
 | Durée | Enregistrements : 90 jours par défaut (`record_retention_days`) ; `-1` pour une conservation illimitée, à justifier |
-| Secrets | Identifiants et clés du coffre : chiffrés AES-GCM sur la passerelle, jamais envoyés à l'Admin |
+| Secrets | Identifiants et clés du coffre : chiffrés AES-GCM sur la passerelle, jamais envoyés à l'Admin en clair. Les secrets des logins préconfigurés sont scellés pour la passerelle (ECIES) avant d'atteindre l'Admin, qui ne stocke et ne relaie que l'enveloppe chiffrée ([ADR 0025](adr/0025-coffre-du-portail-logins-et-liaisons.md)) |
 
 ### 1.6 Intégrations choisies par l'opérateur
 

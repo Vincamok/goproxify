@@ -142,11 +142,13 @@ async function renderPortalCatalogPage(ctx) {
           ${tabBtn('dests', t('pcatalog.tab_dests') || 'Destinations', filtered().length)}
           ${tabBtn('groups', t('pcatalog.tab_groups') || 'Groupes', filteredGroups().length)}
           ${tabBtn('sources', t('psrc.tab'), '')}
+          ${tabBtn('logins', t('plog.tab'), '')}
         </div>`;
 
-      if (tab === 'sources') {
-        // Sources de destinations (ADR 0024) : page propre, qui charge ses données.
-        document.getElementById('topbar-actions').innerHTML = `<button class="btn btn-primary" id="pc-add-source">${esc(t('psrc.add'))}</button>`;
+      if (tab === 'sources' || tab === 'logins') {
+        // Sources de destinations (ADR 0024) et logins préconfigurés (ADR 0025) : pages propres, qui chargent leurs données.
+        const isLogins = tab === 'logins';
+        document.getElementById('topbar-actions').innerHTML = `<button class="btn btn-primary" id="pc-add-source">${esc(t(isLogins ? 'plog.add' : 'psrc.add'))}</button>`;
         content.innerHTML = `${headHTML()}
           ${isAdmin ? `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:14px">
             <button type="button" class="chip" data-edge="" style="cursor:pointer;${!window._pcFilter.edge ? 'border-color:var(--accent);color:var(--accent)' : ''}">${esc(t('pcatalog.all_edges') || 'Tous')}</button>
@@ -158,10 +160,10 @@ async function renderPortalCatalogPage(ctx) {
           isAdmin, edges,
           edgeFilter: () => (isAdmin ? window._pcFilter.edge : edgeName),
           scopeEdge: () => (isAdmin ? (window._pcFilter.edge || (edges[0] && (edges[0].node_name || edges[0].id)) || '') : edgeName),
-          state: window._pcSourcesState,
+          state: isLogins ? undefined : window._pcSourcesState,
         };
-        PortalSources.mount(document.getElementById('ps-host'), sctx).then(() => {
-          window._pcSourcesState = sctx.state;
+        (isLogins ? PortalLogins : PortalSources).mount(document.getElementById('ps-host'), sctx).then(() => {
+          if (!isLogins) window._pcSourcesState = sctx.state;
           const add = document.getElementById('pc-add-source');
           if (add) add.onclick = () => sctx.onAdd && sctx.onAdd();
         });
@@ -342,7 +344,13 @@ async function renderPortalCatalogPage(ctx) {
               <div class="field" style="margin-bottom:8px"><label class="field-label">Container</label><input class="input" id="pe-container" value="${esc(d.container || '')}"/></div>
             </div>
             <div class="field" style="margin-bottom:8px"><label class="field-label">Tags</label>
-              <input class="input" id="pe-tags" value="${esc((d.tags || []).join(', '))}" placeholder="prod, devops"/>
+              ${PortalUI.tagInput('pe-tags', d.tags, {
+                placeholder: t('pcatalog.tag_add'),
+                removeLabel: t('pcatalog.tag_remove'),
+                label: 'Tags',
+                suggestions: (window._portalCatalogAll || []).flatMap(x => x.tags || []),
+              })}
+              <div style="font-size:11px;color:var(--text2);margin-top:4px">${esc(t('pcatalog.tag_hint'))}</div>
             </div>
             <label style="display:flex;align-items:center;gap:8px;margin:10px 0;font-size:13px">
               <input type="checkbox" id="pe-enabled" ${d.enabled !== false ? 'checked' : ''}/> ${esc(t('common.enabled') || 'Activé')}
@@ -356,6 +364,7 @@ async function renderPortalCatalogPage(ctx) {
         </div>`);
 
       window._pcCloseEditor = () => document.getElementById('pc-editor-backdrop')?.remove();
+      PortalUI.bindTagInput(document, 'pe-tags');
 
       const syncKind = () => {
         const docker = document.getElementById('pe-kind').value === 'docker';
@@ -390,7 +399,7 @@ async function renderPortalCatalogPage(ctx) {
             port: +document.getElementById('pe-port').value || 22,
             agent_name: document.getElementById('pe-agent').value.trim(),
             container: document.getElementById('pe-container').value.trim(),
-            tags: document.getElementById('pe-tags').value.split(',').map(s => s.trim()).filter(Boolean),
+            tags: PortalUI.tagValues(document, 'pe-tags'),
             enabled: document.getElementById('pe-enabled').checked,
           };
           let saved;

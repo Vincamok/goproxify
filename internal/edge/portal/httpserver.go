@@ -6,7 +6,7 @@ package portal
 import (
 	"github.com/vincamok/goproxify/internal/edge/middleware"
 	"github.com/vincamok/goproxify/internal/httpx"
-	"context"
+	"errors"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -44,6 +45,7 @@ type HTTPServer struct {
 	sendEmailOTP      func(email, code string) error
 	pageTemplates     *TemplateStore
 	loginLimit        *middleware.AuthFailLimiter // essais de mot de passe du formulaire de connexion
+	vaultMu           sync.Mutex                  // sérialise les lectures-écritures du coffre d'un utilisateur
 }
 
 type portalToken struct {
@@ -98,9 +100,12 @@ func (h *HTTPServer) Handler() http.Handler {
 	mux.HandleFunc("GET /api/targets", h.auth(h.handleListTargets))
 	mux.HandleFunc("POST /api/targets", h.auth(h.handleUpsertTarget))
 	mux.HandleFunc("DELETE /api/targets/{id}", h.auth(h.handleDeleteTarget))
-	mux.HandleFunc("GET /api/vault", h.auth(h.handleListVault))
-	mux.HandleFunc("PUT /api/vault/{id}", h.auth(h.handlePutVault))
-	mux.HandleFunc("DELETE /api/vault/{id}", h.auth(h.handleDeleteVault))
+	mux.HandleFunc("GET /api/targets/{dest}/logins", h.auth(h.handleDestLogins))
+	mux.HandleFunc("GET /api/vault", h.auth(h.handleGetVault))
+	mux.HandleFunc("POST /api/vault/logins", h.auth(h.handleCreateVaultLogin))
+	mux.HandleFunc("PUT /api/vault/logins/{id}", h.auth(h.handleUpdateVaultLogin))
+	mux.HandleFunc("DELETE /api/vault/logins/{id}", h.auth(h.handleDeleteVaultLogin))
+	mux.HandleFunc("PUT /api/vault/defaults/{dest}", h.auth(h.handlePutVaultDefault))
 	mux.HandleFunc("POST /api/sessions", h.auth(h.handleCreateSession))
 	mux.HandleFunc("GET /api/sessions", h.auth(h.handleListSessions))
 	mux.HandleFunc("DELETE /api/sessions/{id}", h.auth(h.handleRevokeSession))
@@ -538,9 +543,24 @@ func (h *HTTPServer) handleUpsertTarget(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	if body.Password != "" || body.PrivateKey != "" {
-		if err := PutTargetCreds(h.store, pt.UserID, pt.VaultKey, body.ID, TargetCreds{
-			Username: body.Username, Password: body.Password, PrivateKey: body.PrivateKey,
-		}); err != nil {
+		// Les secrets saisis avec la cible deviennent un login personnel lié à cette seule cible.
+		loginID := personalTargetLoginID(body.ID)
+		h.vaultMu.Lock()
+		err := UpdateVault(h.store, pt.UserID, pt.VaultKey, func(p *VaultPayload) error {
+			l := p.Logins[loginID]
+			l.ID, l.Name, l.Username = loginID, body.Name, strings.TrimSpace(body.Username)
+			if body.Password != "" {
+				l.Password = body.Password
+			}
+			if body.PrivateKey != "" {
+				l.PrivateKey = body.PrivateKey
+			}
+			l.DestIDs = addUnique(l.DestIDs, body.ID)
+			p.Logins[loginID] = l
+			return nil
+		})
+		h.vaultMu.Unlock()
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -555,73 +575,35 @@ func (h *HTTPServer) handleDeleteTarget(w http.ResponseWriter, r *http.Request, 
 	}
 	id := r.PathValue("id")
 	_ = h.store.DeletePersonalTarget(pt.UserID, id)
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (h *HTTPServer) handleListVault(w http.ResponseWriter, r *http.Request, pt portalToken) {
-	meta, err := ListVaultMeta(h.store, pt.UserID, pt.VaultKey)
-	if err != nil {
-		http.Error(w, "vault illisible", http.StatusUnauthorized)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"entries": meta})
-}
-
-func (h *HTTPServer) handlePutVault(w http.ResponseWriter, r *http.Request, pt portalToken) {
-	id := r.PathValue("id")
-	if id == "" {
-		http.Error(w, "target id requis", http.StatusBadRequest)
-		return
-	}
-	var body struct {
-		Username   string `json:"username"`
-		Password   string `json:"password"`
-		PrivateKey string `json:"private_key"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "bad json", http.StatusBadRequest)
-		return
-	}
-	existing, _, err := GetTargetCreds(h.store, pt.UserID, pt.VaultKey, id)
-	if err != nil {
-		http.Error(w, "vault illisible", http.StatusUnauthorized)
-		return
-	}
-	creds := existing
-	if u := strings.TrimSpace(body.Username); u != "" {
-		creds.Username = u
-	}
-	if body.Password != "" {
-		creds.Password = body.Password
-	}
-	if body.PrivateKey != "" {
-		creds.PrivateKey = body.PrivateKey
-	}
-	if strings.TrimSpace(creds.Username) == "" {
-		http.Error(w, "login SSH requis", http.StatusBadRequest)
-		return
-	}
-	if creds.Password == "" && creds.PrivateKey == "" {
-		http.Error(w, "mot de passe ou clé privée requis", http.StatusBadRequest)
-		return
-	}
-	if err := PutTargetCreds(h.store, pt.UserID, pt.VaultKey, id, creds); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, http.StatusOK, VaultEntryMeta{
-		TargetID: id, Username: creds.Username,
-		HasPassword: creds.Password != "", HasPrivateKey: creds.PrivateKey != "",
+	// Une cible supprimée ne laisse ni lien ni login créé avec elle dans le coffre.
+	h.vaultMu.Lock()
+	_ = UpdateVault(h.store, pt.UserID, pt.VaultKey, func(p *VaultPayload) error {
+		delete(p.Logins, personalTargetLoginID(id))
+		for lid, l := range p.Logins {
+			l.DestIDs = removeID(l.DestIDs, id)
+			p.Logins[lid] = l
+		}
+		delete(p.Defaults, id)
+		return nil
 	})
+	h.vaultMu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *HTTPServer) handleDeleteVault(w http.ResponseWriter, r *http.Request, pt portalToken) {
-	id := r.PathValue("id")
-	if err := DeleteTargetCreds(h.store, pt.UserID, pt.VaultKey, id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+// catalogVisible dit si une destination du catalogue est offerte à l'utilisateur sur l'entrée où il est connecté : dans la
+// liste de l'entrée, ou visible par ses tags, ou accordée pour une durée limitée.
+func (h *HTTPServer) catalogVisible(r *http.Request, pt portalToken, c CatalogTarget) bool {
+	view := h.viewFor(r)
+	if !view.AllowsTarget(c.ID) {
+		return false
 	}
-	w.WriteHeader(http.StatusNoContent)
+	if view.HasTargets() {
+		return true
+	}
+	if _, granted := h.grants.Expiry(pt.UserID, c.ID); granted {
+		return true
+	}
+	return CatalogVisible(h.userTags(pt.UserID), c.Tags)
 }
 
 func (h *HTTPServer) handleCreateSession(w http.ResponseWriter, r *http.Request, pt portalToken) {
@@ -632,6 +614,7 @@ func (h *HTTPServer) handleCreateSession(w http.ResponseWriter, r *http.Request,
 		TargetID string        `json:"target_id"`
 		Source   string        `json:"source"`
 		Facade   SessionFacade `json:"facade"`
+		LoginID  string        `json:"login_id"` // LoginRef du login choisi quand plusieurs s'appliquent
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
@@ -645,47 +628,21 @@ func (h *HTTPServer) handleCreateSession(w http.ResponseWriter, r *http.Request,
 	switch body.Source {
 	case "catalog":
 		c, ok := h.store.FindCatalogTarget(body.TargetID)
-		if !ok {
+		if !ok || !h.catalogVisible(r, pt, c) {
 			http.Error(w, "cible catalogue introuvable", http.StatusNotFound)
-			return
-		}
-		view := h.viewFor(r)
-		if !view.AllowsTarget(c.ID) {
-			http.Error(w, "cible catalogue introuvable", http.StatusNotFound)
-			return
-		}
-		if _, granted := h.grants.Expiry(pt.UserID, c.ID); !view.HasTargets() && !granted && !CatalogVisible(h.userTags(pt.UserID), c.Tags) {
-			http.Error(w, "cible catalogue introuvable", http.StatusNotFound)
-			return
-		}
-		creds, _, err := GetTargetCreds(h.store, pt.UserID, pt.VaultKey, body.TargetID)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		port := c.Port
 		if port <= 0 {
 			port = 22
 		}
-		sshUser := strings.TrimSpace(creds.Username)
 		dial = dialTarget{
 			Kind: c.Kind, Host: c.Host, Port: port,
-			Username: sshUser, Password: creds.Password, PrivateKey: creds.PrivateKey,
 			AgentName: c.AgentName, Container: c.Container,
 		}
 		if c.Kind == TargetDocker {
-			dial.Username = ""
 			if c.AgentName == "" || c.Container == "" {
 				http.Error(w, "catalogue docker: agent_name + container requis", http.StatusBadRequest)
-				return
-			}
-		} else {
-			if dial.Username == "" {
-				http.Error(w, "renseignez le login SSH dans le coffre (pas l'email Access)", http.StatusBadRequest)
-				return
-			}
-			if creds.Password == "" && creds.PrivateKey == "" {
-				http.Error(w, "ajoutez mot de passe ou clé privée dans le coffre", http.StatusBadRequest)
 				return
 			}
 		}
@@ -699,32 +656,37 @@ func (h *HTTPServer) handleCreateSession(w http.ResponseWriter, r *http.Request,
 			http.Error(w, "cible introuvable", http.StatusNotFound)
 			return
 		}
-		creds, _, err := GetTargetCreds(h.store, pt.UserID, pt.VaultKey, body.TargetID)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
 		if p.Kind == TargetDocker {
 			http.Error(w, "cibles docker personnelles interdites — utilisez le catalogue", http.StatusForbidden)
 			return
 		}
-		user := strings.TrimSpace(creds.Username)
-		if user == "" {
-			user = strings.TrimSpace(p.Username)
-		}
-		if user == "" {
-			http.Error(w, "renseignez le login SSH (coffre ou cible)", http.StatusBadRequest)
-			return
-		}
-		if creds.Password == "" && creds.PrivateKey == "" {
-			http.Error(w, "ajoutez mot de passe ou clé privée dans le coffre", http.StatusBadRequest)
-			return
-		}
 		dial = dialTarget{
-			Kind: p.Kind, Host: p.Host, Port: p.Port, Username: user,
-			Password: creds.Password, PrivateKey: creds.PrivateKey,
+			Kind: p.Kind, Host: p.Host, Port: p.Port,
 			AgentName: p.AgentName, Container: p.Container,
 		}
+	}
+
+	// Une destination SSH s'ouvre avec un login du coffre ; Docker passe par l'Agent et n'en veut aucun.
+	loginNote := ""
+	if dial.Kind != TargetDocker {
+		res, choices, err := h.resolveLogin(pt, body.TargetID, body.LoginID)
+		switch {
+		case errors.Is(err, errLoginRequired):
+			writeJSON(w, http.StatusConflict, map[string]any{"error": "login_required", "message": "plusieurs logins s'appliquent : choisissez-en un", "logins": choices})
+			return
+		case errors.Is(err, errNoLogin):
+			http.Error(w, "aucun login n'est lié à cette destination : ajoutez-en un dans le coffre (pas l'email Access)", http.StatusBadRequest)
+			return
+		case errors.Is(err, errLoginNotApplicable):
+			http.Error(w, "ce login ne s'applique pas à cette destination", http.StatusBadRequest)
+			return
+		case err != nil:
+			h.log.Warn("portail: login inutilisable", "err", err)
+			http.Error(w, "login inutilisable : "+err.Error(), http.StatusBadGateway)
+			return
+		}
+		dial.Username, dial.Password, dial.PrivateKey = res.Username, res.Secret.Password, res.Secret.PrivateKey
+		loginNote = " coffre=" + res.Choice.Name + " (" + res.Choice.Origin + ")"
 	}
 
 	sess := h.sessions.Create(pt.UserID, pt.Username, body.TargetID, dial, body.Facade, h.sessionTTL(), h.sessionMode())
@@ -740,7 +702,7 @@ func (h *HTTPServer) handleCreateSession(w http.ResponseWriter, r *http.Request,
 	}
 	h.emitAudit(AuditEvent{
 		Actor: pt.Username, TargetID: body.TargetID, Facade: body.Facade,
-		Success: true, Detail: "session_created",
+		Success: true, Detail: "session_created" + loginNote,
 	})
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"uuid":       sess.ID,
@@ -837,7 +799,7 @@ func (h *HTTPServer) handleWS(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	rec := h.startRecording(sess.Username, sess.TargetID, string(FacadeWeb), r.RemoteAddr)
 	defer rec.Close()
-	rw := touchRW{ReadWriteCloser: &wsRW{ctx: ctx, c: c}, h: live, rec: rec}
+	rw := touchRW{ReadWriteCloser: newWSRW(ctx, c), h: live, rec: rec}
 
 	if sess.Target.Kind == TargetDocker {
 		if h.shell == nil {
@@ -871,28 +833,6 @@ func (h *HTTPServer) handleWS(w http.ResponseWriter, r *http.Request) {
 		Actor: sess.Username, TargetID: sess.TargetID, Facade: FacadeWeb,
 		Success: err == nil || err == io.EOF, Detail: "end",
 	})
-}
-
-type wsRW struct {
-	ctx context.Context
-	c   *websocket.Conn
-}
-
-func (w *wsRW) Read(p []byte) (int, error) {
-	_, data, err := w.c.Read(w.ctx)
-	if err != nil {
-		return 0, err
-	}
-	return copy(p, data), nil
-}
-
-func (w *wsRW) Write(p []byte) (int, error) {
-	err := w.c.Write(w.ctx, websocket.MessageBinary, p)
-	return len(p), err
-}
-
-func (w *wsRW) Close() error {
-	return w.c.Close(websocket.StatusNormalClosure, "")
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

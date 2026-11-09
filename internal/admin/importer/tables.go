@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vincamok/goproxify/internal/admin/auth"
 	"github.com/vincamok/goproxify/internal/sqltime"
 )
 
@@ -45,6 +46,7 @@ var backupTables = []string{
 	"portal_dest_groups",
 	"portal_dest_sources",
 	"portal_dest_candidates",
+	"portal_logins",
 	"automation_silences",
 	"flow_versions",
 	"portal_page_templates",
@@ -54,7 +56,52 @@ var backupTables = []string{
 var blobColumns = map[string]bool{"error_page_assets.content": true, "plugins.wasm": true}
 
 // clearedColumns : colonnes dont la valeur ne doit jamais sortir de la base.
-var clearedColumns = map[string]bool{"portal_users.invite_token_hash": true}
+//
+// Portail Access : `portal_dest_sources.config_enc` porte les identifiants d'API des fournisseurs (scellés par la clé de nœud de
+// l'Admin), `portal_logins.secret_sealed` l'enveloppe chiffrée d'un login préconfiguré (illisible de l'Admin, mais jamais en
+// clair dans la section standard non plus). Les deux voyagent dans la section secrets, chiffrée par la clé de sauvegarde.
+var clearedColumns = map[string]bool{
+	"portal_users.invite_token_hash": true,
+	"portal_dest_sources.config_enc": true,
+	"portal_logins.secret_sealed":    true,
+}
+
+// nodeSealedColumns : colonnes scellées par la clé de nœud de l'Admin (auth.SealNodeToken), dérivée du secret JWT ou de
+// GPX_NODE_TOKEN_KEY. Ce secret n'est pas restauré : à la reconstruction d'un Admin, le JWT est régénéré et une valeur scellée
+// avec l'ancienne clé deviendrait illisible, sans erreur visible (la source se lirait « sans configuration »). La section
+// secrets les porte donc en clair (elle est chiffrée par la clé de sauvegarde) et la restauration les scelle avec la clé de
+// l'Admin qui restaure.
+var nodeSealedColumns = map[string]bool{"portal_dest_sources.config_enc": true}
+
+// unsealNodeColumns remplace, dans les lignes d'une section secrets, les valeurs scellées par la clé de nœud par leur contenu.
+// Une valeur illisible (clé de nœud déjà changée) est gardée telle quelle.
+func unsealNodeColumns(tables map[string][]map[string]any) {
+	for table, rows := range tables {
+		for _, row := range rows {
+			for col, v := range row {
+				if s, ok := v.(string); ok && s != "" && nodeSealedColumns[table+"."+col] {
+					if plain, err := auth.OpenNodeToken(s); err == nil && plain != "" {
+						row[col] = plain
+					}
+				}
+			}
+		}
+	}
+}
+
+// sealNodeColumns scelle avec la clé de nœud courante les valeurs que unsealNodeColumns a rendues en clair. Une valeur déjà
+// scellée (ancienne sauvegarde) est laissée telle quelle par SealNodeToken.
+func sealNodeColumns(tables map[string][]map[string]any) {
+	for table, rows := range tables {
+		for _, row := range rows {
+			for col, v := range row {
+				if s, ok := v.(string); ok && s != "" && nodeSealedColumns[table+"."+col] {
+					row[col] = auth.SealNodeToken(s)
+				}
+			}
+		}
+	}
+}
 
 var secretFragments = []string{"secret", "password", "passwd", "token", "api_key", "apikey", "private_key", "credential", "webhook_url", "authorization", "routing_key"}
 
@@ -241,6 +288,16 @@ func applyTablesOrdered(db *sql.DB, tables map[string][]map[string]any, order []
 				if s, ok := v.(string); ok && blobColumns[table+"."+c] {
 					if b, err := base64.StdEncoding.DecodeString(s); err == nil {
 						v = b
+					}
+				}
+				// Une colonne vidée à l'export (secret) n'efface pas la valeur en place : sans cela, restaurer la section
+				// standard seule sur une instance qui a ses secrets les écraserait par du vide.
+				if s, ok := v.(string); ok && s == "" && clearedColumns[table+"."+c] {
+					if id, hasID := row["id"]; hasID {
+						var cur string
+						if db.QueryRow(`SELECT `+c+` FROM `+table+` WHERE id=?`, id).Scan(&cur) == nil {
+							v = cur
+						}
 					}
 				}
 				cols = append(cols, c)

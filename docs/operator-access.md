@@ -74,6 +74,19 @@ Plutôt que de saisir chaque machine, **Catalogue Access › Sources** relie le 
 
 La publication automatique (« Publish discovered machines automatically ») est désactivée par défaut : activée, toute machine découverte avec une adresse devient visible sans validation. Droit requis pour créer, modifier, supprimer ou tester une source : `portal_catalog:sources` (elle porte des identifiants d'API) ; publier relève de `portal_catalog:manage`.
 
+## Coffre : logins et liaisons
+
+Le coffre relie des **logins** à des **destinations**. Un login se lie à une ou plusieurs destinations, et une destination peut avoir plusieurs logins. Il y a deux sortes de logins :
+
+- **Manuels** : l'utilisateur les crée dans l'onglet *Coffre* du portail (nom, login SSH, mot de passe ou clé privée, destinations liées). Son mot de passe de connexion dérive la clé qui les chiffre ; l'administrateur ne les voit pas.
+- **Préconfigurés** : l'administrateur les crée dans **Catalogue Access › Logins** pour un compte partagé (`root`, `deploy`…). Il choisit qui peut s'en servir (groupes Access, tags d'utilisateur, ou « tout utilisateur qui voit la destination » ; **sans aucun de ces choix, personne**) et les destinations ou groupes de destinations liés. L'utilisateur le voit dans son coffre (nom, compte, destinations) mais **jamais le secret**.
+
+**Le secret d'un login préconfiguré** est chiffré dans le navigateur de l'administrateur avec la clé publique de la passerelle (le navigateur doit être en HTTPS ou sur localhost). L'Admin ne stocke et ne relaie que l'enveloppe chiffrée ; la passerelle l'ouvre à la connexion, depuis sa copie locale, donc même Admin éteint. Toutes les passerelles d'un groupe HA doivent partager la même clé maître du portail (`GPX_PORTAL_MASTER_KEY`, ou le secret d'appairage) : sinon les secrets scellés pour l'une sont illisibles pour l'autre, et le message d'erreur demande de les ressaisir. En ligne de commande, `goproxify access logins create -password-file …` scelle le secret localement ; ne jamais passer un mot de passe en argument.
+
+**À la connexion**, un seul login applicable est employé. S'il y en a plusieurs, le portail demande lequel, et l'utilisateur peut le retenir pour cette destination. Un login n'ouvre jamais une destination que l'utilisateur ne voit pas déjà (tags, entrée, accès temporaire). Le journal d'audit indique le nom du login utilisé et son origine, jamais son secret. Les destinations Docker passent par l'Agent et n'ont pas besoin de login.
+
+**Mise à jour d'une version antérieure** : l'ancien coffre (une entrée par destination) n'est pas converti ; chaque utilisateur ressaisit ses logins.
+
 ## Supervision
 
 - Logs d'accès : Admin → **Logs** → filtre `source=access`

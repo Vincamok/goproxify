@@ -88,6 +88,7 @@ func (s *Server) startInternalAPI() error {
 	mux.HandleFunc("DELETE /internal/v1/waf/behavior/profiles/{ip}", s.handleWAFBehaviorDeleteProfile)
 	mux.HandleFunc("POST /internal/v1/settings", s.handlePushSettings)
 	mux.HandleFunc("POST /internal/v1/portal", s.handlePushPortal)
+	mux.HandleFunc("GET /internal/v1/portal/login-pubkey", s.handlePortalLoginPubKey)
 	mux.HandleFunc("POST /internal/v1/portal/dest-sources/test", s.handleDestSourceTest)
 	mux.HandleFunc("POST /internal/v1/portal/dest-sources/{id}/sync", s.handleDestSourceSync)
 	mux.HandleFunc("GET /internal/v1/portal/recordings", s.handlePortalRecordingsList)
@@ -977,6 +978,8 @@ type portalPushPayload struct {
 	Theme                string                 `json:"theme"`
 	Views                []portal.View          `json:"views"`
 	Catalog              []portal.CatalogTarget `json:"catalog"`
+	// SharedLogins : logins préconfigurés (ADR 0025), secrets scellés pour la passerelle. Absent : inchangés.
+	SharedLogins []portal.SharedLogin `json:"shared_logins"`
 	Users                []portal.SyncedUser    `json:"users"`
 	Grants               []portal.AccessGrant   `json:"grants"`
 	Policy               portal.Policy          `json:"policy"`
@@ -1047,6 +1050,11 @@ func (s *Server) applyPortalPayload(payload portalPushPayload) {
 		if payload.Catalog != nil {
 			if err := s.portal.SetCatalog(payload.Catalog); err != nil {
 				s.log.Warn("portal: catalog", "err", err)
+			}
+		}
+		if payload.SharedLogins != nil {
+			if err := s.portal.SetSharedLogins(payload.SharedLogins); err != nil {
+				s.log.Warn("portal: logins préconfigurés", "err", err)
 			}
 		}
 		if payload.Grants != nil {

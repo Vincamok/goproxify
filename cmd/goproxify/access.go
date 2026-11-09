@@ -31,6 +31,8 @@ func runAccess() {
 		runAccessSources()
 	case "candidates":
 		runAccessCandidates()
+	case "logins":
+		runAccessLogins()
 	case "recordings":
 		runAccessRecordings()
 	case "policy":
@@ -63,6 +65,7 @@ Ressources :
   destination-groups  Groupes de destinations (machines offertes ensemble par une entrée)
   sources        Sources de destinations (Proxmox… : la passerelle liste les machines d'une plateforme)
   candidates     Machines découvertes par les sources (publier, ignorer)
+  logins         Logins préconfigurés (comptes partagés, secrets scellés pour la passerelle)
   sessions       Connexions Access en cours (lister, observer, terminer)
   requests       Demandes d'accès temporaire (lister, approuver, refuser, révoquer)
   policy         Politique d'accès (plages horaires, IP autorisées, inactivité)
@@ -87,6 +90,8 @@ Exemples :
   goproxify access sources sync -id <uuid>
   goproxify access candidates list -edge edge-a -state new
   goproxify access candidates publish -ids <id>,<id> -tags prod
+  goproxify access logins create -edge edge-a -username deploy -name deploy-prod -password-file pw.txt -dests <id>,<id> -tags ops
+  goproxify access logins list -edge edge-a
   goproxify access users list -edge edge-a
   goproxify access users invite -email user@ex.com -home-edge edge-a -tags prod
   goproxify access users update -id <uuid> -status disabled
@@ -730,6 +735,9 @@ func runAccessPolicy() {
 			rec, _ := parseBoolFlag(args, "-record")
 			body["record_sessions"] = rec
 		}
+		if in, ok := parseBoolFlag(args, "-record-input"); ok {
+			body["record_input"] = in
+		}
 		if v := flagValue(args, "-retention", ""); v != "" {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -745,7 +753,7 @@ func runAccessPolicy() {
 		}
 		printJSON(out)
 	default:
-		fmt.Fprintln(os.Stderr, "usage: goproxify access policy get|set -edge <passerelle> [-hours true -days 1,2 -start 07:00 -end 20:00 -tz Europe/Paris -ip <cidr,…> -idle <min> -record true -retention <jours>]")
+		fmt.Fprintln(os.Stderr, "usage: goproxify access policy get|set -edge <passerelle> [-hours true -days 1,2 -start 07:00 -end 20:00 -tz Europe/Paris -ip <cidr,…> -idle <min> -record true -record-input true -retention <jours>]")
 		os.Exit(1)
 	}
 }

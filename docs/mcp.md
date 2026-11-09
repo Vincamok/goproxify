@@ -1902,6 +1902,10 @@ Groupes de destinations (machines du catalogue) par passerelle : une entrée du 
 
 La passerelle interroge l'API d'une plateforme (Proxmox VE…) et remonte ses machines comme *candidates* ; elles ne sont visibles des utilisateurs qu'une fois publiées ([ADR 0024](adr/0024-sources-de-destinations-du-portail-access.md)). Lecture, scope `portal:read` : `list_portal_dest_source_types` (manifestes : champs, secrets), `list_portal_dest_sources` (`edge` ; secrets masqués, état de la dernière synchronisation, candidates par état), `list_portal_dest_candidates` (`edge`, `state` = `new`/`published`/`ignored`/`missing`, `source`). Écriture, scope `portal:write` : `create_portal_dest_source` (`edge_name`, `type`, `name`, `config`, `interval_s`, `enabled`, `extra_tags`, `auto_publish`), `update_portal_dest_source` (`id` + champs à changer ; un secret vide ou masqué est conservé), `delete_portal_dest_source` (`id` ; les destinations déjà publiées restent), `test_portal_dest_source` (`edge_name`, `type`, `config`, `source_id` : lecture unique depuis la passerelle, rien d'enregistré), `sync_portal_dest_source` (`id`), `publish_portal_dest_candidates` (`ids`, `tags` ; une machine sans adresse est refusée), `ignore_portal_dest_candidate` / `restore_portal_dest_candidate` (`id`). Droits de l'équipe : `portal_catalog:read` pour la lecture, `portal_catalog:manage` pour publier/ignorer/rétablir/synchroniser, permission explicite `portal_catalog:sources` pour créer, modifier, supprimer ou tester une source.
 
+### Logins préconfigurés — `list_portal_logins`, `create_portal_login`, `update_portal_login`, `delete_portal_login`
+
+Comptes partagés que les utilisateurs emploient sur les destinations liées, sans voir le secret ([ADR 0025](adr/0025-coffre-du-portail-logins-et-liaisons.md)). **Aucun outil ne reçoit un mot de passe ou une clé en clair** : un secret n'entre que scellé pour la passerelle (`sealed`, interface d'Admin ou `goproxify access logins`) ; un login sans secret existe mais n'est pas proposé. `list_portal_logins` (`edge`, scope `portal:read` ; jamais de secret : `has_secret`). `create_portal_login` (`edge_name`, `username`, `name`, `sealed`, `has_password`, `has_private_key`, `all_users`, `groups`, `tags`, `dest_ids`, `dest_groups`, `enabled`), `update_portal_login` (`id` + champs à changer ; les listes remplacent les existantes ; `sealed` vide retire le secret), `delete_portal_login` (`id`) (scope `portal:write`). Droits de l'équipe : `portal_catalog:read` pour la lecture, permission explicite `portal_catalog:logins` pour créer, modifier et supprimer.
+
 ### Sessions en direct — `list_portal_sessions`, `terminate_portal_session`
 
 `list_portal_sessions` (`edge`, scope `portal:read`) liste les connexions en cours ; `terminate_portal_session` (`edge`, `id`, scope `portal:write`) en ferme une.
@@ -1912,7 +1916,7 @@ La passerelle interroge l'API d'une plateforme (Proxmox VE…) et remonte ses ma
 
 ### Politique d'accès — `get_portal_policy`, `set_portal_policy`
 
-`get_portal_policy` (`edge`, scope `portal:read`) lit la politique ; `set_portal_policy` (`edge` + `hours_enabled`, `days`, `start_time`, `end_time`, `timezone`, `ip_allow`, `idle_timeout_min`, `record_sessions`, `record_retention_days` : 0 = 90 jours, -1 = illimitée, scope `portal:write`) la remplace en entier : un champ absent revient à « pas de restriction ».
+`get_portal_policy` (`edge`, scope `portal:read`) lit la politique ; `set_portal_policy` (`edge` + `hours_enabled`, `days`, `start_time`, `end_time`, `timezone`, `ip_allow`, `idle_timeout_min`, `record_sessions`, `record_input`, `record_retention_days` : 0 = 90 jours, -1 = illimitée, scope `portal:write`) la remplace en entier : un champ absent revient à « pas de restriction ».
 
 ### Enregistrements — `list_portal_recordings`, `delete_portal_recording`
 

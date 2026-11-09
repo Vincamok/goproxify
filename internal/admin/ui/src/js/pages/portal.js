@@ -599,11 +599,16 @@ pages['portal-policy'] = async function() {
     </div>
     <div class="card blueprint" style="padding:16px 18px;max-width:640px;margin-bottom:14px">
       <div style="font-size:13px;font-weight:600;margin-bottom:4px">Enregistrement des sessions</div>
-      <p class="muted" style="font-size:12px;margin:0 0 12px">Garde la sortie du terminal de chaque nouvelle session (jamais la saisie), chiffrée sur la passerelle, pour la rejouer dans l'onglet Enregistrements. Prévenez vos utilisateurs.</p>
+      <p class="muted" style="font-size:12px;margin:0 0 12px">Garde la sortie du terminal de chaque nouvelle session, chiffrée sur la passerelle, pour la rejouer dans l'onglet Enregistrements. Prévenez vos utilisateurs.</p>
       <label style="display:flex;align-items:center;gap:10px;margin-bottom:12px;cursor:pointer">
         <input type="checkbox" id="ppol-rec" ${p.record_sessions ? 'checked' : ''}/>
         <span style="font-size:13px">Enregistrer les sessions</span>
       </label>
+      <label style="display:flex;align-items:center;gap:10px;margin-bottom:4px;cursor:pointer">
+        <input type="checkbox" id="ppol-recin" ${p.record_input ? 'checked' : ''} ${p.record_sessions ? '' : 'disabled'}/>
+        <span style="font-size:13px">Enregistrer aussi ce qui est tapé au clavier</span>
+      </label>
+      <p class="muted" style="font-size:12px;margin:0 0 12px 28px">Les frappes sont gardées avec la sortie, chiffrées de la même façon. Ce qui est tapé après une invite de mot de passe (<code>sudo</code>, <code>ssh</code>, <code>su</code>…) est remplacé par <code>[masqué]</code>, mais la passerelle ne voit pas si le terminal distant masque la saisie : un secret demandé par une invite inhabituelle (<code>read -s</code>) peut être enregistré. À signaler à vos utilisateurs.</p>
       <div class="field" style="max-width:220px"><label class="field-label">Conservation (jours, 0 = 90 par défaut, -1 = illimitée)</label><input class="input" id="ppol-ret" type="number" min="-1" max="3650" value="${p.record_retention_days || 0}"/></div>
     </div>
     <div class="card blueprint" style="padding:16px 18px;max-width:640px">
@@ -613,6 +618,11 @@ pages['portal-policy'] = async function() {
       <div id="ppol-msg" style="margin-top:12px;font-size:13px;min-height:1.2em"></div>
     </div>`;
 
+  document.getElementById('ppol-rec').onchange = (e) => {
+    const input = document.getElementById('ppol-recin');
+    input.disabled = !e.target.checked;
+    if (!e.target.checked) input.checked = false;
+  };
   document.getElementById('ppol-hours').onchange = (e) => {
     document.getElementById('ppol-hours-box').style.opacity = e.target.checked ? '' : '.5';
   };
@@ -627,6 +637,7 @@ pages['portal-policy'] = async function() {
       ip_allow: document.getElementById('ppol-ip').value.split('\n').map(s => s.trim()).filter(Boolean),
       idle_timeout_min: +document.getElementById('ppol-idle').value || 0,
       record_sessions: document.getElementById('ppol-rec').checked,
+      record_input: document.getElementById('ppol-rec').checked && document.getElementById('ppol-recin').checked,
       record_retention_days: +document.getElementById('ppol-ret').value || 0,
     };
     try {

@@ -32,3 +32,14 @@ func (c *Client) TestDestSource(ctx context.Context, t Target, typ string, confi
 func (c *Client) SyncDestSource(ctx context.Context, t Target, id string) error {
 	return c.do(ctx, t, http.MethodPost, "/internal/v1/portal/dest-sources/"+url.PathEscape(id)+"/sync", nil, nil)
 }
+
+// PortalLoginPubKey lit la clé publique avec laquelle sceller les secrets des logins préconfigurés du portail (ADR 0025).
+func (c *Client) PortalLoginPubKey(ctx context.Context, t Target) (string, error) {
+	var out struct {
+		PublicKey string `json:"public_key"`
+	}
+	if err := c.do(ctx, t, http.MethodGet, "/internal/v1/portal/login-pubkey", nil, &out); err != nil {
+		return "", err
+	}
+	return out.PublicKey, nil
+}
