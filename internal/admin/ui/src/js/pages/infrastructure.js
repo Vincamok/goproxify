@@ -280,7 +280,7 @@ async function confirmAgentRemoval(dnId, nodeName, displayName) {
 
 
 /** Génère les opts Agent (envVars, volumes, image) depuis un formulaire "Ajouter un agent". */
-function _buildAddAgentOpts({ name, edgeURL, docker, dockerSock, portainer, portainerURL, portainerKey, pairingSecret }) {
+function _buildAddAgentOpts({ name, edgeURL, docker, dockerSock, portainer, portainerURL, portainerKey, arcane, arcaneURL, arcaneKey, pairingSecret }) {
   const cat = window._gpxCatalog;
   const image = cat ? cat.image('agent') : 'ghcr.io/vincamok/goproxify/agent:preview';
   const netBlock = cat ? cat.netBlock() : '\nnetworks:\n  goproxify_net:\n    driver: bridge';
@@ -294,6 +294,9 @@ function _buildAddAgentOpts({ name, edgeURL, docker, dockerSock, portainer, port
     portainer                 ? { k: 'GPX_PORTAINER_ENABLED',  v: 'true' }         : null,
     portainer && portainerURL ? { k: 'GPX_PORTAINER_URL',      v: portainerURL }    : null,
     portainer && portainerKey ? { k: 'GPX_PORTAINER_API_KEY',  v: portainerKey }    : null,
+    arcane                    ? { k: 'GPX_ARCANE_ENABLED',     v: 'true' }         : null,
+    arcane && arcaneURL       ? { k: 'GPX_ARCANE_URL',         v: arcaneURL }       : null,
+    arcane && arcaneKey       ? { k: 'GPX_ARCANE_API_KEY',     v: arcaneKey }       : null,
   ].filter(Boolean);
   const volumes = [];
   if (docker) volumes.push(`${sockPath}:${sockPath}`);
@@ -349,6 +352,19 @@ window.openAddAgentModal = async function() {
         <input id="aa-portainer-key" type="password" value="" placeholder="ptr_..."
           style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text1);">
       </label>
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);margin-top:4px;">${t('infra.add_agent.arcane')}</div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+        <input type="checkbox" id="aa-arcane" style="accent-color:var(--accent);width:16px;height:16px;">
+        ${t('infra.configure.enabled')}
+      </label>
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text2);">${t('infra.add_agent.arcane_url')}
+        <input id="aa-arcane-url" type="url" value="" placeholder="https://arcane.example.com"
+          style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text1);">
+      </label>
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text2);">${t('infra.add_agent.arcane_key')}
+        <input id="aa-arcane-key" type="password" value="" placeholder="arc_..."
+          style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text1);">
+      </label>
     </div>`;
 
   const footer = `
@@ -369,6 +385,9 @@ window._submitAddAgent = async function(pairingSecret) {
   const portainer    = document.getElementById('aa-portainer')?.checked ?? false;
   const portainerURL = document.getElementById('aa-portainer-url')?.value || '';
   const portainerKey = document.getElementById('aa-portainer-key')?.value || '';
+  const arcane       = document.getElementById('aa-arcane')?.checked ?? false;
+  const arcaneURL    = document.getElementById('aa-arcane-url')?.value || '';
+  const arcaneKey    = document.getElementById('aa-arcane-key')?.value || '';
 
   if (!name) { toast(t('infra.add_agent.name') + ' requis', 'error'); return; }
   if (!edgeURL) { toast(t('infra.add_agent.edge_url') + ' requis', 'error'); return; }
@@ -380,6 +399,7 @@ window._submitAddAgent = async function(pairingSecret) {
   const agentConfig = {
     docker: { enabled: docker, runtime: docker ? 'auto' : '' },
     portainer: { enabled: portainer, url: portainerURL, api_key: portainerKey },
+    arcane: { enabled: arcane, url: arcaneURL, api_key: arcaneKey },
     edge_endpoint: edgeURL,
     auto_accept: true,
   };
@@ -396,7 +416,7 @@ window._submitAddAgent = async function(pairingSecret) {
   }
 
   // 2. Générer le snippet docker-compose
-  const opts = _buildAddAgentOpts({ name, edgeURL, docker, portainer, portainerURL, portainerKey, pairingSecret });
+  const opts = _buildAddAgentOpts({ name, edgeURL, docker, portainer, portainerURL, portainerKey, arcane, arcaneURL, arcaneKey, pairingSecret });
   const composeText = _cfgComposeText(opts, 'inline');
   const envText = opts.envVars.map(({ k, v }) => `${k}=${v}`).join('\n');
 
@@ -527,6 +547,15 @@ async function agentConfigure(nodeName, node) {
     skip_endpoints: pLive.skip_endpoints,
     endpoint_edges: pLive.endpoint_edges,
   };
+  const aLive = (node && node._agent_config && node._agent_config.sources && node._agent_config.sources.arcane) || {};
+  const fbArcane = fallback.arcane || {};
+  const ar = {
+    enabled: aLive.enabled !== undefined ? aLive.enabled : !!fbArcane.enabled,
+    url: aLive.url || fbArcane.url || '',
+    api_key: aLive.api_key || fbArcane.api_key || '',
+    poll_interval_s: aLive.poll_interval_s,
+    skip_environments: aLive.skip_environments,
+  };
   const cp = (node && node._agent_config && node._agent_config.control_plane) || {};
 
   // Sélecteur "Passerelle cible" — liste des passerelles connus
@@ -573,6 +602,12 @@ async function agentConfigure(nodeName, node) {
       <button type="button" class="btn btn-secondary" style="font-size:11px;padding:4px 10px;" onclick="_addEpEdgeRow()">${t('infra.configure.endpoint_edges_add')}</button>
       <p style="margin:4px 0 0;font-size:10px;color:var(--text2);">${t('infra.configure.endpoint_edges_hint')}</p>
     </div>
+    ${sectionTitle(t('infra.configure.arcane_section'))}
+    ${toggle('cfg-arcane-enabled', t('infra.configure.enabled'), !!ar.enabled)}
+    ${field('cfg-arcane-url', t('infra.configure.url'), ar.url, 'url', 'https://arcane.example.com')}
+    ${field('cfg-arcane-key', t('infra.configure.api_key'), ar.api_key, 'password', 'arc_...')}
+    ${field('cfg-arcane-poll', t('infra.configure.poll_interval'), ar.poll_interval_s||30, 'number', '30')}
+    ${field('cfg-arcane-skip', t('infra.configure.skip_environments'), (ar.skip_environments||[]).join(', '), 'text', 'lab, staging')}
     <p style="margin:8px 0 0;font-size:11px;color:var(--text2);">${t('infra.configure.restart_notice')}</p>
   </form>`;
 
@@ -627,6 +662,15 @@ window._submitAgentConfigure = async function(nodeName, formId) {
         });
         return result;
       })(),
+    },
+    sources: {
+      arcane: {
+        enabled: document.getElementById('cfg-arcane-enabled')?.checked ?? false,
+        url: document.getElementById('cfg-arcane-url')?.value || '',
+        api_key: document.getElementById('cfg-arcane-key')?.value || '',
+        poll_interval_s: parseInt(document.getElementById('cfg-arcane-poll')?.value || '30', 10) || 30,
+        skip_environments: (document.getElementById('cfg-arcane-skip')?.value || '').split(',').map(s => s.trim()).filter(Boolean),
+      },
     },
   };
 

@@ -24,7 +24,7 @@ GoProxify deploys as a **single Go binary**. The instance personality is determi
   ┌──────────────────────────────────────────────────────────┐
   │  AGENT  (Service Discovery)                              │
   │  Uses docker.sock · goproxify.* labels                   │
-  │  K8s · Portainer · Consul · Nomad · etcd · Amazon ECS    │
+  │  K8s · Portainer · Arcane · Consul · Nomad · etcd · ECS  │
   │  Streams CPU/mem/disk IO metrics via WS (adaptive LB)    │
   │  Prometheus :9191/metrics                                │
   └──────────────────────────────────────────────────────────┘

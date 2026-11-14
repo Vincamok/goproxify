@@ -102,7 +102,7 @@ func TestBuiltinManifests(t *testing.T) {
 	for _, m := range Manifests() {
 		got = append(got, m.Type)
 	}
-	if !reflect.DeepEqual(got, []string{"docker", "portainer", "kubernetes", "consul", "nomad", "etcd", "ecs"}) {
+	if !reflect.DeepEqual(got, []string{"docker", "portainer", "kubernetes", "consul", "nomad", "etcd", "ecs", "arcane"}) {
 		t.Fatalf("sources intégrées = %v", got)
 	}
 }

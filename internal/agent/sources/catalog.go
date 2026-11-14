@@ -64,6 +64,13 @@ func init() {
 		secret("secret_access_key", "Secret access key", false),
 		secret("session_token", "Session token", false),
 	}, common()...)}, ecsSource)
+
+	Register(modules.Manifest{Type: "arcane", Label: "Arcane", Fields: append([]modules.Field{
+		text("url", "Arcane URL", "https://arcane.example.com", true),
+		secret("api_key", "API key", true),
+		kind("skip_environments", "Environments to skip (name or ID)", modules.KindList),
+		text("ca_cert", "CA certificate (PEM or path)", "", false),
+	}, common()...)}, arcaneSource)
 }
 
 // --- lecture de la configuration `sources.<type>` ---------------------------------------------------------------
@@ -199,4 +206,19 @@ func ecsSource(d Deps) (*Instance, error) {
 		return nil, err
 	}
 	return catalogInstance(d, "ecs", l, s), nil
+}
+
+func arcaneSource(d Deps) (*Instance, error) {
+	s := d.Settings("arcane")
+	if !settingBool(s, "enabled") {
+		return nil, nil
+	}
+	l, err := catalog.NewArcane(catalog.ArcaneConfig{
+		URL: settingString(s, "url"), APIKey: settingString(s, "api_key"), CACert: settingString(s, "ca_cert"),
+		Prefix: settingString(s, "label_prefix"), SkipEnvironments: settingList(s, "skip_environments"), Log: d.Log,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return catalogInstance(d, "arcane", l, s), nil
 }

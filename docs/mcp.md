@@ -327,7 +327,7 @@ Liste les Agents vus via le plan de contrôle WebSocket (`pending`, `approved`, 
 
 ### `list_discovery_sources`
 
-Sources de découverte de l'Agent — Docker/Podman, Portainer, Kubernetes, Consul, Nomad, etcd, Amazon ECS — avec leurs champs de configuration (clé, `secret`, `required`) pour la section `sources.<type>` de `agent.json`. Même source que `GET /api/v1/discovery-sources` et `goproxify agent-mgmt sources`.
+Sources de découverte de l'Agent — Docker/Podman, Portainer, Kubernetes, Consul, Nomad, etcd, Amazon ECS, Arcane — avec leurs champs de configuration (clé, `secret`, `required`) pour la section `sources.<type>` de `agent.json`. Même source que `GET /api/v1/discovery-sources` et `goproxify agent-mgmt sources`.
 
 _Aucun paramètre._
 

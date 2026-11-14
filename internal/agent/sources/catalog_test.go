@@ -34,6 +34,7 @@ func TestCatalogSources_EnabledOnlyWhenConfigured(t *testing.T) {
 		"nomad":  {"enabled": true},
 		"etcd":   {"enabled": true, "endpoints": []any{"http://e1:2379", "http://e2:2379"}},
 		"ecs":    {"enabled": true, "region": "eu-west-1", "cluster": "prod"},
+		"arcane": {"enabled": true, "url": "https://arcane.example.com", "api_key": "k"},
 	}))
 	var types []string
 	for _, s := range out {
@@ -42,7 +43,7 @@ func TestCatalogSources_EnabledOnlyWhenConfigured(t *testing.T) {
 			t.Errorf("%s : instance incomplète %+v", s.Type, s)
 		}
 	}
-	if !reflect.DeepEqual(types, []string{"consul", "nomad", "etcd", "ecs"}) {
+	if !reflect.DeepEqual(types, []string{"consul", "nomad", "etcd", "ecs", "arcane"}) {
 		t.Fatalf("sources construites = %v", types)
 	}
 }
@@ -63,7 +64,7 @@ func TestCatalogSources_SecretsAreDeclared(t *testing.T) {
 	for _, k := range BuiltinSecretKeys() {
 		secrets[k] = true
 	}
-	for _, k := range []string{"token", "password", "access_key_id", "secret_access_key", "session_token"} {
+	for _, k := range []string{"token", "password", "api_key", "access_key_id", "secret_access_key", "session_token"} {
 		if !secrets[k] {
 			t.Errorf("%s doit être déclaré secret", k)
 		}

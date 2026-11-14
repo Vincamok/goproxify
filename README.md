@@ -17,7 +17,7 @@ You have several VPS, Docker containers on different hosts, and you want to rout
 - **HTTP/1.1, HTTP/2, HTTP/3 QUIC, TCP/UDP L4** — one tool covers all protocols
 - **Built-in OWASP CRS-4 WAF** — 13 rule sets (SQLi, XSS, Log4Shell…) with no external plugin
 - **SSH and Docker access from the UI** — web terminal, UUID `ssh` to VMs and `docker exec` to containers, directly from your browser
-- **Automatic service discovery** — the Agent reads `goproxify.*` labels on Docker/Podman containers and Kubernetes services, or tags from Consul, Nomad, etcd and Amazon ECS, and pushes routes in real time; a discovered container can be converted into a regular, editable proxy with one click, or its route switched off and on without touching the container
+- **Automatic service discovery** — the Agent reads `goproxify.*` labels on Docker/Podman containers and Kubernetes services, or tags from Consul, Nomad, etcd and Amazon ECS, and containers of Portainer or Arcane, and pushes routes in real time; a discovered container can be converted into a regular, editable proxy with one click, or its route switched off and on without touching the container
 - **WASM plugins** — sandboxed plugins on requests, bodies and TCP/UDP streams; Coraza (SecLang) and ready-made examples installable in one click
 - **Alerting to 10 channels** — Email, Webhook, ntfy.sh, Jira, Linear, GitHub Issues, and more
 
@@ -282,7 +282,7 @@ Full reference → **[docs/cli.md](docs/cli.md)**
 
 - Uses `/var/run/docker.sock`: access **equivalent to root on the host** (a read-only mount does not limit it), so run the Agent only on hosts that need it
 - Detects `goproxify.*` labels on containers in real time
-- Also discovers Portainer, Kubernetes `Ingress`/`Service` annotations, and **Consul, Nomad, etcd and Amazon ECS** instances (polled; an unreachable directory never removes a route)
+- Also discovers Portainer, **Arcane** (every environment of the manager), Kubernetes `Ingress`/`Service` annotations, and **Consul, Nomad, etcd and Amazon ECS** instances (polled; an unreachable directory never removes a route)
 - Sends routes, metrics and events to the Edge via **persistent WS tunnel** (Agent→Edge)
 - HTTP heartbeat fallback if WS connection is unavailable
 - Canary (`goproxify.canary`) and Shadow Mirror (`goproxify.shadow`) labels supported

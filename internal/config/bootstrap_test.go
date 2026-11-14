@@ -240,3 +240,50 @@ func TestBootstrapAgentHonoursKubernetesEnv(t *testing.T) {
 		t.Error("sans GPX_KUBERNETES_ENABLED, le fichier existant reste intact")
 	}
 }
+
+// La source Arcane s'active par GPX_ARCANE_*, à la création comme à la migration d'un agent.json existant.
+func TestBootstrapAgentHonoursArcaneEnv(t *testing.T) {
+	t.Setenv("GPX_ARCANE_ENABLED", "true")
+	t.Setenv("GPX_ARCANE_URL", "https://arcane.example.com")
+	t.Setenv("GPX_ARCANE_API_KEY", "arc_secret")
+	path := filepath.Join(t.TempDir(), "agent.json")
+	if err := BootstrapAgent(path); err != nil {
+		t.Fatal(err)
+	}
+	a := readDoc(t, path)["sources"].(map[string]any)["arcane"].(map[string]any)
+	if a["enabled"] != true || a["url"] != "https://arcane.example.com" || a["api_key"] != "arc_secret" || a["poll_interval_s"] != float64(30) {
+		t.Errorf("sources.arcane = %v", a)
+	}
+
+	old := filepath.Join(t.TempDir(), "old.json")
+	if err := os.WriteFile(old, []byte(`{"docker":{"enabled":true},"portainer":{"enabled":false},"sources":{"consul":{"enabled":true}}}`), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := BootstrapAgent(old); err != nil {
+		t.Fatal(err)
+	}
+	src := readDoc(t, old)["sources"].(map[string]any)
+	if src["arcane"].(map[string]any)["enabled"] != true || src["consul"] == nil {
+		t.Errorf("migration : sources = %v", src)
+	}
+
+	// Une section déjà présente n'est jamais réécrite par l'environnement.
+	keep := filepath.Join(t.TempDir(), "keep.json")
+	_ = os.WriteFile(keep, []byte(`{"docker":{"enabled":true},"portainer":{"enabled":false},"sources":{"arcane":{"enabled":false,"url":"https://autre.example.com"}}}`), 0o640)
+	if err := BootstrapAgent(keep); err != nil {
+		t.Fatal(err)
+	}
+	if a := readDoc(t, keep)["sources"].(map[string]any)["arcane"].(map[string]any); a["url"] != "https://autre.example.com" || a["enabled"] != false {
+		t.Errorf("section existante modifiée : %v", a)
+	}
+
+	t.Setenv("GPX_ARCANE_ENABLED", "")
+	same := filepath.Join(t.TempDir(), "same.json")
+	_ = os.WriteFile(same, []byte(`{"docker":{"enabled":true},"portainer":{"enabled":false}}`), 0o640)
+	if err := BootstrapAgent(same); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := readDoc(t, same)["sources"]; ok {
+		t.Error("sans GPX_ARCANE_ENABLED, le fichier existant reste intact")
+	}
+}

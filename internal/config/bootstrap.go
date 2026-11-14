@@ -195,6 +195,9 @@ func BootstrapAgent(path string) error {
 			"log_level": logLevel,
 		},
 	}
+	if arcane := arcaneSourceFromEnv(); arcane != nil {
+		cfg["sources"] = map[string]any{"arcane": arcane}
+	}
 
 	if err := writeJSON(path, cfg); err != nil {
 		return fmt.Errorf("bootstrap agent: %w", err)
@@ -240,6 +243,17 @@ func migrateAgentDockerConfig(path string, dockerEnabled bool, dockerRuntime str
 		}
 		changed = true
 	}
+	if arcane := arcaneSourceFromEnv(); arcane != nil {
+		sources, _ := m["sources"].(map[string]any)
+		if _, ok := sources["arcane"]; !ok {
+			if sources == nil {
+				sources = map[string]any{}
+			}
+			sources["arcane"] = arcane
+			m["sources"] = sources
+			changed = true
+		}
+	}
 	if !changed {
 		return nil
 	}
@@ -248,6 +262,20 @@ func migrateAgentDockerConfig(path string, dockerEnabled bool, dockerRuntime str
 	}
 	slog.Info("bootstrap: agent.json migré — sections docker/portainer ajoutées", "path", path)
 	return nil
+}
+
+// arcaneSourceFromEnv : section `sources.arcane` d'agent.json depuis GPX_ARCANE_* ; nil quand la source n'est pas
+// activée par l'environnement (un fichier existant n'est alors pas touché).
+func arcaneSourceFromEnv() map[string]any {
+	if !envBoolOr("GPX_ARCANE_ENABLED", false) {
+		return nil
+	}
+	return map[string]any{
+		"enabled":         true,
+		"url":             os.Getenv("GPX_ARCANE_URL"),
+		"api_key":         os.Getenv("GPX_ARCANE_API_KEY"),
+		"poll_interval_s": envIntOr("GPX_ARCANE_POLL_INTERVAL_S", 30),
+	}
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────────

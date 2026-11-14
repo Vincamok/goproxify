@@ -752,7 +752,7 @@ goproxify agent-mgmt delete  <id> [-y] [-admin-url …] [-token …]
 goproxify agent-mgmt sources [-admin-url …] [-token …]
 ```
 
-`sources` liste les sources de découverte de l'Agent (Docker/Podman, Portainer, Kubernetes, Consul, Nomad, etcd, ECS) avec leurs champs de configuration (`*` = requis, « secret » = masqué dans le heartbeat et conservé par un correctif de configuration). Chaque source est un module du registre (ADR 0007).
+`sources` liste les sources de découverte de l'Agent (Docker/Podman, Portainer, Kubernetes, Consul, Nomad, etcd, ECS, Arcane) avec leurs champs de configuration (`*` = requis, « secret » = masqué dans le heartbeat et conservé par un correctif de configuration). Chaque source est un module du registre (ADR 0007).
 
 Exemples :
 

@@ -91,6 +91,7 @@ function _archSvcFromExisting(role, node, cfg) {
     name,
     access: !!cfg.portal,
     portainer: !!cfg.portainer,
+    arcane: !!cfg.arcane,
     k8s: !!cfg.k8s,
     docker: role === 'agent' ? docker : false,
     podman: role === 'agent' ? podman : false,
@@ -101,6 +102,8 @@ function _archSvcFromExisting(role, node, cfg) {
     reachable: (cfg.reachable_host || '').trim() || (role === 'edge' ? _archHostFromEndpoint(node.endpoint || node.node_endpoint || '') : ''),
     portainerUrl: cfg.portainer_url || '',
     portainerKey: cfg.portainer_key || '',
+    arcaneUrl: cfg.arcane_url || '',
+    arcaneKey: cfg.arcane_key || '',
     targetEdgeId: '',
     placement: (cfg.placement || '').trim(),
     existing: true,
@@ -237,9 +240,9 @@ function _archHydrateFromExisting(nodes, declared) {
       id: _archUid('admin'),
       type: 'admin',
       name: 'goproxify-admin',
-      access: false, portainer: false, k8s: false, docker: false, podman: false,
+      access: false, portainer: false, arcane: false, k8s: false, docker: false, podman: false,
       domains: '', acme: false, acmeEmail: '', dnsProvider: 'none',
-      reachable: '', portainerUrl: '', portainerKey: '', targetEdgeId: '', placement: '',
+      reachable: '', portainerUrl: '', portainerKey: '', arcaneUrl: '', arcaneKey: '', targetEdgeId: '', placement: '',
       existing: true, status: 'online',
     });
   }
@@ -264,6 +267,7 @@ const _ARCH_CAPS = [
   { id: 'docker',    role: 'agent', label: 'arch.svc.docker',    desc: 'arch.cap.docker_desc',    chip: 'Docker' },
   { id: 'podman',    role: 'agent', label: 'arch.svc.podman',    desc: 'arch.cap.podman_desc',    chip: 'Podman' },
   { id: 'portainer', role: 'agent', label: 'arch.svc.portainer', desc: 'arch.cap.portainer_desc', chip: 'Portainer' },
+  { id: 'arcane',    role: 'agent', label: 'arch.svc.arcane',    desc: 'arch.cap.arcane_desc',    chip: 'Arcane' },
   { id: 'k8s',       role: 'agent', label: 'arch.svc.k8s',       desc: 'arch.cap.k8s_desc',       chip: 'K8s' },
 ];
 
@@ -534,7 +538,7 @@ function _archSig(model) {
   for (const h of model.hosts) for (const s of h.services || []) byId.set(s.id, s);
   const svc = s => {
     const o = { t: s.type, n: s.name };
-    for (const f of Object.keys(_ARCH_CHG_FIELDS)) if (f !== 'portainerKey') o[f] = _archNorm(s[f]);
+    for (const f of Object.keys(_ARCH_CHG_FIELDS)) if (f !== 'portainerKey' && f !== 'arcaneKey') o[f] = _archNorm(s[f]);
     o.targetEdgeId = s.targetEdgeId ? (_archIsGroupTarget(s.targetEdgeId) ? s.targetEdgeId : ((byId.get(s.targetEdgeId) || {}).name || '')) : '';
     return o;
   };
@@ -545,10 +549,10 @@ function _archSig(model) {
   return JSON.stringify({ hosts, groups });
 }
 
-/** Copie sans secret : les clés Portainer ne sont jamais écrites dans le navigateur. */
+/** Copie sans secret : les clés Portainer et Arcane ne sont jamais écrites dans le navigateur. */
 function _archWithoutSecrets(model) {
   const m = JSON.parse(JSON.stringify(model));
-  for (const h of m.hosts || []) for (const s of h.services || []) delete s.portainerKey;
+  for (const h of m.hosts || []) for (const s of h.services || []) { delete s.portainerKey; delete s.arcaneKey; }
   return m;
 }
 
@@ -599,6 +603,7 @@ function _archDraftApply(d) {
       s.status = f.status;
       s.existing = f.existing;
       if (!s.portainerKey && f.portainerKey) s.portainerKey = f.portainerKey;
+      if (!s.arcaneKey && f.arcaneKey) s.arcaneKey = f.arcaneKey;
     }
     return m;
   };
@@ -640,21 +645,21 @@ function _archDraftBannerHTML() {
 const _ARCH_CHG_FIELDS = {
   name: 'restart', reachable: 'restart', access: 'restart', domains: 'restart', acme: 'restart',
   acmeEmail: 'restart', dnsProvider: 'restart', docker: 'redeploy', podman: 'redeploy', portainer: 'restart',
-  portainerUrl: 'restart', portainerKey: 'restart', k8s: 'restart', targetEdgeId: 'restart',
+  portainerUrl: 'restart', portainerKey: 'restart', arcane: 'restart', arcaneUrl: 'restart', arcaneKey: 'restart', k8s: 'restart', targetEdgeId: 'restart',
 };
 const _ARCH_IMPACT_RANK = { decl: 0, live: 1, restart: 2, redeploy: 3, install: 4 };
-const _ARCH_BOOL_FIELDS = new Set(['access', 'acme', 'docker', 'podman', 'portainer', 'k8s']);
+const _ARCH_BOOL_FIELDS = new Set(['access', 'acme', 'docker', 'podman', 'portainer', 'arcane', 'k8s']);
 
 function _archNorm(v) { return v === undefined || v === null || v === false ? '' : v; }
 
 function _archFieldLabel(f) {
   const k = {
     access: 'arch.svc.access', acme: 'arch.opt.acme', docker: 'arch.svc.docker', podman: 'arch.svc.podman',
-    portainer: 'arch.svc.portainer', k8s: 'arch.svc.k8s', reachable: 'arch.opt.reachable', domains: 'arch.opt.domains',
-    acmeEmail: 'arch.opt.acme_email', dnsProvider: 'arch.opt.dns_provider', portainerKey: 'arch.opt.portainer_key',
+    portainer: 'arch.svc.portainer', arcane: 'arch.svc.arcane', k8s: 'arch.svc.k8s', reachable: 'arch.opt.reachable', domains: 'arch.opt.domains',
+    acmeEmail: 'arch.opt.acme_email', dnsProvider: 'arch.opt.dns_provider', portainerKey: 'arch.opt.portainer_key', arcaneKey: 'arch.opt.arcane_key',
     targetEdgeId: 'arch.opt.target_edge',
   }[f];
-  return k ? t(k) : f === 'portainerUrl' ? 'Portainer URL' : f;
+  return k ? t(k) : f === 'portainerUrl' ? 'Portainer URL' : f === 'arcaneUrl' ? 'Arcane URL' : f;
 }
 
 function _archBaseIndex() {
@@ -924,6 +929,9 @@ function _archDeclaredPayload() {
         cfg.portainer      = !!svc.portainer;
         cfg.portainer_url  = svc.portainerUrl || '';
         cfg.portainer_key  = svc.portainerKey || '';
+        cfg.arcane         = !!svc.arcane;
+        cfg.arcane_url     = svc.arcaneUrl || '';
+        cfg.arcane_key     = svc.arcaneKey || '';
         cfg.placement      = svc.placement || '';
         // Relu par _archHydrateFromExisting (_archResolveEdgeKey) : sans lui, la passerelle cible choisie se perdait.
         if (_archIsGroupTarget(svc.targetEdgeId)) {
@@ -1232,6 +1240,13 @@ function _archAgentCapsHTML(svc) {
       _archField(t('arch.opt.portainer_key') + req(svc.portainer && !svc.portainerKey),
         `<input class="arch-input" type="password" style="${svc.portainer && !svc.portainerKey ? 'border-color:var(--red);' : ''}" value="${esc(svc.portainerKey || '')}" placeholder="ptr_…" oninput="_archSetField('${svc.id}','portainerKey',this.value)">`),
       _archBefore(svc, 'portainer')) +
+    _archCapRow(!!svc.arcane, t('arch.svc.arcane') + _archImpactBadge('restart', svc.existing), t('arch.cap.arcane_desc'),
+      `_archSetOpt('${svc.id}','arcane',this.checked)`,
+      _archField('URL' + req(svc.arcane && !svc.arcaneUrl),
+        `<input class="arch-input" style="${svc.arcane && !svc.arcaneUrl ? 'border-color:var(--red);' : ''}" value="${esc(svc.arcaneUrl || '')}" placeholder="https://arcane.example.com" oninput="_archSetField('${svc.id}','arcaneUrl',this.value)">`) +
+      _archField(t('arch.opt.arcane_key') + req(svc.arcane && !svc.arcaneKey),
+        `<input class="arch-input" type="password" style="${svc.arcane && !svc.arcaneKey ? 'border-color:var(--red);' : ''}" value="${esc(svc.arcaneKey || '')}" placeholder="arc_…" oninput="_archSetField('${svc.id}','arcaneKey',this.value)">`),
+      _archBefore(svc, 'arcane')) +
     _archCapRow(!!svc.k8s, t('arch.svc.k8s') + _archImpactBadge('restart', svc.existing), t('arch.cap.k8s_desc'),
       `_archSetOpt('${svc.id}','k8s',this.checked)`, '', _archBefore(svc, 'k8s'));
 }
@@ -1443,6 +1458,7 @@ function _archAddService(hostId, type) {
     name,
     access: false,
     portainer: false,
+    arcane: false,
     k8s: false,
     docker: type === 'agent',
     podman: false,
@@ -1453,6 +1469,8 @@ function _archAddService(hostId, type) {
     reachable: '',
     portainerUrl: '',
     portainerKey: '',
+    arcaneUrl: '',
+    arcaneKey: '',
     targetEdgeId: '',
     placement: type === 'agent'
       ? (host.services.some(s => s.type === 'edge') ? 'colocated' : 'remote')
@@ -1643,6 +1661,8 @@ function _archValidate() {
     }
     if (svc.portainer && !svc.portainerUrl) return t('arch.err.portainer_url', { name: svc.name });
     if (svc.portainer && !svc.portainerKey) return t('arch.err.portainer_key', { name: svc.name });
+    if (svc.arcane && !svc.arcaneUrl) return t('arch.err.arcane_url', { name: svc.name });
+    if (svc.arcane && !svc.arcaneKey) return t('arch.err.arcane_key', { name: svc.name });
   }
   return '';
 }
@@ -1798,6 +1818,9 @@ function _archBuildPacks() {
         wa_portainer: !!a.portainer,
         wa_portainer_url: a.portainerUrl || '',
         wa_portainer_key: a.portainerKey || '',
+        wa_arcane: !!a.arcane,
+        wa_arcane_url: a.arcaneUrl || '',
+        wa_arcane_key: a.arcaneKey || '',
         wa_placement: localEdge ? 'colocated' : 'remote',
       });
       if (localEdge) {

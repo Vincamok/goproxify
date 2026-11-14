@@ -245,6 +245,9 @@ function _buildAgentOpts(d) {
     d.wa_portainer ? { k:'GPX_PORTAINER_ENABLED',      v: 'true' } : null,
     d.wa_portainer&&d.wa_portainer_url ? { k:'GPX_PORTAINER_URL',     v: d.wa_portainer_url } : null,
     d.wa_portainer&&d.wa_portainer_key ? { k:'GPX_PORTAINER_API_KEY', v: d.wa_portainer_key } : null,
+    d.wa_arcane    ? { k:'GPX_ARCANE_ENABLED',        v: 'true' } : null,
+    d.wa_arcane&&d.wa_arcane_url ? { k:'GPX_ARCANE_URL',     v: d.wa_arcane_url } : null,
+    d.wa_arcane&&d.wa_arcane_key ? { k:'GPX_ARCANE_API_KEY', v: d.wa_arcane_key } : null,
     d.wa_log_fwd   ? { k:'GPX_LOG_FORWARDING_ENABLED', v: 'true' } : null,
   ].filter(Boolean);
   const image    = cat ? cat.image('agent') : 'ghcr.io/vincamok/goproxify/agent:preview';

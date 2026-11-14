@@ -7,6 +7,15 @@ Format : [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ## [Unreleased]
 
+### Ajouté
+
+- **Découverte Arcane : l'Agent se connecte au gestionnaire Arcane et découvre les conteneurs de tous ses environnements (Agent 0.29.0, Admin 0.265.1)** : comme pour Portainer, l'Agent n'a pas besoin d'être installé sur les hôtes. Il interroge l'API REST d'Arcane (clé d'API en `X-API-Key`, créée dans Arcane) et publie les routes des conteneurs portant `goproxify.enable=true` et `goproxify.host`, avec les mêmes options de sécurité que les labels Docker.
+  - **Source annuaire** : `arcane` rejoint Consul, Nomad, etcd et ECS dans `internal/agent/catalog` ; elle profite du moteur commun (état complet envoyé à la passerelle, retrait d'une route quand le conteneur disparaît, groupe HA, autonomie : un Arcane injoignable ne retire rien). Aucun changement côté passerelle.
+  - **Backend** : label `goproxify.backend`, sinon `goproxify.ip`, sinon l'hôte de l'environnement (distant) avec le port **publié**, ou l'IP du conteneur (environnement local) avec son port applicatif. Un conteneur qui ne tourne pas apparaît « inactif », sans route.
+  - **Environnements** : tous les environnements activés, sauf `skip_environments` (nom ou identifiant). Un environnement qui ne répond pas garde ses dernières routes, les autres continuent d'être mis à jour.
+  - **Configuration** : `sources.arcane` dans `agent.json` (`url`, `api_key` secrète, `poll_interval_s`, `skip_environments`, `ca_cert`), `GPX_ARCANE_ENABLED` / `GPX_ARCANE_URL` / `GPX_ARCANE_API_KEY` / `GPX_ARCANE_POLL_INTERVAL_S` au démarrage, sections « Discovery Arcane » des fenêtres « Ajouter un agent » et « Configurer l'agent », capacité « Arcane » de l'assistant d'architecture (URL et clé requises à l'activation, variables `GPX_ARCANE_*` générées dans le compose, écart déclaré/réel signalé, clé jamais gardée dans le brouillon du navigateur), le tout en quatre langues. `GET /api/v1/discovery-sources`, `list_discovery_sources` (MCP) et `agent-mgmt sources` (CLI) la listent sans autre modification.
+  - **Limites** : un conteneur donne une seule route (comme les autres annuaires) .
+
 ### Corrigé
 
 - **Audit de création de session du portail : le login choisi est tracé sous `coffre=` (Edge 0.151.2)** : le détail `session_created` portait `login=<nom> (<origine>)`, motif que le contrôle d'anonymisation de la synchro produit refuse (`login non anonymisé`). C'est le nom de l'entrée du coffre, pas un identifiant d'utilisateur ; la clé devient `coffre=<nom> (<origine>)`, sans autre changement de comportement

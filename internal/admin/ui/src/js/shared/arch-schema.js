@@ -56,6 +56,7 @@ function _asCaps(model, svc) {
     if (svc.docker) c.push('Docker');
     if (svc.podman) c.push('Podman');
     if (svc.portainer) c.push('Portainer');
+    if (svc.arcane) c.push('Arcane');
     if (svc.k8s) c.push('K8s');
   }
   return c;
@@ -134,7 +135,7 @@ function _asTime(iso) {
   return d.toLocaleString(typeof gpxBCP47 === 'function' ? gpxBCP47() : undefined, opts);
 }
 
-/** Sous-titre d'un rôle : « Passerelle · leader », « Agent · Docker, Portainer »… */
+/** Sous-titre d'un rôle : « Passerelle · leader », « Agent · Docker, Portainer, Arcane »… */
 function _asRoleDetail(model, s, h) {
   if (s.type === 'admin') return t('as.admin_role') + (h ? ' · ' + h.name : '');
   let extra = '';
@@ -721,7 +722,7 @@ function asAddHost() {
   _archRender();
 }
 
-/** Plateformes portées par les agents d'un hôte (Docker ou Podman, Portainer, K8s : cumulables sauf Docker/Podman). */
+/** Plateformes portées par les agents d'un hôte (Docker ou Podman, Portainer, Arcane, K8s : cumulables sauf Docker/Podman). */
 function _asPlatforms(h) {
   const set = new Set();
   for (const s of h.services || []) {
@@ -729,6 +730,7 @@ function _asPlatforms(h) {
     if (s.docker) set.add('Docker');
     if (s.podman) set.add('Podman');
     if (s.portainer) set.add('Portainer');
+    if (s.arcane) set.add('Arcane');
     if (s.k8s) set.add('K8s');
   }
   return [...set];
@@ -1211,6 +1213,8 @@ function _asDriftRows(s, host) {
     if (rts.length) rows.push({ p: t('as.drift.runtime'), d: dec, l: rts.join(', '), bad: dec !== '—' && !rts.some(r => r.includes(dec)) });
     const pl = node._agent_config && node._agent_config.portainer;
     if (pl && pl.enabled !== undefined) rows.push({ p: 'Portainer', d: s.portainer ? 'on' : 'off', l: pl.enabled ? 'on' : 'off', bad: !!s.portainer !== !!pl.enabled });
+    const al = node._agent_config && node._agent_config.sources && node._agent_config.sources.arcane;
+    if (al && al.enabled !== undefined) rows.push({ p: 'Arcane', d: s.arcane ? 'on' : 'off', l: al.enabled ? 'on' : 'off', bad: !!s.arcane !== !!al.enabled });
   }
   if (s.type === 'edge' && node) {
     const ep = node.endpoint || node.node_endpoint || '';
