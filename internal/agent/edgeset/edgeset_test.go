@@ -96,3 +96,15 @@ func TestUpdateFromFailoverEdgeKeepsCurrent(t *testing.T) {
 		t.Fatalf("membres connus : %d", s.Len())
 	}
 }
+
+func TestAllListsTheCurrentGatewayFirst(t *testing.T) {
+	s := New("http://core:8000/", "")
+	s.Update([]string{"http://core:8000", "http://192.168.10.91:8000"})
+	if got := s.All(); len(got) != 2 || got[0] != "http://core:8000" || got[1] != "http://192.168.10.91:8000" {
+		t.Fatalf("All = %v", got)
+	}
+	s.Rotate()
+	if got := s.All(); len(got) != 2 || got[0] != "http://192.168.10.91:8000" || got[1] != "http://core:8000" {
+		t.Errorf("après bascule, la courante d'abord : %v", got)
+	}
+}

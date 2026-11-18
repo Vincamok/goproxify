@@ -24,6 +24,14 @@ async function renderObsSynthese(scope) {
   main.innerHTML = `<div class="spinner" style="margin:60px auto"></div>`;
   const page = state.page;
   const token = main._obsSynToken = (main._obsSynToken || 0) + 1;
+  let openPrism_ = () => {};
+  ObsUX.setPage({
+    reload: () => renderObsSynthese(scope),
+    refresh: () => renderObsSynthese(scope),
+    range: ms => { _obsSynRangeMs = ms; renderObsSynthese(scope); },
+    brush: r => openPrism_({ from: r.fromLocal, to: r.toLocal }),
+    actions: () => [{ label: t('obs.syn.open_prism'), kw: 'prism analyse analytics', run: () => openPrism_() }],
+  });
 
   const allEdges = scope.lock ? [] : ((await api('GET', '/nodes').catch(() => [])) || []).filter(n => n.role === 'edge');
   const [kpis, uniq, timeline, status, geo, anoms, backends, domains, slo, sloCfg, deploys, edgeKpis] = await Promise.all([
@@ -45,12 +53,16 @@ async function renderObsSynthese(scope) {
   ]);
   if (state.page !== page || main._obsSynToken !== token) return;
 
-  const rangeBtns = OBS_RANGES.map(([l, ms]) =>
-    `<button type="button" class="btn btn-secondary btn-sm${ms === _obsSynRangeMs ? ' is-active' : ''}" data-obs="range" data-ms="${ms}">${l}</button>`).join('');
-  const nodeSel = scope.lock ? '' : `
-    <select class="form-input" style="max-width:200px" data-obs="node">
+  const rangeBtns = ObsUX.rangeHTML(OBS_RANGES, _obsSynRangeMs);
+  const edgeVal = n => n.node_name || n.display_name || n.id;
+  const nodeSel = scope.lock ? '' : allEdges.length <= 8 ? `
+    <div class="oux-nodes" role="group" aria-label="${esc(t('logs.node'))}">
+      <button type="button" class="chip${node ? '' : ' active'}" data-obs="node" data-v="">${esc(t('obs.syn.all_edges'))}</button>
+      ${allEdges.map(n => `<button type="button" class="chip${edgeVal(n) === node ? ' active' : ''}" data-obs="node" data-v="${esc(edgeVal(n))}">${esc(n.display_name || n.node_name || n.id)}</button>`).join('')}
+    </div>` : `
+    <select class="form-input" style="max-width:200px" data-obs="node-select">
       <option value="">${esc(t('obs.syn.all_edges'))}</option>
-      ${allEdges.map(n => { const v = n.node_name || n.display_name || n.id; return `<option value="${esc(v)}" ${v === node ? 'selected' : ''}>${esc(n.display_name || n.node_name || n.id)}</option>`; }).join('')}
+      ${allEdges.map(n => `<option value="${esc(edgeVal(n))}" ${edgeVal(n) === node ? 'selected' : ''}>${esc(n.display_name || n.node_name || n.id)}</option>`).join('')}
     </select>`;
 
   const anomRows = Array.isArray(anoms) ? anoms : [];
@@ -123,7 +135,7 @@ async function renderObsSynthese(scope) {
     <div class="prism-filters">
       <div class="prism-fg">${nodeSel}</div>
       ${nodeSel ? '<div class="prism-fg-sep"></div>' : ''}
-      <div class="prism-fg" style="gap:4px">${rangeBtns}</div>
+      <div class="prism-fg">${rangeBtns}</div>
       <div class="prism-fg prism-fg-end" style="gap:4px">
         <button type="button" class="btn btn-primary btn-sm" data-obs="refresh">${esc(t('obs.syn.refresh'))}</button>
         <button type="button" class="btn btn-secondary btn-sm" data-obs="prism">${esc(t('obs.syn.open_prism'))}</button>
@@ -134,7 +146,7 @@ async function renderObsSynthese(scope) {
       ${obsAnomaliesHtml(anomRows, { limit: 3 })}
     </div>` : ''}
     ${sloCard}
-    ${obsKpisHtml({ ...kpis, unique_ips: uniq?.unique_ips ?? kpis?.unique_ips }, timelinePts)}
+    ${obsKpisHtml({ ...kpis, unique_ips: uniq?.unique_ips ?? kpis?.unique_ips }, timelinePts, { links: true })}
     <div class="prism-two">
       <div class="prism-panel">${obsTimelineHtml(timelinePts, { live: bucket === 'minute', bucketUnit: bucket, deploys: Array.isArray(deploys) ? deploys : [] })}</div>
       <div class="prism-panel">${obsStatusHtml(Array.isArray(status) ? status : [])}</div>
@@ -143,7 +155,7 @@ async function renderObsSynthese(scope) {
     <div class="prism-two">${countriesCard}${certsCard}</div></div>`;
   const root = document.getElementById('obs-syn-root');
 
-  const openPrism_ = (opts = {}) => {
+  openPrism_ = (opts = {}) => {
     window._prismProxyInit = opts.proxy || '';
     window._prismIpInit = opts.ip || '';
     window._prismFromInit = opts.from || '';
@@ -158,7 +170,7 @@ async function renderObsSynthese(scope) {
     if (!el || !root.contains(el)) return;
     const obs = el.getAttribute('data-obs');
     const act = el.getAttribute('data-prism');
-    if (obs === 'range') { _obsSynRangeMs = parseInt(el.dataset.ms, 10) || 86400000; renderObsSynthese(scope); }
+    if (obs === 'node') { _obsSynNode = el.dataset.v || ''; renderObsSynthese(scope); }
     else if (obs === 'refresh') renderObsSynthese(scope);
     else if (obs === 'prism') openPrism_();
     else if (obs === 'proxy') openPrism_({ proxy: el.dataset.proxy || '' });
@@ -168,33 +180,23 @@ async function renderObsSynthese(scope) {
       if (typeof openLogsFiltered === 'function') openLogsFiltered(opts);
     }
     else if (act === 'bucket') openPrism_(obsBucketRange(el.getAttribute('data-bucket') || '', bucket));
+    else if (act === 'kpi') {
+      const k = el.dataset.kpi;
+      if (k === 'errors') { if (typeof openLogsFiltered === 'function') openLogsFiltered({ status: '5xx', date_from: from.toISOString(), date_to: now.toISOString() }); }
+      else if (k === 'latency') navigate(scope.lock ? 'edge-metrics' : 'obs-metrics');
+      else openPrism_();
+    }
     else if (act === 'ban') openPrism_({ ip: el.getAttribute('data-ip') || '' });
     else if (act === 'filter-proxy') openPrism_({ proxy: el.getAttribute('data-proxy') || '' });
     else if (act) openPrism_();
     if (el.hasAttribute('data-obs') || act) e.preventDefault();
   };
   root.onchange = e => {
-    const sl = e.target.closest('[data-obs="slo-target"]');
-    if (sl) {
-      const nq = node ? '?node_name=' + encodeURIComponent(node) : '';
-      api('PUT', '/prism/slo/config' + nq, { target: parseFloat(sl.value) })
-        .catch(err => toast(err.message, 'error'))
-        .finally(() => renderObsSynthese(scope));
-      return;
-    }
-    const el = e.target.closest('[data-obs="node"]');
+    const el = e.target.closest('[data-obs="node-select"]');
     if (!el) return;
     _obsSynNode = el.value;
     renderObsSynthese(scope);
   };
-  root.addEventListener('click', e => {
-    const rst = e.target.closest('[data-obs="slo-reset"]');
-    if (!rst || !node) return;
-    e.preventDefault();
-    api('DELETE', '/prism/slo/config?node_name=' + encodeURIComponent(node))
-      .catch(err => toast(err.message, 'error'))
-      .finally(() => renderObsSynthese(scope));
-  });
 }
 
 // Tranche de la courbe (heure locale du serveur, « AAAA-MM-JJTHH:MM ») → période datetime-local pour Prism.

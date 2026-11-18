@@ -26,6 +26,9 @@ type Config struct {
 	MaxPerRun   int           // dossiers construits par passage (200)
 	Sources     []string      // sources de ban dont on apprend : celles qui détectent seules
 	MaxDossiers time.Duration // rétention des dossiers (365 jours)
+	// Rest : temps de repos après chaque lecture de logs, en fraction de sa durée (1 = la moitié du temps au repos). Chaque
+	// lecture parcourt jusqu'à 30 jours de logs : sans repos, un passage occupe un cœur de l'Admin pendant des minutes.
+	Rest float64
 }
 
 // DefaultConfig rend les valeurs de départ.
@@ -35,6 +38,7 @@ func DefaultConfig() Config {
 		Lookback: 30 * 24 * time.Hour, Before: 24 * time.Hour, After: time.Hour, MaxPerRun: 200,
 		Sources:     []string{"fail2ban", "threat", "waf", "rules_engine"},
 		MaxDossiers: 365 * 24 * time.Hour,
+		Rest:        1,
 	}
 }
 
@@ -121,7 +125,9 @@ func (m *Miner) run(ctx context.Context) (Result, error) {
 			res.Skipped++
 			continue
 		}
+		began := time.Now()
 		lines, err := m.Traffic.Lines(ctx, b.IP, b.At.Add(-m.Cfg.Before), b.At.Add(m.Cfg.After))
+		m.rest(ctx, began)
 		if err != nil {
 			res.Errors++
 			continue
@@ -339,7 +345,9 @@ func (m *Miner) recompute(ctx context.Context, res *Result) error {
 	keep := map[string]struct{}{}
 	for _, tpl := range candidates {
 		a := paths[tpl]
+		began := time.Now()
 		reach, err := m.Traffic.PathReach(ctx, LiteralPrefix(tpl), since, now)
+		m.rest(ctx, began)
 		if err != nil {
 			res.Degraded, res.Message = true, "passerelles injoignables : les entrées de chemin n'ont pas été recalculées"
 			return nil
@@ -364,6 +372,23 @@ func (m *Miner) recompute(ctx context.Context, res *Result) error {
 	n, err = m.Store.dropStale(ctx, KindPath, keep)
 	res.Dropped += n
 	return err
+}
+
+// maxRest borne un repos : une lecture exceptionnellement longue ne doit pas immobiliser le passage.
+const maxRest = 10 * time.Second
+
+// rest laisse la main à l'Admin après une lecture de logs commencée à began, pendant Cfg.Rest fois sa durée.
+func (m *Miner) rest(ctx context.Context, began time.Time) {
+	d := min(time.Duration(float64(time.Since(began))*m.Cfg.Rest), maxRest)
+	if d <= 0 {
+		return
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+	case <-ctx.Done():
+	}
 }
 
 func entryOf(kind Kind, value string, a *aggregate, lift float64, clean int64) Entry {

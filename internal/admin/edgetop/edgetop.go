@@ -36,6 +36,8 @@ type Request struct {
 	K   int
 	// WithIPs : joint à chaque valeur du classement le nombre d'IP attribuables distinctes.
 	WithIPs bool
+	// WithBots : compte les robots (Item.Bots) ; sans cela la passerelle ne fait pas ce calcul, qui coûte plus de la moitié d'un classement.
+	WithBots bool
 }
 
 // Item est une valeur du classement avec ses comptes, additionnés sur toutes les passerelles.
@@ -146,7 +148,7 @@ func run(ctx context.Context, active []int, call Caller, req Request) (items []I
 
 	// Tour 1 : les K meilleures de chaque passerelle.
 	if f, err := do(all, func(int) (logapi.TopRequest, bool) {
-		return logapi.TopRequest{Dim: req.Dim, Mode: "best", K: req.K}, true
+		return logapi.TopRequest{Dim: req.Dim, Mode: "best", K: req.K, WithBots: req.WithBots}, true
 	}, func(i int, r *logapi.TopResponse) {
 		absorb(i, r)
 		complete[i] = r.Complete
@@ -170,7 +172,7 @@ func run(ctx context.Context, active []int, call Caller, req Request) (items []I
 		}
 		// Tour 2 : tout ce qui atteint le seuil.
 		if f, err := do(open, func(int) (logapi.TopRequest, bool) {
-			return logapi.TopRequest{Dim: req.Dim, Mode: "above", Min: t}, true
+			return logapi.TopRequest{Dim: req.Dim, Mode: "above", Min: t, WithBots: req.WithBots}, true
 		}, absorb); f >= 0 {
 			return nil, false, f, err
 		}
@@ -203,7 +205,7 @@ func run(ctx context.Context, active []int, call Caller, req Request) (items []I
 						need = append(need, v)
 					}
 				}
-				return logapi.TopRequest{Dim: req.Dim, Mode: "exact", Values: need}, len(need) > 0
+				return logapi.TopRequest{Dim: req.Dim, Mode: "exact", Values: need, WithBots: req.WithBots}, len(need) > 0
 			}, absorb); f >= 0 {
 				return nil, false, f, err
 			}
@@ -281,7 +283,7 @@ func run(ctx context.Context, active []int, call Caller, req Request) (items []I
 		var mu sync.Mutex
 		var bad error
 		if f, err := do(all, func(int) (logapi.TopRequest, bool) {
-			return logapi.TopRequest{Dim: req.Dim, Mode: "exact", Values: values, WithIPs: true}, true
+			return logapi.TopRequest{Dim: req.Dim, Mode: "exact", Values: values, WithIPs: true, WithBots: req.WithBots}, true
 		}, func(_ int, r *logapi.TopResponse) {
 			mu.Lock()
 			defer mu.Unlock()

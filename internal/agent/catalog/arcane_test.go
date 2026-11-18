@@ -5,13 +5,17 @@ package catalog
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/vincamok/goproxify/internal/agent/hostaddr"
 )
 
 const arcaneEnvs = `{"success":true,"data":[
@@ -22,7 +26,7 @@ const arcaneEnvs = `{"success":true,"data":[
 ],"pagination":{"totalItems":4}}`
 
 const arcaneLocal = `{"success":true,"data":[
- {"id":"c1aaaaaaaaaaaaaaaa","names":["/web"],"state":"running",
+ {"id":"c1aaaaaaaaaaaaaaaa","names":["/web"],"state":"running","image":"grafana/grafana:10.2.0",
   "labels":{"goproxify.enable":"true","goproxify.host":"web.example.com","autre":"x"},
   "ports":[{"privatePort":8080,"type":"tcp"}],
   "networkSettings":{"networks":{"z":{"ipAddress":""},"a":{"ipAddress":"172.18.0.4"}}}},
@@ -47,21 +51,35 @@ const arcaneNAS = `{"success":true,"data":[
   "ports":[{"privatePort":80,"publicPort":8090,"type":"tcp"}]}
 ],"pagination":{"totalItems":3}}`
 
+// arcaneServer simule un gestionnaire Arcane 3 (collection « agents »).
 func arcaneServer(t *testing.T, labFails *atomic.Bool) *httptest.Server {
 	t.Helper()
+	return arcaneServerOn(t, "agents", labFails)
+}
+
+// arcaneServerOn simule un gestionnaire dont la collection d'environnements est base : « agents » (Arcane 3) ou
+// « environments » (Arcane 2). L'autre chemin répond 404, comme le vrai.
+func arcaneServerOn(t *testing.T, base string, labFails *atomic.Bool) *httptest.Server {
+	t.Helper()
+	root := "/api/" + base
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-API-Key") != "k" {
 			http.Error(w, `{"success":false}`, http.StatusUnauthorized)
 			return
 		}
+		if strings.HasPrefix(r.URL.Path, "/api/agents") != (base == "agents") && strings.HasPrefix(r.URL.Path, "/api/") &&
+			(strings.HasPrefix(r.URL.Path, "/api/agents") || strings.HasPrefix(r.URL.Path, "/api/environments")) {
+			http.Error(w, `{"success":false,"error":"API endpoint not found"}`, http.StatusNotFound)
+			return
+		}
 		switch r.URL.Path {
-		case "/api/environments":
+		case root:
 			_, _ = io.WriteString(w, arcaneEnvs)
-		case "/api/environments/0/containers":
+		case root + "/0/containers":
 			_, _ = io.WriteString(w, arcaneLocal)
-		case "/api/environments/1/containers":
+		case root + "/1/containers":
 			_, _ = io.WriteString(w, arcaneNAS)
-		case "/api/environments/3/containers":
+		case root + "/3/containers":
 			if labFails != nil && labFails.Load() {
 				http.Error(w, "boom", http.StatusBadGateway)
 				return
@@ -110,6 +128,9 @@ func TestArcane_ListsContainersOfEveryEnvironment(t *testing.T) {
 	}
 	if by["0/c3cccccccccccccccc"].Inactive != "exited" || by["0/c1aaaaaaaaaaaaaaaa"].Inactive != "" {
 		t.Errorf("états : %+v", got)
+	}
+	if by["0/c1aaaaaaaaaaaaaaaa"].Image != "grafana/grafana:10.2.0" || by["1/n2ffffffffffffffff"].Image != "" {
+		t.Errorf("image : %q, %q", by["0/c1aaaaaaaaaaaaaaaa"].Image, by["1/n2ffffffffffffffff"].Image)
 	}
 	if n := by["1/n1eeeeeeeeeeeeeeee"].Name; n != "app (nas)" {
 		t.Errorf("nom = %q", n)
@@ -175,7 +196,7 @@ func TestArcane_ReadsEveryPage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		pages.Add(1)
 		switch {
-		case r.URL.Path == "/api/environments":
+		case r.URL.Path == "/api/agents":
 			_, _ = io.WriteString(w, `{"data":[{"id":"1","name":"e","apiUrl":"http://10.0.0.5:3552","enabled":true}],"pagination":{"totalItems":1}}`)
 		case r.URL.Query().Get("start") == "0":
 			var rows []string
@@ -218,5 +239,259 @@ func TestArcaneEnvHost(t *testing.T) {
 		if got := arcaneEnvHost(in); got != want {
 			t.Errorf("arcaneEnvHost(%q) = %q, attendu %q", in, got, want)
 		}
+	}
+}
+
+// Un Arcane 2 expose ses environnements sous /environments : la source essaie /agents, reçoit 404 et retient l'ancien
+// chemin, sans le réessayer à chaque sondage.
+func TestArcane_FallsBackToEnvironmentsOnArcane2(t *testing.T) {
+	var agentsCalls atomic.Int32
+	inner := arcaneServerOn(t, "environments", nil)
+	defer inner.Close()
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/agents") {
+			agentsCalls.Add(1)
+		}
+		inner.Config.Handler.ServeHTTP(w, r)
+	}))
+	defer front.Close()
+	a, _ := NewArcane(ArcaneConfig{URL: front.URL, APIKey: "k"})
+	for i := 0; i < 2; i++ {
+		got, err := a.List(context.Background())
+		if err != nil || len(got) != 7 {
+			t.Fatalf("passe %d : %d instances, %v", i, len(got), err)
+		}
+	}
+	if n := agentsCalls.Load(); n != 1 {
+		t.Errorf("/agents appelé %d fois, une seule attendue (le chemin appris est retenu)", n)
+	}
+}
+
+// Une erreur qui n'est pas un 404 (clé refusée, panne) ne bascule pas sur l'autre chemin.
+func TestArcane_OnlyNotFoundTriggersTheFallback(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	a, _ := NewArcane(ArcaneConfig{URL: srv.URL, APIKey: "k"})
+	if _, err := a.List(context.Background()); err == nil {
+		t.Fatal("erreur attendue")
+	}
+	if calls.Load() != 1 {
+		t.Errorf("%d appels, un seul attendu", calls.Load())
+	}
+}
+
+func arcaneFixtureServer(t *testing.T, envAPI, ip string, publicIP ...string) *httptest.Server {
+	t.Helper()
+	declared := ""
+	if len(publicIP) > 0 {
+		declared = publicIP[0]
+	}
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/agents":
+			fmt.Fprintf(w, `{"data":[{"id":"e1","name":"vm-docker","apiUrl":%q,"enabled":true,"agentHost":{"publicIp":%q}}],"pagination":{"totalItems":1}}`, envAPI, declared)
+		case "/api/agents/e1/containers":
+			fmt.Fprintf(w, `{"data":[{"id":"c1","names":["/lore"],"state":"running","labels":{"goproxify.enable":"true","goproxify.host":"lore.example.com","goproxify.port":"80"},
+			 "ports":[{"ip":%q,"privatePort":80,"publicPort":32865,"type":"tcp"}]}],"pagination":{"totalItems":1}}`, ip)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+}
+
+func arcaneBackendOf(t *testing.T, srv *httptest.Server, hosts map[string]string) string {
+	t.Helper()
+	a, _ := NewArcane(ArcaneConfig{URL: srv.URL, APIKey: "k", EnvironmentHosts: hosts})
+	got, err := a.List(context.Background())
+	if err != nil || len(got) != 1 {
+		t.Fatalf("%d instances, %v", len(got), err)
+	}
+	return got[0].Backend
+}
+
+// L'adresse d'API d'un environnement peut être un nom de machine que la passerelle ne résout pas : l'adresse à laquelle
+// Docker a lié le port publié, ou celle que l'opérateur impose, passent avant.
+func TestArcane_BackendHostPrecedence(t *testing.T) {
+	defer hostaddr.SetLookup(func(context.Context, string) ([]net.IPAddr, error) { return nil, errors.New("no such host") })()
+	cases := map[string]struct {
+		envAPI, ip string
+		hosts      map[string]string
+		want       string
+	}{
+		"hôte de l'API":              {"http://vm-docker:3552", "0.0.0.0", nil, "http://vm-docker:32865"},
+		"adresse de liaison précise": {"http://vm-docker:3552", "192.168.10.91", nil, "http://192.168.10.91:32865"},
+		"liaison IPv6 générique":     {"http://vm-docker:3552", "::", nil, "http://vm-docker:32865"},
+		"imposée par le nom":         {"http://vm-docker:3552", "192.168.10.91", map[string]string{"VM-Docker": "10.9.9.9"}, "http://10.9.9.9:32865"},
+		"imposée par l'identifiant":  {"http://vm-docker:3552", "0.0.0.0", map[string]string{"e1": "10.9.9.9"}, "http://10.9.9.9:32865"},
+		"environnement local forcé":  {"http://localhost:3552", "0.0.0.0", map[string]string{"vm-docker": "10.9.9.9"}, "http://10.9.9.9:32865"},
+	}
+	for name, tc := range cases {
+		srv := arcaneFixtureServer(t, tc.envAPI, tc.ip)
+		if got := arcaneBackendOf(t, srv, tc.hosts); got != tc.want {
+			t.Errorf("%s : %q, attendu %q", name, got, tc.want)
+		}
+		srv.Close()
+	}
+}
+
+// Le nom d'hôte d'un environnement devient son adresse IP dans le backend ; un nom que l'Agent ne résout pas est gardé.
+func TestArcane_EnvironmentNameBecomesAnIP(t *testing.T) {
+	defer hostaddr.SetLookup(func(_ context.Context, h string) ([]net.IPAddr, error) {
+		if h == "vm-docker" {
+			return []net.IPAddr{{IP: net.ParseIP("10.20.0.15")}}, nil
+		}
+		return nil, errors.New("no such host")
+	})()
+
+	srv := arcaneFixtureServer(t, "http://vm-docker:3552", "0.0.0.0")
+	defer srv.Close()
+	if got := arcaneBackendOf(t, srv, nil); got != "http://10.20.0.15:32865" {
+		t.Errorf("nom résolu : %q", got)
+	}
+	if got := arcaneBackendOf(t, srv, map[string]string{"vm-docker": "autre-nom"}); got != "http://autre-nom:32865" {
+		t.Errorf("nom imposé non résolu, gardé : %q", got)
+	}
+	srv2 := arcaneFixtureServer(t, "http://inconnu:3552", "0.0.0.0")
+	defer srv2.Close()
+	if got := arcaneBackendOf(t, srv2, nil); got != "http://inconnu:32865" {
+		t.Errorf("nom non résolu, gardé : %q", got)
+	}
+}
+
+// L'agent Arcane de l'hôte déclare son adresse (celle du LAN) : elle remplace un nom que l'Agent ne résout pas, sans
+// jamais passer avant un nom résolu ni avant une adresse imposée.
+func TestArcane_UsesTheAddressDeclaredByTheArcaneAgent(t *testing.T) {
+	defer hostaddr.SetLookup(func(_ context.Context, h string) ([]net.IPAddr, error) {
+		if h == "resolvable" {
+			return []net.IPAddr{{IP: net.ParseIP("10.20.0.99")}}, nil
+		}
+		return nil, errors.New("no such host")
+	})()
+	cases := map[string]struct {
+		envAPI, public string
+		hosts          map[string]string
+		want           string
+	}{
+		"nom non résolu":                {"http://vm-docker:3552", "192.168.10.91", nil, "http://192.168.10.91:32865"},
+		"nom résolu, il passe avant":    {"http://resolvable:3552", "192.168.10.91", nil, "http://10.20.0.99:32865"},
+		"adresse imposée avant tout":    {"http://vm-docker:3552", "192.168.10.91", map[string]string{"vm-docker": "10.9.9.9"}, "http://10.9.9.9:32865"},
+		"sans adresse d'API":            {"", "192.168.10.91", nil, "http://192.168.10.91:32865"},
+		"adresse déclarée inutilisable": {"http://vm-docker:3552", "0.0.0.0", nil, "http://vm-docker:32865"},
+		"adresse déclarée pas une IP":   {"http://vm-docker:3552", "hote.example.com", nil, "http://vm-docker:32865"},
+	}
+	for name, tc := range cases {
+		srv := arcaneFixtureServer(t, tc.envAPI, "0.0.0.0", tc.public)
+		if got := arcaneBackendOf(t, srv, tc.hosts); got != tc.want {
+			t.Errorf("%s : %q, attendu %q", name, got, tc.want)
+		}
+		srv.Close()
+	}
+}
+
+func arcaneNetServer(t *testing.T, extraLabels string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/agents":
+			_, _ = io.WriteString(w, `{"data":[{"id":"e1","name":"nas","apiUrl":"http://10.0.0.5:3552","enabled":true}],"pagination":{"totalItems":1}}`)
+		case "/api/agents/e1/containers":
+			fmt.Fprintf(w, `{"data":[{"id":"c1","names":["/app"],"state":"running",
+			 "labels":{"goproxify.enable":"true","goproxify.host":"app.example.com"%s},
+			 "ports":[{"privatePort":8080,"publicPort":32788,"type":"tcp"}],
+			 "networkSettings":{"networks":{"bridge":{"ipAddress":"172.17.0.4"},"lan":{"ipAddress":"10.20.0.77"}}}}],"pagination":{"totalItems":1}}`, extraLabels)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+}
+
+func arcaneInstanceOf(t *testing.T, srv *httptest.Server, cfg ArcaneConfig) Instance {
+	t.Helper()
+	cfg.URL, cfg.APIKey = srv.URL, "k"
+	a, err := NewArcane(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := a.List(context.Background())
+	if err != nil || len(got) != 1 {
+		t.Fatalf("%d instances, %v", len(got), err)
+	}
+	return got[0]
+}
+
+// Une adresse interne n'est proposée que si elle est sûrement joignable : jamais celle d'un bridge d'un autre hôte, qu'une
+// IP identique chez la passerelle pourrait confondre avec un autre conteneur.
+func TestArcane_InternalAddressOnlyWhenSurelyReachable(t *testing.T) {
+	srv := arcaneNetServer(t, "")
+	defer srv.Close()
+
+	got := arcaneInstanceOf(t, srv, ArcaneConfig{})
+	if got.Backend != "http://10.0.0.5:32788" || len(got.Candidates) != 0 {
+		t.Errorf("hôte distant sans réseau routable : %q %v", got.Backend, got.Candidates)
+	}
+
+	got = arcaneInstanceOf(t, srv, ArcaneConfig{RoutableNetworks: []string{"10.20.0.0/16"}})
+	if got.Backend != "http://10.0.0.5:32788" || len(got.Candidates) != 2 ||
+		got.Candidates[0] != "http://10.20.0.77:8080" || got.Candidates[1] != "http://10.0.0.5:32788" {
+		t.Errorf("réseau routable : l'IP interne et son port applicatif d'abord, le port publié ensuite : %q %v", got.Backend, got.Candidates)
+	}
+
+	var joined []string
+	got = arcaneInstanceOf(t, srv, ArcaneConfig{Join: func(_ context.Context, id string, nets []string) bool {
+		joined = nets
+		return id == "c1"
+	}})
+	if got.Backend != "http://172.17.0.4:8080" || len(got.Candidates) != 0 || len(joined) != 2 {
+		t.Errorf("conteneur local : IP interne servie, réseaux rejoints %v : %q %v", joined, got.Backend, got.Candidates)
+	}
+
+	got = arcaneInstanceOf(t, srv, ArcaneConfig{Join: func(context.Context, string, []string) bool { return false }})
+	if got.Backend != "http://10.0.0.5:32788" || len(got.Candidates) != 0 {
+		t.Errorf("conteneur non local : port publié : %q %v", got.Backend, got.Candidates)
+	}
+}
+
+func TestArcane_ExplicitLabelsKeepASingleAddress(t *testing.T) {
+	srv := arcaneNetServer(t, `,"goproxify.ip":"192.168.1.9"`)
+	defer srv.Close()
+	got := arcaneInstanceOf(t, srv, ArcaneConfig{RoutableNetworks: []string{"10.20.0.0/16"}, Join: func(context.Context, string, []string) bool { return true }})
+	if got.Backend != "http://192.168.1.9:32788" || len(got.Candidates) != 0 {
+		t.Errorf("l'étiquette ip désigne une seule adresse : %q %v", got.Backend, got.Candidates)
+	}
+}
+
+func TestNewArcane_RejectsABadRoutableNetwork(t *testing.T) {
+	if _, err := NewArcane(ArcaneConfig{URL: "https://arcane.example.com", APIKey: "k", RoutableNetworks: []string{"10.0.0.0/8", "pas-un-cidr"}}); err == nil {
+		t.Error("un CIDR invalide doit être refusé")
+	}
+}
+
+// Un conteneur de l'hôte de l'Agent qui publie un port est joint par l'adresse de l'hôte et ce port : toutes les passerelles
+// d'un groupe HA l'atteignent. Sans adresse d'hôte connue, ou sans port publié, l'IP interne reste.
+func TestArcane_LocalContainerUsesTheHostAddressAndItsPublishedPort(t *testing.T) {
+	srv := arcaneNetServer(t, "")
+	defer srv.Close()
+	join := func(context.Context, string, []string) bool { return true }
+	host := func(addr string) func(context.Context) string { return func(context.Context) string { return addr } }
+
+	got := arcaneInstanceOf(t, srv, ArcaneConfig{Join: join, HostAddress: host("192.168.10.10")})
+	if got.Backend != "http://192.168.10.10:32788" || len(got.Candidates) != 0 {
+		t.Errorf("hôte connu : %q %v", got.Backend, got.Candidates)
+	}
+	got = arcaneInstanceOf(t, srv, ArcaneConfig{Join: join, HostAddress: host("")})
+	if got.Backend != "http://172.17.0.4:8080" {
+		t.Errorf("hôte inconnu : l'IP interne : %q", got.Backend)
+	}
+	got = arcaneInstanceOf(t, srv, ArcaneConfig{Join: join})
+	if got.Backend != "http://172.17.0.4:8080" {
+		t.Errorf("sans résolveur : l'IP interne : %q", got.Backend)
+	}
+	got = arcaneInstanceOf(t, srv, ArcaneConfig{Join: func(context.Context, string, []string) bool { return false }, HostAddress: host("192.168.10.10")})
+	if got.Backend != "http://10.0.0.5:32788" {
+		t.Errorf("conteneur non local : l'hôte de son environnement : %q", got.Backend)
 	}
 }

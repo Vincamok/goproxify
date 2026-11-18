@@ -206,6 +206,8 @@ type TopRequest struct {
 	Min     int64    `json:"min,omitempty"`
 	Values  []string `json:"values,omitempty"`
 	WithIPs bool     `json:"with_ips,omitempty"`
+	// WithBots : compte les requêtes de robots (TopItem.Bots) ; sans cela Bots reste à 0 (le calcul coûte plus de la moitié du regroupement).
+	WithBots bool `json:"with_bots,omitempty"`
 }
 
 // TopItem additionne les accès d'une valeur ; tous ses compteurs s'additionnent d'une passerelle à l'autre.

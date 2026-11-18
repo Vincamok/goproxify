@@ -19,11 +19,11 @@ import (
 )
 
 // settingKey est la clé de configuration (table settings) listant les IP/CIDR
-// autorisés à appeler /mcp. Liste vide = pas de restriction (comportement historique).
+// autorisés à appeler /mcp. Liste vide = personne : pour ouvrir à tous, écrire 0.0.0.0/0 et ::/0.
 const settingKey = "mcp.allowed_ips"
 
 // defaultAllowedIPs s'applique tant que la clÃ© n'a jamais Ã©tÃ© Ã©crite : rÃ©seaux privÃ©s (RFC 1918),
-// loopback et ULA IPv6. Une liste explicitement vidÃ©e par l'admin reste sans restriction.
+// loopback et ULA IPv6. Une liste explicitement vidÃ©e par l'admin refuse tout le monde.
 const defaultAllowedIPs = `["10.0.0.0/8","172.16.0.0/12","192.168.0.0/16","127.0.0.0/8","::1/128","fc00::/7"]`
 
 // AllowedIPs retourne la liste des IP/CIDR autorisés à utiliser le MCP.
@@ -59,7 +59,8 @@ func IsValidIPOrCIDR(s string) bool {
 	return net.ParseIP(s) != nil
 }
 
-// Allowed vérifie que l'IP appelante figure dans l'allowlist (ou qu'elle est vide).
+// Allowed vérifie que l'IP appelante figure dans l'allowlist. Une liste vide refuse tout : « vide = ouvert » faisait d'un
+// réglage effacé par erreur une exposition à Internet.
 func Allowed(db *sql.DB, r *http.Request) bool {
 	if db == nil {
 		return true
@@ -71,7 +72,7 @@ func Allowed(db *sql.DB, r *http.Request) bool {
 // X-Forwarded-For envoyé par un pair qui n'est pas un proxy de confiance ne compte pas.
 func matchAllowlist(allowlist []string, r *http.Request) bool {
 	if len(allowlist) == 0 {
-		return true
+		return false
 	}
 	clientIP := net.ParseIP(hostOnly(audit.IPFrom(r)))
 	if clientIP == nil {

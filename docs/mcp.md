@@ -5,11 +5,22 @@ Le serveur MCP (Model Context Protocol) de Goproxify expose l'Administration à 
 **Endpoint :** `https://<admin-host>:9443/mcp`  
 **Protocole :** MCP `2025-03-26`, JSON-RPC 2.0 over HTTP  
 **Authentification :** `Authorization: Bearer <gpx_pat_…>` — token API utilisateur (PAT) créé depuis **Paramètres → Mes tokens API**, avec l'usage **MCP** (ou **API + MCP**). Le JWT de session UI n’est **pas** accepté sur `/mcp`, ni un token créé pour l'usage **API** seul (403, Admin `0.260.0`) ; inversement, un token **MCP** seul est refusé par l'API REST.  
-**SSE (streaming) :** `GET /mcp/sse` — keepalive toutes les 15 s
+**SSE (streaming) :** `GET /mcp/sse` — keepalive toutes les 15 s ; le flux n'a pas de durée maximale (chaque écriture a son échéance de 30 s, un client qui n'écoute plus est coupé)
 
 Les scopes du PAT (`proxies:read`, `nodes:read`, …) bornent les outils MCP ; l’autorisation effective est toujours l’intersection avec les droits actuels du compte.
 
-**Allowlist IP :** la page **Accès → Accès MCP** (`/mcp-access`, admin uniquement) permet de restreindre `/mcp` à une liste d'IP/CIDR sources (`GET`/`PUT /api/v1/mcp-access/allowed-ips`). Liste vide (défaut) = pas de restriction. Le contrôle s'applique **avant** l'authentification PAT — une requête hors liste reçoit un 403 immédiat, PAT valide ou non.
+**Allowlist IP :** la page **Accès → Accès MCP** (`/mcp-access`, admin uniquement) permet de restreindre `/mcp` à une liste d'IP/CIDR sources (`GET`/`PUT /api/v1/mcp-access/allowed-ips`). Défaut : réseaux privés (RFC 1918, loopback, ULA IPv6). Une liste vide **refuse tout le monde** ; pour ouvrir `/mcp` à Internet, saisir explicitement `0.0.0.0/0` et `::/0`. Le contrôle s'applique **avant** l'authentification PAT — une requête hors liste reçoit un 403 immédiat, PAT valide ou non, sans toucher à la base.
+
+**Authentification :** `Authorization: Bearer gpx_pat_…` uniquement. Le jeton n'est pas lu dans l'URL (`?_auth=` est ignoré sur `/mcp` et `/mcp/sse`). **Verrouillage :** 10 jetons refusés (inconnus, révoqués, expirés, mal formés) depuis une même adresse en 5 minutes la verrouillent 15 minutes : `429` avec `Retry-After`, même pour un jeton valide ; l'événement est journalisé (`mcp_auth_locked`) et alerté (`admin_auth_failures`). Un jeton absent ou réservé à l'API REST ne compte pas. Derrière un proxy, l'adresse est celle vue par `GPX_TRUSTED_PROXIES`.
+
+### Listener dédié
+
+Par défaut, `/mcp` est servi par le même port que l'interface et l'API REST : publier ce port sur Internet expose tout. Pour ne publier que le MCP, définir `server.mcp_port` (variable `GPX_SERVER_MCP_PORT`, `0` = désactivé) :
+
+- le MCP écoute sur ce port et **ne sert que `/mcp` et `/mcp/sse`** — toute autre URL (UI, `/api/…`, WebSocket, appairage) répond 404 ;
+- le port de l'API et le port local ne servent plus `/mcp` (404) : un seul point d'entrée à filtrer, surveiller et publier ;
+- l'allowlist d'IP, le verrouillage des jetons refusés et les scopes s'appliquent exactement comme avant ; le certificat est celui de l'Admin (`GPX_ADMIN_TLS_CERT` / `GPX_ADMIN_TLS_KEY`). Sans certificat, le listener démarre en HTTP clair avec un avertissement : le jeton circulerait en clair, placer un reverse-proxy TLS devant avant d'ouvrir à Internet ;
+- le port doit différer de `api_port` et de `local_port`, sinon l'Admin refuse de démarrer.
 
 **Vue d'ensemble admin :** la même page affiche la liste des utilisateurs porteurs d'un PAT actif utilisable sur le MCP (usage `mcp` ou `both`, tous porteurs confondus) avec leurs scopes, ainsi que le catalogue de scopes et les outils MCP que chacun couvre, pour référence. C'est une vue en lecture seule côté scopes — la création et le choix des scopes d'un PAT restent self-service depuis **Paramètres → Mes tokens API**.
 
@@ -1880,7 +1891,7 @@ Scopes PAT : `portal:read` (lecture) / `portal:write` (écriture + push). Réser
 | Paramètre | Type | Requis | Description |
 |-----------|------|--------|-------------|
 | `edge` | string | ✓ | Nom du nœud passerelle |
-| `enabled`, `ssh_port`, `http_port`, `public_host`, `allow_personal_targets`, `require_2fa`, `session_ttl_sec`, `session_mode`, `theme`, `views`, `ha_session_mode` | — | — | Champs optionnels pour `update_portal_config` (`theme` : `auto`, `clair`, `sombre`, `ocean`, `foret`, `amethyste` ou `contraste`) (`ha_session_mode` : `sticky` ou `shared`, groupe HA) |
+| `enabled`, `ssh_port`, `http_port`, `public_host`, `allow_personal_targets`, `require_2fa`, `session_ttl_sec`, `session_mode`, `theme`, `views`, `ha_session_mode` | — | — | Champs optionnels pour `update_portal_config` (`theme` : `auto`, `clair`, `sombre`, `ocean`, `foret`, `amethyste`, `contraste` ou `boussole`, une interface complète) (`ha_session_mode` : `sticky` ou `shared`, groupe HA) |
 
 ### Catalogue — `list_portal_destinations`, `create_portal_destination`, `update_portal_destination`, `delete_portal_destination`, `preview_portal_destinations`
 

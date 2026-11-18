@@ -115,6 +115,7 @@ async function renderPrismPage() {
 
   const main = document.getElementById('content');
   main.innerHTML = `
+    ${ObsUX.subNav()}
     ${prismScopeBanner()}
 
     <div id="prism-root"><div class="spinner" style="margin:60px auto"></div></div>`;
@@ -506,9 +507,9 @@ async function renderPrismPage() {
         </select>`;
     const icoCompare = `<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M8 3L4 7l4 4"/><path d="M4 7h16"/><path d="M16 21l4-4-4-4"/><path d="M20 17H4"/></svg>`;
     const icoLive = `<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>`;
-    const quickBtns = logsPeriodsForRetention(logsRetention.access).map(({label, ms})=>
-      `<button type="button" class="seg-btn" data-prism="quick" data-ms="${ms}"${liveMode ? ' disabled' : ''}>${label}</button>`
-    ).join('');
+    const spanMs = Math.round((new Date(selTo) - new Date(selFrom)) / 60000) * 60000;
+    const activeMs = Math.abs(Date.now() - new Date(selTo)) < 120000 ? spanMs : 0;
+    const rangeBtns = ObsUX.rangeHTML(logsPeriodsForRetention(logsRetention.access).map(({label, ms}) => [label, ms]), activeMs, { attr: 'data-prism="quick" data-ms' });
     return `
       <div class="prism-filters">
         <div class="prism-fg">
@@ -519,14 +520,16 @@ async function renderPrismPage() {
           </select>
         </div>
         <div class="prism-fg-sep"></div>
-        <div class="prism-fg">
-          <span class="prism-fg-label">De</span>
-          <input type="datetime-local" id="prism-from" class="form-input" style="max-width:168px" value="${esc(selFrom)}" data-prism="from"${liveMode ? ' disabled' : ''}>
-          <span class="prism-fg-label">à</span>
-          <input type="datetime-local" id="prism-to" class="form-input" style="max-width:168px" value="${esc(selTo)}" data-prism="to"${liveMode ? ' disabled' : ''}>
-        </div>
-        <div class="prism-fg-sep"></div>
-        <div class="prism-fg"><div class="logs-seg">${quickBtns}</div></div>
+        <div class="prism-fg">${rangeBtns}</div>
+        <details class="oux-precise">
+          <summary>${esc(t('obs.ux.range_precise'))}</summary>
+          <div class="oux-precise-body">
+            <span class="prism-fg-label">De</span>
+            <input type="datetime-local" id="prism-from" class="form-input" style="max-width:168px" value="${esc(selFrom)}" data-prism="from"${liveMode ? ' disabled' : ''}>
+            <span class="prism-fg-label">à</span>
+            <input type="datetime-local" id="prism-to" class="form-input" style="max-width:168px" value="${esc(selTo)}" data-prism="to"${liveMode ? ' disabled' : ''}>
+          </div>
+        </details>
         <div class="prism-fg prism-fg-end" style="gap:4px">
           <button type="button" class="btn btn-primary btn-sm" id="prism-refresh-btn" data-prism="refresh">${esc(t('obs.syn.refresh'))}</button>
           <span id="prism-live-indicator" class="prism-live-indicator" style="display:${liveMode ? 'inline-flex' : 'none'};margin:0 4px">
@@ -545,7 +548,7 @@ async function renderPrismPage() {
     return '';
   }
 
-  function kpisHtml(k) { return obsKpisHtml(k, anomData.timeline); }
+  function kpisHtml(k) { return obsKpisHtml(k, anomData.timeline, { links: true }); }
   function timelineHtml(pts) { return obsTimelineHtml(pts, { live: liveMode, bucketUnit: liveMode ? 'minute' : 'hour', deploys: deployMarkers }); }
   function statusHtml(groups) { return obsStatusHtml(groups); }
 
@@ -611,7 +614,7 @@ async function renderPrismPage() {
           return `
           <tr>
             <td style="font-family:monospace">
-              <button type="button" class="log-filter-link${selIp===i.ip?' is-active':''}" data-prism="filter-ip" data-ip="${esc(i.ip)}">${esc(i.ip)}</button>
+              ${ObsUX.ipBtn(i.ip, { cls: selIp === i.ip ? 'is-active' : '', attrs: `data-prism="filter-ip" data-ip="${esc(i.ip)}"`, actionable: actionable })}
               ${banned ? `<span class="tag tag-red" style="margin-left:6px;font-size:9px;padding:1px 6px;vertical-align:middle">${esc(t('prism.banned'))}</span>` : ''}
               ${i.ip_truncated && i.ip !== LOGS_PSEUDONYMIZED_IP ? `<span class="tag tag-neutral" style="margin-left:6px;font-size:9px;padding:1px 6px;vertical-align:middle" title="${esc(t('logs.ip_truncated_hint'))}">${esc(t('prism.ip_truncated'))}</span>` : ''}
             </td>
@@ -913,7 +916,7 @@ async function renderPrismPage() {
       return `<div class="live-feed-row">
         <span class="live-feed-kind" style="color:${kindColor(ev.kind)}">${kindLabel(ev.kind)}</span>
         <span class="live-feed-flag">${flag(ev.country_code)}</span>
-        <code class="live-feed-ip">${esc(ev.ip)}</code>
+        ${ObsUX.ipBtn(ev.ip, { menu: true, tag: 'code', cls: 'live-feed-ip' })}
         <span class="live-feed-domain" title="${esc(ev.domain)}">${esc(ev.domain)}</span>
         ${ev.count > 1 ? `<span class="live-feed-count" title="${ev.count} occurrences">×${ev.count}</span>` : ''}
         <span class="live-feed-ts">${ts}</span>
@@ -1078,12 +1081,19 @@ async function renderPrismPage() {
     compareOpen = true;
     syncFilterLiveState();
     const n = new Date();
-    const cmp1f = toLocalInput(new Date(n - 172800000)), cmp1t = toLocalInput(new Date(n - 86400000));
-    const cmp2f = toLocalInput(new Date(n - 86400000)), cmp2t = toLocalInput(n);
+    const curFrom = new Date(selFrom), curTo = new Date(selTo);
+    const len = curTo - curFrom > 0 ? curTo - curFrom : 3600000;
+    const cmp1f = toLocalInput(new Date(curFrom - len)), cmp1t = toLocalInput(curFrom);
+    const cmp2f = toLocalInput(curFrom), cmp2t = toLocalInput(curTo);
     panel.style.display = 'block';
     panel.innerHTML = `
       <div class="prism-panel">
         <div class="prism-panel-title">${t('prism.compare_title')}</div>
+        <div class="oux-views" style="margin-bottom:10px">
+          <button type="button" class="chip" data-prism="cmp-preset" data-p="prev">${esc(t('obs.ux.cmp_prev'))}</button>
+          <button type="button" class="chip" data-prism="cmp-preset" data-p="day">${esc(t('obs.ux.cmp_day'))}</button>
+          <button type="button" class="chip" data-prism="cmp-preset" data-p="week">${esc(t('obs.ux.cmp_week'))}</button>
+        </div>
         <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px">
           <div>
             <div style="font-size:11px;color:var(--text3);margin-bottom:4px">${t('prism.period1')}</div>
@@ -1155,25 +1165,43 @@ async function renderPrismPage() {
       }).catch(e => toast(t('prism.export_fail') + ' ' + e.message, 'error'));
   }
 
+  // Le ban reste à vie comme avant ; la confirmation devient un « Annuler » (SecUX), qui recharge aussi la liste des IP.
   async function banIP(ip) {
-    if (!ip || bannedIPs.has(ip) || !confirm(t('prism.ban_confirm', { ip }))) return;
+    if (!ip || bannedIPs.has(ip)) return;
     try {
-      await api('POST', '/security/bans', {
-        ip,
-        reason: t('prism.ban_reason'),
-        source: 'native',
-      });
-      bannedIPs.add(ip);
-      const panel = document.getElementById('px-ips');
-      if (panel) {
-        // Re-render with current rows if still present; otherwise soft-reload IPs.
-        const q = qp();
-        api('GET', '/prism/ips?' + q + '&limit=50')
-          .then(d => upd('px-ips', ipsHtml(d)))
-          .catch(() => { /* keep current */ });
-      }
-      toast(t('security.ban_success'), 'success');
+      await SecUX.ban(ip, { ms: null, reason: t('prism.ban_reason') });
     } catch(e) { toast(t('prism.error') + ': ' + e.message, 'error'); }
+  }
+
+  async function reloadIps() {
+    if (!document.getElementById('px-ips')) return;
+    const [ips, bans] = await Promise.all([
+      api('GET', '/prism/ips?' + qp() + '&limit=50').catch(() => []),
+      api('GET', '/security/bans?active=true').catch(() => []),
+    ]);
+    bannedIPs = new Set((bans || []).map(b => b.ip).filter(Boolean));
+    upd('px-ips', ipsHtml(ips));
+  }
+
+  function applyRange(fromISO, toISO) {
+    if (liveMode) return;
+    selFrom = toLocalInput(new Date(fromISO));
+    selTo = toLocalInput(new Date(toISO));
+    pathOffset = 0;
+    loadAll();
+  }
+
+  function cmpPreset(p) {
+    const n = new Date();
+    const set = (id, d) => { const el = document.getElementById(id); if (el) el.value = toLocalInput(d); };
+    const d = p === 'week' ? 7 * 86400000 : 86400000;
+    if (p === 'prev') {
+      const to = new Date(selTo), from = new Date(selFrom), len = to - from > 0 ? to - from : 3600000;
+      set('cmp1f', new Date(from - len)); set('cmp1t', from); set('cmp2f', from); set('cmp2t', to);
+    } else {
+      set('cmp1f', new Date(n - 2 * d)); set('cmp1t', new Date(n - d)); set('cmp2f', new Date(n - d)); set('cmp2t', n);
+    }
+    runCompare();
   }
 
   function searchPath() {
@@ -1255,6 +1283,14 @@ async function renderPrismPage() {
       else if (act === 'ban') { e.preventDefault(); banIP(el.getAttribute('data-ip') || ''); }
       else if (act === 'compare') { e.preventDefault(); showCompare(); }
       else if (act === 'run-compare') { e.preventDefault(); runCompare(); }
+      else if (act === 'cmp-preset') { e.preventDefault(); cmpPreset(el.getAttribute('data-p') || 'prev'); }
+      else if (act === 'kpi') {
+        e.preventDefault();
+        const k = el.getAttribute('data-kpi');
+        if (k === 'errors') goToLogs({ status: '5xx' });
+        else if (k === 'ips') setTab('ips');
+        else if (k === 'bots') setTab('sources');
+      }
       else if (act === 'export') { e.preventDefault(); doExport(el.getAttribute('data-fmt') || 'csv'); }
 
       else if (act === 'live') { e.preventDefault(); startLive(); }
@@ -1307,8 +1343,8 @@ async function renderPrismPage() {
       const act = el.getAttribute('data-prism');
       if (act === 'node') { selNode = el.value; pathOffset = 0; loadAll(); }
       else if (act === 'proxy') { selProxy = el.value; loadAll(); }
-      else if (act === 'from') { selFrom = el.value; }
-      else if (act === 'to') { selTo = el.value; }
+      else if (act === 'from') { selFrom = el.value; pathOffset = 0; loadAll(); }
+      else if (act === 'to') { selTo = el.value; pathOffset = 0; loadAll(); }
       else if (act === 'hide-internal') {
         prismHideInternal = !!el.checked;
         _liveMapFeed = _liveMapFeed.filter(e => !isInternalLiveEvent(e));
@@ -1338,6 +1374,22 @@ async function renderPrismPage() {
     return b+' B';
   }
 
+  if (prismRoot.isConnected) {
+    ObsUX.setPage({
+      reload: reloadIps,
+      refresh: doRefresh,
+      range: ms => { if (!liveMode) applyQuickRange(ms); },
+      brush: r => applyRange(r.from, r.to),
+      live: toggleLiveMode,
+      liveOn: () => liveMode,
+      export: doExport,
+      actions: () => [
+        { label: t('prism.compare'), kw: 'comparer comparaison compare periodes', run: () => showCompare() },
+        { label: t('prism.filter_logs'), kw: 'logs journaux filtrer', run: () => goToLogs() },
+        { label: t('pz.clear_all'), kw: 'effacer filtres reset clear', run: () => clearPrismFilter('*') },
+      ],
+    });
+  }
   await loadAll();
 }
 

@@ -19,7 +19,6 @@ import (
 	"reflect"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	agentdocker "github.com/vincamok/goproxify/internal/agent/docker"
@@ -79,12 +78,14 @@ func New(cfg *config.AgentConfig, cfgPath string) (*Agent, error) {
 
 	// Network manager
 	netMgr := agentdocker.NewNetworkManager(client, cfg.NetworkManagement.EdgeContainerName, log)
+	netMgr.SetEdgeHosts(edges.All)
+	hostAddr := agentdocker.NewHostAddress(client, cfg.HostAddress, log)
 
 	// Sources de découverte (Docker/Podman, Portainer, Kubernetes… : modules du registre
 	// internal/agent/sources). Docker reste actif avec une ancienne config qui définit
 	// docker.runtime ; Docker est désactivable via docker.enabled: false.
 	state := statepub.New(cfg.Identity.NodeName, agentStateGenPath)
-	srcs := agentsources.BuildBuiltin(agentsources.Deps{Cfg: cfg, Log: log, Docker: client, Net: netMgr, Edges: edges, State: state})
+	srcs := agentsources.BuildBuiltin(agentsources.Deps{Cfg: cfg, Log: log, Docker: client, Net: netMgr, Edges: edges, State: state, HostAddr: hostAddr.Get})
 	var disc *agentdocker.Discovery
 	for _, s := range srcs {
 		if d, ok := s.Impl.(*agentdocker.Discovery); ok {
@@ -592,12 +593,7 @@ func (a *Agent) handleWSCommand(action string, payload json.RawMessage) {
 				break
 			}
 			a.log.Info("agent: configure WS appliqué — redémarrage")
-			go func() {
-				p, err := os.FindProcess(os.Getpid())
-				if err == nil {
-					_ = p.Signal(syscall.SIGTERM)
-				}
-			}()
+			requestRestart()
 		}
 	case edgews.TypeShellOpen, edgews.TypeShellData, edgews.TypeShellClose:
 		if a.shellHub != nil {
@@ -807,6 +803,7 @@ func sanitizedAgentConfig(cfg *config.AgentConfig) map[string]any {
 		"control_plane": map[string]any{
 			"edge_endpoint": cfg.ControlPlane.EdgeEndpoint,
 		},
+		"host_address": cfg.HostAddress,
 		"docker": map[string]any{
 			"enabled":     cfg.Docker.Enabled || cfg.Docker.Runtime != "",
 			"socket_path": cfg.Docker.SocketPath,
@@ -817,6 +814,7 @@ func sanitizedAgentConfig(cfg *config.AgentConfig) map[string]any {
 			"api_key":         maskIfSet(cfg.Portainer.APIKey),
 			"poll_interval_s": cfg.Portainer.PollIntervalS,
 			"skip_endpoints":  cfg.Portainer.SkipEndpoints,
+			"routable_networks": cfg.Portainer.RoutableNetworks,
 			"endpoint_edges":  epEdges,
 		},
 	}

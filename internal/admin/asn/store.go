@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sync"
 	"time"
 )
@@ -91,6 +92,8 @@ func (s *Store) Index(ctx context.Context) (*Index, error) {
 		return nil, err
 	}
 	s.idx, s.mod = idx, st.ModTime()
+	// Le chargement brasse des centaines de Mo de déchets : sans cela le runtime les garde plusieurs minutes.
+	debug.FreeOSMemory()
 	return idx, nil
 }
 
@@ -213,5 +216,6 @@ func (s *Store) downloadLocked(ctx context.Context) error {
 	s.idx, s.mod = idx, st.ModTime()
 	asns, ranges := idx.Len()
 	s.log.Info("asn: base installée", "asns", asns, "ranges", ranges, "path", s.path)
+	debug.FreeOSMemory()
 	return nil
 }

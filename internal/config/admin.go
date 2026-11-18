@@ -18,6 +18,7 @@ type AdminConfig struct {
 		APIPort    int    `mapstructure:"api_port"`   // REST API + WebSocket
 		UIPort     int    `mapstructure:"ui_port"`    // Interface Web
 		LocalPort  int    `mapstructure:"local_port"` // Port direct sur 0.0.0.0, jamais derrière la passerelle (0 = désactivé)
+		MCPPort    int    `mapstructure:"mcp_port"`   // Listener dédié au seul /mcp (0 = /mcp servi par le port de l'API) ; à publier seul sur Internet
 		TLSEnabled bool   `mapstructure:"tls_enabled"`
 	} `mapstructure:"server"`
 

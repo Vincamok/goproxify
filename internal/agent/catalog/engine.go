@@ -38,6 +38,10 @@ type Instance struct {
 	Name string
 	// Backend est l'URL de base de l'instance (http://10.0.0.5:8080).
 	Backend string
+	// Candidates : adresses du même conteneur, de la plus à la moins préférée, que la passerelle sonde pour servir la
+	// première qu'elle joint (ADR 0026). Backend reste l'adresse sûre servie tant que la sonde n'a pas retenu mieux. Vide :
+	// une seule adresse.
+	Candidates []string
 	// Labels sont les étiquettes de l'instance, sous leur forme publiée : le préfixe configuré est ramené à
 	// « goproxify. » par le moteur.
 	Labels map[string]string
@@ -45,6 +49,9 @@ type Instance struct {
 	// encore démarrée) : critical, warning, pending, unhealthy… Vide : l'instance sert. Une instance inactive n'a pas de
 	// route ; elle part dans l'inventaire des inactifs que l'Admin affiche.
 	Inactive string
+	// Image est l'image du conteneur (« grafana/grafana:10.2.0 »), pour l'inventaire des applications (ADR 0017). Vide :
+	// la source ne la connaît pas.
+	Image string
 }
 
 // Lister liste les instances que l'annuaire publie, étiquetées pour GoProxify. Une erreur signifie « je ne sais pas » :
@@ -237,6 +244,9 @@ func (e *Engine) publishState(ctx context.Context, want map[string]desired, inac
 	defer e.mu.Unlock()
 	switch res {
 	case statepub.Sent:
+		if e.inactives != inactiveHash && (len(inactive) > 0 || e.inactives != "") {
+			e.log.Info("découverte : instances inactives modifiées", "source", e.source, "inactives", inactiveNames(inactive))
+		}
 		e.published = make(map[string]published, len(want))
 		for id, w := range want {
 			e.published[id] = published{host: w.host, name: w.name, hash: w.hash}
@@ -381,7 +391,7 @@ func (e *Engine) build(insts []Instance) (map[string]desired, []map[string]any) 
 		// L'adresse découverte l'emporte sur une étiquette : c'est elle qui désigne l'instance.
 		labels[docker.LabelBackendURL] = in.Backend
 		id := containerID(e.source, in.Key)
-		spec := docker.ParseLabels(e.source+":"+in.Key, in.Name, "", "", labels, nil, "")
+		spec := docker.ParseLabels(e.source+":"+in.Key, in.Name, in.Image, "", labels, nil, "")
 		if spec == nil {
 			e.log.Warn("découverte : étiquettes invalides, instance ignorée", "source", e.source, "instance", in.Name)
 			continue
@@ -404,8 +414,12 @@ func (e *Engine) build(insts []Instance) (map[string]desired, []map[string]any) 
 			"redirect_https": spec.RedirectHTTPS,
 			"source":       e.source,
 			"container_id": id,
+			"image":        spec.Image,
 			"agent_name":   e.agentName,
 			"role":         spec.Role,
+		}
+		if len(in.Candidates) > 1 {
+			payload["candidates"] = in.Candidates
 		}
 		if spec.Role == docker.RoleCanary {
 			payload["canary_weight"] = spec.CanaryWeight
@@ -461,4 +475,16 @@ func (e *Engine) stop(ctx context.Context, id, name string) bool {
 	}
 	resp.Body.Close()
 	return resp.StatusCode < 500
+}
+
+// inactiveNames liste « nom (état) » des instances inactives, pour qu'une instance qui passe de actif à inactif en boucle
+// se voie dans les logs.
+func inactiveNames(inactive []map[string]any) []string {
+	out := make([]string, 0, len(inactive))
+	for _, in := range inactive {
+		name, _ := in["name"].(string)
+		state, _ := in["state"].(string)
+		out = append(out, name+" ("+state+")")
+	}
+	return out
 }

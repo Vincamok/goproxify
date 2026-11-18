@@ -93,6 +93,7 @@ The Agent can watch a remote Portainer API to discover containers across multipl
 | Field | Type | Description |
 |-------|------|-------------|
 | `skip_endpoints` | `[]string` | Portainer endpoint names to skip during discovery |
+| `routable_networks` | `[]string` | CIDRs of container networks whose addresses are unique and reachable from the gateway (macvlan, overlay, VPN): a container of a remote endpoint offers its IP and application port before its published port, and the gateway serves the first address it reaches ([ADR 0026](adr/0026-candidats-d-adresse-des-backends-decouverts.md)) |
 | `endpoint_edges` | `map[string]{ edge_endpoint, auth_token }` | Route an endpoint's routes to an alternate GoProxify Edge |
 
 Example:

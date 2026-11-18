@@ -15,6 +15,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -331,7 +334,35 @@ type ContainerInspect struct {
 			NetworkID string `json:"NetworkID"`
 			IPAddress string `json:"IPAddress"`
 		} `json:"Networks"`
+		// Ports : ports publiés, « 8080/tcp » → liaisons hôte.
+		Ports map[string][]struct {
+			HostIP   string `json:"HostIp"`
+			HostPort string `json:"HostPort"`
+		} `json:"Ports"`
 	} `json:"NetworkSettings"`
+}
+
+// PublishedPorts rend les ports publiés d'un conteneur inspecté, sous la forme de ceux de la liste des conteneurs.
+func (c ContainerInspect) PublishedPorts() []PortBinding {
+	var out []PortBinding
+	for key, binds := range c.NetworkSettings.Ports {
+		port, proto, _ := strings.Cut(key, "/")
+		priv, err := strconv.Atoi(port)
+		if err != nil {
+			continue
+		}
+		for _, b := range binds {
+			pub, err := strconv.Atoi(b.HostPort)
+			if err != nil || pub <= 0 {
+				continue
+			}
+			out = append(out, PortBinding{PrivatePort: priv, PublicPort: pub, Type: proto, IP: b.HostIP})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].PrivatePort < out[j].PrivatePort || out[i].PrivatePort == out[j].PrivatePort && out[i].PublicPort < out[j].PublicPort
+	})
+	return out
 }
 
 // Event est un événement Docker du stream /events.

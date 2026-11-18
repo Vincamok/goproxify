@@ -8,7 +8,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
-	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -200,34 +199,10 @@ func UserIDFromContext(ctx context.Context) string {
 	return v
 }
 
-// RequireBearerToken est un middleware HTTP qui valide un token d'appairage passerelle/Agent depuis la DB.
-func RequireBearerToken(db *sql.DB) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			tokenStr := bearerToken(r)
-			if tokenStr == "" {
-				http.Error(w, "Token d'appairage manquant", http.StatusUnauthorized)
-				return
-			}
-
-			var revoked int
-			hash := HashNodeToken(tokenStr)
-			err := db.QueryRowContext(r.Context(),
-				`SELECT revoked FROM tokens WHERE (token_hash = ? OR token = ?) AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)`,
-				hash, tokenStr,
-			).Scan(&revoked)
-			if err != nil || revoked != 0 {
-				http.Error(w, "Token invalide ou révoqué", http.StatusUnauthorized)
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
 // bearerToken extrait le token du header Authorization: Bearer <token>.
-// Le paramètre query `_auth` n'est accepté que pour SSE/MCP (EventSource ne peut
-// pas envoyer de header) — pas pour les routes API génériques (L2).
+// Le paramètre query `_auth` n'est accepté que pour les flux SSE de l'UI (EventSource ne peut
+// pas envoyer de header) — ni pour les routes API génériques (L2), ni pour /mcp : un jeton dans
+// l'URL finit dans les journaux des proxys et l'historique, et les clients MCP posent l'en-tête.
 func bearerToken(r *http.Request) string {
 	h := r.Header.Get("Authorization")
 	if after, ok := strings.CutPrefix(h, "Bearer "); ok {
@@ -241,8 +216,8 @@ func bearerToken(r *http.Request) string {
 
 func allowAuthQueryParam(r *http.Request) bool {
 	path := r.URL.Path
-	if strings.HasPrefix(path, "/mcp") {
-		return true
+	if path == "/mcp" || strings.HasPrefix(path, "/mcp/") {
+		return false
 	}
 	accept := r.Header.Get("Accept")
 	return strings.Contains(accept, "text/event-stream")

@@ -16,7 +16,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	agentdocker "github.com/vincamok/goproxify/internal/agent/docker"
@@ -237,13 +236,7 @@ func (a *internalAPI) handleCommand(w http.ResponseWriter, r *http.Request) {
 		a.log.Info("agent: configure appliqué — redémarrage")
 		w.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "configure_applied"})
-		go func() {
-			// Docker redémarre l'agent après SIGTERM (restart: unless-stopped).
-			p, err := os.FindProcess(os.Getpid())
-			if err == nil {
-				_ = p.Signal(syscall.SIGTERM)
-			}
-		}()
+		requestRestart()
 
 	default:
 		http.Error(w, fmt.Sprintf("action inconnue : %q", cmd.Action), http.StatusBadRequest)
@@ -294,6 +287,13 @@ func applyConfigPatch(cfgPath string, patch json.RawMessage) error {
 				var bSub, pSub map[string]json.RawMessage
 				if json.Unmarshal(baseVal, &bSub) == nil && json.Unmarshal(v, &pSub) == nil {
 					for sk, sv := range pSub {
+						// Une source ajoutée (`sources.<type>`) porte ses secrets à ce niveau, pas dans une sous-entrée.
+						if isSecretKey(sk) {
+							var s string
+							if json.Unmarshal(sv, &s) == nil && (s == "" || s == "••••••••") {
+								continue
+							}
+						}
 						// Merge de chaque sous-entrée (ex: un endpoint_edge par nom).
 						if bEntry, ok2 := bSub[sk]; ok2 {
 							var bEnt, pEnt map[string]json.RawMessage

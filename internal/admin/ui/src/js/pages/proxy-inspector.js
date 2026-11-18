@@ -102,6 +102,12 @@ async function renderProxyInspector() {
   }
   const byDomain = new Map(proxies.map(p => [p.domain, p]));
   pxiSelected = pxiSelected.filter(d => byDomain.has(d));
+  if (window._pxiPreset) {
+    const want = String(window._pxiPreset).toLowerCase();
+    window._pxiPreset = '';
+    const hit = proxies.find(p => p.domain.toLowerCase() === want);
+    if (hit) pxiSelected = [hit.domain];
+  }
 
   let metricsByHost = new Map((metrics0?.proxies || []).map(m => [(m.host || '').toLowerCase(), m]));
   const metricOf = d => metricsByHost.get(d.toLowerCase()) || null;
@@ -132,10 +138,11 @@ async function renderProxyInspector() {
   // ── Squelette ────────────────────────────────────────────────────────────
   main.innerHTML = `
     <div class="pxi-root" id="pxi-root">
+      ${ObsUX.subNav()}
       <div class="pxi-bar">
         <div class="pxi-bar-row">
           <div class="pxi-chips" id="pxi-chips"></div>
-          <div class="logs-seg" id="pxi-period"></div>
+          <div id="pxi-period"></div>
         </div>
         <div class="pxi-bar-row">
           <div class="pxi-search-wrap">
@@ -149,6 +156,7 @@ async function renderProxyInspector() {
           </label>
         </div>
         <div class="pxi-hint" id="pxi-count-hint"></div>
+        <div class="oux-views" id="pxi-views"></div>
       </div>
       <div class="pxi-empty" id="pxi-empty"><b>${esc(t('pxi.empty_title'))}</b>${esc(t('pxi.empty_hint', { n: proxies.length }))}</div>
       <div class="pxi-dash" id="pxi-dash" hidden>
@@ -202,7 +210,8 @@ async function renderProxyInspector() {
           return `<span class="chip active"><span class="pxi-dot" style="background:${dot.c}" title="${esc(dot.label)}"></span>${esc(d)}<button type="button" class="chip-x" data-pxi-remove="${esc(d)}" aria-label="${esc(t('pxi.remove'))}" title="${esc(t('pxi.remove'))}">×</button></span>`;
         }).join('') + `<button type="button" class="chip" data-pxi="clear">${esc(t('pxi.clear'))}</button>`
       : `<span class="pxi-hint">${esc(t('pxi.sel_none'))}</span>`);
-    upd('pxi-period', PXI_PERIODS.map(c => `<button type="button" class="seg-btn${pxiPeriodMs === c.ms ? ' active' : ''}" data-pxi-period="${c.ms}">${c.label}</button>`).join(''));
+    upd('pxi-period', ObsUX.rangeHTML(PXI_PERIODS.map(c => [c.label, c.ms]), pxiPeriodMs, { attr: 'data-pxi-period' }));
+    renderViews();
     const lb = document.getElementById('pxi-live-btn');
     if (lb) {
       lb.classList.toggle('is-active', pxiLive);
@@ -212,6 +221,17 @@ async function renderProxyInspector() {
     upd('pxi-count-hint', esc(t('pxi.count_hint', { sel: pxiSelected.length, total: proxies.length })));
     document.querySelectorAll('#pxi-root .geo-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === pxiGeoMode));
     document.querySelectorAll('#pxi-root .geo-style-btn').forEach(b => b.classList.toggle('active', b.dataset.style === pxiGeoStyle));
+  }
+
+  // ── Vues enregistrées : des ensembles de proxies à rouvrir d'un clic (propres à ce navigateur) ──
+  const VIEWS_KEY = 'gpx.obs.pxi.views';
+  const loadViews = () => { try { return JSON.parse(localStorage.getItem(VIEWS_KEY) || '[]').filter(v => v && v.name && Array.isArray(v.hosts)); } catch { return []; } };
+  const saveViews = l => { try { localStorage.setItem(VIEWS_KEY, JSON.stringify(l.slice(0, 20))); } catch { /* stockage indisponible */ } };
+  function renderViews() {
+    const views = loadViews();
+    upd('pxi-views', `<span class="oux-views-l">${esc(t('obs.ux.views'))}</span>`
+      + views.map((v, i) => `<span class="chip oux-view" role="button" tabindex="0" data-pxi-view="${i}" title="${esc(v.hosts.join(', '))}">${esc(v.name)} <span class="secux-mute">${v.hosts.length}</span><button type="button" class="chip-x" data-pxi-view-del="${i}" aria-label="${esc(t('obs.ux.view_del'))}" title="${esc(t('obs.ux.view_del'))}">×</button></span>`).join('')
+      + (pxiSelected.length ? `<span class="chip" role="button" tabindex="0" data-pxi="view-save">+ ${esc(t('obs.ux.view_save'))}</span>` : (views.length ? '' : `<span class="pxi-hint">${esc(t('obs.ux.view_none'))}</span>`)));
   }
 
   // ── Recherche / suggestions ──────────────────────────────────────────────
@@ -313,7 +333,7 @@ async function renderProxyInspector() {
       const maintLabel = p.enabled ? t('pxi.act_maintenance') : t('pxi.act_reactivate');
       const extra = p.backends.length > 1 ? ` +${p.backends.length - 1}` : '';
       const btn = (act, ico, label) => `<button type="button" class="btn btn-ghost btn-icon btn-sm" data-pxi-tile="${act}" data-domain="${esc(d)}" title="${esc(label)}" aria-label="${esc(label)}">${ico}</button>`;
-      return `<div class="pxi-tile${p.enabled ? '' : ' off'}">
+      return `<div class="pxi-tile${p.enabled ? '' : ' off'}" draggable="true" data-pxi-tile-d="${esc(d)}" title="${esc(t('obs.ux.drag_tile'))}">
         <div class="pxi-tile-head">
           <span class="pxi-dot" style="background:${dot.c}" title="${esc(dot.label)}"></span>
           <span class="pxi-tile-name" title="${esc(d)}">${esc(d)}</span>
@@ -402,7 +422,7 @@ async function renderProxyInspector() {
     if (!list.length) return title + `<p class="prism-muted">${esc(t('prism.no_data'))}</p>`;
     const maxR = Math.max(...list.map(p => p.requests), 1);
     return title + `<table class="prism-table"><thead><tr><th>IP</th><th>${esc(t('prism.req_short'))}</th><th>${esc(t('pxi.kpi_err'))}</th></tr></thead><tbody>${list.map(p => `
-      <tr><td class="mono">${esc(p.ip)}</td>
+      <tr><td>${ObsUX.ipBtn(p.ip, { menu: true, actionable: obsIPActionable(p) })}</td>
         <td>${num(p.requests)} <span class="prism-bar-bg" style="display:inline-block;width:50px;vertical-align:middle"><span class="prism-bar-fill" style="width:${(p.requests / maxR * 100).toFixed(1)}%"></span></span></td>
         <td style="${p.errors ? 'color:var(--red)' : 'color:var(--text3)'}">${num(p.errors)}</td></tr>`).join('')}</tbody></table>`;
   }
@@ -503,7 +523,7 @@ async function renderProxyInspector() {
       return `<div class="live-feed-row">
         <span class="live-feed-kind" style="color:${kindColor(ev.kind)}">${kindLabel(ev.kind)}</span>
         <span class="live-feed-flag">${flagOf(ev.country_code)}</span>
-        <code class="live-feed-ip">${esc(ev.ip)}</code>
+        ${ObsUX.ipBtn(ev.ip, { menu: true, tag: 'code', cls: 'live-feed-ip' })}
         <span class="live-feed-domain" title="${esc(ev.domain || '')}">${esc(ev.domain || '')}</span>
         ${ev.count > 1 ? `<span class="live-feed-count" title="${ev.count} occurrences">×${ev.count}</span>` : ''}
         <span class="live-feed-ts">${ts}</span>
@@ -543,7 +563,60 @@ async function renderProxyInspector() {
     applyGeo();
   });
 
+  // Réordonner les tuiles par glisser-déposer.
+  let dragDom = null;
+  const tileOf = e => e.target.closest?.('.pxi-tile[data-pxi-tile-d]');
+  root.addEventListener('dragstart', e => {
+    const tile = tileOf(e);
+    if (!tile || e.target.closest('[data-secip]')) return;
+    dragDom = tile.dataset.pxiTileD;
+    tile.classList.add('oux-dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', dragDom);
+  });
+  root.addEventListener('dragend', () => { dragDom = null; root.querySelectorAll('.oux-dragging,.oux-over').forEach(x => x.classList.remove('oux-dragging', 'oux-over')); });
+  root.addEventListener('dragover', e => {
+    const tile = tileOf(e);
+    if (!dragDom || !tile) return;
+    e.preventDefault();
+    root.querySelectorAll('.oux-over').forEach(x => { if (x !== tile) x.classList.remove('oux-over'); });
+    tile.classList.add('oux-over');
+  });
+  root.addEventListener('drop', e => {
+    const tile = tileOf(e);
+    if (!dragDom || !tile) return;
+    e.preventDefault();
+    const to = tile.dataset.pxiTileD;
+    if (to !== dragDom) {
+      const at = pxiSelected.indexOf(to);
+      const [m] = pxiSelected.splice(pxiSelected.indexOf(dragDom), 1);
+      pxiSelected.splice(at, 0, m);
+    }
+    dragDom = null;
+    renderBar();
+    renderTiles();
+  });
+
   root.addEventListener('click', e => {
+    const vdel = e.target.closest('[data-pxi-view-del]');
+    if (vdel) {
+      e.stopPropagation();
+      const views = loadViews();
+      views.splice(parseInt(vdel.getAttribute('data-pxi-view-del'), 10), 1);
+      saveViews(views);
+      renderViews();
+      return;
+    }
+    const vload = e.target.closest('[data-pxi-view]');
+    if (vload) {
+      const v = loadViews()[parseInt(vload.getAttribute('data-pxi-view'), 10)];
+      if (!v) return;
+      const known = v.hosts.filter(h => byDomain.has(h));
+      if (!known.length) { toast(t('obs.ux.view_gone'), 'error'); return; }
+      pxiSelected = known;
+      selectionChanged();
+      return;
+    }
     const add = e.target.closest('[data-pxi-add]');
     if (add) { addProxies([add.getAttribute('data-pxi-add')]); return; }
     const rem = e.target.closest('[data-pxi-remove]');
@@ -570,11 +643,32 @@ async function renderProxyInspector() {
     const a = act.getAttribute('data-pxi');
     if (a === 'live') toggleLive(!pxiLive);
     else if (a === 'clear') { pxiSelected = []; selectionChanged(); }
+    else if (a === 'view-save') {
+      SecUX.editInline(act, {
+        placeholder: t('obs.ux.view_name'),
+        parse: v => (String(v).trim() ? String(v).trim().slice(0, 40) : undefined),
+        onSave: name => {
+          const views = loadViews().filter(v => v.name !== name);
+          views.unshift({ name, hosts: [...pxiSelected] });
+          saveViews(views);
+          renderViews();
+        },
+      });
+    }
     else if (a === 'add-all') addProxies(sgItems.map(p => p.domain));
     else if (a === 'mode') { pxiGeoMode = act.dataset.mode || 'requests'; applyGeo(); }
     else if (a === 'style') { pxiGeoStyle = act.dataset.style || 'zones'; applyGeo(); }
   });
 
+  if (main.isConnected) {
+    ObsUX.setPage({
+      reload: () => { renderBar(); loadAll(); },
+      refresh: () => loadAll(),
+      range: ms => { pxiPeriodMs = ms; renderBar(); loadAll(); },
+      live: () => { if (pxiSelected.length) toggleLive(!pxiLive); },
+      liveOn: () => pxiLive,
+    });
+  }
   renderBar();
   loadAll();
 }

@@ -887,8 +887,8 @@ t_internal() { section internal "API interne passerelle ↔ Admin, MCP, ports de
   local c p
   if [ -n "${LAB_ADMIN_URL:-}" ]; then
     for p in 'POST /internal/v1/heartbeat' 'GET /internal/v1/routes' 'POST /internal/v1/security/bans'; do
-      c=$(code -X "${p%% *}" -d '{}' "$LAB_ADMIN_URL${p#* }"); denied "Admin ${p#* } sans jeton d'appairage" "$c"
-      c=$(code -X "${p%% *}" -d '{}' -H 'Authorization: Bearer gpx_pair_0000000000000000' "$LAB_ADMIN_URL${p#* }"); denied "Admin ${p#* } avec un jeton inventé" "$c"
+      c=$(code -X "${p%% *}" -d '{}' "$LAB_ADMIN_URL${p#* }"); hidden "Admin ${p#* } (route retirée ou refusée) sans jeton" "$c"
+      c=$(code -X "${p%% *}" -d '{}' -H 'Authorization: Bearer gpx_pair_0000000000000000' "$LAB_ADMIN_URL${p#* }"); hidden "Admin ${p#* } (route retirée ou refusée) avec un jeton inventé" "$c"
     done
     c=$(code -X POST -H 'Content-Type: application/json' -d '{}' "$LAB_ADMIN_URL/mcp"); denied "MCP sans PAT" "$c"
     c=$(code -X POST -H 'Content-Type: application/json' -H 'Authorization: Bearer gpx_pat_0000000000000000' -d '{}' "$LAB_ADMIN_URL/mcp"); denied "MCP avec un PAT inventé" "$c"

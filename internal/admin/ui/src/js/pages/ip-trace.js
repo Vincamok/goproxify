@@ -78,7 +78,7 @@ function trStepHTML(s) {
     title = t('trace.step.' + s.kind);
     const ua = trUserAgentHTML(s.user_agent);
     const src = s.source ? (typeof _secSourceLabel === 'function' ? _secSourceLabel(s.source) : s.source) : '';
-    body = `<div class="tr-meta">${[s.ip && `<span class="tr-mono">${esc(s.ip)}</span>`, s.domain && esc(s.domain), src && esc(src), s.occurrences > 1 && `×${s.occurrences}`].filter(Boolean).join(' · ')}</div>
+    body = `<div class="tr-meta">${[s.ip && `<span class="tr-mono">${SecUX.ipHTML(s.ip)}</span>`, s.domain && esc(s.domain), src && esc(src), s.occurrences > 1 && `×${s.occurrences}`].filter(Boolean).join(' · ')}</div>
       ${s.reason ? `<div class="tr-row">${esc(s.reason)}</div>` : ''}${ua}${banSignalsDetailHTML(s.signals)}`;
   }
   return `<div class="tr-step"><span class="tr-dot" style="background:${k.color}">${k.icon}</span>
@@ -172,8 +172,27 @@ async function trLoadEdges() {
   _tr.edges = ((await api('GET', '/nodes').catch(() => [])) || []).filter(n => n.role === 'edge');
 }
 
+// Le champ accepte « cible durée » (« 203.0.113.7 7j », « 198.51.100.0/24 90j », « … tout ») : la durée
+// choisit la période. Les puces de période et de passerelle ne gardent que la cible.
+function trApplyInput(raw) {
+  const [target, word] = String(raw || '').trim().split(/\s+/);
+  if (target) _tr.target = target;
+  if (!word) return;
+  if (/^(tout|all)$/i.test(word)) { _tr.period = 'all'; return; }
+  const ms = SecUX.parseDur(word);
+  if (!ms) return;
+  const days = Math.round(ms / 864e5);
+  const key = days > 0 && Object.keys(TR_PERIODS).find(k => TR_PERIODS[k] === days);
+  if (key) { _tr.period = key; return; }
+  _tr.period = 'custom';
+  _tr.from = new Date(Date.now() - ms).toISOString().slice(0, 10);
+  _tr.to = '';
+}
+
+function trFirstToken(raw) { return String(raw || '').trim().split(/\s+/)[0]; }
+
 function trRefilter() {
-  _tr.target = document.getElementById('tr-target')?.value.trim() || _tr.target;
+  _tr.target = trFirstToken(document.getElementById('tr-target')?.value) || _tr.target;
   _tr.from = document.getElementById('tr-from')?.value || '';
   _tr.to = document.getElementById('tr-to')?.value || '';
   if (_tr.target) trRun(); else trPaint(`<p class="tr-empty">${esc(t('trace.empty_hint'))}</p>`);
@@ -184,7 +203,7 @@ window.trSetNode = v => { _tr.node = _tr.node === v ? '' : v; trRefilter(); };
 function trPaint(body) {
   const content = document.getElementById('content');
   if (!content) return;
-  content.innerHTML = `<div class="tr-page"><p class="tr-meta" style="margin:0 0 10px">${esc(t('trace.subtitle'))}</p>${trFormHTML()}${body}</div>`;
+  content.innerHTML = `<div class="tr-page">${SecUX.subNav('threats', 'trace', 'admin')}<div class="vs-page-head"><div><h2 class="vs-title">${esc(t('sec.tab.trace'))}</h2><div class="vs-sub">${esc(t('trace.subtitle'))}</div></div></div>${trFormHTML()}${body}</div>`;
 }
 
 // Opérateur de l'adresse (base ASN) : on bascule entre l'IP seule et tout son ASN, sans connaître le CIDR. Absent quand la base ASN n'est pas installée ou ne connaît pas l'adresse.
@@ -214,7 +233,7 @@ function trPaintResult() {
   const d = _tr.data;
   const order = `<button class="btn btn-ghost btn-sm" onclick="trToggleOrder()">${esc(t(_tr.order === 'desc' ? 'trace.order_desc' : 'trace.order_asc'))}</button>`;
   const widen = d.kind === 'ip' && d.scope === 'ip' && trIsPublic(d.target) ? trRanges(d.target.split('/')[0]).slice(1).map(([l, x]) => `<button type="button" class="btn btn-ghost btn-sm" onclick="openIPTrace('${esc(x)}')">${esc(t('trace.widen'))} ${esc(l)}</button>`).join('') : '';
-  trPaint(`<h3 class="tr-title"><span class="tr-mono">${esc(d.scope !== 'ip' && d.scope_label ? d.scope_label : d.target)}</span> ${widen}</h3>${trAsnBarHTML()}${trSummaryHTML()}
+  trPaint(`<h3 class="tr-title"><span class="tr-mono">${d.scope !== 'ip' && d.scope_label ? esc(d.scope_label) : SecUX.ipHTML(d.target)}</span> ${widen}<span class="tr-act" style="margin-left:auto;display:inline-flex;gap:6px"><button type="button" class="btn btn-sm" onclick="SecUX.doIP('ban24h','${esc(d.target)}')">Bannir 24 h</button><button type="button" class="btn btn-ghost btn-sm" onclick="SecUX.doIP('allow','${esc(d.target)}')">Toujours autoriser</button></span></h3>${trAsnBarHTML()}${trSummaryHTML()}
     <div class="card blueprint" style="padding:16px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
       <h4 style="margin:0">${esc(t('trace.timeline'))} <span class="tr-meta">(${d.total_steps})</span></h4>${order}</div>${trTimelineHTML()}</div>`);
 }
@@ -234,10 +253,11 @@ async function trRun() {
 
 window.trSubmit = function(ev) {
   ev.preventDefault();
-  _tr.target = document.getElementById('tr-target').value.trim();
+  _tr.target = '';
   _tr.scope = 'ip';
   _tr.from = document.getElementById('tr-from')?.value || '';
   _tr.to = document.getElementById('tr-to')?.value || '';
+  trApplyInput(document.getElementById('tr-target').value);
   if (_tr.target) trRun();
 };
 
@@ -251,7 +271,7 @@ window.trPeriod = function(v) {
 };
 
 function trRefilterPaint() {
-  _tr.target = document.getElementById('tr-target')?.value.trim() || _tr.target;
+  _tr.target = trFirstToken(document.getElementById('tr-target')?.value) || _tr.target;
   if (_tr.data) trPaintResult(); else trPaint('');
 }
 
@@ -327,3 +347,16 @@ function trBtn(target, cls = 'btn btn-ghost btn-icon btn-sm') {
   const label = t('trace.analyze');
   return `<button type="button" class="${cls}" onclick="openIPTrace('${esc(target)}')" title="${esc(label)}" aria-label="${esc(label)}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>`;
 }
+
+// Coller une adresse sur la page (hors d'un champ) lance son traçage ; « adresse durée » fixe aussi la période.
+document.addEventListener('paste', e => {
+  if (state.page !== 'security-trace') return;
+  const tag = (e.target.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable) return;
+  const txt = (e.clipboardData?.getData('text') || '').trim();
+  if (!SecUX.parseTarget(txt.split(/\s+/)[0])) return;
+  e.preventDefault();
+  _tr.scope = 'ip';
+  trApplyInput(txt);
+  trRun();
+});

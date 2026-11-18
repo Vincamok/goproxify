@@ -70,6 +70,20 @@ func (s *Set) at(i int) string {
 	return s.others[i-1]
 }
 
+// All retourne toutes les passerelles connues, la courante en premier.
+func (s *Set) All() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	cur := s.at(s.cur)
+	out := []string{cur}
+	for _, ep := range append([]string{s.primary}, s.others...) {
+		if ep != "" && ep != cur {
+			out = append(out, ep)
+		}
+	}
+	return out
+}
+
 // Len retourne le nombre de passerelles connues, la configurée comprise.
 func (s *Set) Len() int {
 	s.mu.RLock()

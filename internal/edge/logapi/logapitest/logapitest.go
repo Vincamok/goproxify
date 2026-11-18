@@ -184,7 +184,7 @@ func (g *Gateway) top(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := g.Store.Top(r.Context(), query(logapi.ParamsFromValues(r.URL.Query())), logstore.TopRequest{
-		Dim: req.Dim, Mode: logstore.TopMode(req.Mode), K: req.K, Min: req.Min, Values: req.Values, WithIPs: req.WithIPs})
+		Dim: req.Dim, Mode: logstore.TopMode(req.Mode), K: req.K, Min: req.Min, Values: req.Values, WithIPs: req.WithIPs, WithBots: req.WithBots})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

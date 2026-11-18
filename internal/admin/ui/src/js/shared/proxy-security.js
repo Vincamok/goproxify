@@ -1,5 +1,5 @@
 // ── Shared: onglet Protection de la modale proxy + GeoIP + score headers ──────────────────
-// Chargé avant pages/* (trafic.js dépend de openProxySecModal, computeProxyHeaderScore).
+// Chargé avant pages/* (proxies.js dépend de openProxySecModal, computeProxyHeaderScore).
 // Extrait de pages-all.js — phase 1 du plan split pages-all.
 
 // ── Modale Sécurité du proxy ──────────────────────────────────────────────────

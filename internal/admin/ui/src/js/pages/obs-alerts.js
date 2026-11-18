@@ -23,6 +23,11 @@ async function renderObsAlerts(scope) {
   const node = scope.lock ? scope.node_name : _obsAlNode;
   const nq = node ? '?node_name=' + encodeURIComponent(node) : '';
   main.innerHTML = `<div class="spinner" style="margin:60px auto"></div>`;
+  ObsUX.setPage({
+    reload: () => renderObsAlerts(scope),
+    refresh: () => renderObsAlerts(scope),
+    range: ms => { _obsAlDays = Math.max(1, Math.min(30, Math.ceil(ms / 86400000))); renderObsAlerts(scope); },
+  });
 
   const ev = new URLSearchParams({ limit: '200', days: String(_obsAlDays) });
   if (node) ev.set('node', node);
@@ -62,10 +67,15 @@ async function renderObsAlerts(scope) {
   // Règles, canaux et acquittement réservés aux admins (API : 403 pour un user).
   const canManage = Role.isAdmin();
 
-  const nodeSel = scope.lock ? '' : `
-    <select class="form-input" style="max-width:200px" data-oa="node">
+  const edgeVal = n => n.node_name || n.display_name || n.id;
+  const nodeSel = scope.lock ? '' : allEdges.length <= 8 ? `
+    <div class="oux-nodes" role="group" aria-label="${esc(t('logs.node'))}">
+      <button type="button" class="chip${node ? '' : ' active'}" data-oa="node" data-v="">${esc(t('obs.syn.all_edges'))}</button>
+      ${allEdges.map(n => `<button type="button" class="chip${edgeVal(n) === node ? ' active' : ''}" data-oa="node" data-v="${esc(edgeVal(n))}">${esc(n.display_name || n.node_name || n.id)}</button>`).join('')}
+    </div>` : `
+    <select class="form-input" style="max-width:200px" data-oa="node-select">
       <option value="">${esc(t('obs.syn.all_edges'))}</option>
-      ${allEdges.map(n => { const v = n.node_name || n.display_name || n.id; return `<option value="${esc(v)}" ${v === node ? 'selected' : ''}>${esc(n.display_name || n.node_name || n.id)}</option>`; }).join('')}
+      ${allEdges.map(n => `<option value="${esc(edgeVal(n))}" ${edgeVal(n) === node ? 'selected' : ''}>${esc(n.display_name || n.node_name || n.id)}</option>`).join('')}
     </select>`;
 
   const banner = covered || !canManage ? '' : `
@@ -116,12 +126,17 @@ async function renderObsAlerts(scope) {
   const rows = list.map((e, i) => {
     const d = e.detail && typeof e.detail === 'object' ? e.detail : {};
     const where = d.node_name || d.node || d.domain || '';
-    return `<tr style="cursor:pointer" data-oa="event" data-i="${i}">
-      <td class="mono">${esc(fmtDate(oaTs(e.fired_at)))}</td>
-      <td><b>${esc(label(e.trigger))}</b></td>
-      <td>${esc(e.rule_name || '—')}${e.silenced ? ` <span class="tag tag-neutral" style="font-size:10px">${esc(t('oa.silenced'))}</span>` : ''}</td>
-      <td class="mono">${esc(where || '—')}</td>
-      <td style="color:var(--text2);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(e.title || e.message_title || '')}</td></tr>`;
+    const st = e.acked ? ' acked' : e.silenced ? ' silenced' : '';
+    return `<li class="sx-swipe" data-swipe="oaSwipe" data-id="${i}">
+      ${canManage && !e.acked ? `<div class="sx-swipe-bg l">${esc(t('obs.ux.ack_swipe'))}</div>` : ''}<div class="sx-swipe-bg r info">${esc(t('obs.ux.detail_swipe'))}</div>
+      <div class="sx-swipe-fg sx-row oa-row${st}" data-oa="event" data-i="${i}">
+        <span class="oa-dot" aria-hidden="true"></span>
+        <div class="oa-row-main">
+          <div class="oa-row-top"><b>${esc(label(e.trigger))}</b><span>${esc(e.rule_name || '—')}${e.silenced ? ` <span class="tag tag-neutral" style="font-size:10px">${esc(t('oa.silenced'))}</span>` : ''}</span><span class="mono">${esc(where || '—')}</span></div>
+          <div class="oa-row-msg">${esc(e.title || e.message_title || '')}</div>
+        </div>
+        <div class="oa-row-end"><span class="mono">${esc(fmtDate(oaTs(e.fired_at)))}</span>${e.acked ? `<span class="tag tag-green" style="font-size:10px">${esc(t('oa.acked'))}</span>` : canManage ? `<button type="button" class="btn btn-ghost btn-sm oa-ack" data-oa="ack" data-i="${i}" title="${esc(t('oa.ack'))}">✓ ${esc(t('oa.ack'))}</button>` : ''}</div>
+      </div></li>`;
   }).join('');
 
   const rulesCard = `
@@ -138,24 +153,42 @@ async function renderObsAlerts(scope) {
     </div>`;
 
   main.innerHTML = `<div id="obs-al-root">
+    ${ObsUX.subNav()}
     <div class="prism-filters">
       <div class="prism-fg">${nodeSel}</div>
       ${nodeSel ? '<div class="prism-fg-sep"></div>' : ''}
-      <div class="prism-fg" style="gap:4px">${OBS_AL_DAYS.map(([l, d]) => `<button type="button" class="btn btn-secondary btn-sm${d === _obsAlDays ? ' is-active' : ''}" data-oa="days" data-v="${d}">${l}</button>`).join('')}</div>
+      <div class="prism-fg">${ObsUX.rangeHTML(OBS_AL_DAYS.map(([l, d]) => [l, d * 86400000]), _obsAlDays * 86400000)}</div>
     </div>
     ${banner}
-    ${obsSloCardHTML(slo, { targetAttr: 'data-oa="slo-target"', resetAttr: 'data-oa="slo-reset"', node, isOverride: !!sloCfg?.is_override })}
+    ${obsSloCardHTML(slo, { node, isOverride: !!sloCfg?.is_override })}
     ${fleet}
     <div class="prism-panel">
       <div class="prism-panel-title">${esc(t('oa.recent'))}</div>
       <div class="logs-quick"><div class="logs-quick-g">${chips}</div></div>
       <div id="oa-hist">${gpxHistHTML(pts, unit, { attr: 'data-oa-bucket', title: t('oa.hist_title'), hint: '' })}</div>
-      ${list.length ? `<div class="tw"><table class="prism-table"><thead><tr><th>${esc(t('oa.col_time'))}</th><th>${esc(t('oa.col_trigger'))}</th><th>${esc(t('oa.col_rule'))}</th><th>${esc(t('oa.col_where'))}</th><th>${esc(t('oa.col_message'))}</th></tr></thead><tbody>${rows}</tbody></table></div>`
+      ${list.length ? `<ul class="sx-rows oa-rows">${rows}</ul><p class="sx-hint">${esc(t(canManage ? 'obs.ux.swipe_hint' : 'obs.ux.swipe_hint_ro'))}</p>`
         : `<p class="prism-muted">${esc(t('oa.none'))}</p>`}
     </div>
     ${rulesCard}</div>`;
 
   const root = document.getElementById('obs-al-root');
+  const ackEvent = async e => {
+    try {
+      await api('POST', `/alert-events/${e.id}/ack`);
+      toast(t('oa.acked_toast'), 'success');
+      ObsUX.badgeRefresh();
+      renderObsAlerts(scope);
+      return true;
+    } catch (err) { toast(err.message, 'error'); return false; }
+  };
+  window.oaSwipe = (id, dir) => {
+    const e = list[parseInt(id, 10)];
+    if (!e) return;
+    if (dir === 'right') { if (canManage && !e.acked) ackEvent(e); return; }
+    drawer(e);
+    const fg = root.querySelector(`.sx-swipe[data-id="${id}"] .sx-swipe-fg`);
+    if (fg) fg.style.transform = '';
+  };
   const drawer = e => {
     root.querySelector('#oa-drawer')?.remove();
     const d = document.createElement('aside');
@@ -183,7 +216,7 @@ async function renderObsAlerts(scope) {
     if (!el) return;
     const act = el.getAttribute('data-oa');
     if (el.hasAttribute('data-oa-bucket')) return;
-    if (act === 'days') { _obsAlDays = parseInt(el.dataset.v, 10) || 7; renderObsAlerts(scope); }
+    if (act === 'node') { _obsAlNode = el.dataset.v || ''; renderObsAlerts(scope); }
     else if (act === 'trigger') { _obsAlTrigger = el.dataset.v || ''; renderObsAlerts(scope); }
     else if (act === 'event') drawer(list[parseInt(el.dataset.i, 10)]);
     else if (act === 'close') root.querySelector('#oa-drawer')?.remove();
@@ -191,11 +224,7 @@ async function renderObsAlerts(scope) {
       const e = list[parseInt(el.dataset.i, 10)];
       if (!e) return;
       el.disabled = true;
-      try {
-        await api('POST', `/alert-events/${e.id}/ack`);
-        toast(t('oa.acked_toast'), 'success');
-        renderObsAlerts(scope);
-      } catch (err) { toast(err.message, 'error'); el.disabled = false; }
+      if (!await ackEvent(e)) el.disabled = false;
     }
     else if (act === 'manage') navigate('alerts');
     else if (act === 'channels') navigate('alert-channels');
@@ -207,22 +236,9 @@ async function renderObsAlerts(scope) {
         renderObsAlerts(scope);
       } catch (e) { toast(e.message, 'error'); }
     }
-    else if (act === 'slo-reset') {
-      if (!node) return;
-      api('DELETE', '/prism/slo/config?node_name=' + encodeURIComponent(node))
-        .catch(err => toast(err.message, 'error'))
-        .finally(() => renderObsAlerts(scope));
-    }
   };
   root.onchange = e => {
-    const nodeEl = e.target.closest('[data-oa="node"]');
-    if (nodeEl) { _obsAlNode = nodeEl.value; renderObsAlerts(scope); return; }
-    const sl = e.target.closest('[data-oa="slo-target"]');
-    if (sl) {
-      const nqp = node ? '?node_name=' + encodeURIComponent(node) : '';
-      api('PUT', '/prism/slo/config' + nqp, { target: parseFloat(sl.value) })
-        .catch(err => toast(err.message, 'error'))
-        .finally(() => renderObsAlerts(scope));
-    }
+    const nodeEl = e.target.closest('[data-oa="node-select"]');
+    if (nodeEl) { _obsAlNode = nodeEl.value; renderObsAlerts(scope); }
   };
 }

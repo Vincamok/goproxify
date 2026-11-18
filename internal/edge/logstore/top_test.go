@@ -372,3 +372,49 @@ func TestRecentCountsCoverTheWindowAcrossFiles(t *testing.T) {
 		t.Errorf("total=%d refusées=%d erreurs=%d (%v), attendu 8/2/1", total, blocked, errs, err)
 	}
 }
+
+// Le compteur de robots passe trois LIKE sur chaque ligne lue : il n'est calculé que sur demande, et vaut alors ce que
+// l'agrégation par minute compte pour les mêmes lignes.
+func TestTopCountsBotsOnlyOnRequest(t *testing.T) {
+	s := openTest(t)
+	base := at("2026-10-21T10:00:00Z")
+	var want int64
+	for i := 0; i < 40; i++ {
+		e := access(base.Add(time.Duration(i)*time.Minute), "198.51.100.7")
+		e.Path = "/p/1"
+		switch i % 4 {
+		case 0:
+			e.UserAgent = "Googlebot/2.1"
+		case 1:
+			e.Referrer = "https://botnet.example/"
+		case 2:
+			e.Path = "/robots-bot.txt"
+		default:
+			e.UserAgent = "curl/8"
+		}
+		if isBot(&e) {
+			want++
+		}
+		s.Add(KindAccess, e)
+	}
+	s.Flush()
+	if want != 30 {
+		t.Fatalf("jeu mal construit : %d robots attendus 30", want)
+	}
+
+	q := Query{From: base.Add(-time.Hour), To: base.Add(time.Hour)}
+	off, err := s.Top(context.Background(), q, TopRequest{Dim: "all", Mode: TopBest, K: 1})
+	if err != nil || len(off.Items) != 1 {
+		t.Fatalf("Top sans robots : %v %+v", err, off)
+	}
+	if off.Items[0].Bots != 0 || off.Items[0].Requests != 40 {
+		t.Errorf("sans WithBots : Bots=%d Requests=%d, attendu 0 et 40", off.Items[0].Bots, off.Items[0].Requests)
+	}
+	on, err := s.Top(context.Background(), q, TopRequest{Dim: "all", Mode: TopBest, K: 1, WithBots: true})
+	if err != nil || len(on.Items) != 1 {
+		t.Fatalf("Top avec robots : %v %+v", err, on)
+	}
+	if on.Items[0].Bots != want {
+		t.Errorf("avec WithBots : Bots=%d, attendu %d (ce que compte l'agrégation par minute)", on.Items[0].Bots, want)
+	}
+}

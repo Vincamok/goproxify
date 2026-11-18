@@ -603,6 +603,13 @@ func runAgentService() {
 	}
 	<-ctx.Done()
 	ag.Stop(context.Background())
+	// Configuration appliquée : l'Agent se relance lui-même, sans dépendre de la politique de redémarrage du conteneur.
+	if agent.RestartRequested() {
+		slog.Info("agent: relance pour appliquer la configuration")
+		if err := agent.Reexec(); err != nil {
+			slog.Warn("agent: relance impossible, arrêt (le superviseur doit le redémarrer)", "err", err)
+		}
+	}
 }
 
 // runAgentPair affiche la configuration WS à injecter dans agent.json ou en variables d'env.

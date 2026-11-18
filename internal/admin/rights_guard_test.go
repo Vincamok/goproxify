@@ -37,7 +37,7 @@ func registeredRoutes(t *testing.T) map[string]string {
 			pattern = strings.Trim(pattern, `"`)
 		}
 		wrapper := "none"
-		for _, w := range []string{"protected(", "adminOnly(", "adminWrites(", "operatorWrites(", "gatedReads(", "gatedOpen(", "gatedOperate(", "gatedAll(", "gatedOperatorReads(", "memberReads(", "auth.RequireBearerToken(", "auth.RequirePAT("} {
+		for _, w := range []string{"protected(", "adminOnly(", "adminWrites(", "operatorWrites(", "gatedReads(", "gatedOpen(", "gatedOperate(", "gatedAll(", "gatedOperatorReads(", "memberReads(", "auth.RequirePAT("} {
 			if strings.HasPrefix(m[2], w) {
 				wrapper = strings.TrimSuffix(w, "(")
 			}
@@ -55,7 +55,6 @@ func registeredRoutes(t *testing.T) map[string]string {
 
 var wrapperKinds = map[string][]routeKind{
 	"none":                    {kindPublic, kindStatic, kindSecret},
-	"auth.RequireBearerToken": {kindGateway},
 	"auth.RequirePAT":         {kindMCP},
 	"protected":               {kindService, kindSelf},
 	"adminOnly":               {kindService},

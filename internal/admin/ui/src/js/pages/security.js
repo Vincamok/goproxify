@@ -11,6 +11,9 @@ function securityPageId(variant, mode) {
     vulns:    isEdge ? 'edge-security-vulns' : 'security-vulns',
     posture:  isEdge ? 'edge-security-posture' : 'security-posture',
     ephor: isEdge ? 'edge-security-ephor' : 'security-ephor',
+    engines:  isEdge ? 'edge-security-engines' : 'security-engines',
+    trace:    'security-trace',
+    attackref: 'security-attack-ref',
   };
   return map[variant] || map.overview;
 }
@@ -288,7 +291,7 @@ function secTopThreatsHTML(events, navBans) {
     <div style="display:flex;align-items:center;gap:10px;padding:7px 16px;border-bottom:1px solid var(--border)">
       <span class="tag" style="background:${srcColor[e.type]||'var(--bg2)'};color:#fff;font-size:9px;min-width:36px;text-align:center;padding:1px 5px;border-radius:3px">${(e.type||'').toUpperCase()}</span>
       <div style="flex:1;min-width:0">
-        <div style="font-size:12px;font-weight:500;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(e.summary||'')}</div>
+        <div style="font-size:12px;font-weight:500;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(e.summary||'')}${e.ip ? ` <span class="mono" style="font-weight:400">${SecUX.ipHTML(e.ip)}</span>` : ''}</div>
         <div style="font-size:10px;color:var(--text3)">${fmtDate(e.created_at)}</div>
       </div>
       <span class="tag ${e.severity==='critical'?'tag-red':e.severity==='warning'?'tag-yellow':'tag-neutral'}" style="font-size:9px">${esc(e.severity||'')}</span>
@@ -382,14 +385,16 @@ function vsStatusTag(status) {
 
 function vsRowHTML(c, showGw) {
   const sev = vsSev(c.cvss_score);
-  return `<button type="button" class="vs-row${_vs.sel === vsCveKey(c) ? ' sel' : ''}" onclick="vsSelect('${esc(vsCveKey(c))}')" aria-label="${esc(c.cve_id)}">
+  // Un <div role="button"> et non un <button> : la ligne se glisse vers un statut (Firefox ne glisse pas un bouton).
+  return `<div role="button" tabindex="0" class="vs-row${_vs.sel === vsCveKey(c) ? ' sel' : ''}" draggable="true" data-secdrag="cve:${Number(c.id)}" onclick="vsSelect('${esc(vsCveKey(c))}')"
+    onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();vsSelect('${esc(vsCveKey(c))}')}" aria-label="${esc(c.cve_id)}" title="Glisser vers Corrigée, Ignorée ou Rouverte">
     <span class="vs-c-cve mono">${esc(c.cve_id)}${vsKevBadge(c)}</span>
     <span class="vs-c-score"><span class="vs-score vs-${sev}">${(Number(c.cvss_score) || 0).toFixed(1)}</span>${vsEpssHTML(c)}</span>
     <span class="vs-c-be mono" title="${esc(c.backend_url)}">${esc(c.backend_url)}</span>
     ${showGw ? `<span class="vs-c-gw">${esc(c.edge_name || '—')}</span>` : ''}
     <span class="vs-c-desc" title="${esc(c.description)}">${esc(c.description)}</span>
     <span class="vs-c-st">${vsStatusTag(c.status)}${vsSlaBadge(c)}</span>
-  </button>`;
+  </div>`;
 }
 
 function vsListHTML(list, showGw) {
@@ -524,13 +529,18 @@ window.vsSelect = function(id) {
   vsPaint();
 };
 window.vsSetStatus = async function(id, status) {
-  try {
-    await api('PATCH', `/security/cves/${id}`, { status });
-    const c = _vs.cves.find(x => Number(x.id) === Number(id));
-    if (c) c.status = status;
-    toast(t('security.cve_updated'), 'success');
+  const c = _vs.cves.find(x => Number(x.id) === Number(id));
+  const prev = c ? c.status : null;
+  const apply = async st => {
+    await api('PATCH', `/security/cves/${id}`, { status: st });
+    if (c) c.status = st;
     vsPaint();
     vsPaintKpis();
+  };
+  try {
+    await apply(status);
+    // Corriger, ignorer ou rouvrir s'annule aussitôt (toast, Ctrl+Z) : le statut précédent est remis.
+    SecUX.remember(t('security.cve_updated'), prev && prev !== status ? () => apply(prev) : null);
   } catch (e) { toast(e.message, 'error'); }
 };
 
@@ -581,6 +591,7 @@ async function renderSecurityVulns(ctx) {
     window._secEdgeCtx = edgeCtx;
     window._secMode = mode;
     window._vsConfig = vsConfigRaw || {};
+    window._secBadges = Object.assign(window._secBadges || {}, { vulns: filterSecCVEs(cvesRaw || [], edgeCtx).filter(c => c.status === 'open').length });
 
     const scope = mode + ':' + (edgeCtx?.edgeRef || '');
     if (_vs.scope !== scope) Object.assign(_vs, { scope, sev: '', st: 'open', q: '', gw: '', kevOnly: false, open: null, sel: null });
@@ -597,6 +608,7 @@ async function renderSecurityVulns(ctx) {
 
     content.innerHTML = `
       ${securityEdgeBanner(edgeCtx)}
+      ${SecUX.subNav('exposure', 'vulns', mode)}
       <div class="vs-page-head">
         <div><h2 class="vs-title">${esc(t('page.' + (isAdmin ? 'security-vulns' : 'edge-security-vulns')))}</h2><div class="vs-sub">${sub}${lastScan ? ` · ${esc(t('security.vulnscan.last_scan'))} ${esc(lastScan)}` : ''}</div></div>
         ${!isAdmin ? `<div class="vs-head-acts">${vsState?.running ? `<span class="tag tag-yellow">${esc(t('security.vulnscan.running'))}</span>` : ''}<button id="vulnscan-btn" class="btn btn-primary btn-sm" onclick="triggerVulnscan()" ${vsState?.running ? 'disabled' : ''}>${esc(t('security.scan_now'))}</button></div>` : ''}
@@ -750,6 +762,8 @@ async function renderSecurityPosture(ctx) {
     const headers = filterSecHeaders(ovData?.overview?.headers || [], edgeCtx);
     content.innerHTML = `
       ${securityEdgeBanner(edgeCtx)}
+      ${SecUX.subNav('exposure', 'posture', mode)}
+      ${secPostureProfilesHTML()}
       <div class="card blueprint" style="margin-bottom:20px">
         <div class="card-header" style="align-items:flex-start;flex-wrap:wrap;gap:8px;">
           <div>
@@ -760,7 +774,9 @@ async function renderSecurityPosture(ctx) {
         <div id="sec-posture-body">${headersGrid(headers)}</div>
       </div>`;
     window._secHeaders = headers || [];
+    window._secCerts = Object.fromEntries(filterSecCerts(ovData?.certs || [], edgeCtx).map(c => [c.domain, c]));
     window._secMode = mode;
+    renderSecPostureGrid({ rebuildToolbar: true });
     refreshSecPostureSubtitle();
   } catch(e) { toast(e.message,'error'); }
 }
@@ -1057,7 +1073,7 @@ function threatsTableRows(list, showEdge) {
       <th ${date.attr}>${t('common.date')}${date.arrow}</th>
     </tr></thead>
     <tbody>${list.map(th => `<tr>
-      <td class="mono">${esc(th.ip)} ${trBtn(th.ip)}</td>
+      <td class="mono">${SecUX.ipHTML(th.ip)} ${trBtn(th.ip)}</td>
       <td style="font-size:12px">${esc(th.scenario||'—')}</td>
       <td style="font-size:12px">${esc(th.origin||'—')}</td>
       <td><span class="tag tag-red">${esc(th.type)}</span></td>
@@ -1290,6 +1306,83 @@ function secPostureChecksLabel(presentN, total, missing) {
   return t(key, { present: presentN, total, missing });
 }
 
+// ── Profils de protection et correctifs directs ────────────────────────────────────────────
+// Un correctif s'applique tout de suite (et s'annule) quand le contrôle a une valeur sûre sans réglage : TLS, HSTS, X-Frame-Options,
+// masquage de l'en-tête Server, WAF en détection. Les autres (limite de débit, bots, filtrage IP, authentification) demandent des valeurs :
+// leur bouton ouvre la sécurité du proxy.
+const SEC_POSTURE_AUTO = {
+  tls: c => ({ ...c, tls_enabled: true }),
+  hsts: c => applySecurityHeaderToCfg(c, 'Strict-Transport-Security', 'max-age=31536000'),
+  xfo: c => applySecurityHeaderToCfg(c, 'X-Frame-Options', 'SAMEORIGIN'),
+  hide_server: c => ({ ...c, headers: { ...(c.headers || {}), hide_server: true } }),
+  waf: c => ({ ...c, waf: { ...(c.waf || {}), enabled: true, mode: (c.waf && c.waf.mode) || 'detect' } }),
+};
+const SEC_PROFILES = [
+  { id: 'public', name: 'Site public', hint: 'TLS, HSTS, cadre, WAF', keys: ['tls', 'hsts', 'xfo', 'hide_server', 'waf'] },
+  { id: 'api', name: 'API machine', hint: 'TLS, HSTS, WAF', keys: ['tls', 'hsts', 'hide_server', 'waf'] },
+  { id: 'intern', name: 'Interne (VPN)', hint: 'TLS, HSTS, cadre', keys: ['tls', 'hsts', 'xfo', 'hide_server'] },
+  { id: 'admin', name: 'Administration', hint: 'Tout ce qui s’applique seul', keys: ['tls', 'hsts', 'xfo', 'hide_server', 'waf'] },
+];
+
+function secPostureProfilesHTML() {
+  const armed = window._secPostureArmed;
+  return `<section class="sx-profs-sec" aria-labelledby="sx-prof-h"><div class="sx-profs-h"><h3 id="sx-prof-h">${esc(t('sec.profiles'))}</h3>
+    <span class="sx-muted" id="sx-prof-hint">${esc(armed ? t('sec.profiles_armed', { name: (SEC_PROFILES.find(p => p.id === armed) || {}).name || '' }) : t('sec.profiles_hint'))}</span></div>
+    <div class="sx-profs">${SEC_PROFILES.map(p => `<button type="button" class="sx-prof${armed === p.id ? ' armed' : ''}" draggable="true" data-prof="${p.id}" ondragstart="secProfileDrag(event,'${p.id}')" onclick="secPostureArm('${p.id}')">
+      <span class="sx-prof-ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6l7-3z"/></svg></span><span><b>${esc(p.name)}</b><small>${esc(p.hint)}</small></span></button>`).join('')}</div></section>`;
+}
+
+window.secPostureArm = function(id) {
+  window._secPostureArmed = window._secPostureArmed === id ? '' : id;
+  const sec = document.querySelector('.sx-profs-sec');
+  if (sec) sec.outerHTML = secPostureProfilesHTML();
+  renderSecPostureGrid();
+};
+window.secProfileDrag = function(e, id) { e.dataTransfer.setData('text/plain', 'profile:' + id); e.dataTransfer.effectAllowed = 'copy'; window._secDragProf = true; };
+document.addEventListener('dragend', () => { window._secDragProf = false; document.querySelectorAll('.secux-card.hot').forEach(c => c.classList.remove('hot')); });
+window.secPostureDragOver = function(e) { if (window._secDragProf) { e.preventDefault(); e.currentTarget.classList.add('hot'); } };
+window.secPostureDrop = function(e, pid) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('hot');
+  const m = /^profile:(.+)$/.exec(e.dataTransfer.getData('text/plain'));
+  if (m) secPostureProfile(pid, m[1]);
+};
+window.secPostureApply = function(pid) { if (window._secPostureArmed) secPostureProfile(pid, window._secPostureArmed); };
+
+async function secProxyConfig(pid) {
+  const ex = await api('GET', `/proxies/${encodeURIComponent(pid)}`);
+  const cfg = typeof ex.config === 'string' ? (tryJSON(ex.config) || {}) : (ex.config || {});
+  return { cfg, enabled: ex.enabled !== false };
+}
+async function secProxyPut(pid, cfg, enabled) { await api('PUT', `/proxies/${encodeURIComponent(pid)}`, { config: cfg, enabled }); }
+
+async function secPostureApplyKeys(pid, keys, label) {
+  const { cfg, enabled } = await secProxyConfig(pid);
+  let next = migrateHeadersConfig({ ...cfg });
+  keys.forEach(k => { next = SEC_POSTURE_AUTO[k](next); });
+  await secProxyPut(pid, next, enabled);
+  SecUX.remember(label, async () => { await secProxyPut(pid, cfg, enabled); reloadCurrentSecurityPage(); });
+  reloadCurrentSecurityPage();
+}
+
+window.secPostureFix = async function(pid, key) {
+  if (!SEC_POSTURE_AUTO[key]) { openProxySecModal(pid); return; }
+  const h = (window._secHeaders || []).find(x => x.proxy_id === pid);
+  const c = h && (h.checks || []).find(x => x.key === key);
+  try { await secPostureApplyKeys(pid, [key], `${h ? h.proxy_name : pid} : ${c ? secCheckLabel(c) : key} corrigé`); } catch (e) { toast(e.message, 'error'); }
+};
+
+async function secPostureProfile(pid, profId) {
+  const prof = SEC_PROFILES.find(p => p.id === profId);
+  const h = (window._secHeaders || []).find(x => x.proxy_id === pid);
+  if (!prof || !h) return;
+  const have = new Set((h.checks || []).filter(c => c.present).map(c => c.key));
+  const todo = prof.keys.filter(k => !have.has(k));
+  window._secPostureArmed = '';
+  if (!todo.length) { toast(t('sec.profile.nothing', { name: prof.name, proxy: h.proxy_name }), 'info'); reloadCurrentSecurityPage(); return; }
+  try { await secPostureApplyKeys(pid, todo, `${t('sec.profile.applied', { name: prof.name, proxy: h.proxy_name })} (${todo.length})`); } catch (e) { toast(e.message, 'error'); }
+}
+
 function secPostureCardsHTML(filtered) {
   if (!filtered.length) return `<div class="empty"><p>${t('security.no_filter_match')}</p></div>`;
   return `<div style="padding:4px 14px 14px;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(190px,100%),1fr));gap:10px;">
@@ -1301,10 +1394,15 @@ function secPostureCardsHTML(filtered) {
       const presentN  = checks.length - missing.length;
       const color     = scoreColor(h.score);
       const pid       = esc(h.proxy_id || '');
+      const cert      = (window._secCerts || {})[h.domain];
+      const certTag   = cert ? `<span class="tag ${cert.status === 'valid' ? 'tag-green' : cert.status === 'expiring' ? 'tag-yellow' : 'tag-red'}" title="${esc(cert.issuer || '')}">${esc(t('sec.cert.' + cert.status))}${cert.status === 'expired' ? ` · ${-cert.days_left} j` : ` · ${cert.days_left} j`}</span>` : '';
+      const armed     = window._secPostureArmed ? SEC_PROFILES.find(p => p.id === window._secPostureArmed) : null;
       const missList  = missing.length
-        ? `<ul style="margin:0;padding-left:14px;font-size:10px;color:var(--text2);line-height:1.45;">${missing.map(c => `<li>${esc(secCheckLabel(c))}</li>`).join('')}</ul>`
+        ? `<ul class="sx-miss">${missing.map(c => `<li><span>${esc(secCheckLabel(c))}</span><button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();secPostureFix('${pid}','${esc(c.key || '')}')">${esc(t('sy.todo_fix'))}</button></li>`).join('')}</ul>`
         : '';
-      return `<div style="border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;">
+      return `<div class="secux-card" data-pcard="${pid}" ondragover="secPostureDragOver(event)" ondragleave="this.classList.remove('hot')" ondrop="secPostureDrop(event,'${pid}')" role="button" tabindex="0" title="${esc(t('security.proxy_security'))}" onclick="openProxySecModal('${pid}')"
+        onkeydown="if(event.target===this&&(event.key==='Enter'||event.key===' ')){event.preventDefault();openProxySecModal('${pid}')}"
+        style="border:1px solid var(--border);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:6px;">
           <div style="min-width:0;flex:1;">
             <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${esc(h.proxy_name)}">${esc(h.proxy_name)}</div>
@@ -1319,12 +1417,14 @@ function secPostureCardsHTML(filtered) {
         <div style="font-size:10px;color:${missing.length>0?'var(--text2)':'var(--green)'};">
           ${secPostureChecksLabel(presentN, checks.length, missing.length)}
         </div>
+        ${certTag ? `<div>${certTag}</div>` : ''}
         ${missList}
         <div style="display:flex;gap:2px;margin-top:auto;justify-content:flex-end;">
-          <button class="btn btn-ghost btn-icon" title="${t('security.proxy_settings')}" onclick="openProxyModal('${pid}')">
+          <button class="btn btn-ghost btn-icon" title="${t('security.proxy_settings')}" onclick="event.stopPropagation();openProxyModal('${pid}')">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </button>
-          <button class="btn btn-ghost btn-icon" title="${t('security.proxy_security')}" onclick="openProxySecModal('${pid}')">
+          ${armed ? `<button type="button" class="btn btn-sm sx-apply" onclick="event.stopPropagation();secPostureApply('${pid}')">${esc(t('sec.profile.apply', { name: armed.name }))}</button>` : ''}
+          <button class="btn btn-ghost btn-icon" title="${t('security.proxy_security')}" onclick="event.stopPropagation();openProxySecModal('${pid}')">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4" stroke-width="2"/></svg>
           </button>
         </div>
@@ -1681,7 +1781,8 @@ window.exportBansCSV = function() {
     }).catch(e => toast('Export : ' + e.message, 'error'));
 };
 
-window.openBanModal = function() {
+// prefill : { ip, ms } venant de la barre d'ajout rapide (ms = durée choisie, null = permanent).
+window.openBanModal = function(prefill) {
   modal(t('security.ban_modal.title'),
     `<div class="field"><label class="field-label">${t('security.ban_modal.ip')}</label><input id="ban-ip" class="input" placeholder="${t('security.ban_modal.ip_ph')}"></div>
      <div id="ban-preview"></div>
@@ -1693,6 +1794,11 @@ window.openBanModal = function() {
      <button class="btn btn-secondary" onclick="previewBan()">${t('security.ban_modal.preview')}</button>
      <button class="btn btn-danger" onclick="submitBan()">${t('security.ban_modal.submit')}</button>`);
   fillBanScopes();
+  if (prefill && prefill.ip) document.getElementById('ban-ip').value = prefill.ip;
+  if (prefill && prefill.ms) {
+    const d = new Date(Date.now() + prefill.ms);
+    document.getElementById('ban-exp').value = new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  }
 };
 
 // Passerelles et groupes HA proposés pour limiter un ban ; la liste reste réduite à « toutes » si le chargement échoue.
@@ -1754,22 +1860,15 @@ window.submitBan = async function() {
   } catch(e) { toast(e.message, 'error'); }
 };
 
+// Lever un ban ou le rendre permanent s'applique tout de suite et s'annule (toast, Ctrl+Z) : pas de confirmation.
+const _secBanById = (id, ip) => (window._secBans || []).find(x => String(x.id) === String(id)) || { id, ip };
+
 window.deleteBan = async function(id, ip) {
-  if (!confirm(t('security.unban_confirm', { ip }))) return;
-  try {
-    await api('DELETE', `/security/bans/${id}`);
-    toast(t('security.unban_success'), 'success');
-    reloadCurrentSecurityPage();
-  } catch(e) { toast(e.message, 'error'); }
+  try { await SecUX.unban(_secBanById(id, ip)); } catch (e) { toast(e.message, 'error'); }
 };
 
 window.makeBanPermanent = async function(id, ip) {
-  if (!confirm(t('security.ban_make_permanent_confirm', { ip }))) return;
-  try {
-    await api('PATCH', `/security/bans/${id}`, { permanent: true });
-    toast(t('security.ban_make_permanent_success'), 'success');
-    reloadCurrentSecurityPage();
-  } catch(e) { toast(e.message, 'error'); }
+  try { await SecUX.setExpiry(_secBanById(id, ip), null); } catch (e) { toast(e.message, 'error'); }
 };
 
 window.openPrismForBanIP = function(ip) {

@@ -681,6 +681,9 @@ func (m *Manager) handleAgentEvent(raw json.RawMessage) {
 	); err != nil {
 		m.log.Debug("edgews: insert node_event", "err", err)
 	}
+	if ev := agentEventAlert(e.NodeName, e.ContainerID, e.EventType, e.Detail); ev != nil && m.alertEngine != nil {
+		m.alertEngine.Emit(*ev)
+	}
 }
 
 func (m *Manager) handleLogBatch(raw json.RawMessage) {

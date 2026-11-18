@@ -14,7 +14,8 @@ function arEntryRow(e) {
   const rejected = e.status === 'rejected';
   const act = rejected ? 'candidate' : 'rejected';
   const label = rejected ? t('aref.restore') : t('aref.reject');
-  return `<tr${rejected ? ' style="opacity:.55"' : ''}>
+  const drag = 'ref:' + encodeURIComponent(JSON.stringify({ kind: e.kind, value: e.value }));
+  return `<tr${rejected ? ' style="opacity:.55"' : ''} draggable="true" data-secdrag="${esc(drag)}" title="Glisser vers Rejeter ou Restaurer">
     <td>${esc(e.kind)}</td>
     <td class="tr-mono" title="${esc(e.sample || '')}">${esc(e.value)}</td>
     <td>${esc(e.family)}</td>
@@ -45,8 +46,8 @@ function arDossierRow(d, i) {
       <div style="margin-top:8px">${paths}</div>
     </div></td></tr>`;
   }
-  return `<tr style="cursor:pointer" onclick="arToggleDossier(${i})">
-    <td class="tr-mono">${esc(d.ip)}</td><td>${esc(main)}</td><td>${esc(fmtDate(d.banned_at))}</td>
+  return `<tr style="cursor:pointer" onclick="arToggleDossier(${i}, event)">
+    <td class="tr-mono">${SecUX.ipHTML(d.ip)}</td><td>${esc(main)}</td><td>${esc(fmtDate(d.banned_at))}</td>
     <td>${d.requests}</td><td>${d.distinct_paths}</td><td>${arChips(d.families)}</td>
   </tr>${detail}`;
 }
@@ -74,8 +75,7 @@ function arPaint() {
   const degraded = miner.last_result && miner.last_result.degraded ? `<p class="tr-meta" style="color:var(--orange,#d97706)">${esc(t('aref.degraded'))}</p>` : '';
   const entryRows = _ar.entries.map(arEntryRow).join('');
   const dossierRows = _ar.dossiers.map(arDossierRow).join('');
-  content.innerHTML = `<div class="tr-page">
-    <p class="tr-meta" style="margin:0 0 10px">${esc(t('aref.subtitle'))}</p>
+  content.innerHTML = `<div class="tr-page">${SecUX.subNav('threats', 'attackref', 'admin')}<div class="vs-page-head"><div><h2 class="vs-title">${esc(t('sec.tab.attackref'))}</h2><div class="vs-sub">${esc(t('aref.subtitle'))}</div></div></div>
     <div class="bn-kpis">
       ${tile(sum.dossiers || 0, t('aref.kpi.dossiers'))}
       ${tile((sum.entries_by_status || {}).candidate || 0, t('aref.kpi.candidates'))}
@@ -122,6 +122,7 @@ async function arLoad() {
     _ar.dossiers = (dossiers && dossiers.dossiers) || [];
     _ar.dossiersTotal = (dossiers && dossiers.total) || 0;
     _ar.error = '';
+    window._secBadges = Object.assign(window._secBadges || {}, { attackref: ((summary && summary.summary && summary.summary.entries_by_status) || {}).candidate || 0 });
   } catch (e) {
     _ar.error = t('aref.unavailable');
   }
@@ -140,16 +141,27 @@ function arSchedulePoll() {
 }
 
 window.arFilter = (group, value) => { _ar[group] = value; _ar.open = null; arLoad(); };
-window.arToggleDossier = i => { _ar.open = _ar.open === i ? null : i; arPaint(); };
+window.arToggleDossier = (i, ev) => {
+  if (ev && ev.target.closest && ev.target.closest('.secux-ip')) return;
+  _ar.open = _ar.open === i ? null : i;
+  arPaint();
+};
 
-window.arSetStatus = async btn => {
+// Rejeter ou restaurer une entrée s'applique tout de suite et s'annule (toast, Ctrl+Z) ; on peut aussi
+// glisser la ligne vers Rejeter / Restaurer.
+window.arSetEntryStatus = async (kind, value, status) => {
+  const prev = status === 'rejected' ? 'candidate' : 'rejected';
+  const post = st => api('POST', '/security/attack-ref/entries/status', { kind, value, status: st });
   try {
-    await api('POST', '/security/attack-ref/entries/status', { kind: btn.dataset.kind, value: btn.dataset.value, status: btn.dataset.status });
+    await post(status);
+    SecUX.remember(status === 'rejected' ? `« ${value} » rejetée` : `« ${value} » restaurée`, async () => { await post(prev); arLoad(); });
   } catch (e) {
     toast(e.message || String(e), 'error');
   }
   arLoad();
 };
+
+window.arSetStatus = btn => window.arSetEntryStatus(btn.dataset.kind, btn.dataset.value, btn.dataset.status);
 
 window.arRun = async () => {
   try {

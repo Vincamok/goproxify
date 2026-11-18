@@ -23,8 +23,7 @@ pages.audit = async function() {
   }
 
   function quickHTML() {
-    const per = AUDIT_PERIODS.map(([k, ms]) => `<button type="button" class="chip${q.quickMs === ms ? ' active' : ''}" data-aud-quick="${ms}">${k}</button>`).join('')
-      + `<button type="button" class="chip${q.quickMs ? '' : ' active'}" data-aud-quick="0">${esc(t('lg.q_all'))}</button>`;
+    const per = ObsUX.rangeHTML(AUDIT_PERIODS, q.quickMs, { attr: 'data-aud-quick', all: `<button type="button" class="seg-btn${q.quickMs ? '' : ' active'}" data-aud-quick="0">${esc(t('lg.q_all'))}</button>` });
     const sev = ['info', 'warning', 'critical'].map(s => `<button type="button" class="chip${q.severity === s ? ' active' : ''}" data-aud-sev="${s}">${s}</button>`).join('');
     return `<div class="logs-quick"><div class="logs-quick-g">${per}</div><div class="logs-quick-g">${sev}</div></div>`;
   }
@@ -53,13 +52,14 @@ pages.audit = async function() {
       rows = entries;
       const tbody = document.getElementById('audit-tbody');
       if (!tbody) return;
+      const fb = (f, v, inner) => v ? `<button type="button" class="oux-f" data-aud-f="${f}" data-v="${esc(v)}" title="${esc(t('logs.filter_title'))}">${inner}</button>` : inner;
       tbody.innerHTML = entries.length ? entries.map((e, i) => `<tr data-aud-i="${i}">
         <td class="mono">${esc(e.created_at && !String(e.created_at).startsWith('0001') ? new Date(e.created_at).toLocaleString(typeof gpxBCP47==='function'?gpxBCP47():'en-US') : '—')}</td>
-        <td><span class="tag tag-neutral">${esc(e.component)}</span></td>
-        <td>${esc(e.actor || '—')}</td>
-        <td>${esc(e.ip || '—')}</td>
-        <td><b>${esc(e.action)}</b>${e.resource_type ? ` <span style="color:var(--text3)">${esc(e.resource_type)}${e.resource_id ? ':'+esc(e.resource_id) : ''}</span>` : ''}</td>
-        <td>${auditSevBadge(e.severity)}</td>
+        <td>${fb('component', e.component, `<span class="tag tag-neutral">${esc(e.component)}</span>`)}</td>
+        <td>${fb('actor', e.actor, esc(e.actor || '—'))}</td>
+        <td>${e.ip ? ObsUX.ipBtn(e.ip, { menu: true }) : '—'}</td>
+        <td><b>${fb('action', e.action, esc(e.action))}</b>${e.resource_type ? ` <span style="color:var(--text3)">${esc(e.resource_type)}${e.resource_id ? ':'+esc(e.resource_id) : ''}</span>` : ''}</td>
+        <td>${fb('severity', e.severity, auditSevBadge(e.severity))}</td>
         <td style="color:var(--text2);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(e.detail)}">${esc(e.detail || '—')}</td>
       </tr>`).join('') : `<tr><td colspan="7" class="empty"><p>${t('audit.empty')}</p></td></tr>`;
       const pager = document.getElementById('audit-pager');
@@ -145,7 +145,17 @@ pages.audit = async function() {
     loadHist();
   };
 
+  ObsUX.setPage({
+    reload: () => {},
+    refresh: () => refresh(),
+    range: ms => { q.quickMs = ms; q.from = ms ? new Date(Date.now() - ms).toISOString() : ''; q.to = ''; refresh(); },
+    brush: r => { q.quickMs = 0; q.from = r.from; q.to = r.to; refresh(); },
+    export: fmt => exportAudit(fmt),
+    actions: () => [{ label: t('logs.clear_all'), kw: 'effacer filtres reset clear', run: () => { Object.assign(q, { component: '', action: '', actor: '', severity: '' }); refresh(); } }],
+  });
+
   content.innerHTML = `<div id="audit-root">
+    ${ObsUX.subNav()}
     <div id="aud-quick">${quickHTML()}</div>
     <div id="aud-hist"></div>
     <div class="search-bar" style="flex-wrap:wrap;gap:8px">
@@ -179,6 +189,13 @@ pages.audit = async function() {
       refresh();
       return;
     }
+    const cell = ev.target.closest('[data-aud-f]');
+    if (cell) {
+      const f = cell.getAttribute('data-aud-f'), v = cell.getAttribute('data-v');
+      q[f] = q[f] === v ? '' : v;
+      refresh();
+      return;
+    }
     const sev = ev.target.closest('[data-aud-sev]');
     if (sev) {
       const s = sev.getAttribute('data-aud-sev');
@@ -194,7 +211,7 @@ pages.audit = async function() {
     }
     const act = ev.target.closest('[data-aud-act]');
     if (act) { onDrawerAct(act.getAttribute('data-aud-act'), parseInt(act.getAttribute('data-aud-di'), 10)); return; }
-    if (ev.target.closest('#aud-drawer')) return;
+    if (ev.target.closest('#aud-drawer,.oux-ipmenu')) return;
     const row = ev.target.closest('tr[data-aud-i]');
     if (row) { const i = parseInt(row.getAttribute('data-aud-i'), 10); openDrawer(rows[i], i); }
   });

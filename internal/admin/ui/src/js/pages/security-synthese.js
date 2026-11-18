@@ -115,11 +115,11 @@ async function synAttackMap(mode) {
     return out;
   };
   const renderFeed = () => {
-    if (!feedEl) return;
+    if (!feedEl || SecUX.dragging) return;
     feedEl.innerHTML = feed.length ? feed.map(ev => `<div class="live-feed-row">
       <span class="live-feed-kind" style="color:${ev.kind === 'banned' ? 'var(--red)' : 'var(--yellow)'}">${ev.kind === 'banned' ? 'BAN' : 'ERR'}</span>
       <span class="live-feed-flag">${esc(ev.country_code || '')}</span>
-      <code class="live-feed-ip">${esc(ev.ip)}</code>
+      <code class="live-feed-ip">${SecUX.ipHTML(ev.ip)}</code><span class="sx-fr-act"><button type="button" class="btn btn-ghost btn-sm" onclick="SecUX.doIP('ban1h','${esc(ev.ip)}')" title="Bannir 1 h">1 h</button><button type="button" class="btn btn-ghost btn-sm" onclick="SecUX.doIP('ban24h','${esc(ev.ip)}')" title="Bannir 24 h">24 h</button><button type="button" class="btn btn-ghost btn-sm" onclick="SecUX.doIP('banperm','${esc(ev.ip)}')" title="Bannir à vie">∞</button><button type="button" class="btn btn-ghost btn-sm" onclick="SecUX.doIP('allow','${esc(ev.ip)}')" title="Toujours autoriser">✓</button><button type="button" class="btn btn-ghost btn-sm" onclick="SecUX.doIP('trace','${esc(ev.ip)}')" title="Tracer le parcours">↗</button></span>
       <span class="live-feed-domain" title="${esc(ev.domain)}">${esc(ev.domain)}</span>
       ${ev.count > 1 ? `<span class="live-feed-count" title="${ev.count} occurrences">×${ev.count}</span>` : ''}
       <span class="live-feed-ts">${esc((ev.ts || '').replace('T', ' ').slice(11, 19))}</span></div>`).join('')
@@ -194,6 +194,13 @@ function synRankHTML(cves, isAdmin) {
     <span class="sy-rank-c">${esc(t('sy.cve_short', { n: r.l.length }))} · <b>${r.score}</b></span></div>`).join('')}</div>`;
 }
 
+// « À traiter » : les contrôles de sécurité manquants qui font perdre le plus de points, un clic ouvre le proxy concerné.
+function synTodoHTML(headers) {
+  const items = (headers || []).flatMap(h => (h.checks || []).filter(c => !c.present).map(c => ({ h, c, w: Math.round(100 / ((h.checks || []).length || 1)) })));
+  if (!items.length) return `<div class="empty"><p>${esc(t('sy.todo_empty'))}</p></div>`;
+  return `<ul class="sx-todo">${items.slice(0, 4).map(i => `<li><div class="sx-todo-t"><b>${esc(secCheckLabel(i.c))}</b><span class="mono">${esc(i.h.proxy_name || '')}</span></div><span class="sx-todo-w">+${i.w}</span><button type="button" class="btn btn-sm" onclick="openProxySecModal('${esc(i.h.proxy_id || '')}')">${esc(t('sy.todo_fix'))}</button></li>`).join('')}</ul>`;
+}
+
 function synTimelineHTML() {
   const all = _syn.events;
   const types = [['all', 'sy.tl_all'], ['ban', 'sy.tl_ban'], ['threat', 'sy.tl_threat'], ['cve', 'sy.tl_cve'], ['cert', 'sy.tl_cert']];
@@ -205,7 +212,7 @@ function synTimelineHTML() {
   const tagCls = { ban: 'ban', threat: 'threat', cve: 'cve', cert: 'cert' };
   const rows = list.slice(0, _syn.tlN).map(e => `<div class="sy-ev">
       <span class="sy-tag sy-${tagCls[e.type] || 'ban'}">${esc(t('sy.tl_' + (tagCls[e.type] || 'ban')))}</span>
-      <div class="sy-ev-txt">${esc(e.summary || '')}${e.ip ? `<span class="mono">${esc(e.ip)}</span>` : ''}</div>
+      <div class="sy-ev-txt">${esc(e.summary || '')}${e.ip ? `<span class="mono">${SecUX.ipHTML(e.ip)}</span>` : ''}</div>
       <span class="sy-ev-time">${e.created_at ? esc(fmtDate(e.created_at)) : ''}</span>
       ${e.edge_name && _syn.mode === 'admin' ? `<span class="sy-ev-gw mono">${esc(e.edge_name)}</span>` : ''}
     </div>`).join('');
@@ -285,6 +292,8 @@ async function renderSecuritySynthese(ctx) {
     const navBans = securityPageId('bans', mode);
     const navVulns = securityPageId('vulns', mode);
     const navPosture = securityPageId('posture', mode);
+    window._secBadges = Object.assign(window._secBadges || {}, { bans: bans.length, vulns: openCves.length, engines_off: [threatCfg?.enabled, wafCfg?.enabled !== false, fleetCfg?.enabled, csCfg?.enabled].filter(x => !x).length });
+    renderPageTabs(state.page);
     const gwCount = new Set(cves.map(c => c.edge_name).filter(Boolean)).size;
     const sub = isAdmin ? t('security.vs.sub_admin', { n: gwCount || (edgeCtx ? 1 : '—') }) : t('security.vs.sub_edge', { name: esc(edgeCtx.edgeLabel) });
     const tileClick = p => `onclick="navigate('${p}')"`;
@@ -347,14 +356,11 @@ async function renderSecuritySynthese(ctx) {
         <div id="sy-atk-feed" class="live-feed" style="max-height:170px;overflow-y:auto;font-size:11px;margin-top:4px"></div>
         <aside class="prism-drawer" id="sy-atk-drawer"></aside></div>
 
-      <div class="card blueprint sy-card"><div class="sy-card-h"><h3>${esc(t('security.overview_activity_24h'))}</h3></div>${secActivityChartHTML(events)}</div>
-
-      <div class="sy-grid2">
+      <div class="sx-grid">
+      <div class="card blueprint sy-card sx-span2"><div class="sy-card-h"><h3>${esc(t('security.overview_activity_24h'))}</h3></div>${secActivityChartHTML(events)}</div>
+      <div class="card blueprint sy-card"><div class="sy-card-h"><h3>${esc(t('sy.todo'))}</h3><a onclick="navigate('${navPosture}')">${esc(t('sec.tab.posture'))}</a></div>${synTodoHTML(headers)}</div>
         <div class="card blueprint sy-card"><div class="sy-card-h"><h3>${esc(t('security.overview_bans_by_source'))}</h3><a onclick="navigate('${navBans}')">${esc(t('sy.view_bans'))}</a></div>${secBansBySourceHTML(bans)}</div>
-        <div class="card blueprint sy-card"><div class="sy-card-h"><h3>${esc(t('security.overview_top_threats'))}</h3><a onclick="navigate('${navBans}')">${esc(t('sy.view_all'))}</a></div><div class="sy-threats">${secTopThreatsHTML(events.slice(0, 20), navBans)}</div></div>
-      </div>
-
-      <div class="sy-grid2">
+        <div class="card blueprint sy-card sx-span2"><div class="sy-card-h"><h3>${esc(t('security.overview_top_threats'))}</h3><a onclick="navigate('${navBans}')">${esc(t('sy.view_all'))}</a></div><div class="sy-threats">${secTopThreatsHTML(events.slice(0, 20), navBans)}</div></div>
         <div class="card blueprint sy-card"><div class="sy-card-h"><h3>${esc(t(isAdmin ? 'sy.rank_gw' : 'sy.rank_be'))}</h3><a onclick="navigate('${navVulns}')">${esc(t('sec.tab.vulns'))}</a></div>${synRankHTML(cves, isAdmin)}<div class="vs-hint">${esc(t(isAdmin ? 'sy.rank_hint_gw' : 'sy.rank_hint_be'))}</div></div>
         <div class="card blueprint sy-card"><div class="sy-card-h"><h3>${esc(t('sy.posture'))}</h3><a onclick="navigate('${navPosture}')">${esc(t('sec.tab.posture'))}</a></div>
           <div class="sy-posture">
@@ -473,7 +479,9 @@ function smCapsHTML(caps, handler, enabled) {
     }
     return `<div class="sm-cap">
     <div class="sm-cap-d"><b>${esc(c.label)}</b>${c.desc ? `<span>${esc(c.desc)}</span>` : ''}</div>
-    <div class="sm-cap-r">${c.val ? `<span class="sm-val">${esc(c.val)}</span>` : ''}${c.fixed ? '' : smSwitch(c.on, `${handler}('${c.key}',this.checked)`, c.label)}</div>
+    <div class="sm-cap-r">${c.val ? (numCap
+      ? `<button type="button" class="sm-val secux-val" title="Cliquer pour modifier la valeur" onclick="smEditCap('${handler}','${c.key}',this)">${esc(c.val)}</button>`
+      : `<span class="sm-val">${esc(c.val)}</span>`) : ''}${c.fixed ? '' : smSwitch(c.on, `${handler}('${c.key}',this.checked)`, c.label)}</div>
   </div>`;
   }).join('')}</div>`;
 }
@@ -487,6 +495,7 @@ function smTabs() {
   const rulesOn = _sm.rules.some(r => r.enabled);
   const list = [
     { id: 'ephor', label: 'Ephor', on: !!_sm.threat?.enabled },
+    { id: 'lists', label: 'Listes', on: null },
     { id: 'waf', label: 'WAF', on: _sm.waf?.enabled !== false },
     { id: 'fleet', label: 'Seuils multi-passerelles', on: !!_sm.fleet?.enabled },
     { id: 'cs', label: 'CrowdSec', on: !!_sm.cs?.enabled },
@@ -534,14 +543,17 @@ function smWafInfoHTML(engineOn) {
 function smPanelHTML() {
   const admin = _sm.mode === 'admin';
   switch (_sm.tab) {
+    case 'lists':
+      return smListsHTML();
     case 'ephor': {
+      if (_sm.sec && _sm.sec !== 'overview') return smEphorSettingsHTML();
       const on = !!_sm.threat?.enabled;
       const caps = smEphorCaps();
       const n = caps.filter(c => c.on).length;
       return `${smMasterHTML('Ephor', t('sm.ephor_d'), on, 'smMaster_ephor')}
         ${smCapsHTML(caps, 'smEphorCap', on)}
         <div class="vs-hint">${esc(on ? t('sm.caps_count', { n, m: caps.length }) : t('sm.off_hint'))} ${esc(t('sm.tune_hint'))}</div>
-        <div><button type="button" class="btn btn-ghost btn-sm" onclick="smClose();navigate('${securityPageId('ephor', _sm.mode)}')">${esc(t('sm.open_ephor'))} →</button></div>`;
+        <div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn btn-sm" onclick="smSec('general')">Réglages détaillés →</button><button type="button" class="btn btn-ghost btn-sm" onclick="navigate('${securityPageId('ephor', _sm.mode)}')">${esc(t('sm.open_ephor'))} →</button></div>`;
     }
     case 'waf': {
       const on = _sm.waf?.enabled !== false;
@@ -591,35 +603,179 @@ function smPanelHTML() {
   return '';
 }
 
+// Page « Moteurs de sécurité » (Défenses › Moteurs) : mêmes panneaux et mêmes interrupteurs que l'ancienne fenêtre,
+// chaque réglage s'applique tout de suite.
 function smRender() {
   const root = document.getElementById('sm-root');
   if (!root) return;
   const admin = _sm.mode === 'admin';
   const tabs = smTabs();
   if (!tabs.some(x => x.id === _sm.tab)) _sm.tab = tabs[0].id;
-  root.innerHTML = `<div class="sm-scrim" onclick="if(event.target===this)smClose()">
-    <div class="sm-modal" role="dialog" aria-modal="true" aria-labelledby="sm-title">
-      <div class="sm-head"><div><h2 id="sm-title">${esc(t('sm.title'))}</h2><p>${esc(admin ? t('sm.scope_admin') : t('sm.scope_edge', { name: _sm.edgeLabel || '' }))}</p></div>
-        <button type="button" class="btn btn-ghost btn-icon sm-x" onclick="smClose()" aria-label="${esc(t('common.close'))}">✕</button></div>
-      <div class="sm-body">
-        <div class="sm-nav" role="tablist">${tabs.map(x => `<button type="button" role="tab" aria-selected="${x.id === _sm.tab}" onclick="smTab('${x.id}')">${x.on === null ? '' : `<i class="${x.on ? 'on' : ''}"></i>`}${esc(x.label)}</button>`).join('')}</div>
-        <div class="sm-panel" id="sm-panel">${smPanelHTML()}</div>
-      </div>
-      <div class="sm-foot"><span class="vs-hint">${esc(t('sm.apply_hint'))}</span><button type="button" class="btn btn-primary" onclick="smClose()">${esc(t('common.close'))}</button></div>
-    </div></div>`;
+  root.innerHTML = `<div class="vs-page-head"><div><h2 class="vs-title">${esc(t('sm.title'))}</h2><div class="vs-sub">${esc(admin ? t('sm.scope_admin') : t('sm.scope_edge', { name: _sm.edgeLabel || '' }))}</div></div></div>
+    <div class="card blueprint" style="padding:0;overflow:hidden"><div class="sm-body">
+      <div class="sm-nav" role="tablist">${tabs.map(x => `<button type="button" role="tab" aria-selected="${x.id === _sm.tab}" onclick="smTab('${x.id}')">${x.on === null ? '' : `<i class="${x.on ? 'on' : ''}"></i>`}${esc(x.label)}</button>${x.id === 'ephor' && _sm.tab === 'ephor' ? `<div class="sx-subitems">${[{ id: 'overview', label: 'Aperçu' }, ...SENT_SECTIONS].map(sc => `<button type="button" class="${(_sm.sec || 'overview') === sc.id ? 'on' : ''}" onclick="smSec('${sc.id}')">${esc(sc.label)}</button>`).join('')}</div>` : ''}`).join('')}</div>
+      <div class="sm-panel" id="sm-panel">${smPanelHTML()}</div>
+    </div><div class="vs-hint" style="padding:10px 18px;border-top:1px solid var(--border)">${esc(t('sm.apply_hint'))}</div></div>`;
+  smAfterRender();
+}
+
+// Après chaque rendu : n'afficher que la section d'Ephor choisie (toutes restent dans le formulaire, qui les enregistre ensemble),
+// et remplir un champ proposé ailleurs (seuil de limite globale).
+function smAfterRender() {
+  if (_sm.tab === 'ephor' && _sm.sec && _sm.sec !== 'overview') {
+    document.getElementById('sent-sec-' + _sm.sec)?.classList.add('on');
+    if (window._smPrefill) {
+      const el = document.getElementById(window._smPrefill.id);
+      if (el) { el.value = window._smPrefill.value; smDirty(true); }
+      window._smPrefill = null;
+    }
+  }
+}
+
+// ── Moteurs › Ephor : réglages détaillés ──────────────────────────────────────────────────────
+// Le formulaire reprend les anciens « Réglages Ephor » : une section à la fois, une barre collante pour simuler, annuler ou enregistrer.
+function smEphorSettingsHTML() {
+  const on = !!_sm.threat?.enabled;
+  const group = _sent.edgeCtx?.group;
+  return `${smMasterHTML('Ephor', t('sm.ephor_d'), on, 'smMaster_ephor')}
+    ${group ? `<p class="vs-hint">Ces réglages sont partagés par le groupe HA <b>${esc(group.name)}</b> et appliqués à tous ses membres.</p>` : ''}
+    <form id="sent-form" class="sx-form" onsubmit="smEphorSave(event)">${sentDrawerForm(_sm.threat || {})}</form>
+    <div class="sx-savebar" id="sx-savebar" hidden>
+      <span class="sx-dirty"><i></i>Modifications non enregistrées</span>
+      <select id="sx-sim-h" class="input" style="height:30px;width:auto" title="Fenêtre de logs rejouée"><option value="1">1 h</option><option value="6" selected>6 h</option><option value="24">24 h</option><option value="168">7 j</option></select>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="smEphorSimulate()">Simuler</button>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="smEphorCancel()">Annuler</button>
+      <button type="submit" form="sent-form" class="btn btn-primary btn-sm">${esc(t('common.save'))}</button>
+    </div>
+    <div id="sx-sim-res"></div>`;
+}
+
+function smDirty(on) { const b = document.getElementById('sx-savebar'); if (b) b.hidden = !on; }
+document.addEventListener('input', e => { if (e.target.closest && e.target.closest('#sent-form')) smDirty(true); });
+document.addEventListener('change', e => { if (e.target.closest && e.target.closest('#sent-form')) smDirty(true); });
+
+window.smEphorCancel = function() { smRender(); };
+
+window.smEphorSave = async function(e) {
+  if (e) e.preventDefault();
+  const url = `/security/threat-config${window._secEdgeQ || ''}`;
+  const prev = _sm.threat;
+  try {
+    const cfg = sentCollectConfig(!!prev?.enabled);
+    await api('PUT', url, cfg);
+    _sm.threat = cfg;
+    window._threatCfg = cfg;
+    _sm.dirty = true;
+    SecUX.remember(t('security.threat.saved'), async () => { await api('PUT', url, prev); _sm.threat = prev; window._threatCfg = prev; smRender(); });
+    smRender();
+  } catch (err) { toast(err.message, 'error'); }
+};
+
+window.smEphorSimulate = async function() {
+  const out = document.getElementById('sx-sim-res');
+  if (!out) return;
+  out.innerHTML = '<div class="sent-sim"><div class="spinner"></div></div>';
+  try {
+    const hours = parseInt(document.getElementById('sx-sim-h')?.value || '6', 10);
+    const sim = await api('POST', `/security/threat-config/simulate${window._secEdgeQ || ''}`, { config: sentCollectConfig(!!_sm.threat?.enabled), hours });
+    out.innerHTML = sentDrawSummary(sim);
+  } catch (err) {
+    out.innerHTML = '';
+    let m = err.message;
+    try { m = JSON.parse(m).error || m; } catch { /* texte brut */ }
+    toast(m, 'error');
+  }
+};
+
+// ── Moteurs › Listes ──────────────────────────────────────────────────────────────────────────
+// Un seul endroit pour trois choses qu'on confondait : ce qu'Ephor bloque, ce qu'il n'évalue jamais, et la liste blanche des bans.
+async function smListPatch(label, mutate) {
+  const url = `/security/threat-config${window._secEdgeQ || ''}`;
+  const prev = JSON.parse(JSON.stringify(_sm.threat || {}));
+  const next = JSON.parse(JSON.stringify(prev));
+  mutate(next);
+  try {
+    await api('PUT', url, next);
+  } catch (e) { toast(e.message, 'error'); return; }
+  _sm.threat = next; window._threatCfg = next; _sm.dirty = true;
+  SecUX.remember(label, async () => { await api('PUT', url, prev); _sm.threat = prev; window._threatCfg = prev; smRender(); });
+  smRender();
+}
+
+const SM_LIST_REFS = [['ip_enabled', 'IP connues', 'réputation (Firehol Level 1)'], ['ua_enabled', 'User-Agents malveillants', 'scanners et robots connus'], ['path_enabled', 'Chemins suspects', '.env, wp-admin, phpmyadmin…']];
+
+function smChipBox(title, hint, group, key, ph) {
+  const arr = (_sm.threat?.[group] || {})[key] || [];
+  return `<div class="sx-chipbox"><div class="sx-chipbox-h"><b>${esc(title)}</b> <span>(${arr.length})</span></div>${hint ? `<p class="sx-hint">${esc(hint)}</p>` : ''}
+    <div class="sx-chips">${arr.map((v, i) => `<span class="sx-lchip"><span class="cv" tabindex="0" role="button" title="Cliquer pour modifier" onclick="smChipEdit(this,'${group}','${key}',${i})">${esc(v)}</span><button type="button" class="x" aria-label="Retirer ${esc(v)}" onclick="smChipDel('${group}','${key}',${i})">✕</button></span>`).join('') || '<span class="sx-muted">Aucune entrée</span>'}</div>
+    <input class="input" style="height:32px;font-family:var(--font-mono,monospace);font-size:12.5px" placeholder="${esc(ph)}" aria-label="Ajouter : ${esc(title)}" autocomplete="off" spellcheck="false" onkeydown="if(event.key==='Enter'){event.preventDefault();smChipAdd('${group}','${key}',this)}"></div>`;
+}
+
+window.smChipAdd = function(group, key, input) {
+  const v = input.value.trim();
+  if (!v) return;
+  if (key === 'ips' && !SecUX.parseTarget(v)) { input.classList.add('bad'); toast('Adresse ou CIDR non reconnu : ' + v, 'error'); return; }
+  if (((_sm.threat?.[group] || {})[key] || []).includes(v)) { toast('Déjà dans la liste', 'info'); return; }
+  smListPatch('Entrée ajoutée', c => { c[group] = c[group] || {}; c[group][key] = [...(c[group][key] || []), v]; });
+};
+window.smChipDel = function(group, key, i) {
+  smListPatch('Entrée retirée', c => { c[group][key] = c[group][key].filter((_, n) => n !== i); });
+};
+window.smChipEdit = function(el, group, key, i) {
+  SecUX.editInline(el.parentElement, {
+    value: _sm.threat[group][key][i], placeholder: 'valeur',
+    parse: v => { v = v.trim(); return v && (key !== 'ips' || SecUX.parseTarget(v)) ? v : undefined; },
+    onSave: v => smListPatch('Entrée modifiée', c => { c[group][key][i] = v; }),
+  });
+};
+window.smListRef = function(key, on) {
+  smListPatch(`Liste ${on ? 'activée' : 'désactivée'}`, c => { c.lists = { ...(c.lists || {}), [key]: on }; });
+};
+window.smListRefresh = function(el) {
+  SecUX.editInline(el, { value: _sm.threat?.lists?.refresh_interval || '6h', placeholder: '6h', parse: v => { const ms = SecUX.parseDur(v); return ms ? SecUX.goDuration(ms) : undefined; },
+    onSave: v => smListPatch(`Rafraîchissement : ${v}`, c => { c.lists = { ...(c.lists || {}), refresh_interval: v }; }) });
+};
+window.smBanWlAdd = async function() {
+  const ip = document.getElementById('sm-wl-ip');
+  const t_ = SecUX.parseTarget(ip.value);
+  if (!t_) { ip.classList.add('bad'); toast('Adresse ou CIDR non reconnu', 'error'); return; }
+  try { await SecUX.allow(t_.value, document.getElementById('sm-wl-c').value.trim()); } catch (e) { toast(e.message, 'error'); }
+};
+window.smBanWlDel = async function(value) {
+  const entry = (_sm.banWl || []).find(e => e.value === value) || { value, comment: '' };
+  try { await SecUX.unallow(entry); } catch (e) { toast(e.message, 'error'); }
+};
+
+function smListsHTML() {
+  const l = _sm.threat?.lists || {};
+  const card = (title, sub, body) => `<section class="sx-lcard"><header><h3>${esc(title)}</h3><p>${sub}</p></header>${body}</section>`;
+  const wl = _sm.banWl || [];
+  return `<div class="sm-master"><div><b>Listes</b><p>Trois listes différentes, trois portées : ce qu'Ephor bloque d'office, ce qu'il ne regarde jamais, et les adresses qu'aucun ban n'atteint.</p></div></div>
+  ${card('Listes de référence', 'Maintenues par le produit et rafraîchies régulièrement. Une IP, un User-Agent ou un chemin listé est refusé par Ephor.', `<div class="sm-caps">${SM_LIST_REFS.map(([k, n, d]) => `<div class="sm-cap"><div class="sm-cap-d"><b>${esc(n)}</b><span>${esc(d)}</span></div><div class="sm-cap-r">${smSwitch(!!l[k], `smListRef('${k}',this.checked)`, n)}</div></div>`).join('')}
+    <div class="sm-cap"><div class="sm-cap-d"><b>Rafraîchissement</b><span>Fréquence de mise à jour des listes</span></div><div class="sm-cap-r"><button type="button" class="sm-val secux-val" title="Cliquer pour modifier" onclick="smListRefresh(this)">${esc(l.refresh_interval || '6h')}</button></div></div></div>
+    ${_sent.edgeCtx?.group ? `<p class="vs-hint">Dans le groupe HA <b>${esc(_sent.edgeCtx.group.name)}</b>, les listes sont échangées entre passerelles : la plus récente l'emporte.</p>` : ''}`)}
+  ${card('Bloqués par Ephor', 'Vos propres entrées. Chaque ajout s\'applique tout de suite et s\'annule.', `<div class="sx-chipgrid">${smChipBox('IP et CIDR', '', 'custom_lists', 'ips', '203.0.113.0/24')}${smChipBox('User-Agents', 'Sous-chaîne du User-Agent.', 'custom_lists', 'uas', 'sqlmap')}${smChipBox('Chemins', 'Préfixes de chemin.', 'custom_lists', 'paths', '/admin/config.php')}${smChipBox('Empreintes TLS', 'JA3 (MD5) ou JA4.', 'custom_lists', 'tls_fingerprints', 't13d1516h2_8daaf6152771_02713d6af862')}</div>`)}
+  ${card('Exceptions d\'Ephor', 'Ce qu\'Ephor n\'évalue jamais : ni signal, ni score, ni ban de sa part. Les autres moteurs (CrowdSec, WAF, bans manuels) continuent de s\'appliquer.', `<div class="sx-chipgrid">${smChipBox('IP et CIDR de confiance', '', 'whitelist', 'ips', '198.51.100.0/24')}${smChipBox('User-Agents autorisés', '', 'whitelist', 'uas', 'Googlebot')}${smChipBox('Chemins exclus', '', 'whitelist', 'paths', '/health')}</div>`)}
+  ${card('Liste blanche des bans', 'Adresses et plages qu\'aucun ban n\'atteint, quel qu\'en soit l\'auteur (manuel, Seuils, CrowdSec, Ephor, règles), et qu\'Ephor n\'évalue pas. Les bans existants ne sont pas supprimés : ils cessent de s\'appliquer à ces adresses.', `
+    <div class="sm-caps">${wl.map(e => `<div class="sm-cap"><div class="sm-cap-d"><b class="mono">${esc(e.value)}</b><span>${esc(e.comment || '—')}${e.bans_exempted ? ` · ${e.bans_exempted} ban${e.bans_exempted > 1 ? 's' : ''} neutralisé${e.bans_exempted > 1 ? 's' : ''}` : ''}</span></div><div class="sm-cap-r"><button type="button" class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="smBanWlDel(this.dataset.v)" data-v="${esc(e.value)}">Retirer</button></div></div>`).join('') || '<div class="sm-cap"><div class="sm-cap-d"><span>Liste blanche vide.</span></div></div>'}</div>
+    <div class="sx-wl-add"><input id="sm-wl-ip" class="input" placeholder="203.0.113.10 ou 203.0.113.0/24" autocomplete="off" spellcheck="false" onkeydown="if(event.key==='Enter'){event.preventDefault();smBanWlAdd()}"><input id="sm-wl-c" class="input" placeholder="Commentaire (optionnel)" onkeydown="if(event.key==='Enter'){event.preventDefault();smBanWlAdd()}"><button type="button" class="btn btn-primary btn-sm" onclick="smBanWlAdd()">Ajouter</button></div>`)}`;
 }
 
 function _condLabel(r) {
   return FlowCatalog.triggerText(r);
 }
 
-window.secEnginesOpen = async function(tab) {
-  const mode = _syn.mode;
+window.secEnginesOpen = function(tab) {
+  window._smTabInit = tab || 'ephor';
+  navigate(securityPageId('engines', _syn.mode));
+};
+
+// La page remplace l'ancienne fenêtre : « fermer » ne fait rien, les liens « Ouvrir … » naviguent directement.
+window.smClose = function() {};
+
+// Lit toute la configuration des moteurs ; Ephor et le WAF sont propres à la passerelle (`?edge=`), le reste est global.
+async function smLoad(mode) {
   const edgeQ = window._secEdgeQ || '';
-  Object.assign(_sm, { open: true, tab: tab || 'ephor', mode, dirty: false, prev: {}, edgeLabel: state.selectedEdge?.display_name || state.selectedEdge?.node_name || '' });
-  let root = document.getElementById('sm-root');
-  if (!root) { root = document.createElement('div'); root.id = 'sm-root'; document.body.appendChild(root); }
-  root.innerHTML = `<div class="sm-scrim"><div class="sm-modal"><p style="padding:24px;color:var(--text2)">${esc(t('common.loading'))}</p></div></div>`;
   const [threat, waf, wafActivity, wafProxies, fleet, cs, rules, scan, sla] = await Promise.all([
     api('GET', `/security/threat-config${edgeQ}`).catch(() => ({})),
     api('GET', `/security/waf-config${edgeQ}`).catch(() => ({ enabled: true })),
@@ -639,24 +795,50 @@ window.secEnginesOpen = async function(tab) {
   _sm.rules = Array.isArray(rules) ? rules : (rules?.rules || []);
   _sm.scan = scan || {};
   _sm.sla = sla || {};
+  _sm.banWl = await api('GET', '/security/bans/whitelist').catch(() => []);
+  window._threatCfg = _sm.threat;
   if (mode === 'admin') await smDwReload();
   window._fleetCfg = _sm.fleet;
   window._csCfg = _sm.cs;
   if (mode === 'admin') await FlowCatalog.load().catch(() => null);
+}
+
+async function renderSecurityEngines(ctx) {
+  const mode = ctx?.mode || 'admin';
+  const content = document.getElementById('content');
+  content.innerHTML = '<p style="color:var(--text2)">' + t('common.loading') + '</p>';
+  const ta = document.getElementById('topbar-actions');
+  if (ta) ta.innerHTML = '';
+  try {
+    const edgeCtx = await resolveSecurityEdgeCtx(mode);
+    if (mode === 'edge' && edgeCtx?.missing) {
+      content.innerHTML = '<p style="color:var(--text2)">' + t('trafic.no_edge') + '</p>';
+      return;
+    }
+    window._secEdgeQ = edgeCtx?.edgeRef ? `?edge=${encodeURIComponent(edgeCtx.edgeRef)}` : '';
+    window._secMode = mode;
+    _syn.mode = mode;
+    _sent.edgeCtx = edgeCtx;
+    _sent.mode = mode;
+    _sm.sec = window._smSecInit || _sm.sec || 'overview';
+    window._smSecInit = null;
+    Object.assign(_sm, { open: true, page: true, tab: window._smTabInit || _sm.tab || 'ephor', mode, dirty: false, prev: {}, pendingNum: null, edgeLabel: edgeCtx?.edgeLabel || '' });
+    window._smTabInit = null;
+    await smLoad(mode);
+    content.innerHTML = `${securityEdgeBanner(edgeCtx)}${SecUX.subNav('defenses', 'engines', mode)}<div id="sm-root"></div>`;
+    smRender();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+pages['security-engines'] = () => renderSecurityEngines({ mode: 'admin' });
+pages['edge-security-engines'] = () => renderSecurityEngines({ mode: 'edge' });
+
+window.smTab = function(id) {
+  _sm.tab = id;
+  if (id === 'ephor' && !_sm.sec) _sm.sec = 'overview';
   smRender();
-  document.addEventListener('keydown', smKey);
 };
-
-function smKey(e) { if (e.key === 'Escape') smClose(); }
-
-window.smClose = function() {
-  document.removeEventListener('keydown', smKey);
-  document.getElementById('sm-root')?.remove();
-  _sm.open = false;
-  if (_sm.dirty) reloadCurrentSecurityPage();
-};
-
-window.smTab = function(id) { _sm.tab = id; smRender(); };
+window.smSec = function(id) { _sm.tab = 'ephor'; _sm.sec = id; smRender(); };
 
 async function smSave(fn, ok) {
   try {
@@ -696,6 +878,36 @@ window.smEphorCapValue = function(key) {
   const cfg = smApplyEphorCap(_sm.threat, key, true, value);
   return smSave(async () => { await api('PUT', `/security/threat-config${window._secEdgeQ || ''}`, cfg); _sm.threat = cfg; });
 };
+// La valeur d'une capacité numérique déjà active se modifie sur place (Entrée enregistre, Échap annule) ;
+// l'ancienne configuration sert à l'annulation. Activer une capacité éteinte passe toujours par la saisie explicite.
+window.smEditCap = function(handler, key, el) {
+  const nc = SM_NUM_CAPS[handler] && SM_NUM_CAPS[handler][key];
+  if (!nc) return;
+  const fleet = handler === 'smFleetCap';
+  const cur = fleet ? Math.round((_sm.fleet.ban_duration_sec || 0) / nc.toSeconds) : _sm.threat[nc.field];
+  SecUX.editInline(el, {
+    value: cur, placeholder: t(nc.unitKey),
+    parse: v => { const n = parseFloat(String(v).replace(',', '.')); return n >= nc.min ? n : undefined; },
+    onSave: v => smSetNum(fleet, key, nc, v),
+  });
+};
+
+async function smSetNum(fleet, key, nc, value) {
+  const url = fleet ? '/security/fleet' : `/security/threat-config${window._secEdgeQ || ''}`;
+  const prev = fleet ? { ..._sm.fleet } : { ..._sm.threat };
+  const next = fleet ? { ...prev, ban_duration_sec: Math.round(value * nc.toSeconds) } : smApplyEphorCap(prev, key, true, value);
+  const set = cfg => {
+    if (fleet) { _sm.fleet = cfg; window._fleetCfg = cfg; } else _sm.threat = cfg;
+    _sm.dirty = true;
+  };
+  try {
+    await api('PUT', url, next);
+    set(next);
+    SecUX.remember(t('sm.saved'), async () => { await api('PUT', url, prev); set(prev); smRender(); });
+  } catch (e) { toast(e.message, 'error'); }
+  smRender();
+}
+
 window.smEphorCapCancel = function() {
   _sm.pendingNum = null;
   smRender();

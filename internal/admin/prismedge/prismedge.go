@@ -141,6 +141,12 @@ func meta(targets []edgeproxy.Target, failed map[int]error, partial bool) (Meta,
 
 // Top classe les valeurs d'un champ des accès. Les passerelles qui manquent sont dans Meta.
 func (s *Source) Top(ctx context.Context, p analytics.Params, extra func(*logapi.Params), dim string, k int, withIPs bool) ([]edgetop.Item, Meta, error) {
+	return s.top(ctx, p, extra, edgetop.Request{Dim: dim, K: k, WithIPs: withIPs})
+}
+
+// top : Top avec la demande complète. Le compteur de robots n'est calculé que si req.WithBots : il passe trois LIKE sur
+// chaque ligne lue et pèse plus de la moitié du coût d'un classement.
+func (s *Source) top(ctx context.Context, p analytics.Params, extra func(*logapi.Params), req edgetop.Request) ([]edgetop.Item, Meta, error) {
 	targets, err := s.targets(ctx, p)
 	if err != nil {
 		return nil, Meta{}, err
@@ -153,11 +159,11 @@ func (s *Source) Top(ctx context.Context, p analytics.Params, extra func(*logapi
 		extra(&lp)
 	}
 	client := s.client()
-	res := edgetop.Top(ctx, len(targets), func(ctx context.Context, n int, req logapi.TopRequest) (*logapi.TopResponse, error) {
+	res := edgetop.Top(ctx, len(targets), func(ctx context.Context, n int, r logapi.TopRequest) (*logapi.TopResponse, error) {
 		cctx, cancel := context.WithTimeout(ctx, nodeTimeout)
 		defer cancel()
-		return client.LogTop(cctx, targets[n], lp, req)
-	}, edgetop.Request{Dim: dim, K: k, WithIPs: withIPs})
+		return client.LogTop(cctx, targets[n], lp, r)
+	}, req)
 	m, err := meta(targets, res.Failed, res.Partial)
 	return res.Items, m, err
 }
@@ -412,7 +418,12 @@ func (s *Source) IPCounts(ctx context.Context, p analytics.Params) ([]analytics.
 // Totals rend les totaux de la sélection (requêtes, erreurs, premier et dernier passage, tronquée) : un seul groupe.
 // found est faux quand aucune ligne ne correspond.
 func (s *Source) Totals(ctx context.Context, p analytics.Params) (it logapi.TopItem, found bool, m Meta, err error) {
-	items, m, err := s.Top(ctx, p, nil, "all", 1, false)
+	return s.totals(ctx, p, false)
+}
+
+// totals : Totals, avec le compteur de robots si withBots (TopItem.Bots vaut 0 sinon).
+func (s *Source) totals(ctx context.Context, p analytics.Params, withBots bool) (it logapi.TopItem, found bool, m Meta, err error) {
+	items, m, err := s.top(ctx, p, nil, edgetop.Request{Dim: "all", K: 1, WithBots: withBots})
 	if err != nil || len(items) == 0 {
 		return logapi.TopItem{}, false, m, err
 	}
@@ -844,7 +855,7 @@ func Filtered(p analytics.Params) bool { return p.IP != "" || p.Path != "" }
 
 // FilteredTotals rend les totaux de la sélection : un seul groupe côté passerelles.
 func (s *Source) FilteredTotals(ctx context.Context, p analytics.Params) (analytics.Totals, Meta, error) {
-	it, found, m, err := s.Totals(ctx, p)
+	it, found, m, err := s.totals(ctx, p, true)
 	if err != nil || !found {
 		return analytics.Totals{}, m, err
 	}

@@ -81,6 +81,10 @@ type AgentConfig struct {
 		CheckIntervalS int  `mapstructure:"check_interval_s"` // défaut: 3600 (1h)
 	} `mapstructure:"digest_watch"`
 
+	// HostAddress : adresse (IP ou nom) de la machine qui porte le Docker de l'Agent, celle que les passerelles joignent pour
+	// un port publié. Vide : déduite du nom de la machine que Docker rapporte (GPX_HOST_ADDRESS).
+	HostAddress string `mapstructure:"host_address"`
+
 	// Portainer permet de découvrir des conteneurs sur plusieurs hôtes Docker
 	// via l'API Portainer, sans installer l'Agent sur chaque hôte.
 	Portainer struct {
@@ -90,6 +94,9 @@ type AgentConfig struct {
 		PollIntervalS  int                         `mapstructure:"poll_interval_s"`  // défaut: 30
 		SkipEndpoints  []string                    `mapstructure:"skip_endpoints"`   // noms d'endpoints à ignorer
 		EndpointEdges  map[string]EndpointEdgeConf `mapstructure:"endpoint_edges"`   // endpoint → passerelle alternatif
+		// RoutableNetworks : sous-réseaux (CIDR) de conteneurs dont les adresses sont uniques et joignables depuis la
+		// passerelle (macvlan, overlay, VPN) : l'IP du conteneur y est proposée avant le port publié (ADR 0026).
+		RoutableNetworks []string `mapstructure:"routable_networks"`
 	} `mapstructure:"portainer"`
 
 	// Sources : configuration des sources de découverte ajoutées après Docker, Portainer et

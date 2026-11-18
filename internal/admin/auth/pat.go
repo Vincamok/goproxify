@@ -152,17 +152,42 @@ func RequireAuth(secret string, db *sql.DB) func(http.Handler) http.Handler {
 	}
 }
 
-// RequirePAT n'accepte que les tokens utilisateur (gpx_pat_*) — utilisé pour le MCP.
-func RequirePAT(db *sql.DB) func(http.Handler) http.Handler {
+// RequirePAT n'accepte que les tokens utilisateur (gpx_pat_*) — utilisé pour le MCP. Les jetons refusés comptent
+// contre l'adresse de l'appelant (patMaxFails puis 429) ; un jeton absent ou d'une autre audience ne compte pas.
+// Sans WithPATLockoutHook, chaque appel a son propre compteur.
+func RequirePAT(db *sql.DB, opts ...PATOption) func(http.Handler) http.Handler {
+	var cfg patConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
+	limiter := cfg.limiter
+	if limiter == nil {
+		limiter = newPATFailLimiter()
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if cfg.allow != nil && !cfg.allow(r) {
+				http.Error(w, "IP non autorisée pour le MCP", http.StatusForbidden)
+				return
+			}
+			ip := clientIPKey(r)
+			if wait := limiter.blocked(ip); wait > 0 {
+				cfg.rejectLocked(w, wait)
+				return
+			}
+			refuse := func(msg string) {
+				if limiter.fail(ip) && cfg.onLockout != nil {
+					cfg.onLockout(r, ip)
+				}
+				http.Error(w, msg, http.StatusUnauthorized)
+			}
 			tokenStr := bearerToken(r)
 			if tokenStr == "" {
 				http.Error(w, "Authorization manquant", http.StatusUnauthorized)
 				return
 			}
 			if !IsPATToken(tokenStr) {
-				http.Error(w, "MCP : un token API utilisateur (gpx_pat_*) est requis", http.StatusUnauthorized)
+				refuse("MCP : un token API utilisateur (gpx_pat_*) est requis")
 				return
 			}
 			userID, patID, scopes, err := lookupPAT(r.Context(), db, tokenStr, PATAudienceMCP)
@@ -171,7 +196,7 @@ func RequirePAT(db *sql.DB) func(http.Handler) http.Handler {
 				return
 			}
 			if err != nil {
-				http.Error(w, "Token invalide", http.StatusUnauthorized)
+				refuse("Token invalide")
 				return
 			}
 			ctx := context.WithValue(r.Context(), ctxUserID, userID)

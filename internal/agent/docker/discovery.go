@@ -33,6 +33,7 @@ type Discovery struct {
 	labelPrefix  string
 	log          *slog.Logger
 	netManager   *NetworkManager
+	hostAddr     func(context.Context) string // adresse de l'hôte de ce Docker (voir PreferHostAddress)
 	onLifecycle  LifecycleEventFn
 	known        map[string]string // containerID → name (proxies goproxify)
 
@@ -224,6 +225,7 @@ func (d *Discovery) ScanAll(ctx context.Context) {
 		if len(specs) == 0 {
 			continue
 		}
+		d.preferHost(ctx, specs, c.Labels, c.Ports)
 		// Un conteneur qui ne tourne pas n'a pas de route : il part dans l'inventaire des inactifs, que l'Admin affiche.
 		if !containerRunning(c.State) {
 			for _, spec := range specs {
@@ -331,6 +333,16 @@ func (d *Discovery) scheduleState(ctx context.Context) {
 	})
 }
 
+// SetHostAddress donne l'adresse de la machine qui porte ce Docker : un conteneur qui y publie un port est joint par
+// elle et ce port, que toutes les passerelles d'un groupe HA atteignent, plutôt que par son IP interne.
+func (d *Discovery) SetHostAddress(fn func(context.Context) string) { d.hostAddr = fn }
+
+func (d *Discovery) preferHost(ctx context.Context, specs []*ProxySpec, labels map[string]string, ports []PortBinding) {
+	if d.hostAddr != nil {
+		PreferHostAddress(specs, labels, ports, d.hostAddr(ctx))
+	}
+}
+
 // handleEvent réagit aux événements start/die/destroy.
 func (d *Discovery) handleEvent(ctx context.Context, ev Event) {
 	switch ev.Action {
@@ -351,6 +363,7 @@ func (d *Discovery) handleEvent(ctx context.Context, ev Event) {
 		if len(specs) == 0 {
 			return
 		}
+		d.preferHost(ctx, specs, inspect.Config.Labels, inspect.PublishedPorts())
 		d.log.Info("docker: conteneur découvert", "name", name, "hosts", len(specs))
 
 		if d.netManager != nil && firstNet != "" {

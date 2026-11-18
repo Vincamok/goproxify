@@ -338,7 +338,7 @@ func (s *Service) Top(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.WithGate(w, r, false, topTimeout, func(ctx context.Context) {
-		res, err := s.Store.Top(ctx, q, logstore.TopRequest{Dim: req.Dim, Mode: mode, K: req.K, Min: req.Min, Values: req.Values, WithIPs: req.WithIPs})
+		res, err := s.Store.Top(ctx, q, logstore.TopRequest{Dim: req.Dim, Mode: mode, K: req.K, Min: req.Min, Values: req.Values, WithIPs: req.WithIPs, WithBots: req.WithBots})
 		if err != nil {
 			s.log().Warn("logs: regroupement échoué", "err", err)
 			http.Error(w, "regroupement impossible", http.StatusInternalServerError)

@@ -251,7 +251,7 @@ func TestBootstrapAgentHonoursArcaneEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := readDoc(t, path)["sources"].(map[string]any)["arcane"].(map[string]any)
-	if a["enabled"] != true || a["url"] != "https://arcane.example.com" || a["api_key"] != "arc_secret" || a["poll_interval_s"] != float64(30) {
+	if a["enabled"] != true || a["url"] != "https://arcane.example.com" || a["api_key"] != "arc_secret" || a["poll_interval_s"] != float64(15) {
 		t.Errorf("sources.arcane = %v", a)
 	}
 

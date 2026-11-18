@@ -34,6 +34,9 @@ type Deps struct {
 	Edges  *edgeset.Set
 	// State envoie à la passerelle l'état complet d'une source ; nil : publication route par route seulement.
 	State *statepub.Publisher
+	// HostAddr rend l'adresse de la machine qui porte le Docker de l'Agent (vide si inconnue) : un conteneur local qui y publie
+	// un port est joint par cette adresse et ce port. Nil : inconnue.
+	HostAddr func(ctx context.Context) string
 }
 
 // Settings retourne la configuration d'une source qui n'a pas de section dédiée dans

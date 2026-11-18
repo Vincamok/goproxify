@@ -150,11 +150,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/mcp")
 	path = strings.TrimPrefix(path, "/")
 
-	if !mcpaccess.Allowed(h.DB, r) {
-		http.Error(w, "IP non autorisée pour le MCP", http.StatusForbidden)
-		return
-	}
-
 	if r.Method == http.MethodGet && path == "sse" {
 		h.serveSSE(w, r)
 		return
@@ -2555,6 +2550,13 @@ func (h *Handler) handleResourcesRead(req rpcRequest, r *http.Request) rpcRespon
 
 // --- SSE (server-sent events) --------------------------------------------
 
+// sseKeepalive : intervalle des commentaires qui tiennent le flux ouvert ; sseWriteWindow : temps laissé au client pour lire chaque
+// écriture avant de couper un flux qu'il n'écoute plus. Variables pour que les tests n'attendent pas des secondes.
+var (
+	sseKeepalive   = 15 * time.Second
+	sseWriteWindow = 30 * time.Second
+)
+
 func (h *Handler) serveSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -2572,6 +2574,12 @@ func (h *Handler) serveSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// WriteTimeout du serveur borne toute la réponse : un flux SSE y serait coupé toutes les 30 s. Chaque écriture reçoit donc sa
+	// propre échéance (sseWriteWindow), ce qui coupe encore un client qui n'écoute plus. Sans ResponseController (enveloppe sans
+	// Unwrap), l'erreur est ignorée et le plafond du serveur reste.
+	rc := http.NewResponseController(w)
+	extend := func() { _ = rc.SetWriteDeadline(time.Now().Add(sseWriteWindow)) }
+
 	// Envoie l'URL endpoint pour que le client sache où poster
 	scheme := "http"
 	if r.TLS != nil {
@@ -2581,17 +2589,19 @@ func (h *Handler) serveSSE(w http.ResponseWriter, r *http.Request) {
 	if r.URL.RawQuery != "" {
 		endpointURL += "?" + r.URL.RawQuery // conserve ?toolsets= pour les POST du client
 	}
+	extend()
 	fmt.Fprintf(w, "event: endpoint\ndata: %s\n\n", endpointURL)
 	flusher.Flush()
 
 	// Keepalive toutes les 15s
-	tick := time.NewTicker(15 * time.Second)
+	tick := time.NewTicker(sseKeepalive)
 	defer tick.Stop()
 	for {
 		select {
 		case <-r.Context().Done():
 			return
 		case <-tick.C:
+			extend()
 			fmt.Fprintf(w, ": keepalive\n\n")
 			flusher.Flush()
 		}

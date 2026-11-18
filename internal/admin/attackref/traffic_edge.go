@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/vincamok/goproxify/internal/admin/analytics"
+	"github.com/vincamok/goproxify/internal/admin/logs"
 	"github.com/vincamok/goproxify/internal/admin/prismedge"
 	"github.com/vincamok/goproxify/internal/edge/logapi"
 )
@@ -63,7 +64,17 @@ func (t EdgeTraffic) PathReach(ctx context.Context, prefix string, from, to time
 	return Reach{Requests: it.Requests, OK: it.Ok}, nil
 }
 
+// TotalRequests lit les cumuls par minute que les passerelles envoient à l'Admin (logs_minute, conservés 400 jours) : le
+// total de 30 jours sans filtre n'a pas besoin de relire les lignes d'accès (près de 5 s pour 1,5 million de lignes, contre
+// quelques millisecondes ici). Sans base, repli sur les passerelles.
 func (t EdgeTraffic) TotalRequests(ctx context.Context, from, to time.Time) (int64, error) {
+	if t.Source != nil && t.Source.DB != nil {
+		var n int64
+		err := t.Source.DB.QueryRowContext(ctx,
+			`SELECT COALESCE(SUM(requests), 0) FROM logs_minute WHERE minute >= ? AND minute <= ?`,
+			logs.MinuteKey(from), logs.MinuteKey(to)).Scan(&n)
+		return n, err
+	}
 	it, found, meta, err := t.Source.Totals(ctx, analytics.Params{From: from, To: to})
 	if err != nil {
 		return 0, err

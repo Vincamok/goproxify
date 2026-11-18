@@ -1,5 +1,5 @@
 // ── PAGE: Contexte Core (waf, ipfilter, certs, auth, metrics, cluster…) ─
-// Extrait de pages-all.js — phase 3. Trafic Core reste dans trafic.js.
+// Extrait de pages-all.js — phase 3. Trafic Core reste dans proxies.js.
 
 const _stubPage = (label) => function() {
   document.getElementById('content').innerHTML = `

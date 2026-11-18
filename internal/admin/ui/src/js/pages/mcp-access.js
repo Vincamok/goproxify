@@ -31,7 +31,7 @@ pages['mcp-access'] = async function() {
 
     <div class="card" style="padding:16px 20px;margin:16px 0">
       <h6 style="margin:0 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:0.09em;opacity:0.5;">${t('mcp_access.ips_title') || 'IP sources autorisées'}</h6>
-      <p style="margin:0 0 12px;font-size:12px;color:var(--text2)">${t('mcp_access.ips_hint') || 'Une IP ou un CIDR par ligne (ex. 203.0.113.4 ou 10.0.0.0/24). Liste vide = aucune restriction (tout PAT valide peut appeler /mcp, quelle que soit son origine).'}</p>
+      <p style="margin:0 0 12px;font-size:12px;color:var(--text2)">${t('mcp_access.ips_hint') || 'Une IP ou un CIDR par ligne (ex. 203.0.113.4 ou 10.0.0.0/24). Une liste vide refuse tout le monde ; pour ouvrir /mcp à tous, saisir 0.0.0.0/0 et ::/0.'}</p>
       <textarea id="mcp-ips-textarea" class="input" rows="6" style="width:100%;font-family:monospace;font-size:12px;resize:vertical"
         placeholder="203.0.113.4&#10;10.0.0.0/24">${esc((allowedIPs||[]).join('\n'))}</textarea>
       <div style="margin-top:10px;display:flex;align-items:center;gap:10px">
@@ -39,7 +39,7 @@ pages['mcp-access'] = async function() {
         <span style="font-size:12px;color:${allowedIPs.length ? 'var(--green)' : 'var(--text2)'}">
           ${allowedIPs.length
             ? (t('mcp_access.ips_active', { n: allowedIPs.length }) || `${allowedIPs.length} entrée(s) actives — accès restreint`)
-            : (t('mcp_access.ips_open') || 'Aucune restriction active')}
+            : (t('mcp_access.ips_open') || 'Aucune source autorisée — /mcp est fermé')}
         </span>
       </div>
     </div>
@@ -100,6 +100,6 @@ window.saveMcpAllowedIPs = async function() {
     toast(t('mcp_access.ips_saved') || 'Liste enregistrée', 'success');
     navigate('mcp-access');
   } catch (e) {
-    toast(e?.message || (t('mcp_access.ips_save_err') || 'IP ou CIDR invalide'), 'error');
+    toast(e?.message || (t('mcp_access.ips_save_err') || 'IP ou CIDR invalide, ou liste vide'), 'error');
   }
 };

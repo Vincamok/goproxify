@@ -52,6 +52,13 @@ func Handler() http.Handler {
 	}
 	fileServer := http.FileServer(http.FS(sub))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Un chemin d'API ou interne inconnu ne doit jamais rendre l'interface (200 + HTML) : une route retirée répond 404.
+		if p := r.URL.Path; strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/internal/") {
+			if _, err := fs.Stat(sub, p[1:]); err != nil {
+				http.NotFound(w, r)
+				return
+			}
+		}
 		// Vérifie si le fichier existe dans l'FS embarqué
 		if _, err := fs.Stat(sub, r.URL.Path[1:]); err != nil {
 			// SPA fallback → index.html

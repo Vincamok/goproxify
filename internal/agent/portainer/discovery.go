@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/vincamok/goproxify/internal/agent/docker"
+	"github.com/vincamok/goproxify/internal/agent/hostaddr"
 	"github.com/vincamok/goproxify/internal/agent/statepub"
 )
 
@@ -43,6 +45,8 @@ type Discovery struct {
 	pollInterval  time.Duration
 	log           *slog.Logger
 	netMgr        netManager // connecte la passerelle aux réseaux Docker locaux (nil = désactivé)
+	nets          []*net.IPNet // réseaux de conteneurs routables (ADR 0026)
+	hostAddr      func(context.Context) string // adresse de la machine de l'Agent (voir docker.PreferHostAddress)
 	skipEndpoints map[string]bool
 	endpointEdges map[string]endpointEdgeConf // endpoint name (lowercase) → passerelle alternatif
 
@@ -182,6 +186,14 @@ func (d *Discovery) scan(ctx context.Context) {
 		d.log.Info("portainer: endpoint scanné", "endpoint", ep.Name, "containers", len(containers))
 		epHost := endpointHost(ep.URL)
 		isLocal := epHost == "" || isLocalHost(epHost)
+		if !isLocal {
+			// Le backend porte une adresse IP : la passerelle ne résout pas toujours le nom de l'hôte d'un endpoint.
+			name := epHost
+			var ok bool
+			if epHost, ok = hostaddr.Resolve(name); !ok && hostaddr.FirstFailure(name) {
+				d.log.Warn("portainer: nom d'hôte de l'endpoint non résolu depuis l'Agent, gardé tel quel", "endpoint", ep.Name, "host", name)
+			}
+		}
 		var epSpecs []*docker.ProxySpec
 		var epInactive []map[string]any
 		for _, c := range containers {
@@ -200,6 +212,10 @@ func (d *Discovery) scan(ctx context.Context) {
 				d.log.Debug("portainer: container sans labels goproxify", "container", firstName, "image", c.Image)
 				continue
 			}
+			if isLocal {
+				d.preferHost(ctx, c, specs)
+			}
+			d.addCandidates(c, specs, isLocal)
 			// Un conteneur qui ne tourne pas n'a pas de route : il part dans l'inventaire des inactifs, que l'Admin affiche.
 			if !containerRunning(c.State) {
 				for _, spec := range specs {
@@ -492,6 +508,9 @@ func (d *Discovery) payload(ep Endpoint, spec *docker.ProxySpec) map[string]any 
 		"endpoint_name": ep.Name,
 		"agent_name":    d.agentName,
 		"role":          spec.Role,
+	}
+	if len(spec.Candidates) > 1 {
+		payload["candidates"] = spec.Candidates
 	}
 	if spec.Role == docker.RoleCanary {
 		payload["canary_weight"] = spec.CanaryWeight

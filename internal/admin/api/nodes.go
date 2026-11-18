@@ -5,14 +5,12 @@ package api
 
 import (
 	"github.com/vincamok/goproxify/internal/pairing"
-	"github.com/vincamok/goproxify/internal/ssrf"
 	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -21,7 +19,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/vincamok/goproxify/internal/admin/alerting"
 	"github.com/vincamok/goproxify/internal/admin/auth"
 	admindb "github.com/vincamok/goproxify/internal/admin/db"
 	"github.com/vincamok/goproxify/internal/admin/rbac"
@@ -956,106 +953,12 @@ func (h *NodesHandler) rejectPending(w http.ResponseWriter, r *http.Request, id 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// --- Heartbeat handler (appelé par l'Agent) --------------------------------
-
-// HeartbeatHandler reçoit les heartbeats des Agents et des passerelles.
-type HeartbeatHandler struct {
-	DB  *sql.DB
-	Log *slog.Logger
-}
-
-type heartbeatPayload struct {
-	NodeName          string   `json:"node_name"`
-	Role              string   `json:"role"`
-	Version           string   `json:"version"`
-	Endpoint          string   `json:"endpoint"`
-	CPUPCT            float64  `json:"cpu_pct"`
-	MemPCT            float64  `json:"mem_pct"`
-	ContainerRuntimes []string `json:"container_runtimes,omitempty"`
-}
-
-func (h *HeartbeatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeErr(w, r, http.StatusMethodNotAllowed, "api.err.method")
-		return
-	}
-	var hb heartbeatPayload
-	if err := json.NewDecoder(r.Body).Decode(&hb); err != nil {
-		writeErr(w, r, http.StatusBadRequest, "api.err.json")
-		return
-	}
-	if hb.NodeName == "" || len(hb.NodeName) > 128 {
-		http.Error(w, "node_name requis (128 caractères au plus)", http.StatusBadRequest)
-		return
-	}
-	if hb.Role != "edge" && hb.Role != "agent" {
-		hb.Role = "edge" // même repli que l'appairage : un rôle libre n'a pas de sens dans la table des nœuds
-	}
-	if len(hb.Version) > 64 {
-		hb.Version = hb.Version[:64]
-	}
-	if len(hb.ContainerRuntimes) > 8 {
-		hb.ContainerRuntimes = hb.ContainerRuntimes[:8]
-	}
-	// L'Admin appelle cette adresse avec le secret d'appairage : lien local et métadonnées du cloud sont exclus,
-	// et une valeur illisible ne doit pas être enregistrée. Le heartbeat reste accepté sans endpoint.
-	if hb.Endpoint != "" && ssrf.ValidateHTTPURL(hb.Endpoint, true) != nil {
-		hb.Endpoint = ""
-	}
-
-	// Remplace les IPs Docker bridge (172.16.0.0/12) par l'IP source réelle.
-	if hb.Endpoint != "" {
-		if u, pErr := url.Parse(hb.Endpoint); pErr == nil {
-			if host := u.Hostname(); host != "" {
-				if ip := net.ParseIP(host); ip != nil {
-					_, docker172, _ := net.ParseCIDR("172.16.0.0/12")
-					if docker172 != nil && docker172.Contains(ip) {
-						if srcIP, _, sErr := net.SplitHostPort(r.RemoteAddr); sErr == nil {
-							u.Host = net.JoinHostPort(srcIP, u.Port())
-							hb.Endpoint = u.String()
-						}
-					}
-				}
-			}
-		}
-	}
-
-	runtimesJSON := "[]"
-	if len(hb.ContainerRuntimes) > 0 {
-		if b, err := json.Marshal(hb.ContainerRuntimes); err == nil {
-			runtimesJSON = string(b)
-		}
-	}
-
-	_, err := h.DB.ExecContext(r.Context(),
-		`INSERT INTO nodes (id, node_name, display_name, role, version, endpoint, cpu_pct, mem_pct, status, last_seen_at, container_runtimes)
-		 VALUES (lower(hex(randomblob(8))), ?, ?, ?, ?, ?, ?, ?, 'online', CURRENT_TIMESTAMP, ?)
-		 ON CONFLICT(node_name) DO UPDATE SET
-		   role=excluded.role, version=excluded.version, endpoint=excluded.endpoint,
-		   cpu_pct=excluded.cpu_pct, mem_pct=excluded.mem_pct,
-		   status='online', last_seen_at=CURRENT_TIMESTAMP,
-		   container_runtimes=excluded.container_runtimes`,
-		// display_name, region, environment, tags ne sont PAS écrasés sur UPDATE
-		// (l'utilisateur peut les modifier dans l'UI sans que le heartbeat les réinitialise)
-		hb.NodeName, hb.NodeName, hb.Role, hb.Version, hb.Endpoint, hb.CPUPCT, hb.MemPCT, runtimesJSON,
-	)
-	if err != nil {
-		if !isCtxErr(err) { h.Log.Error("heartbeat: upsert node", "err", err) }
-		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
 // --- NodeEvents handler ---------------------------------------------------
 
 // NodeEventsHandler expose l'historique des événements de santé.
 type NodeEventsHandler struct {
 	DB             *sql.DB
 	Log            *slog.Logger
-	AlertingEngine interface {
-		Emit(alerting.Event)
-	}
 }
 
 type nodeEvent struct {
@@ -1068,10 +971,6 @@ type nodeEvent struct {
 }
 
 func (h *NodeEventsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodPost {
-		h.record(w, r)
-		return
-	}
 	if r.Method == http.MethodGet {
 		h.list(w, r)
 		return
@@ -1213,50 +1112,6 @@ func sortNodeEvents(evs []nodeEvent) {
 			evs[j], evs[j-1] = evs[j-1], evs[j]
 		}
 	}
-}
-
-func (h *NodeEventsHandler) record(w http.ResponseWriter, r *http.Request) {
-	var e struct {
-		NodeName    string `json:"node_name"`
-		ContainerID string `json:"container_id"`
-		EventType   string `json:"event_type"`
-		Detail      string `json:"detail"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&e); err != nil {
-		writeErr(w, r, http.StatusBadRequest, "api.err.json")
-		return
-	}
-	_, err := h.DB.ExecContext(r.Context(),
-		`INSERT INTO node_events (node_name, container_id, event_type, detail) VALUES (?, ?, ?, ?)`,
-		e.NodeName, e.ContainerID, e.EventType, e.Detail,
-	)
-	if err != nil {
-		if !isCtxErr(err) { h.Log.Error("node_events: insert", "err", err) }
-		writeErr(w, r, http.StatusInternalServerError, "api.err.internal")
-		return
-	}
-
-	// Émet une alerte pour les événements de scaling et d'escalade de santé.
-	if h.AlertingEngine != nil {
-		ev := alerting.Event{
-			NodeName:  e.NodeName,
-			Component: "agent",
-			Detail:    map[string]any{"event_type": e.EventType, "detail": e.Detail, "container": e.ContainerID},
-		}
-		switch {
-		case strings.HasPrefix(e.EventType, "scale_"):
-			ev.Trigger = alerting.TriggerScaleEvent
-			ev.Severity = alerting.SevInfo
-		case e.EventType == "health_escalation":
-			ev.Trigger = alerting.TriggerHealthEscalation
-			ev.Severity = alerting.SevWarning
-		}
-		if ev.Trigger != "" {
-			h.AlertingEngine.Emit(ev)
-		}
-	}
-
-	w.WriteHeader(http.StatusCreated)
 }
 
 // ── Tunnel L4 config ──────────────────────────────────────────────────────────

@@ -71,6 +71,17 @@ type TopRequest struct {
 	Values []string // TopExact
 	// WithIPs : pour TopExact, joint à chaque valeur le résumé de ses IP attribuables (ni tronquées ni pseudonymisées).
 	WithIPs bool
+	// WithBots : compte les requêtes de robots (TopItem.Bots). Le calcul passe trois LIKE sur chaque ligne et pèse plus de la
+	// moitié du coût d'un regroupement : sans cette demande Bots reste à 0.
+	WithBots bool
+}
+
+// botsExpr : le compteur de robots d'un regroupement, ou 0 quand personne ne le lit.
+func botsExpr(with bool) string {
+	if !with {
+		return "0"
+	}
+	return `COALESCE(SUM(CASE WHEN lower(user_agent) LIKE '%bot%' OR lower(referrer) LIKE '%bot%' OR lower(path) LIKE '%bot%' THEN 1 ELSE 0 END), 0)`
 }
 
 // TopItem additionne les accès d'une valeur du champ.
@@ -181,7 +192,7 @@ func (s *Store) Top(ctx context.Context, q Query, r TopRequest) (TopResult, erro
 			COALESCE(SUM(CASE WHEN status IN (403, 429) OR threat_signal != '' OR waf_matches != '' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN status < 400 AND status NOT IN (403, 429) AND threat_signal = '' AND waf_matches = '' THEN 1 ELSE 0 END), 0),
 			MIN(ts), MAX(ts),
-			COALESCE(SUM(CASE WHEN lower(user_agent) LIKE '%bot%' OR lower(referrer) LIKE '%bot%' OR lower(path) LIKE '%bot%' THEN 1 ELSE 0 END), 0)
+			`+botsExpr(r.WithBots)+`
 			FROM entries`+where+` GROUP BY 1`+tail, append(append([]any(nil), args...), tailArgs...)...)
 		if err != nil {
 			if ctx.Err() != nil {

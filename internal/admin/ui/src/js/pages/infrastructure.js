@@ -349,7 +349,7 @@ window.openAddAgentModal = async function() {
           style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text1);">
       </label>
       <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text2);">${t('infra.add_agent.portainer_key')}
-        <input id="aa-portainer-key" type="password" value="" placeholder="ptr_..."
+        <input id="aa-portainer-key" type="password" autocomplete="new-password" readonly onfocus="this.readOnly=false" value="" placeholder="ptr_..."
           style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text1);">
       </label>
       <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);margin-top:4px;">${t('infra.add_agent.arcane')}</div>
@@ -362,7 +362,7 @@ window.openAddAgentModal = async function() {
           style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text1);">
       </label>
       <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text2);">${t('infra.add_agent.arcane_key')}
-        <input id="aa-arcane-key" type="password" value="" placeholder="arc_..."
+        <input id="aa-arcane-key" type="password" autocomplete="new-password" readonly onfocus="this.readOnly=false" value="" placeholder="arc_..."
           style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text1);">
       </label>
     </div>`;
@@ -476,7 +476,7 @@ function _epEdgeRowHTML(epName, edgeEndpoint, authToken) {
       <input type="url" class="ep-edge-manual" placeholder="http://edge:8000" value="${esc(isOther ? edgeEndpoint : '')}"
         style="${s}margin-top:3px;display:${isOther ? 'block' : 'none'};">
     </div>
-    <input type="password" placeholder="${t('infra.configure.ep_edge_token')}" value="${esc(authToken)}" style="${s}">
+    <input type="password" autocomplete="new-password" readonly onfocus="this.readOnly=false" placeholder="${esc(authToken ? t('infra.configure.secret_unchanged') : t('infra.configure.ep_edge_token'))}" value="" style="${s}">
     <button type="button" style="padding:4px 8px;font-size:11px;background:var(--red,#e53e3e);color:#fff;border:none;border-radius:4px;cursor:pointer;margin-top:2px;"
       onclick="this.closest('.ep-edge-row').remove()">✕</button>
   </div>`;
@@ -502,6 +502,11 @@ window._addEpEdgeRow = function() {
 };
 
 async function agentConfigure(nodeName, node) {
+  // La ligne reçue date du chargement de la page : relue à l'ouverture, pour ne pas afficher (puis renvoyer) la
+  // configuration d'avant une relance de l'Agent.
+  const fresh = await api('GET', '/nodes?role=agent').catch(() => null);
+  const live = Array.isArray(fresh) && fresh.find(n => n.node_name === nodeName && n._agent_config);
+  if (live) node = { ...node, ...live };
   const name = (node && (node.display_name || node.node_name)) || nodeName;
   const formId = 'agent-cfg-form-' + nodeName.replace(/[^a-z0-9]/gi,'_');
   window._agentCfgCtx = null;
@@ -515,9 +520,11 @@ async function agentConfigure(nodeName, node) {
        ${label}
      </label>`;
 
+  // Un secret n'est jamais prérempli (ni masque, ni valeur déclarée) : il part avec l'enregistrement seulement si on l'a
+  // saisi. Le champ reste en lecture seule jusqu'au focus pour que le navigateur ne le remplisse pas lui-même.
   const field = (id, label, value, type='text', placeholder='') =>
     `<label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text2);">${label}
-       <input id="${id}" type="${type}" value="${esc(value||'')}" placeholder="${esc(placeholder)}"
+       <input id="${id}" type="${type}" ${type === 'password' ? 'autocomplete="new-password" readonly onfocus="this.readOnly=false" ' : ''}value="${type === 'password' ? '' : esc(value||'')}" placeholder="${esc(type === 'password' && value ? t('infra.configure.secret_unchanged') : placeholder)}"
          style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text1);font-family:inherit;">
      </label>`;
 
@@ -545,6 +552,7 @@ async function agentConfigure(nodeName, node) {
     api_key: pLive.api_key || fallback.portainer_key || '',
     poll_interval_s: pLive.poll_interval_s,
     skip_endpoints: pLive.skip_endpoints,
+    routable_networks: pLive.routable_networks,
     endpoint_edges: pLive.endpoint_edges,
   };
   const aLive = (node && node._agent_config && node._agent_config.sources && node._agent_config.sources.arcane) || {};
@@ -555,8 +563,11 @@ async function agentConfigure(nodeName, node) {
     api_key: aLive.api_key || fbArcane.api_key || '',
     poll_interval_s: aLive.poll_interval_s,
     skip_environments: aLive.skip_environments,
+    environment_hosts: aLive.environment_hosts,
+    routable_networks: aLive.routable_networks,
   };
   const cp = (node && node._agent_config && node._agent_config.control_plane) || {};
+  const hostAddress = (node && node._agent_config && node._agent_config.host_address) || '';
 
   // Sélecteur "Passerelle cible" — liste des passerelles connus
   const edgeURL = c => { const ep = c.endpoint || c.node_endpoint || ''; return ep.startsWith('http') ? ep : 'http://' + ep; };
@@ -588,12 +599,14 @@ async function agentConfigure(nodeName, node) {
     ${sectionTitle(t('infra.configure.docker_section'))}
     ${toggle('cfg-docker-enabled', t('infra.configure.enabled'), d.enabled !== false)}
     ${field('cfg-docker-socket', 'Socket path', d.socket_path, 'text', '/var/run/docker.sock')}
+    ${field('cfg-host-address', t('infra.configure.host_address'), hostAddress, 'text', '192.168.10.10')}
     ${sectionTitle(t('infra.configure.portainer_section'))}
     ${toggle('cfg-portainer-enabled', t('infra.configure.enabled'), !!p.enabled)}
     ${field('cfg-portainer-url', t('infra.configure.url'), p.url, 'url', 'https://portainer:9443')}
     ${field('cfg-portainer-key', t('infra.configure.api_key'), p.api_key, 'password', 'ptr_...')}
     ${field('cfg-portainer-poll', t('infra.configure.poll_interval'), p.poll_interval_s||30, 'number', '30')}
     ${field('cfg-portainer-skip', t('infra.configure.skip_endpoints'), (p.skip_endpoints||[]).join(', '), 'text', 'lucas.vm-docker, prod-server')}
+    ${field('cfg-portainer-nets', t('infra.configure.routable_networks'), (p.routable_networks||[]).join(', '), 'text', '10.20.0.0/16')}
     <div style="margin-top:10px;">
       <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:6px;">${t('infra.configure.endpoint_edges')}</div>
       <div id="cfg-ep-edges-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px;">
@@ -606,8 +619,10 @@ async function agentConfigure(nodeName, node) {
     ${toggle('cfg-arcane-enabled', t('infra.configure.enabled'), !!ar.enabled)}
     ${field('cfg-arcane-url', t('infra.configure.url'), ar.url, 'url', 'https://arcane.example.com')}
     ${field('cfg-arcane-key', t('infra.configure.api_key'), ar.api_key, 'password', 'arc_...')}
-    ${field('cfg-arcane-poll', t('infra.configure.poll_interval'), ar.poll_interval_s||30, 'number', '30')}
+    ${field('cfg-arcane-poll', t('infra.configure.poll_interval'), ar.poll_interval_s||15, 'number', '15')}
     ${field('cfg-arcane-skip', t('infra.configure.skip_environments'), (ar.skip_environments||[]).join(', '), 'text', 'lab, staging')}
+    ${field('cfg-arcane-hosts', t('infra.configure.environment_hosts'), (ar.environment_hosts||[]).join(', '), 'text', 'vm-docker=192.168.1.20')}
+    ${field('cfg-arcane-nets', t('infra.configure.routable_networks'), (ar.routable_networks||[]).join(', '), 'text', '10.20.0.0/16')}
     <p style="margin:8px 0 0;font-size:11px;color:var(--text2);">${t('infra.configure.restart_notice')}</p>
   </form>`;
 
@@ -616,8 +631,21 @@ async function agentConfigure(nodeName, node) {
     <button class="btn btn-primary" id="cfg-apply-btn" onclick="_submitAgentConfigure('${esc(nodeName)}','${formId}')">${t('common.save')}</button>`;
 
   modal(t('infra.configure.title', { name: esc(name) }), body, footer);
+  window._cfgArcaneInitial = JSON.stringify(_cfgArcaneForm());
 }
 window.agentConfigure = agentConfigure;
+
+function _cfgArcaneForm() {
+  return {
+    enabled: document.getElementById('cfg-arcane-enabled')?.checked ?? false,
+    url: document.getElementById('cfg-arcane-url')?.value || '',
+    api_key: document.getElementById('cfg-arcane-key')?.value || '',
+    poll_interval_s: parseInt(document.getElementById('cfg-arcane-poll')?.value || '15', 10) || 15,
+    skip_environments: (document.getElementById('cfg-arcane-skip')?.value || '').split(',').map(s => s.trim()).filter(Boolean),
+    environment_hosts: (document.getElementById('cfg-arcane-hosts')?.value || '').split(',').map(s => s.trim()).filter(Boolean),
+    routable_networks: (document.getElementById('cfg-arcane-nets')?.value || '').split(',').map(s => s.trim()).filter(Boolean),
+  };
+}
 
 window._submitAgentConfigure = async function(nodeName, formId) {
   const btn = document.getElementById('cfg-apply-btn');
@@ -638,7 +666,8 @@ window._submitAgentConfigure = async function(nodeName, formId) {
   }
 
   const patch = {
-    ...(cfgEdgeEP ? { control_plane: { edge_endpoint: cfgEdgeEP } } : {}),
+    ...(/^https?:\/\/[^/\s]+/.test(cfgEdgeEP || '') ? { control_plane: { edge_endpoint: cfgEdgeEP } } : {}),
+    host_address: (document.getElementById('cfg-host-address')?.value || '').trim(),
     docker: {
       enabled: document.getElementById('cfg-docker-enabled')?.checked ?? true,
       socket_path: document.getElementById('cfg-docker-socket')?.value || '/var/run/docker.sock',
@@ -649,6 +678,7 @@ window._submitAgentConfigure = async function(nodeName, formId) {
       api_key: document.getElementById('cfg-portainer-key')?.value || '',
       poll_interval_s: parseInt(document.getElementById('cfg-portainer-poll')?.value || '30', 10) || 30,
       skip_endpoints: (document.getElementById('cfg-portainer-skip')?.value || '').split(',').map(s => s.trim()).filter(Boolean),
+      routable_networks: (document.getElementById('cfg-portainer-nets')?.value || '').split(',').map(s => s.trim()).filter(Boolean),
       endpoint_edges: (() => {
         const result = {};
         document.querySelectorAll('#cfg-ep-edges-list .ep-edge-row').forEach(row => {
@@ -663,15 +693,9 @@ window._submitAgentConfigure = async function(nodeName, formId) {
         return result;
       })(),
     },
-    sources: {
-      arcane: {
-        enabled: document.getElementById('cfg-arcane-enabled')?.checked ?? false,
-        url: document.getElementById('cfg-arcane-url')?.value || '',
-        api_key: document.getElementById('cfg-arcane-key')?.value || '',
-        poll_interval_s: parseInt(document.getElementById('cfg-arcane-poll')?.value || '30', 10) || 30,
-        skip_environments: (document.getElementById('cfg-arcane-skip')?.value || '').split(',').map(s => s.trim()).filter(Boolean),
-      },
-    },
+    // Une section laissée telle qu'affichée n'est pas renvoyée : si la fenêtre s'est ouverte sur des données périmées
+    // (agent en cours de relance), l'enregistrer ne doit pas écraser ce que l'agent a réellement.
+    ...(JSON.stringify(_cfgArcaneForm()) === window._cfgArcaneInitial ? {} : { sources: { arcane: _cfgArcaneForm() } }),
   };
 
   try {
@@ -709,6 +733,8 @@ async function agentContainers(nodeName, displayName) {
 
   const srcLabel = { docker: 'Docker', k8s: 'Kubernetes', portainer: 'Portainer', podman: 'Podman' };
   const srcOrder = ['docker', 'portainer', 'k8s', 'podman'];
+  const manifestLabels = {};
+  try { for (const m of await api('GET', '/discovery-sources') || []) manifestLabels[m.type] = m.label; } catch (_) {}
 
   // group by source
   const groups = {};
@@ -746,7 +772,7 @@ async function agentContainers(nodeName, displayName) {
   const presentSrcs = srcOrder.filter(s => groups[s]);
   const otherSrcs = Object.keys(groups).filter(s => !srcOrder.includes(s));
   for (const src of [...presentSrcs, ...otherSrcs]) {
-    const label = srcLabel[src] || src;
+    const label = srcLabel[src] || manifestLabels[src] || src.charAt(0).toUpperCase() + src.slice(1);
     sections += `<h4 style="margin:0 0 8px;font-size:12px;font-weight:600;color:var(--text1);">${esc(label)} <span style="font-weight:400;color:var(--text2);">(${groups[src].length})</span></h4>`;
     sections += tableFor(groups[src]);
   }

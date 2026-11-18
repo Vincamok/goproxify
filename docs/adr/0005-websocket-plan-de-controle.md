@@ -110,3 +110,5 @@ Chaque message WS est une enveloppe JSON :
 - Nouveau workflow d'approbation Agent à documenter pour les opérateurs
 
 **Bibliothèque choisie :** `nhooyr.io/websocket` — pure Go, API context-native, zéro dépendance CGO, activement maintenue.
+
+**Fin de la phase transitoire (Admin `0.268.0`) :** les routes HTTP de l'Admin destinées aux passerelles — `POST /internal/v1/edges/register`, `GET /internal/v1/routes`, `GET /internal/v1/nodes/metrics`, `/internal/v1/logs`, `/internal/v1/security/{bans,threats,cves}`, `/internal/v1/heartbeat` et `/internal/v1/events` — ont été retirées : plus aucun composant ne les appelait, les flux passant par les tunnels WebSocket. Il ne reste, côté Admin, que l'appairage (`/internal/v1/pair`, `/internal/v1/pair/status`). Un chemin `/api/` ou `/internal/` inconnu répond désormais 404 au lieu de rendre l'interface.

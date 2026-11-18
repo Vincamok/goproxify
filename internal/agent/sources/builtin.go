@@ -42,6 +42,7 @@ func init() {
 		secret("api_key", "API key", true),
 		kind("poll_interval_s", "Poll interval (s)", modules.KindNumber),
 		kind("skip_endpoints", "Endpoints to skip", modules.KindList),
+		kind("routable_networks", "Routable container networks (CIDR)", modules.KindList),
 	}}, portainerSource)
 
 	Register(modules.Manifest{Type: "kubernetes", Label: "Kubernetes", Fields: []modules.Field{
@@ -71,6 +72,7 @@ func dockerSource(d Deps) (*Instance, error) {
 	)
 	disc.SetEndpointFunc(d.Edges.Current)
 	disc.SetStatePublisher(d.State)
+	disc.SetHostAddress(d.HostAddr)
 	runtime := "docker"
 	if strings.Contains(cfg.Docker.SocketPath, "podman") {
 		runtime = "podman"
@@ -103,6 +105,10 @@ func portainerSource(d Deps) (*Instance, error) {
 		cfg.Portainer.SkipEndpoints,
 		epEdges,
 	)
+	if err := disc.SetRoutableNetworks(cfg.Portainer.RoutableNetworks); err != nil {
+		return nil, err
+	}
+	disc.SetHostAddress(d.HostAddr)
 	disc.SetEndpointFunc(d.Edges.Current)
 	disc.SetStatePublisher(d.State)
 	return &Instance{Impl: disc, Start: disc.Start, Blocking: true, SetToken: disc.SetToken, Reannounce: disc.Resync, Runtimes: []string{"portainer"}}, nil

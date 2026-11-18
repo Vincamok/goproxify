@@ -35,6 +35,7 @@ pages.settings = async function() {
       items: [
         { page: 'settings-mfa', icon: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>', label: gpxPageLabel('settings-mfa', 'MFA'), desc: t('settings.item.mfa_desc') },
         { page: 'ha-status', icon: '<circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="M6 9v3a6 6 0 0 0 6 6h3"/><path d="M9 6h3a6 6 0 0 1 6 6v3"/>', label: gpxPageLabel('ha-status', 'HA'), desc: t('settings.item.ha_desc') },
+        { page: 'diagnostics', icon: '<path d="M2 12l3-4 3 2 3-6 3 4"/><path d="M2 14h12"/>', label: gpxPageLabel('diagnostics', 'Diagnostic'), desc: t('settings.item.diagnostics_desc') },
       ]
     },
     {

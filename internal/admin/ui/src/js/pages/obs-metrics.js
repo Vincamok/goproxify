@@ -9,6 +9,7 @@ let _obsMFilter = '';
 pages['obs-metrics'] = async function() {
   const main = document.getElementById('content');
   main.innerHTML = `<div class="spinner" style="margin:60px auto"></div>`;
+  ObsUX.setPage({ reload: () => pages['obs-metrics'](), refresh: () => pages['obs-metrics']() });
   const [sum, prox, nodes] = await Promise.all([
     api('GET', '/metrics/summary').catch(() => null),
     api('GET', '/metrics/proxies?points=60').catch(() => null),
@@ -57,7 +58,7 @@ pages['obs-metrics'] = async function() {
     const key = { p95: p => p.p95_ms || 0, err: p => p.error_rate || 0, rps: p => p.requests_per_second || 0 }[_obsMSort];
     const list = (prox?.proxies || []).filter(p => !_obsMFilter || p.host.includes(_obsMFilter)).sort((a, b) => key(b) - key(a)).slice(0, 25);
     return list.length ? `<div class="tw"><table class="prism-table"><thead><tr><th>${esc(t('obs.syn.col_proxy'))}</th><th>${esc(t('om.rps'))}</th><th></th><th>${esc(t('om.err5'))}</th><th>p95</th></tr></thead><tbody>
-      ${list.map(p => `<tr><td class="mono" style="font-size:12px">${esc(p.host)}</td><td>${rps(p.requests_per_second)}</td><td>${p.series && p.series.length > 2 ? spark_(p.series) : ''}</td>
+      ${list.map(p => `<tr style="cursor:pointer" data-om="proxy" data-host="${esc(p.host)}" title="${esc(t('obs.ux.open_proxy_view'))}"><td class="mono" style="font-size:12px">${esc(p.host)}</td><td>${rps(p.requests_per_second)}</td><td>${p.series && p.series.length > 2 ? spark_(p.series) : ''}</td>
         <td style="color:${errColor(p.error_rate)}">${pctv(p.error_rate)}</td><td>${p.p95_ms ? Math.round(p.p95_ms) + ' ms' : '—'}</td></tr>`).join('')}</tbody></table></div>`
       : `<p class="prism-muted">${esc(t('om.no_data'))}</p>`;
   };
@@ -91,6 +92,7 @@ pages['obs-metrics'] = async function() {
   </div>`;
 
   main.innerHTML = `<div id="obs-m-root">
+    ${ObsUX.subNav()}
     <div class="prism-filters"><div class="prism-fg prism-fg-end"><button type="button" class="btn btn-primary btn-sm" data-om="refresh">${esc(t('obs.syn.refresh'))}</button></div></div>
     ${has ? '' : `<div class="prism-panel" style="margin-bottom:14px"><p style="margin:0;font-size:13px;color:var(--text2)">${t('edgepage.metrics.prometheus_desc')}</p></div>`}
     ${kpis}${edgesCard}${proxiesCard}<div class="prism-two">${certsCard}${secCard}</div></div>`;
@@ -101,6 +103,7 @@ pages['obs-metrics'] = async function() {
     if (!el) return;
     const a = el.getAttribute('data-om');
     if (a === 'refresh') pages['obs-metrics']();
+    else if (a === 'proxy') ObsUX.openProxyView(el.dataset.host);
     else if (a === 'sort') { _obsMSort = el.dataset.v; document.getElementById('om-sort').innerHTML = sortChips(); document.getElementById('om-prox').innerHTML = proxiesBody(); }
     else if (a === 'edge') {
       const { e: ed, n } = edgeRows[parseInt(el.dataset.i, 10)] || {};

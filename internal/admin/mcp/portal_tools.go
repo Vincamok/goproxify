@@ -153,7 +153,7 @@ func portalTools() []map[string]any {
 				opt("require_2fa", "boolean", "Exiger la 2FA Access"),
 				opt("session_ttl_sec", "number", "TTL session en secondes"),
 				opt("session_mode", "string", "Mode session: one_shot ou renew"),
-				opt("theme", "string", "Thème de l'interface du portail : auto, clair, sombre, ocean, foret, amethyste ou contraste"),
+				opt("theme", "string", "Thème de l'interface du portail : auto, clair, sombre, ocean, foret, amethyste, contraste ou boussole (interface complète : lanceur, coffre par glisser-déposer, terminaux à onglets)"),
 				opt("views", "array", "Entrées dédiées du portail (remplace la liste) : objets {slug, host, name, title, tagline, theme, auth_provider_id, allowed_tags[], target_tags[], require_2fa}. Même annuaire et mêmes destinations, URL/thème/auth/périmètre propres"),
 				opt("ha_session_mode", "string", "Groupe HA : sessions web sticky (défaut, restent sur la passerelle) ou shared (répliquées entre les membres)"),
 			),

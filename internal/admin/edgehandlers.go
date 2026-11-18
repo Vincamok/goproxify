@@ -4,21 +4,15 @@
 package admin
 
 import (
-	"github.com/vincamok/goproxify/internal/ssrf"
 	"github.com/vincamok/goproxify/internal/pairing"
 	"fmt"
 	"encoding/json"
-	"net"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/vincamok/goproxify/internal/admin/api"
 	"github.com/vincamok/goproxify/internal/admin/auth"
-	"github.com/vincamok/goproxify/internal/admin/edgews"
-	"github.com/vincamok/goproxify/internal/admin/rbac"
-	"github.com/vincamok/goproxify/internal/edge/router"
 )
 
 // --- Routes pour les passerelles -----------------------------------------------
@@ -240,149 +234,5 @@ func (s *Server) handlePairStatus(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "pending"})
 	}
-}
-
-func (s *Server) handleEdgeRoutes(w http.ResponseWriter, r *http.Request) {
-	// Identifie le token pour appliquer le filtre RBAC + délégations.
-	bearerToken := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	tokenID, rbacRole := rbac.TokenRBACRole(r.Context(), s.db, bearerToken)
-
-	rows, err := s.db.QueryContext(r.Context(),
-		`SELECT config FROM proxies WHERE enabled=1`)
-	if err != nil {
-		http.Error(w, "erreur interne", http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
-
-	var allRoutes []router.Route
-	for rows.Next() {
-		var cfg string
-		if err := rows.Scan(&cfg); err != nil {
-			continue
-		}
-		var route router.Route
-		if err := json.Unmarshal([]byte(cfg), &route); err == nil {
-			allRoutes = append(allRoutes, route)
-		}
-	}
-
-	var nodeName string
-	_ = s.db.QueryRowContext(r.Context(),
-		`SELECT COALESCE(node_name,'') FROM tokens WHERE id=?`, tokenID).Scan(&nodeName)
-	acc := rbac.LoadEdgeAccess(r.Context(), s.db, tokenID, nodeName)
-	if acc.Role != "" {
-		rbacRole = acc.Role
-	}
-
-	var filtered []router.Route
-	if s.wsManager != nil {
-		filtered = s.wsManager.FilterRoutesForEdge(r.Context(), tokenID, nodeName, rbacRole, acc.Scopes, allRoutes)
-	} else {
-		filtered = rbac.FilterRoutesByScopes(rbacRole, acc.Scopes, allRoutes)
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(filtered) //nolint:errcheck
-}
-
-// handleEdgeRegister met à jour l'endpoint d'une passerelle dans la table tokens
-// et enregistre/met à jour le client WS Admin→Passerelle dans le Manager.
-func (s *Server) handleEdgeRegister(mgr *edgews.Manager) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Endpoint string `json:"endpoint"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Endpoint == "" {
-			http.Error(w, "endpoint requis", http.StatusBadRequest)
-			return
-		}
-		// L'Admin ouvre ensuite un WebSocket vers cette adresse en y joignant une signature valable cinq minutes sur
-		// n'importe quelle passerelle : une adresse choisie par l'appelant la livrerait.
-		if err := ssrf.ValidateHTTPURL(req.Endpoint, true); err != nil {
-			http.Error(w, "endpoint refusé : "+err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		// Identifie le token depuis l'en-tête Authorization.
-		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-
-		// Si l'endpoint fourni contient une IP Docker interne (172.x.x.x),
-		// la remplacer par l'IP source de la requête afin qu'Admin puisse
-		// joindre la passerelle cross-machine (Docker bridge → host NAT).
-		if u, err := url.Parse(req.Endpoint); err == nil {
-			host := u.Hostname()
-			if ip := net.ParseIP(host); ip != nil {
-				_, docker172, _ := net.ParseCIDR("172.16.0.0/12")
-				if docker172.Contains(ip) {
-					if srcIP, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-						u.Host = net.JoinHostPort(srcIP, u.Port())
-						req.Endpoint = u.String()
-					}
-				}
-			}
-		}
-
-		res, err := s.db.ExecContext(r.Context(),
-			`UPDATE tokens SET node_endpoint=? WHERE (token_hash=? OR token=?) AND role='edge' AND revoked=0`,
-			req.Endpoint, auth.HashNodeToken(token), token,
-		)
-		if err != nil {
-			s.log.Error("edge register: update endpoint", "err", err)
-			http.Error(w, "erreur interne", http.StatusInternalServerError)
-			return
-		}
-		n, _ := res.RowsAffected()
-		if n == 0 {
-			http.Error(w, "token introuvable ou révoqué", http.StatusNotFound)
-			return
-		}
-
-		// Récupérer l'ID et le nom de la passerelle pour l'enregistrement dans le Manager.
-		var edgeID, nodeName, rbacRole string
-		_ = s.db.QueryRowContext(r.Context(),
-			`SELECT id, COALESCE(node_name,''), COALESCE(rbac_role,'admin')
-			 FROM tokens WHERE (token_hash=? OR token=?) AND role='edge' AND revoked=0`,
-			auth.HashNodeToken(token), token,
-		).Scan(&edgeID, &nodeName, &rbacRole)
-
-		s.log.Info("edge enregistré", "endpoint", req.Endpoint, "node", nodeName)
-
-		// Enregistrer/mettre à jour le client WS Admin→Passerelle.
-		// La connexion WS + le full_sync sont déclenchés automatiquement dans Register.
-		settings := s.runtimeSettings()
-		mgr.SetSettings(settings)
-		if edgeID != "" {
-			mgr.Register(edgeID, nodeName, req.Endpoint, rbacRole)
-		}
-
-		w.WriteHeader(http.StatusNoContent)
-	}
-}
-
-func (s *Server) handleNodeMetrics(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.db.QueryContext(r.Context(),
-		`SELECT endpoint, COALESCE(cpu_pct,0), COALESCE(mem_pct,0) FROM nodes WHERE status='online'`)
-	if err != nil {
-		http.Error(w, "erreur interne", http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
-
-	type nodeMetric struct {
-		Endpoint string  `json:"endpoint"`
-		CPUPCT   float64 `json:"cpu_pct"`
-		MemPCT   float64 `json:"mem_pct"`
-	}
-	result := make([]nodeMetric, 0)
-	for rows.Next() {
-		var m nodeMetric
-		if err := rows.Scan(&m.Endpoint, &m.CPUPCT, &m.MemPCT); err != nil {
-			continue
-		}
-		result = append(result, m)
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result) //nolint:errcheck
 }
 

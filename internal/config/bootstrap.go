@@ -54,6 +54,7 @@ func BootstrapAdmin(path string) error {
 		"server": map[string]any{
 			"api_port":    apiPort,
 			"listen_addr": envOr("GPX_SERVER_LISTEN_ADDR", "0.0.0.0"),
+			"mcp_port":    envIntOr("GPX_SERVER_MCP_PORT", 0),
 		},
 		"storage": map[string]any{
 			"base_path": basePath,
@@ -274,7 +275,7 @@ func arcaneSourceFromEnv() map[string]any {
 		"enabled":         true,
 		"url":             os.Getenv("GPX_ARCANE_URL"),
 		"api_key":         os.Getenv("GPX_ARCANE_API_KEY"),
-		"poll_interval_s": envIntOr("GPX_ARCANE_POLL_INTERVAL_S", 30),
+		"poll_interval_s": envIntOr("GPX_ARCANE_POLL_INTERVAL_S", 15),
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -67,16 +68,28 @@ type Index struct {
 // Parse lit le format ip2asn : une plage par ligne, séparée par des tabulations
 // (début, fin, ASN, pays, nom). Les plages non annoncées (ASN 0) sont ignorées.
 func Parse(r io.Reader) (*Index, error) {
-	idx := &Index{byASN: map[uint32]*Entry{}}
+	idx := &Index{byASN: map[uint32]*Entry{}, sorted: make([]lookupRange, 0, 1<<19)}
 	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 1<<20), 1<<20)
+	sc.Buffer(make([]byte, 64<<10), 1<<20)
 	for line := 1; sc.Scan(); line++ {
 		text := strings.TrimSpace(sc.Text())
 		if text == "" || strings.HasPrefix(text, "#") {
 			continue
 		}
-		f := strings.Split(text, "\t")
-		if len(f) < 3 {
+		// Découpage sans allouer de tranche : ce chargement porte sur plus de 700 000 lignes.
+		var f [5]string
+		nf, rest := 0, text
+		for nf < len(f) {
+			i := strings.IndexByte(rest, '\t')
+			if i < 0 {
+				f[nf] = rest
+				nf++
+				break
+			}
+			f[nf], rest = rest[:i], rest[i+1:]
+			nf++
+		}
+		if nf < 3 {
 			return nil, fmt.Errorf("ligne %d : au moins 3 colonnes séparées par des tabulations attendues", line)
 		}
 		n, err := strconv.ParseUint(f[2], 10, 32)
@@ -94,11 +107,12 @@ func Parse(r io.Reader) (*Index, error) {
 		e := idx.byASN[uint32(n)]
 		if e == nil {
 			e = &Entry{ASN: uint32(n)}
-			if len(f) > 3 && f[3] != "None" {
-				e.Country = f[3]
+			// Clone : sinon le nom garderait en mémoire la ligne entière dont il est extrait.
+			if nf > 3 && f[3] != "None" {
+				e.Country = strings.Clone(f[3])
 			}
-			if len(f) > 4 {
-				e.Name = f[4]
+			if nf > 4 {
+				e.Name = strings.Clone(f[4])
 			}
 			idx.byASN[uint32(n)] = e
 		}
@@ -109,9 +123,10 @@ func Parse(r io.Reader) (*Index, error) {
 		return nil, err
 	}
 	for _, e := range idx.byASN {
-		e.Ranges = mergeRanges(e.Ranges)
+		e.Ranges = trimmed(mergeRanges(e.Ranges))
 	}
-	sort.Slice(idx.sorted, func(i, j int) bool { return idx.sorted[i].start.Less(idx.sorted[j].start) })
+	idx.sorted = trimmed(idx.sorted)
+	slices.SortFunc(idx.sorted, func(a, b lookupRange) int { return a.start.Compare(b.start) })
 	return idx, nil
 }
 
@@ -228,10 +243,20 @@ func ParseASN(s string) (uint32, bool) {
 	return uint32(n), err == nil && n > 0
 }
 
+// trimmed rend la tranche sans la capacité que la croissance par append a laissée : Clip seul ne libère rien, la
+// mémoire reste celle du tableau agrandi. Une copie exacte n'est faite que si le surplus vaut la peine.
+func trimmed[T any](s []T) []T {
+	if cap(s)-len(s) <= max(len(s)/8, 2) {
+		return s
+	}
+	return append(make([]T, 0, len(s)), s...)
+}
+
 // mergeRanges trie les plages et fusionne celles qui se chevauchent ou se touchent.
 func mergeRanges(in []Range) []Range {
 	sort.Slice(in, func(i, j int) bool { return in[i].Start.Less(in[j].Start) })
-	var out []Range
+	// Fusion sur place : l'écriture ne dépasse jamais la lecture, et aucune seconde tranche n'est allouée.
+	out := in[:0]
 	for _, r := range in {
 		if n := len(out); n > 0 && out[n-1].Start.Is4() == r.Start.Is4() {
 			last := &out[n-1]

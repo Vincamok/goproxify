@@ -28,7 +28,8 @@ function obsBytes(b) {
   return b + ' B';
 }
 
-function obsKpisHtml(k, timeline) {
+// opts.links : chaque carte mène à son détail (data-prism="kpi"), à interpréter par la page hôte.
+function obsKpisHtml(k, timeline, opts = {}) {
   if (!k || typeof k !== 'object' || Array.isArray(k)) return '';
   const delta = (v, inv) => {
     const n = Number(v) || 0;
@@ -55,8 +56,8 @@ function obsKpisHtml(k, timeline) {
   };
   const sparkReq = spark(tl.map(p => p.requests || 0), 'var(--accent)');
   const sparkErr = spark(tl.map(p => p.requests ? (p.errors || 0) / p.requests * 100 : 0), 'var(--red)');
-  const card = (icon, label, val, foot, sp = '') => `
-    <div class="prism-kpi">${sp}
+  const card = (icon, label, val, foot, sp = '', kpi = '') => `
+    <div class="prism-kpi${opts.links ? ' oux-kpi-link oux-act' : ''}"${opts.links ? ` role="button" tabindex="0" data-prism="kpi" data-kpi="${kpi}" title="${esc(t('obs.ux.kpi_open'))}"` : ''}>${sp}
       <div class="prism-kpi-top">
         <span class="prism-kpi-ico">${icon}</span>
         <span class="prism-kpi-label">${label}</span>
@@ -65,12 +66,12 @@ function obsKpisHtml(k, timeline) {
       <div class="prism-kpi-foot">${foot}</div>
     </div>`;
   return `<div class="prism-kpis">
-    ${card(icoReq, t('prism.requests'), obsNum(k.requests), delta(k.requests_delta, false), sparkReq)}
-    ${card(icoBw, t('prism.bandwidth'), obsBytes(k.bandwidth), delta(k.bandwidth_delta, false))}
-    ${card(icoErr, t('prism.error_rate'), errRate.toFixed(1) + '%', delta(k.error_rate_delta, true), sparkErr)}
-    ${card(icoIp, t('prism.unique_ips'), `<span id="prism-kpi-unique-ips">${uniqueVal}</span>`, '')}
-    ${card(icoLat, t('prism.latency'), avgLat.toFixed(0) + ' ms', '')}
-    ${card(icoBot, t('prism.bot_share'), botShare.toFixed(1) + '%', '')}
+    ${card(icoReq, t('prism.requests'), obsNum(k.requests), delta(k.requests_delta, false), sparkReq, 'requests')}
+    ${card(icoBw, t('prism.bandwidth'), obsBytes(k.bandwidth), delta(k.bandwidth_delta, false), '', 'bandwidth')}
+    ${card(icoErr, t('prism.error_rate'), errRate.toFixed(1) + '%', delta(k.error_rate_delta, true), sparkErr, 'errors')}
+    ${card(icoIp, t('prism.unique_ips'), `<span id="prism-kpi-unique-ips">${uniqueVal}</span>`, '', '', 'ips')}
+    ${card(icoLat, t('prism.latency'), avgLat.toFixed(0) + ' ms', '', '', 'latency')}
+    ${card(icoBot, t('prism.bot_share'), botShare.toFixed(1) + '%', '', '', 'bots')}
   </div>`;
 }
 
@@ -166,7 +167,7 @@ function obsTimelineHtml(pts, opts = {}) {
   const uid = 'pg' + Math.random().toString(36).slice(2, 7);
   return `
     <div class="prism-panel-title">${t('prism.requests_per', { bucket: bucketLabel })} <span style="font-weight:400;color:var(--text3);font-size:11px">· ${t('prism.click_zoom')}</span></div>
-    <svg class="prism-svg" viewBox="0 0 ${W} ${H + padB}" preserveAspectRatio="none">
+    <svg class="prism-svg" data-unit="${esc(opts.bucketUnit || (opts.live ? 'minute' : 'hour'))}" viewBox="0 0 ${W} ${H + padB}" preserveAspectRatio="none">
       <defs>
         <linearGradient id="${uid}" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%"   stop-color="var(--accent)" stop-opacity=".12"/>
@@ -275,28 +276,26 @@ function obsAnomaliesHtml(list, opts = {}) {
 const OBS_SLO_TARGETS = [99, 99.5, 99.9, 99.95, 99.99];
 
 // Carte SLO de disponibilité (GET /prism/slo) : disponibilité, budget d'erreur, consommation.
-// opts.targetAttr : attribut posé sur le sélecteur d'objectif (défaut data-obs="slo-target").
-// opts.node + opts.isOverride : affiche « propre à cette passerelle » et un bouton de retour au
-// global (opts.resetAttr, défaut data-obs="slo-reset") quand une passerelle a son propre objectif.
+// L'objectif se choisit d'une puce (ou « … » pour une valeur libre) ; ObsUX enregistre et propose d'annuler.
+// opts.node + opts.isOverride : affiche « propre à cette passerelle » et un retour au global quand une passerelle
+// a son propre objectif.
 function obsSloCardHTML(slo, opts = {}) {
   if (!slo) return '';
   const cls = { ok: 'var(--green)', warning: 'var(--yellow)', critical: 'var(--red)', exhausted: 'var(--red)' }[slo.state] || 'var(--text2)';
   const left = Math.max(0, Math.min(100, slo.budget_left_pct));
   const burn = v => `<b style="color:${v >= 6 ? 'var(--red)' : v >= 3 ? 'var(--yellow)' : 'inherit'}">${v.toFixed(1)}×</b>`;
-  const attr = opts.targetAttr || 'data-obs="slo-target"';
-  const resetAttr = opts.resetAttr || 'data-obs="slo-reset"';
   const overrideNote = opts.node && opts.isOverride
     ? `<span class="prism-muted" style="display:flex;align-items:center;gap:6px">${esc(t('obs.syn.slo_override', { node: opts.node }))}
-        <button type="button" class="btn btn-ghost btn-sm" style="padding:1px 8px" ${resetAttr}>${esc(t('obs.syn.slo_reset'))}</button></span>`
+        <button type="button" class="btn btn-ghost btn-sm" style="padding:1px 8px" data-oux-slo-reset>${esc(t('obs.syn.slo_reset'))}</button></span>`
     : opts.node ? `<span class="prism-muted">${esc(t('obs.syn.slo_global_for', { node: opts.node }))}</span>` : '';
-  return `<div class="prism-panel" style="margin-bottom:14px">
+  const chips = [...new Set([...OBS_SLO_TARGETS, slo.target])].sort((a, b) => a - b)
+    .map(v => `<button type="button" class="secux-chip${v === slo.target ? ' on' : ''}" data-oux-slo="${v}" aria-pressed="${v === slo.target}">${v} %</button>`).join('');
+  return `<div class="prism-panel oux-slo-card" style="margin-bottom:14px" data-node="${esc(opts.node || '')}" data-target="${slo.target}" data-override="${opts.isOverride ? 1 : 0}">
     <div class="prism-panel-title" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
       <span>${esc(t('obs.syn.slo', { days: slo.days }))}</span>
       <span style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         ${overrideNote}
-        <select class="form-input" style="max-width:110px" ${attr} aria-label="${esc(t('obs.syn.slo_target'))}">
-          ${[...new Set([...OBS_SLO_TARGETS, slo.target])].sort((a, b) => a - b).map(v => `<option value="${v}" ${v === slo.target ? 'selected' : ''}>${v} %</option>`).join('')}
-        </select>
+        <span class="oux-slo" role="group" aria-label="${esc(t('obs.syn.slo_target'))}">${chips}<button type="button" class="secux-chip" data-oux-slo-custom title="${esc(t('obs.ux.slo_custom'))}" aria-label="${esc(t('obs.ux.slo_custom'))}">…</button></span>
       </span>
     </div>
     <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:center">

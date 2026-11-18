@@ -52,16 +52,18 @@ function bnRemaining(ms) {
   return `${Math.floor(h / 24)} j`;
 }
 
+// Cliquer sur l'expiration l'édite sur place : prolonger d'un pas, « expire dans 36h », ou permanent.
 function bnTtlCell(b) {
   const exp = bnExpiry(b);
-  if (exp == null) return '<span class="tag tag-red">Permanent</span>';
+  const open = `onclick="SecUX.expiryPop(this,'${esc(String(b.id))}')"`;
+  if (exp == null) return `<button type="button" class="secux-exp" ${open} title="Permanent — cliquer pour fixer une expiration"><span class="tag tag-red">Permanent</span></button>`;
   const left = exp - Date.now();
   const total = exp - (bnTime(b.created_at) || exp);
   const pct = total > 0 ? Math.max(0, Math.min(100, Math.round(left / total * 100))) : 0;
   const soon = left <= 3600000;
-  return `<div style="display:flex;flex-direction:column;gap:4px;min-width:84px" title="${esc(fmtDate(b.expires_at))}">
+  return `<button type="button" class="secux-exp" ${open} title="${esc(fmtDate(b.expires_at))} — cliquer pour modifier"><span style="display:flex;flex-direction:column;gap:4px;min-width:84px">
     <span style="font-size:12px;${soon ? 'color:var(--yellow);font-weight:600' : ''}">${bnRemaining(left)}</span>
-    <span class="bn-bar" style="width:70px"><i style="width:${pct}%;background:${soon ? 'var(--red)' : 'var(--yellow)'}"></i></span></div>`;
+    <span class="bn-bar" style="width:70px"><i style="width:${pct}%;background:${soon ? 'var(--red)' : 'var(--yellow)'}"></i></span></span></button>`;
 }
 
 // ── Chargement ────────────────────────────────────────────────────────────────
@@ -85,6 +87,7 @@ async function bnLoad(mode) {
     api('GET', url('/security/bans/intel/top-ips?limit=100')).catch(() => []),
   ]);
   window._secThreats = threats || [];
+  window._secBadges = Object.assign(window._secBadges || {}, { bans: (bans || []).filter(b => !b.asn).length });
   window._secThreatsShowEdge = mode === 'admin';
   return {
     edgeCtx,
@@ -261,27 +264,43 @@ function bnThSort(col, label) {
   return `<th onclick="bnSortBy('${col}')" style="cursor:pointer;user-select:none;white-space:nowrap${on ? ';color:var(--accent)' : ''}" title="Trier">${label}${on ? (d === 'asc' ? ' ↑' : ' ↓') : ''}</th>`;
 }
 
+// Une ligne de ban : à glisser vers la gauche pour lever, vers la droite pour prolonger de 24 h (voir sec-ux.js).
 function bnRowHTML(b) {
   const admin = _bn.mode === 'admin';
   const id = esc(String(b.id)), ip = esc(b.ip);
   const rec = _bn.rec.get(b.ip);
   const temp = bnExpiry(b) != null;
-  return `<tr>
-    <td class="bn-c-sel"><input type="checkbox" ${_bn.sel.has(b.id) ? 'checked' : ''} onchange="bnToggle('${id}',this.checked)" aria-label="Sélectionner ${ip}"></td>
-    <td class="mono bn-c-ip">${ip}${rec ? ` <span class="tag tag-yellow" title="${rec} bans sur l'historique">×${rec}</span>` : ''}${b.exempt ? ' <span class="tag tag-green" title="Entièrement couvert par la liste blanche : ce ban ne s\'applique pas">Exempté</span>' : ''}</td>
-    <td data-label="Source"><span class="tag tag-neutral"><i class="sent-dot" style="background:${bnSrcColor(bnSrc(b))};margin-right:5px"></i>${esc(_secSourceLabel(bnSrc(b)))}</span></td>
-    ${admin ? `<td data-label="Passerelle" style="font-size:12px">${b.edge_name ? esc(bnEdge(b.edge_name)) : '<span class="tag tag-neutral">Global</span>'}${bnScopeTag(b)}</td>` : `<td data-label="Domaine" style="color:var(--text2)">${esc(b.domain || '—')}</td>`}
-    <td data-label="Raison" style="color:var(--text2);font-size:12px;max-width:260px" title="${esc(b.reason || '')}">${esc(bnReason(b.reason) || '—')}${banSignalsHTML(b.signals)}${banUserAgentHTML(b.user_agent)}</td>
-    <td data-label="Restant">${bnTtlCell(b)}</td>
-    <td class="bn-actions">
-      ${bnIcon('prism', `openPrismForBanIP('${ip}')`, 'Voir dans Prism')}
-      ${trBtn(b.ip)}
-      ${bnIcon('history', `showBanHistory('${ip}')`, 'Historique de cette IP')}
-      ${temp ? bnIcon('extend', `bnProlong(['${id}'])`, 'Prolonger de 24 h') : ''}
-      ${temp ? bnIcon('permanent', `makeBanPermanent('${id}','${ip}')`, 'Rendre permanent') : ''}
-      ${bnIcon('unban', `deleteBan('${id}','${ip}')`, 'Lever le ban', 'style="color:var(--red)"')}
-    </td></tr>`;
+  const where = admin ? (b.edge_name ? esc(bnEdge(b.edge_name)) : '<span class="tag tag-neutral">Global</span>') + bnScopeTag(b) : esc(b.domain || '—');
+  return `<li class="sx-swipe" data-swipe="bnSwipe" data-id="${id}">
+    <div class="sx-swipe-bg l">+ 24 h</div><div class="sx-swipe-bg r">Lever le ban</div>
+    <div class="sx-swipe-fg sx-row">
+      <input type="checkbox" ${_bn.sel.has(b.id) ? 'checked' : ''} onchange="bnToggle('${id}',this.checked)" aria-label="Sélectionner ${ip}">
+      <div class="sx-row-main">
+        <div class="sx-row-top"><span class="mono sx-row-ip">${SecUX.ipHTML(b.ip)}</span>${rec ? ` <span class="tag tag-yellow" title="${rec} bans sur l'historique">×${rec}</span>` : ''}${b.exempt ? ' <span class="tag tag-green" title="Entièrement couvert par la liste blanche : ce ban ne s\'applique pas">Exempté</span>' : ''}
+          <span class="tag tag-neutral"><i class="sent-dot" style="background:${bnSrcColor(bnSrc(b))};margin-right:5px"></i>${esc(_secSourceLabel(bnSrc(b)))}</span>
+          <span class="sx-row-where">${where}</span></div>
+        <div class="sx-row-why" title="${esc(b.reason || '')}">${esc(bnReason(b.reason) || '—')}${banSignalsHTML(b.signals)}${banUserAgentHTML(b.user_agent)}</div>
+      </div>
+      <div class="sx-row-end">${bnTtlCell(b)}
+        <span class="sx-row-acts">
+          ${bnIcon('prism', `openPrismForBanIP('${ip}')`, 'Voir dans Prism')}
+          ${trBtn(b.ip)}
+          ${bnIcon('history', `showBanHistory('${ip}')`, 'Historique de cette IP')}
+          ${temp ? bnIcon('extend', `bnProlong(['${id}'])`, 'Prolonger de 24 h') : ''}
+          ${temp ? bnIcon('permanent', `makeBanPermanent('${id}','${ip}')`, 'Rendre permanent') : ''}
+          ${bnIcon('unban', `deleteBan('${id}','${ip}')`, 'Lever le ban', 'style="color:var(--red)"')}
+        </span>
+      </div>
+    </div></li>`;
 }
+
+window.bnSwipe = function(id, dir) {
+  const b = _bn.bans.find(x => String(x.id) === String(id));
+  if (!b) return;
+  if (dir === 'left') SecUX.unban(b);
+  else if (bnExpiry(b) == null) toast('Ce ban est déjà permanent', 'info');
+  else SecUX.extend(b, 86400000);
+};
 
 function bnBulkHTML() {
   if (!_bn.sel.size) return '';
@@ -293,23 +312,23 @@ function bnBulkHTML() {
       <button type="button" class="btn btn-ghost btn-sm" onclick="bnClearSel()">Annuler</button></span></div>`;
 }
 
+function bnSortBarHTML() {
+  const [c, d] = _bn.sort.split('_');
+  const cols = [['ip', 'IP'], ['source', 'Source'], ['edge', 'Passerelle'], ['expires', 'Restant'], ['created', 'Création']].filter(([k]) => k !== 'edge' || _bn.mode === 'admin');
+  return cols.map(([k, l]) => `<button type="button" class="sx-sortlink${c === k ? ' on' : ''}" onclick="bnSortBy('${k}')" title="Trier">${l}${c === k ? (d === 'asc' ? ' ↑' : ' ↓') : ''}</button>`).join('');
+}
+
 function bnActiveTableHTML() {
   const list = bnFiltered();
   const page = list.slice(0, _bn.shown);
   if (!list.length) {
-    return `<div class="empty" style="padding:30px 20px"><p>${_bn.bans.length ? 'Aucun ban ne correspond aux filtres.' : 'Aucun ban actif.'}</p></div>`;
+    return `<div class="empty" style="padding:30px 20px"><p>${_bn.bans.length ? 'Aucun ban ne correspond aux filtres.' : 'Aucun ban actif. Collez une IP ci-dessus pour en ajouter un.'}</p></div>`;
   }
   const allOn = page.length && page.every(b => _bn.sel.has(b.id));
-  const admin = _bn.mode === 'admin';
-  return `<div class="table-wrap sec-bans-table-scroll"><table class="bn-table">
-    <thead><tr>
-      <th style="width:28px"><input type="checkbox" ${allOn ? 'checked' : ''} onchange="bnToggleAll(this.checked)" aria-label="Tout sélectionner"></th>
-      ${bnThSort('ip', 'IP')}${bnThSort('source', 'Source')}
-      ${admin ? bnThSort('edge', 'Passerelle') : '<th>Domaine</th>'}
-      <th>Raison</th>${bnThSort('expires', 'Restant')}<th></th>
-    </tr></thead>
-    <tbody>${page.map(bnRowHTML).join('')}</tbody></table></div>
-    ${list.length > page.length ? `<div style="text-align:center;padding:10px"><button type="button" class="btn btn-ghost btn-sm" onclick="bnMore()">Afficher plus (${list.length - page.length} restants)</button></div>` : ''}`;
+  return `<div class="sx-listbar"><label><input type="checkbox" ${allOn ? 'checked' : ''} onchange="bnToggleAll(this.checked)"> Tout sélectionner</label><span class="sx-sort">Trier ${bnSortBarHTML()}</span></div>
+    <ul class="sx-rows" id="ban-list">${page.map(bnRowHTML).join('')}</ul>
+    ${list.length > page.length ? `<div style="text-align:center;padding:10px"><button type="button" class="btn btn-ghost btn-sm" onclick="bnMore()">Afficher plus (${list.length - page.length} restants)</button></div>` : ''}
+    <div class="sx-hint">Glissez une ligne à gauche pour lever le ban, à droite pour prolonger de 24 h. Cliquez sur l’échéance pour la changer, sur une IP pour agir, ou glissez-la vers une zone d’action.</div>`;
 }
 
 function bnHistoryTableHTML() {
@@ -319,7 +338,7 @@ function bnHistoryTableHTML() {
   return `<div class="table-wrap sec-bans-table-scroll"><table class="bn-table">
     <thead><tr><th>IP</th><th>Source</th>${admin ? '<th>Passerelle</th>' : '<th>Domaine</th>'}<th>Raison</th><th>Expiré le</th><th>Créé le</th></tr></thead>
     <tbody>${list.map(b => `<tr>
-      <td class="mono bn-c-ip">${esc(b.ip)}</td>
+      <td class="mono bn-c-ip">${SecUX.ipHTML(b.ip)}</td>
       <td data-label="Source"><span class="tag tag-neutral">${esc(_secSourceLabel(bnSrc(b)))}</span></td>
       ${admin ? `<td data-label="Passerelle" style="font-size:12px">${b.edge_name ? esc(bnEdge(b.edge_name)) : '<span class="tag tag-neutral">Global</span>'}${bnScopeTag(b)}</td>` : `<td data-label="Domaine" style="color:var(--text2)">${esc(b.domain || '—')}</td>`}
       <td data-label="Raison" style="color:var(--text2);font-size:12px">${esc(bnReason(b.reason) || '—')}${banSignalsHTML(b.signals)}${banUserAgentHTML(b.user_agent)}</td>
@@ -387,12 +406,18 @@ function bnViewsSave(list) {
 function bnViewsHTML() {
   const views = bnViewsLoad();
   const cur = _bn.view || '';
+  const naming = _bn.naming;
   const sel = views.length
     ? `<select class="input" style="height:30px;width:auto;font-size:12px;padding:0 8px" onchange="bnViewApply(this.value)" aria-label="Filtres enregistrés">
         <option value="">Filtres enregistrés…</option>
         ${views.map(v => `<option value="${esc(v.name)}"${v.name === cur ? ' selected' : ''}>${esc(v.name)}</option>`).join('')}</select>`
     : '';
   const del = cur ? `<button type="button" class="btn btn-ghost btn-sm" onclick="bnViewDelete()" title="Supprimer ce filtre enregistré">Supprimer</button>` : '';
+  if (naming) {
+    return sel + `<input id="bn-view-name" class="input" maxlength="40" placeholder="Nom du filtre" aria-label="Nom du filtre enregistré" style="height:30px;width:150px;font-size:12px"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();bnViewCommit(this.value)}else if(event.key==='Escape'){bnViewCancel()}" onblur="setTimeout(bnViewCancel,200)">
+      <button type="button" class="btn btn-primary btn-sm" onclick="bnViewCommit(document.getElementById('bn-view-name').value)">OK</button>`;
+  }
   return sel + `<button type="button" class="btn btn-ghost btn-sm" onclick="bnViewSave()" title="Enregistrer les filtres actuels">Enregistrer</button>` + del;
 }
 
@@ -403,8 +428,21 @@ function bnViewsRepaint() {
 
 window.bnViewSave = function() {
   if (!['q', 'src', 'exp', 'edge'].some(k => _bn[k])) { toast('Aucun filtre actif à enregistrer', 'error'); return; }
-  const name = (prompt('Nom du filtre enregistré') || '').trim().slice(0, 40);
-  if (!name) return;
+  _bn.naming = true;
+  bnViewsRepaint();
+  document.getElementById('bn-view-name')?.focus();
+};
+
+window.bnViewCancel = function() {
+  if (!_bn.naming) return;
+  _bn.naming = false;
+  bnViewsRepaint();
+};
+
+window.bnViewCommit = function(raw) {
+  _bn.naming = false;
+  const name = String(raw || '').trim().slice(0, 40);
+  if (!name) { bnViewsRepaint(); return; }
   const filter = Object.fromEntries(BN_VIEW_KEYS.map(k => [k, _bn[k]]));
   const list = bnViewsLoad().filter(v => v.name !== name);
   list.push({ name, filter });
@@ -466,53 +504,74 @@ window.bnSetTab = tab => {
   bnMount();
 };
 
-const bnIso = ms => new Date(ms).toISOString().replace(/\.\d+Z$/, 'Z');
-
+// Prolonger, rendre permanent et lever s'appliquent tout de suite et s'annulent (bouton du toast, Ctrl+Z) :
+// plus de fenêtre de confirmation, sauf au-delà de 20 bans d'un coup.
 window.bnProlong = async function(ids) {
   const bans = _bn.bans.filter(b => ids.includes(String(b.id)) && bnExpiry(b) != null);
   if (!bans.length) return;
-  const res = await Promise.allSettled(bans.map(b =>
-    api('PATCH', `/security/bans/${encodeURIComponent(b.id)}`, { expires_at: bnIso(Math.max(bnExpiry(b), Date.now()) + 86400000) })));
-  const failed = res.filter(r => r.status === 'rejected').length;
-  toast(failed ? `${failed} prolongation(s) en échec` : `${bans.length} ban${bans.length > 1 ? 's' : ''} prolongé${bans.length > 1 ? 's' : ''} de 24 h`, failed ? 'error' : 'success');
-  reloadCurrentSecurityPage();
+  await SecUX.extend(bans, 86400000);
 };
 
 window.bnBulk = async function(kind) {
   const bans = _bn.bans.filter(b => _bn.sel.has(b.id));
   if (!bans.length) return;
-  if (kind === 'extend') return window.bnProlong(bans.map(b => String(b.id)));
-  const label = kind === 'unban' ? 'Lever' : 'Rendre permanent';
-  if (!confirm(`${label} ${bans.length} ban${bans.length > 1 ? 's' : ''} ?`)) return;
-  const res = await Promise.allSettled(bans.map(b => kind === 'unban'
-    ? api('DELETE', `/security/bans/${encodeURIComponent(b.id)}`)
-    : api('PATCH', `/security/bans/${encodeURIComponent(b.id)}`, { permanent: true })));
-  const failed = res.filter(r => r.status === 'rejected').length;
-  toast(failed ? `${failed} action(s) en échec sur ${bans.length}` : `${bans.length} ban${bans.length > 1 ? 's' : ''} traité${bans.length > 1 ? 's' : ''}`, failed ? 'error' : 'success');
+  if (kind !== 'extend' && bans.length > 20) {
+    const label = kind === 'unban' ? 'Lever' : 'Rendre permanent';
+    if (!confirm(`${label} ${bans.length} bans ?`)) return;
+  }
   _bn.sel.clear();
-  reloadCurrentSecurityPage();
+  if (kind === 'extend') return window.bnProlong(bans.map(b => String(b.id)));
+  if (kind === 'unban') return SecUX.unban(bans);
+  return SecUX.setExpiry(bans, null);
 };
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
+function bnHeadHTML() {
+  const admin = _bn.mode === 'admin';
+  const ico = d => `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+  return `<div class="vs-page-head"><div><h2 class="vs-title">Bans</h2><div class="vs-sub">${admin ? 'Toutes les passerelles et les bans globaux' : 'Les bans de ' + esc(_bn.edgeCtx?.edgeLabel || 'la passerelle') + ' et les bans globaux'}</div></div>
+    <div class="sy-head-acts">
+      <button class="btn btn-ghost btn-sm" onclick="exportBansCSV()">${ico('<path d="M12 4v11M7 11l5 5 5-5M5 20h14"/>')} Export CSV</button>
+      <button class="btn btn-ghost btn-sm" onclick="openBanImport()" title="Créer des bans (ou des entrées de la liste blanche) depuis une liste d'adresses et de CIDR">${ico('<path d="M12 16V5M7 9l5-5 5 5M5 20h14"/>')} Importer</button>
+      <button class="btn btn-ghost btn-sm" onclick="openBanWhitelist()" title="Adresses et plages qu'aucun ban n'atteint">${ico('<path d="M5 12l5 5L20 7"/>')} Liste blanche</button>
+      <button class="btn btn-ghost btn-sm" onclick="openBanAsn()" title="Bannir toutes les plages d'un opérateur (système autonome)">+ ASN</button>
+      <button class="btn btn-ghost btn-icon" onclick="reloadCurrentSecurityPage()" title="Actualiser" aria-label="Actualiser">${ico('<path d="M21 4v6h-6"/><path d="M20 10a8 8 0 10-2 6.5"/>')}</button>
+    </div></div>`;
+}
+
+// La barre d'ajout rapide reste en place d'un rendu à l'autre : ce qu'on y tape ne se perd ni au changement
+// d'onglet ni après une action.
 function bnMount() {
   const content = document.getElementById('content');
   if (!content) return;
-  content.innerHTML = `${securityEdgeBanner(_bn.edgeCtx)}${bnKpisHTML()}${bnAnalysisHTML()}${bnListCardHTML()}`;
+  let main = document.getElementById('bn-main');
+  if (!main || !document.getElementById('secux-quick')) {
+    content.innerHTML = `${securityEdgeBanner(_bn.edgeCtx)}${SecUX.subNav('threats', 'bans', _bn.mode)}${bnHeadHTML()}${SecUX.quickBanHTML()}<div id="bn-main"></div>`;
+    main = document.getElementById('bn-main');
+  }
+  main.innerHTML = `${bnKpisHTML()}${bnAnalysisHTML()}${bnListCardHTML()}`;
   bnPaint();
+}
+
+// Relit les bans sans repasser par « Chargement… » : sert après une action (ajout, déban, expiration, annulation).
+async function bnQuietReload() {
+  try {
+    const d = await bnLoad(_bn.mode);
+    if (d.edgeCtx?.missing || !document.getElementById('bn-main')) return;
+    const ids = new Set(d.bans.map(b => b.id));
+    _bn.sel = new Set([..._bn.sel].filter(id => ids.has(id)));
+    Object.assign(_bn, d);
+    window._secBans = _bn.bans;
+    bnMount();
+  } catch (e) { toast(e.message, 'error'); }
 }
 
 async function renderBans({ mode }) {
   const content = document.getElementById('content');
   content.innerHTML = '<p style="color:var(--text2)">' + t('common.loading') + '</p>';
   const ta = document.getElementById('topbar-actions');
-  if (ta) ta.innerHTML = `
-    <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="exportBansCSV()">Export CSV</button>
-    <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="openBanImport()" title="Créer des bans (ou des entrées de la liste blanche) depuis une liste d'adresses et de CIDR">Importer</button>
-    <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="openBanWhitelist()" title="Adresses et plages qu'aucun ban n'atteint">Liste blanche</button>
-    <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="openBanAsn()" title="Bannir toutes les plages d'un opérateur (système autonome)">+ ASN</button>
-    <button class="btn btn-primary btn-sm" onclick="openBanModal()">+ Ban</button>
-    <button class="btn btn-secondary btn-sm" onclick="reloadCurrentSecurityPage()" title="Actualiser" aria-label="Actualiser">↺</button>`;
+  if (ta) ta.innerHTML = '';
   try {
     const d = await bnLoad(mode);
     if (mode === 'edge' && d.edgeCtx?.missing) {
@@ -536,7 +595,10 @@ async function renderBans({ mode }) {
 // Adresses et plages qu'aucun ban n'atteint (manuel, Seuils, CrowdSec, Ephor, règles) et que
 // Ephor n'évalue pas. Gérée ici : le profil IP qui la porte n'est pas modifiable depuis Profils IP.
 
+let _bnWl = [];
+
 function bnWhitelistBodyHTML(list) {
+  _bnWl = list || [];
   const rows = list.length
     ? list.map(e => `<tr>
         <td class="mono">${esc(e.value)}</td>
@@ -576,11 +638,15 @@ window.bnWhitelistAdd = async function() {
   } catch (e) { toast(e.message, 'error'); }
 };
 
+// Retirer une entrée s'applique tout de suite et s'annule (le commentaire revient avec elle).
 window.bnWhitelistRemove = async function(value) {
-  if (!confirm(`Retirer ${value} de la liste blanche ? Les bans qu'elle neutralisait s'appliqueront de nouveau.`)) return;
+  const entry = _bnWl.find(e => e.value === value) || { value, comment: '' };
   try {
     await api('DELETE', '/security/bans/whitelist?ip=' + encodeURIComponent(value));
-    toast('Retiré de la liste blanche', 'success');
+    SecUX.remember(`${value} retiré de la liste blanche`, async () => {
+      await api('POST', '/security/bans/whitelist', { ip: value, comment: entry.comment || '' });
+      await bnWhitelistRepaint();
+    });
     await bnWhitelistRepaint();
   } catch (e) { toast(e.message, 'error'); }
 };

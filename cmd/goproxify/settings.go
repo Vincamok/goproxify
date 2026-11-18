@@ -16,12 +16,15 @@ func runSettings() {
 		runSettingsSMTP()
 	case "mfa":
 		runSettingsMFA()
+	case "diagnostics":
+		runSettingsDiagnostics()
 	case "help":
 		fmt.Print(`Usage: goproxify settings <sous-commande> [options]
 
 Sous-commandes :
   smtp  Configuration du serveur SMTP
   mfa   Configuration MFA serveur (SMS, WebAuthn)
+  diagnostics  Mémoire de l'Admin et profilage du runtime
 
 goproxify settings smtp get  [-admin-url …] [-token …]
 goproxify settings smtp set  -file <smtp.json> [-admin-url …] [-token …]
@@ -31,6 +34,8 @@ goproxify settings mfa sms     get [-admin-url …] [-token …]
 goproxify settings mfa sms     set -file <sms.json> [-admin-url …] [-token …]
 goproxify settings mfa webauthn get [-admin-url …] [-token …]
 goproxify settings mfa webauthn set -file <webauthn.json> [-admin-url …] [-token …]
+
+goproxify settings diagnostics get|enable|disable|profile (voir : goproxify settings diagnostics help)
 `)
 	default:
 		fmt.Fprintf(os.Stderr, "sous-commande settings inconnue : %q\n", sub)

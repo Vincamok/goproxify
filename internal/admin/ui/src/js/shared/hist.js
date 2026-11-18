@@ -22,7 +22,7 @@ function gpxHistHTML(pts, unit, opt) {
       <rect x="${xx}" y="${(H - hOk - hWarn - hErr).toFixed(1)}" width="${w}" height="${hErr.toFixed(1)}" fill="var(--red)"/></g>`;
   }).join('');
   return `<div class="logs-hist-h"><span>${esc(opt.title)}</span><span>${esc(opt.hint)}</span></div>
-    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${esc(opt.title)}">${bars}</svg>`;
+    <svg class="gpx-hist-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${esc(opt.title)}">${bars}</svg>`;
 }
 
 // Position (iso) → clé de tranche, dans le même format que les buckets renvoyés par le serveur

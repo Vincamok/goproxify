@@ -1,0 +1,1253 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="__PORTAL_THEME__">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<title>__PORTAL_TITLE__ · GoProxify Access</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css"/>
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script>
+const c = n => 'rgb(var(--' + n + ') / <alpha-value>)';
+tailwind.config = { theme: { extend: {
+  colors: { bg: c('bg'), surface: c('surface'), sunk: c('sunk'), line: c('line'), ink: c('ink'), mute: c('mute'),
+            accent: c('accent'), 'accent-ink': c('accent-ink'), ok: c('ok'), warn: c('warn'), bad: c('bad') },
+  fontFamily: { display: ['"Space Grotesk"', 'Inter', 'system-ui', 'sans-serif'], sans: ['Inter', 'system-ui', 'sans-serif'],
+                mono: ['"JetBrains Mono"', 'ui-monospace', 'Consolas', 'monospace'] }
+} } };
+</script>
+<style>
+/* Boussole : un lanceur, pas un annuaire. Les jetons de couleur suivent le thème clair ou sombre du système, comme le thème auto. */
+:root {
+  --bg: 244 246 251; --surface: 255 255 255; --sunk: 236 240 247; --line: 226 231 240;
+  --ink: 15 23 42; --mute: 86 96 116;
+  --accent: 79 70 229; --accent-ink: 255 255 255;
+  --ok: 22 140 90; --warn: 196 120 8; --bad: 214 52 52;
+  --term: 11 17 32; --term-ink: 219 228 243;
+}
+@media (prefers-color-scheme: dark) { :root {
+  --bg: 14 16 22; --surface: 23 27 36; --sunk: 17 20 28; --line: 41 47 60;
+  --ink: 236 239 246; --mute: 150 160 178;
+  --accent: 129 140 248; --accent-ink: 12 14 40;
+  --ok: 62 207 142; --warn: 232 169 52; --bad: 248 113 113;
+  --term: 7 10 18; --term-ink: 219 228 243; color-scheme: dark; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: rgb(var(--bg)); color: rgb(var(--ink)); font-family: Inter, system-ui, sans-serif; font-size: 14px; min-height: 100vh; -webkit-font-smoothing: antialiased; }
+.gutter { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.hidden { display: none; }
+:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; }
+button { cursor: pointer; font: inherit; color: inherit; border: 0; background: none; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+.mute { color: rgb(var(--mute)); }
+.mono { font-family: "JetBrains Mono", ui-monospace, Consolas, monospace; }
+.num { font-variant-numeric: tabular-nums; }
+
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 36px; padding: 0 12px; border-radius: 10px; border: 1px solid rgb(var(--line)); background: rgb(var(--surface)); font-weight: 500; font-size: 13px; white-space: nowrap; }
+.btn:hover:not(:disabled) { border-color: rgb(var(--mute)); }
+.btn-p { background: rgb(var(--accent)); color: rgb(var(--accent-ink)); border-color: transparent; font-weight: 600; }
+.btn-p:hover:not(:disabled) { filter: brightness(1.08); border-color: transparent; }
+.btn-bad { color: rgb(var(--bad)); }
+.btn-bad:hover:not(:disabled) { border-color: rgb(var(--bad)); background: rgb(var(--bad) / .08); }
+.ibtn { width: 32px; height: 32px; padding: 0; border-radius: 9px; display: inline-grid; place-items: center; background: none; color: rgb(var(--mute)); flex: none; }
+.ibtn:hover { background: rgb(var(--sunk)); color: rgb(var(--ink)); }
+.input { width: 100%; height: 38px; padding: 0 12px; border-radius: 10px; background: rgb(var(--sunk)); border: 1px solid transparent; font: inherit; font-size: 13.5px; color: rgb(var(--ink)); }
+.input:focus { outline: none; border-color: rgb(var(--accent)); background: rgb(var(--surface)); }
+.input::placeholder { color: rgb(var(--mute) / .8); }
+.input.bad { border-color: rgb(var(--bad)); animation: shake .25s; }
+textarea.input { height: auto; padding: 8px 12px; font-family: "JetBrains Mono", monospace; font-size: 12px; resize: vertical; }
+.input.big { height: 54px; padding: 0 56px 0 48px; font-size: 16px; border-radius: 16px; background: rgb(var(--surface)); border: 1.5px solid rgb(var(--line)); box-shadow: 0 1px 2px rgb(0 0 0 / .04); }
+.input.big:focus { border-color: rgb(var(--accent)); box-shadow: 0 0 0 4px rgb(var(--accent) / .16); }
+.lbl { display: block; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: rgb(var(--mute)); margin-bottom: 5px; }
+kbd { font: 500 11px "JetBrains Mono", monospace; padding: 1px 6px; border-radius: 5px; background: rgb(var(--sunk)); border: 1px solid rgb(var(--line)); color: rgb(var(--mute)); }
+.chip-s { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; padding: 1px 8px; border-radius: 99px; background: rgb(var(--sunk)); color: rgb(var(--mute)); white-space: nowrap; }
+.fchip { height: 30px; padding: 0 12px; border-radius: 99px; font-size: 12.5px; font-weight: 500; border: 1px solid rgb(var(--line)); background: rgb(var(--surface)); color: rgb(var(--mute)); }
+.fchip:hover { border-color: rgb(var(--mute)); }
+.fchip.on { background: rgb(var(--accent)); border-color: transparent; color: rgb(var(--accent-ink)); }
+.card { border-radius: 16px; border: 1px solid rgb(var(--line)); background: rgb(var(--surface)); }
+.err { color: rgb(var(--bad)); font-size: 13px; min-height: 1.2em; margin-top: 10px; }
+
+.tab { position: relative; height: 42px; padding: 0 14px; display: inline-flex; align-items: center; gap: 7px; font-weight: 500; color: rgb(var(--mute)); border-bottom: 2px solid transparent; white-space: nowrap; background: none; }
+.tab:hover { color: rgb(var(--ink)); }
+.tab[aria-selected="true"] { color: rgb(var(--ink)); border-bottom-color: rgb(var(--accent)); }
+.tabn { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 99px; background: rgb(var(--accent)); color: rgb(var(--accent-ink)); font-size: 11px; font-weight: 600; display: inline-grid; place-items: center; }
+.tabn.live { background: rgb(var(--ok)); color: #fff; }
+.live-dot { width: 7px; height: 7px; border-radius: 99px; background: rgb(var(--ok)); animation: pulse 1.8s infinite; flex: none; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgb(var(--ok) / .5); } 70%, 100% { box-shadow: 0 0 0 7px rgb(var(--ok) / 0); } }
+@keyframes shake { 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+
+.h3 { font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: rgb(var(--mute)); display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.zone { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; padding: 4px; margin: -4px; border-radius: 16px; min-height: 56px; transition: background .12s; }
+.zone.empty { display: flex; align-items: center; justify-content: center; border: 1.5px dashed rgb(var(--line)); color: rgb(var(--mute)); padding: 22px; margin: 0; text-align: center; }
+.zone.hot { background: rgb(var(--accent) / .08); outline: 2px dashed rgb(var(--accent)); outline-offset: 2px; }
+.tile { position: relative; min-width: 0; padding: 14px; border-radius: 14px; background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); cursor: pointer; transition: transform .12s, box-shadow .12s, border-color .12s; }
+.tile:hover, .tile:focus-visible { border-color: rgb(var(--accent) / .6); box-shadow: 0 8px 24px rgb(0 0 0 / .08); transform: translateY(-1px); z-index: 2; }
+.tile.open { z-index: 40; border-color: rgb(var(--accent)); box-shadow: 0 0 0 3px rgb(var(--accent) / .16); transform: none; }
+.tile.dragging { opacity: .35; }
+.tile.locked { background: transparent; border-style: dashed; }
+.tile.ins::before { content: ""; position: absolute; left: -9px; top: 6px; bottom: 6px; width: 3px; border-radius: 3px; background: rgb(var(--accent)); }
+.tile.add { border-style: dashed; background: transparent; display: flex; align-items: center; justify-content: center; gap: 8px; color: rgb(var(--mute)); min-height: 110px; }
+.tico { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; flex: none; background: rgb(var(--accent) / .12); color: rgb(var(--accent)); position: relative; }
+.tico.docker { background: rgb(var(--ok) / .13); color: rgb(var(--ok)); }
+.tile.locked .tico { background: rgb(var(--sunk)); color: rgb(var(--mute)); }
+.tact { opacity: 0; transition: opacity .12s; }
+.tile:hover .tact, .tile:focus-within .tact, .tile.open .tact { opacity: 1; }
+@media (hover: none) { .tact { opacity: 1; } }
+.star.on { opacity: 1; color: rgb(var(--warn)); }
+.st { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 99px; white-space: nowrap; }
+.st-lock { background: rgb(var(--sunk)); color: rgb(var(--mute)); }
+.st-wait { background: rgb(var(--warn) / .16); color: rgb(var(--warn)); }
+.st-temp, .st-live { background: rgb(var(--ok) / .14); color: rgb(var(--ok)); }
+.st-warn { background: rgb(var(--bad) / .12); color: rgb(var(--bad)); }
+.wait-dot { width: 6px; height: 6px; border-radius: 99px; background: rgb(var(--warn)); animation: blink 1.2s infinite; }
+@keyframes blink { 50% { opacity: .25; } }
+.pop { position: absolute; left: 0; top: calc(100% + 8px); z-index: 50; width: min(310px, calc(100vw - 32px)); padding: 14px; border-radius: 14px; background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); box-shadow: 0 18px 50px rgb(0 0 0 / .22); cursor: default; animation: popin .14s ease-out; }
+@keyframes popin { from { opacity: 0; transform: translateY(-4px); } }
+.lopt { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border-radius: 10px; background: rgb(var(--sunk)); text-align: left; border: 1px solid transparent; }
+.lopt:hover, .lopt:focus-visible { border-color: rgb(var(--accent)); background: rgb(var(--accent) / .1); }
+.lopt small { display: block; color: rgb(var(--mute)); font-size: 11.5px; }
+.lico { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; background: rgb(var(--sunk)); color: rgb(var(--mute)); flex: none; }
+.rng { -webkit-appearance: none; appearance: none; width: 100%; height: 30px; background: transparent; margin: 0; cursor: pointer; --p: 50%; }
+.rng::-webkit-slider-runnable-track { height: 6px; border-radius: 99px; background: linear-gradient(90deg, rgb(var(--accent)) var(--p), rgb(var(--sunk)) var(--p)); }
+.rng::-webkit-slider-thumb { -webkit-appearance: none; width: 22px; height: 22px; margin-top: -8px; border-radius: 99px; background: rgb(var(--surface)); border: 3px solid rgb(var(--accent)); box-shadow: 0 2px 8px rgb(0 0 0 / .25); }
+.rng::-moz-range-track { height: 6px; border-radius: 99px; background: linear-gradient(90deg, rgb(var(--accent)) var(--p), rgb(var(--sunk)) var(--p)); }
+.rng::-moz-range-thumb { width: 16px; height: 16px; border-radius: 99px; background: rgb(var(--surface)); border: 3px solid rgb(var(--accent)); }
+
+.stab { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 6px 0 12px; border-radius: 10px; background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); font-weight: 500; font-size: 13px; cursor: pointer; white-space: nowrap; flex: none; }
+.stab[aria-selected="true"] { border-color: rgb(var(--accent)); box-shadow: 0 0 0 3px rgb(var(--accent) / .14); }
+.stab.dragging { opacity: .4; }
+.stab.ins-l { box-shadow: -3px 0 0 rgb(var(--accent)); }
+.stab.ins-r { box-shadow: 3px 0 0 rgb(var(--accent)); }
+.term { background: rgb(var(--term)); color: rgb(var(--term-ink)); position: relative; }
+.term.hot { outline: 2px dashed rgb(var(--accent)); outline-offset: -4px; }
+#tHost { padding: 8px 10px 0; overflow: hidden; }
+.tpane { height: 100%; }
+.tover { position: absolute; left: 0; right: 0; bottom: 0; z-index: 5; display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: rgb(var(--bad) / .92); color: #fff; font-size: 13px; }
+.grip-h { height: 14px; cursor: ns-resize; display: grid; place-items: center; touch-action: none; background: rgb(var(--term)); border-top: 1px solid rgb(255 255 255 / .06); }
+.grip-h::after { content: ""; width: 36px; height: 3px; border-radius: 3px; background: rgb(255 255 255 / .22); }
+.grip-h:hover::after { background: rgb(var(--accent)); }
+.snip { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 4px 0 10px; border-radius: 8px; background: rgb(var(--sunk)); border: 1px solid transparent; font: 500 12px "JetBrains Mono", monospace; cursor: grab; white-space: nowrap; flex: none; }
+.snip:hover { border-color: rgb(var(--accent)); }
+.snip .x { width: 20px; height: 20px; border-radius: 99px; display: grid; place-items: center; color: rgb(var(--mute)); }
+.snip .x:hover { color: rgb(var(--bad)); }
+
+.lcard { display: flex; align-items: center; gap: 10px; padding: 12px 12px 12px 8px; border-radius: 14px; background: rgb(var(--surface)); border: 1.5px solid rgb(var(--line)); cursor: pointer; transition: border-color .12s, box-shadow .12s; }
+.lcard[draggable="true"]:hover { border-color: rgb(var(--mute)); }
+.lcard.armed { border-color: rgb(var(--accent)); box-shadow: 0 0 0 4px rgb(var(--accent) / .18); }
+.lcard.shared { background: transparent; border-style: dashed; cursor: default; }
+.lcard.hot { border-color: rgb(var(--accent)); background: rgb(var(--accent) / .08); }
+.lcard.dragging { opacity: .4; }
+.lcard .grip { color: rgb(var(--mute) / .6); cursor: grab; flex: none; }
+.lcard.shared .grip { visibility: hidden; }
+.ed { border-radius: 5px; padding: 0 3px; margin: 0 -3px; outline: none; cursor: text; border: 1px dashed transparent; }
+.ed:hover { border-color: rgb(var(--mute) / .5); }
+.ed[contenteditable="true"] { background: rgb(var(--sunk)); border-color: rgb(var(--accent)); }
+.lcard .del { opacity: 0; }
+.lcard:hover .del, .lcard:focus-within .del { opacity: 1; }
+@media (hover: none) { .lcard .del { opacity: 1; } }
+.drow { display: grid; grid-template-columns: minmax(0, 190px) minmax(0, 1fr); gap: 8px 14px; align-items: center; padding: 11px 14px; border-radius: 12px; border: 1.5px solid rgb(var(--line)); background: rgb(var(--surface)); transition: background .12s, border-color .12s; }
+@media (max-width: 560px) { .drow { grid-template-columns: minmax(0, 1fr); } }
+.drow.hot { background: rgb(var(--accent) / .09); border-color: rgb(var(--accent)); }
+.drow.nodrop { opacity: .6; }
+.drow.target { cursor: copy; border-style: dashed; border-color: rgb(var(--accent) / .7); }
+.lchip { display: inline-flex; align-items: center; gap: 2px; height: 30px; padding: 0 4px 0 2px; border-radius: 99px; background: rgb(var(--sunk)); border: 1px solid rgb(var(--line)); font: 500 12.5px "JetBrains Mono", monospace; }
+.lchip[draggable="true"] { cursor: grab; }
+.lchip.def { border-color: rgb(var(--warn) / .7); }
+.lchip .x, .lchip .f { width: 24px; height: 24px; border-radius: 99px; display: grid; place-items: center; color: rgb(var(--mute)); background: none; padding: 0; }
+.lchip .x:hover { background: rgb(var(--bad) / .15); color: rgb(var(--bad)); }
+.lchip .f:hover, .lchip .f.on { color: rgb(var(--warn)); }
+.lchip.dragging { opacity: .4; }
+
+.swipe { position: relative; overflow: hidden; border-radius: 14px; border: 1px solid rgb(var(--line)); background: rgb(var(--surface)); }
+.swipe-fg { position: relative; background: rgb(var(--surface)); touch-action: pan-y; user-select: none; transition: transform .22s cubic-bezier(.2,.9,.3,1.2); padding: 12px 14px; }
+.swipe-bg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: flex-end; padding: 0 14px; background: rgb(var(--bad)); color: #fff; font-weight: 600; font-size: 13px; opacity: 0; }
+.swipe[data-dir="left"] .swipe-bg, .swipe.open .swipe-bg { opacity: calc(.35 + var(--p, 0) * .65); }
+.swipe.open .swipe-bg { opacity: 1; }
+.swipe-bg button { color: #fff; font-weight: 600; font-size: 13px; padding: 8px 6px; display: flex; gap: 6px; align-items: center; }
+.swipe .sact { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); padding-left: 28px; background: linear-gradient(90deg, transparent, rgb(var(--surface)) 28px); opacity: 0; transition: opacity .12s; }
+.swipe:hover .sact, .swipe:focus-within .sact { opacity: 1; }
+@media (hover: none) { .swipe .sact { display: none; } }
+.seg { display: inline-flex; padding: 2px; border-radius: 10px; background: rgb(var(--sunk)); }
+.seg button { height: 30px; padding: 0 12px; border-radius: 8px; font-size: 12.5px; font-weight: 500; color: rgb(var(--mute)); display: inline-flex; align-items: center; gap: 6px; }
+.seg button[aria-pressed="true"] { background: rgb(var(--surface)); color: rgb(var(--ink)); box-shadow: 0 1px 3px rgb(0 0 0 / .16); }
+.bar { height: 4px; border-radius: 99px; background: rgb(var(--sunk)); overflow: hidden; }
+.bar > i { display: block; height: 100%; border-radius: inherit; background: rgb(var(--accent)); transition: width 1s linear; }
+
+#dropbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 50; display: flex; justify-content: center; padding: 12px max(16px, env(safe-area-inset-right, 0px)) calc(14px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); transform: translateY(110%); transition: transform .22s cubic-bezier(.2,.9,.3,1.1); pointer-events: none; background: linear-gradient(transparent, rgb(var(--bg) / .94) 40%); }
+#dropbar.show { transform: none; pointer-events: auto; }
+.dz { width: 100%; max-width: 280px; height: 64px; border-radius: 14px; border: 2px dashed rgb(var(--line)); background: rgb(var(--surface)); display: flex; flex-direction: column; align-items: center; justify-content: center; font-weight: 600; font-size: 13px; }
+.dz small { font-weight: 400; color: rgb(var(--mute)); font-size: 11.5px; }
+.dz.hot { border-color: rgb(var(--bad)); background: rgb(var(--bad) / .1); color: rgb(var(--bad)); }
+#toast { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); z-index: 90; transform: translate(-50%, 24px); opacity: 0; pointer-events: none; max-width: calc(100vw - 32px); display: flex; align-items: center; gap: 14px; padding: 9px 10px 9px 16px; border-radius: 12px; background: rgb(var(--ink)); color: rgb(var(--bg)); font-size: 13px; font-weight: 500; box-shadow: 0 10px 30px rgb(0 0 0 / .3); transition: .2s; }
+#toast.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+#toast button { height: 26px; padding: 0 10px; border-radius: 7px; font-weight: 600; background: rgb(var(--bg) / .18); color: inherit; white-space: nowrap; }
+#pal { position: fixed; inset: 0; z-index: 80; background: rgb(0 0 0 / .5); display: flex; justify-content: center; align-items: flex-start; padding: 12vh 16px 16px; }
+#pal[hidden] { display: none; }
+#pal .panel { width: 100%; max-width: 580px; border-radius: 16px; background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); box-shadow: 0 30px 80px rgb(0 0 0 / .4); overflow: hidden; }
+.pi { display: flex; align-items: center; gap: 12px; width: 100%; padding: 9px 14px; text-align: left; background: none; }
+.pi.on { background: rgb(var(--accent) / .13); }
+.pi .ic { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: rgb(var(--sunk)); flex: none; }
+.otp { width: 46px; height: 56px; text-align: center; font: 600 22px "JetBrains Mono", monospace; border-radius: 12px; background: rgb(var(--surface)); border: 1.5px solid rgb(var(--line)); color: rgb(var(--ink)); }
+.otp:focus { outline: none; border-color: rgb(var(--accent)); box-shadow: 0 0 0 4px rgb(var(--accent) / .16); }
+.otp.bad { border-color: rgb(var(--bad)); animation: shake .25s; }
+@media (max-width: 420px) { .otp { width: 40px; height: 50px; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+
+<div id="auth" class="gutter min-h-screen grid place-items-center py-10">
+  <div class="card p-7 w-full max-w-md shadow-xl">
+    <div class="flex items-center gap-3 mb-5">
+      <div class="w-10 h-10 rounded-xl bg-accent text-accent-ink grid place-items-center" data-ico="compass" data-size="22"></div>
+      <div><div class="font-display font-semibold text-lg leading-tight">GoProxify Access</div><div class="mute text-xs">Boussole</div></div>
+    </div>
+    <h1 class="font-display text-[24px] font-semibold leading-tight">__PORTAL_TITLE__</h1>
+    <p class="mute mt-1 mb-5">__PORTAL_TAGLINE__</p>
+    <p id="authHint" class="mute text-xs mb-4"></p>
+    <label class="lbl" for="user">Utilisateur</label>
+    <input id="user" class="input" autocomplete="username" autocapitalize="off" spellcheck="false"/>
+    <label class="lbl mt-3" for="pass">Mot de passe</label>
+    <input id="pass" class="input" type="password" autocomplete="current-password"/>
+    <div class="flex flex-wrap gap-2 mt-5">
+      <button type="button" class="btn btn-p grow" id="btnLogin" style="height:42px">Connexion</button>
+      <button type="button" class="btn hidden" id="btnSSO" style="height:42px">Connexion SSO</button>
+    </div>
+    <div id="authErr" class="err" role="alert"></div>
+  </div>
+</div>
+
+<div id="invite" class="hidden gutter min-h-screen grid place-items-center py-10">
+  <div class="card p-7 w-full max-w-md shadow-xl">
+    <h2 class="font-display text-xl font-semibold">Activer votre compte</h2>
+    <p class="mute mt-1 mb-5">Choisissez un mot de passe (8 caractères minimum).</p>
+    <label class="lbl" for="invitePass">Mot de passe</label>
+    <input id="invitePass" class="input" type="password" autocomplete="new-password"/>
+    <label class="lbl mt-3" for="invitePass2">Confirmation</label>
+    <input id="invitePass2" class="input" type="password" autocomplete="new-password"/>
+    <button type="button" class="btn btn-p w-full mt-5" id="btnInvite" style="height:42px">Enregistrer</button>
+    <div id="inviteErr" class="err" role="alert"></div>
+  </div>
+</div>
+
+<div id="twofa" class="hidden gutter min-h-screen grid place-items-center py-10">
+  <div class="card p-7 w-full max-w-md shadow-xl text-center">
+    <div class="w-12 h-12 rounded-2xl bg-accent text-accent-ink grid place-items-center mx-auto mb-4" data-ico="shield" data-size="24"></div>
+    <h2 class="font-display text-xl font-semibold">Vérification en deux étapes</h2>
+    <p class="mute mt-1 mb-4" id="twofaHint">Entrez le code à 6 chiffres. Collez-le, il se répartit seul.</p>
+    <div id="twofaMethods" class="mb-4 flex justify-center"></div>
+    <div id="twofaOtp" class="flex justify-center gap-2"></div>
+    <div id="twofaCountdown" class="mt-5 hidden"><div class="flex justify-between text-xs mute mb-1"><span>Expiration du défi</span><span id="twofaCountdownLabel"></span></div><div class="bar"><i id="twofaCountdownTrack" style="width:100%"></i></div></div>
+    <div id="twofaErr" class="err" role="alert"></div>
+    <div class="flex justify-center gap-2 mt-3">
+      <button type="button" class="btn hidden" id="btnTwoFAEmail">Envoyer le code par email</button>
+      <button type="button" class="btn" id="btnTwoFABack">Retour</button>
+    </div>
+  </div>
+</div>
+
+<div id="app" class="hidden gutter">
+  <header class="sticky z-30 bg-bg/90 backdrop-blur border-b border-line" style="top:0;margin-left:calc(-1 * max(16px, env(safe-area-inset-left, 0px)));margin-right:calc(-1 * max(16px, env(safe-area-inset-right, 0px)));padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px));padding-top:env(safe-area-inset-top, 0px)">
+    <div class="max-w-6xl mx-auto">
+      <div class="flex items-center gap-3 pt-3 pb-1">
+        <div class="w-9 h-9 rounded-[10px] bg-accent text-accent-ink grid place-items-center flex-none" data-ico="compass" data-size="20"></div>
+        <div class="min-w-0 grow">
+          <h1 class="font-display font-semibold text-[19px] leading-tight">Access</h1>
+          <p class="mute text-xs truncate" id="who"></p>
+        </div>
+        <button id="palbtn" data-act="pal" class="btn sm:w-80 sm:justify-start sm:gap-2 sm:px-3 text-mute" aria-label="Ouvrir la palette de commandes">
+          <span data-ico="search" data-size="16"></span><span class="hidden sm:inline">Aller à, ouvrir, demander…</span><kbd class="hidden sm:inline ml-auto">Ctrl K</kbd>
+        </button>
+        <button id="btnLogout" data-act="logout" class="btn ibtn" style="border:1px solid rgb(var(--line))" title="Se déconnecter" aria-label="Se déconnecter"><span data-ico="logout" data-size="16"></span></button>
+      </div>
+      <nav id="tabs" role="tablist" class="flex gap-1 overflow-x-auto -mb-px" aria-label="Sections du portail"></nav>
+    </div>
+  </header>
+  <main id="view" class="max-w-6xl mx-auto py-6 pb-32"></main>
+</div>
+
+<div id="dropbar" aria-hidden="true"><div class="dz" data-dz="unlink"><span>Retirer cette liaison</span><small>déposez le login ici</small></div></div>
+<div id="toast" role="status" aria-live="polite"></div>
+<div id="pal" hidden role="dialog" aria-modal="true" aria-label="Palette de commandes">
+  <div class="panel">
+    <div class="flex items-center gap-3 px-4 border-b border-line"><span class="mute" data-ico="search" data-size="18"></span>
+      <input id="palq" autocomplete="off" spellcheck="false" placeholder="Une machine, deploy@prod, coffre…" class="w-full h-12 bg-transparent text-[15px] outline-none">
+      <kbd>Échap</kbd></div>
+    <ul id="pallist" class="py-1.5 max-h-[50vh] overflow-y-auto"></ul>
+    <div class="px-4 py-2.5 border-t border-line mute text-xs flex flex-wrap gap-x-4 gap-y-1"><span><kbd>↵</kbd> ouvrir</span><span><kbd>⇧↵</kbd> copier la commande ssh</span><span class="ml-auto"><kbd>↑</kbd> <kbd>↓</kbd> choisir</span></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+<script>
+const VIEW = __PORTAL_VIEW__;
+const TOK_KEY = 'gpx_portal_tok:' + VIEW.key;
+const USER_KEY = 'gpx_portal_user:' + VIEW.key;
+const MIN = 60e3, STEPS = [15, 30, 60, 120, 240, 480];
+const REASONS = ['Incident', 'Maintenance', 'Support client', 'Déploiement'];
+
+/* ───────── Utilitaires ───────── */
+const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => Array.prototype.slice.call(r.querySelectorAll(s));
+const byId = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const norm = (s) => String(s == null ? '' : s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+const fmtLeft = (ms) => { if (ms <= 0) return 'expiré'; const s = Math.ceil(ms / 1000); if (s < 60) return s + ' s'; const m = Math.floor(s / 60); if (m < 60) return m + ' min'; const h = Math.floor(m / 60), r = m % 60; return h + ' h' + (r ? ' ' + String(r).padStart(2, '0') : ''); };
+const fmtElapsed = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return h ? h + ' h ' + String(m).padStart(2, '0') : m + ' min ' + String(s % 60).padStart(2, '0') + ' s'; };
+const durLabel = (min) => { if (min < 60) return min + ' min'; const h = Math.floor(min / 60), r = min % 60; return r ? h + ' h ' + String(r).padStart(2, '0') : h + ' h'; };
+const hhmm = (ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const P = {
+  shield: '<path d="M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6l7-3z"/>', search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>',
+  x: '<path d="M6 6l12 12M18 6L6 18"/>', check: '<path d="M5 12l5 5L20 7"/>', plus: '<path d="M12 5v14M5 12h14"/>',
+  terminal: '<path d="M4 17l6-5-6-5M12 19h8"/>', key: '<circle cx="8" cy="15" r="4"/><path d="M10.8 12.2L20 3M17 6l3 3M14 9l2 2"/>',
+  lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/>', star: '<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>',
+  copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 012-2h9"/>', box: '<path d="M21 8l-9-5-9 5v8l9 5 9-5V8z"/><path d="M3 8l9 5 9-5M12 13v8"/>',
+  grid: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
+  vault: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="12" cy="12" r="3.5"/><path d="M12 8.5v-1M12 16.5v-1M8.5 12h-1M16.5 12h1"/>',
+  activity: '<path d="M3 12h4l3-8 4 16 3-8h4"/>', person: '<circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/>',
+  grip: '<circle cx="9" cy="6" r="1.2"/><circle cx="15" cy="6" r="1.2"/><circle cx="9" cy="12" r="1.2"/><circle cx="15" cy="12" r="1.2"/><circle cx="9" cy="18" r="1.2"/><circle cx="15" cy="18" r="1.2"/>',
+  trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>', clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  link: '<path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1"/>',
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>', refresh: '<path d="M20 11a8 8 0 00-14.5-3M4 13a8 8 0 0014.5 3M4 4v4h4M20 20v-4h-4"/>',
+  compass: '<circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5 5-2z"/>', logout: '<path d="M9 4H5a1 1 0 00-1 1v14a1 1 0 001 1h4M16 8l4 4-4 4M20 12H9"/>',
+  phone: '<rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/>', qr: '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3h-3zM20 14v6M14 20h6"/>'
+};
+const ico = (n, s, cls) => '<svg class="' + (cls || '') + '" width="' + (s || 16) + '" height="' + (s || 16) + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + P[n] + '</svg>';
+const icoFill = (n, s, on) => ico(n, s).replace('fill="none"', on ? 'fill="currentColor"' : 'fill="none"');
+function paintIcons(root) { $$('[data-ico]', root || document).forEach((el) => { el.innerHTML = ico(el.dataset.ico, +el.dataset.size || 16); el.removeAttribute('data-ico'); }); }
+function errText(e) {
+  let m = (e && e.message) || String(e);
+  try { const j = JSON.parse(m); m = j.message || j.error || m; } catch (_) {}
+  return String(m).trim();
+}
+function copy(t) {
+  return (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).catch(() => {
+    const ta = document.createElement('textarea'); ta.value = t; ta.style.cssText = 'position:fixed;opacity:0'; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch (_) {} ta.remove();
+  });
+}
+function readLS(k, d) { try { const v = JSON.parse(localStorage.getItem(k) || 'null'); return v == null ? d : v; } catch (_) { return d; } }
+function writeLS(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} }
+
+/* ───────── État ───────── */
+const state = {
+  token: sessionStorage.getItem(TOK_KEY) || '', user: sessionStorage.getItem(USER_KEY) || '',
+  me: {}, targets: [], requestable: { enabled: false, targets: [] }, vault: { personal: [], shared: [], defaults: {} },
+  sessions: [], audit: [], favorites: [], loaded: false,
+  view: 'lanceur', q: '', tags: [], pop: null, drag: null, armed: null, addTarget: false, newLogin: false, editSecret: null, confirm: null,
+  terms: [], activeTerm: null, termH: 380, snips: [], pending: [], undoFns: [], challenge: null, totpSetup: null
+};
+const snipKey = () => 'gpx_portal_snips:' + VIEW.key + ':' + state.user;
+const reqKey = () => 'gpx_portal_req:' + VIEW.key + ':' + state.user;
+function clearSession() {
+  state.token = ''; state.user = '';
+  sessionStorage.removeItem(TOK_KEY); sessionStorage.removeItem(USER_KEY);
+  try { localStorage.removeItem(TOK_KEY); localStorage.removeItem(USER_KEY); localStorage.removeItem('gpx_portal_pass'); } catch (_) {}
+}
+function persistSession() { sessionStorage.setItem(TOK_KEY, state.token); sessionStorage.setItem(USER_KEY, state.user); }
+
+/* ───────── API ───────── */
+/* Ces appels répondent 401 pour un identifiant ou un code faux, pas pour une session expirée : ils ne déconnectent pas. */
+const CODE_CHECKS = ['/api/login', '/api/2fa/verify', '/api/2fa/totp/verify', '/api/complete-invite'];
+async function api(path, opts) {
+  opts = opts || {};
+  const headers = Object.assign({ 'Content-Type': 'application/json', 'X-Portal-View': VIEW.slug }, opts.headers || {});
+  if (state.token) headers.Authorization = 'Bearer ' + state.token;
+  const res = await fetch(path, Object.assign({}, opts, { headers }));
+  if (res.status === 401 && CODE_CHECKS.indexOf(path) < 0) {
+    clearSession(); closeAllTerms(); showScreen('auth');
+    throw new Error('Session expirée, reconnectez-vous');
+  }
+  if (!res.ok) throw new Error(await res.text());
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+/* ───────── Toast et annulation ───────── */
+let toastT;
+function toast(msg, act) {
+  const t = byId('toast'); t.innerHTML = '<span>' + esc(msg) + '</span>' + (act ? '<button id="toastAct">' + esc(act.label) + '</button>' : '');
+  t.classList.add('show'); clearTimeout(toastT);
+  if (act) byId('toastAct').onclick = () => { act.fn(); t.classList.remove('show'); };
+  toastT = setTimeout(() => t.classList.remove('show'), act ? 6500 : 3800);
+}
+function withUndo(msg, fn) {
+  state.undoFns.push(fn);
+  toast(msg, { label: 'Annuler', fn: () => { state.undoFns = state.undoFns.filter((f) => f !== fn); fn(); } });
+}
+function undo() { const f = state.undoFns.pop(); if (f) { f(); byId('toast').classList.remove('show'); } else toast('Rien à annuler.'); }
+
+/* ───────── Écrans d'authentification ───────── */
+function showScreen(name) {
+  ['auth', 'invite', 'twofa', 'app'].forEach((id) => byId(id).classList.toggle('hidden', id !== name));
+  if (name === 'app') { byId('who').textContent = state.user; draw(); }
+}
+async function loadAuthInfo() {
+  try {
+    const info = await fetch('/api/auth-info', { headers: { 'X-Portal-View': VIEW.slug } }).then((r) => r.json());
+    const hint = byId('authHint'), btnSSO = byId('btnSSO');
+    if (info.provider) {
+      const p = info.provider;
+      let msg = 'Fournisseur « ' + (p.name || p.id) + ' » (' + p.type + ').';
+      if (p.oidc) { msg += ' Préférez la connexion SSO, ou un compte local.'; btnSSO.classList.remove('hidden'); btnSSO.onclick = () => { location.href = p.oidc_start || '/api/oidc/start'; }; }
+      else if (p.form_login) msg += ' Identifiants de l’annuaire, ou compte local.';
+      else msg += ' Formulaire non pris en charge pour ce type : comptes locaux uniquement.';
+      hint.textContent = msg;
+    } else hint.textContent = 'Comptes locaux du portail.';
+    if (info.provider_error) hint.textContent += ' (' + info.provider_error + ')';
+  } catch (_) {}
+}
+byId('btnLogin').onclick = async () => {
+  byId('authErr').textContent = '';
+  try {
+    const d = await api('/api/login', { method: 'POST', body: JSON.stringify({ username: byId('user').value, password: byId('pass').value }) });
+    byId('pass').value = '';
+    if (d.need_2fa) { state.user = d.username || ''; startTwoFA(d.challenge_id, d.methods || [], d.ttl_seconds); return; }
+    state.token = d.token; state.user = d.username; persistSession(); await enterApp();
+  } catch (e) { byId('authErr').textContent = errText(e); }
+};
+['user', 'pass'].forEach((id) => byId(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') byId('btnLogin').click(); }));
+byId('btnInvite').onclick = async () => {
+  byId('inviteErr').textContent = '';
+  try {
+    const p1 = byId('invitePass').value, p2 = byId('invitePass2').value;
+    if (p1.length < 8) throw new Error('Mot de passe trop court (8 caractères minimum)');
+    if (p1 !== p2) throw new Error('Les mots de passe ne correspondent pas');
+    const token = new URLSearchParams(location.search).get('invite') || '';
+    if (!token) throw new Error('Jeton d’invitation manquant');
+    const d = await api('/api/complete-invite', { method: 'POST', body: JSON.stringify({ token: token, password: p1 }) });
+    state.token = d.token; state.user = d.username; byId('invitePass').value = byId('invitePass2').value = '';
+    persistSession(); history.replaceState({}, '', location.pathname); await enterApp();
+  } catch (e) { byId('inviteErr').textContent = errText(e); }
+};
+/* Cases du code : saut automatique, collage réparti, retour arrière vers la case précédente. */
+function mountOtp(box, onDone) {
+  box.innerHTML = Array.from({ length: 6 }, (_, i) => '<input class="otp" inputmode="numeric" maxlength="1" autocomplete="' + (i ? 'off' : 'one-time-code') + '" aria-label="Chiffre ' + (i + 1) + '" data-i="' + i + '">').join('');
+  const cells = $$('.otp', box), code = () => cells.map((c) => c.value).join('');
+  const check = () => { if (code().length === 6) onDone(code()); };
+  cells.forEach((c, i) => {
+    c.addEventListener('input', () => { c.value = c.value.replace(/\D/g, '').slice(-1); if (c.value && i < 5) cells[i + 1].focus(); check(); });
+    c.addEventListener('keydown', (e) => {
+      if (e.key === 'Backspace' && !c.value && i > 0) cells[i - 1].focus();
+      else if (e.key === 'ArrowLeft' && i > 0) cells[i - 1].focus();
+      else if (e.key === 'ArrowRight' && i < 5) cells[i + 1].focus();
+    });
+    c.addEventListener('paste', (e) => {
+      const d = (e.clipboardData.getData('text') || '').replace(/\D/g, '').slice(0, 6); if (!d) return; e.preventDefault();
+      cells.forEach((x, k) => { x.value = d[k] || ''; }); cells[Math.min(d.length, 5)].focus(); check();
+    });
+  });
+  return { focus: () => cells[0].focus(), reset: () => { cells.forEach((c) => { c.value = ''; c.classList.remove('bad'); }); cells[0].focus(); }, fail: () => { cells.forEach((c) => c.classList.add('bad')); } };
+}
+let twoFAOtp = null, twoFAInterval = null;
+function startTwoFA(challengeId, methods, ttl) {
+  state.challenge = { id: challengeId, methods: methods.length ? methods : ['totp'], method: (methods[0] || 'totp') };
+  showScreen('twofa');
+  byId('twofaErr').textContent = '';
+  byId('twofaHint').textContent = 'Entrez le code à 6 chiffres. Collez-le, il se répartit seul.';
+  const m = state.challenge.methods;
+  byId('twofaMethods').innerHTML = m.length > 1 ? '<div class="seg">' + m.map((x) => '<button type="button" data-method="' + x + '" aria-pressed="' + (x === state.challenge.method) + '">' + (x === 'email' ? 'Email' : 'Application') + '</button>').join('') + '</div>' : '';
+  byId('btnTwoFAEmail').classList.toggle('hidden', state.challenge.method !== 'email');
+  twoFAOtp = mountOtp(byId('twofaOtp'), submitTwoFA); twoFAOtp.focus();
+  if (twoFAInterval) { clearInterval(twoFAInterval); twoFAInterval = null; }
+  const box = byId('twofaCountdown');
+  if (ttl > 0) {
+    box.classList.remove('hidden'); let left = ttl; byId('twofaCountdownTrack').style.width = '100%'; byId('twofaCountdownLabel').textContent = left + ' s';
+    twoFAInterval = setInterval(() => {
+      left--; byId('twofaCountdownTrack').style.width = Math.max(0, left / ttl * 100) + '%'; byId('twofaCountdownLabel').textContent = Math.max(0, left) + ' s';
+      if (left <= 0) { clearInterval(twoFAInterval); twoFAInterval = null; byId('twofaErr').textContent = 'Défi expiré : reconnectez-vous.'; }
+    }, 1000);
+  } else box.classList.add('hidden');
+}
+async function submitTwoFA(code) {
+  byId('twofaErr').textContent = '';
+  try {
+    const d = await api('/api/2fa/verify', { method: 'POST', body: JSON.stringify({ challenge_id: state.challenge.id, method: state.challenge.method, code: code }) });
+    if (twoFAInterval) { clearInterval(twoFAInterval); twoFAInterval = null; }
+    state.token = d.token; state.user = d.username; state.challenge = null; persistSession(); await enterApp();
+  } catch (e) { byId('twofaErr').textContent = errText(e); twoFAOtp.fail(); setTimeout(() => twoFAOtp.reset(), 450); }
+}
+byId('twofaMethods').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-method]'); if (!b) return;
+  state.challenge.method = b.dataset.method;
+  $$('[data-method]', byId('twofaMethods')).forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+  byId('btnTwoFAEmail').classList.toggle('hidden', b.dataset.method !== 'email'); twoFAOtp.reset();
+});
+byId('btnTwoFAEmail').onclick = async () => {
+  byId('twofaErr').textContent = '';
+  try { await api('/api/2fa/email/send', { method: 'POST', body: JSON.stringify({ challenge_id: state.challenge.id }) }); byId('twofaHint').textContent = 'Code envoyé par email : saisissez-le ci-dessous.'; }
+  catch (e) { byId('twofaErr').textContent = errText(e); }
+};
+byId('btnTwoFABack').onclick = () => { if (twoFAInterval) { clearInterval(twoFAInterval); twoFAInterval = null; } state.challenge = null; showScreen('auth'); };
+async function logout() {
+  try { await api('/api/logout', { method: 'POST' }); } catch (_) {}
+  closeAllTerms(); clearSession(); state.loaded = false; showScreen('auth');
+}
+
+/* ───────── Données ───────── */
+async function loadMe() { const me = await api('/api/me'); state.me = me; state.user = me.username || state.user; state.favorites = me.favorites || []; }
+async function loadTargets() { const d = await api('/api/targets'); state.targets = d.targets || []; }
+async function loadRequestable() {
+  try { const d = await api('/api/access/requestable'); state.requestable = { enabled: !!d.enabled, targets: d.targets || [] }; }
+  catch (_) { state.requestable = { enabled: false, targets: [] }; }
+}
+async function loadVault() { const d = await api('/api/vault'); state.vault = { personal: d.personal || [], shared: d.shared || [], defaults: d.defaults || {} }; }
+async function loadSessions() { const d = await api('/api/sessions'); state.sessions = d.sessions || []; }
+async function loadAudit() { const d = await api('/api/audit'); state.audit = d.events || []; }
+async function loadAll() {
+  await Promise.all([loadMe(), loadTargets(), loadRequestable(), loadVault(), loadSessions(), loadAudit()]);
+  state.loaded = true; reconcilePending(); draw();
+}
+async function enterApp() {
+  state.pending = readLS(reqKey(), []); state.snips = readLS(snipKey(), []);
+  showScreen('app');
+  try { await loadAll(); } catch (e) { toast(errText(e)); }
+}
+const allDests = () => state.targets.concat(state.requestable.enabled
+  ? state.requestable.targets.filter((r) => !state.targets.some((t) => t.id === r.id)).map((r) => Object.assign({}, r, { source: 'catalog', locked: true })) : []);
+const destById = (id) => allDests().find((d) => d.id === id);
+const isSSH = (d) => d.kind !== 'docker';
+const hostOf = (d) => d.kind === 'docker' ? ((d.agent_name || '') + ' / ' + (d.container || '')) : ((d.host || '') + (d.port ? ':' + d.port : ''));
+const allLogins = () => state.vault.shared.map((l) => ({ ref: 'shared:' + l.id, origin: 'shared', id: l.id, name: l.name, username: l.username, dest_ids: l.dest_ids || [] }))
+  .concat(state.vault.personal.map((l) => ({ ref: 'personal:' + l.id, origin: 'personal', id: l.id, name: l.name, username: l.username, dest_ids: l.dest_ids || [], has_password: l.has_password, has_private_key: l.has_private_key })));
+const loginsFor = (destId) => allLogins().filter((l) => l.dest_ids.indexOf(destId) >= 0);
+const defLogin = (destId) => { const ls = loginsFor(destId); return ls.find((l) => l.ref === state.vault.defaults[destId]) || (ls.length === 1 ? ls[0] : null); };
+const isFav = (id) => state.favorites.indexOf(id) >= 0;
+function reconcilePending() {
+  const before = state.pending.length;
+  state.pending = state.pending.filter((p) => {
+    const t = state.targets.find((x) => x.id === p.id);
+    if (!t) return true;
+    toast('Accès accordé à ' + t.name + (t.expires_at ? ' jusqu’à ' + hhmm(t.expires_at) : '') + '.', { label: 'Ouvrir', fn: () => connect(t.id, 'web') });
+    return false;
+  });
+  if (state.pending.length !== before) writeLS(reqKey(), state.pending);
+}
+
+/* ───────── Navigation ───────── */
+const TABS = [['lanceur', 'Lanceur', 'grid'], ['terminal', 'Terminal', 'terminal'], ['coffre', 'Coffre', 'vault'], ['activite', 'Activité', 'activity'], ['compte', 'Compte', 'person']];
+let mounted = null;
+function go(v) { state.view = v; state.pop = null; state.armed = null; state.confirm = null; draw(); window.scrollTo({ top: 0 }); }
+function tabsHTML() {
+  const counts = { terminal: state.terms.length, activite: state.pending.length };
+  return TABS.map((t) => '<button role="tab" class="tab" data-tab="' + t[0] + '" aria-selected="' + (state.view === t[0]) + '">' + ico(t[2], 16) + t[1] + (counts[t[0]] ? '<span class="tabn ' + (t[0] === 'terminal' ? 'live' : '') + '">' + counts[t[0]] + '</span>' : '') + '</button>').join('');
+}
+function draw() {
+  if (byId('app').classList.contains('hidden')) return;
+  const ae = document.activeElement, fid = ae && ae.id, fs = ae && ae.selectionStart;
+  if (mounted !== state.view) { V[state.view].mount(); mounted = state.view; }
+  V[state.view].update();
+  byId('tabs').innerHTML = tabsHTML();
+  if (fid) { const el = byId(fid); if (el && el !== document.activeElement) { el.focus(); try { el.setSelectionRange(fs, fs); } catch (_) {} } }
+  const op = $('.pop'); if (op) { const r = op.getBoundingClientRect(); if (r.right > innerWidth - 8) { op.style.left = 'auto'; op.style.right = '0'; } }
+  tick();
+}
+const V = {};
+
+/* ───────── Lanceur ───────── */
+function parseQuery() {
+  let login = null, term = state.q;
+  const at = state.q.indexOf('@');
+  if (at > 0) { const lq = norm(state.q.slice(0, at)); login = allLogins().find((l) => norm(l.username) === lq || norm(l.name) === lq) || null; if (login) term = state.q.slice(at + 1); }
+  return { login: login, words: norm(term).split(/\s+/).filter(Boolean) };
+}
+function visibleDests() {
+  const q = parseQuery();
+  const list = allDests().filter((d) => {
+    if (state.tags.length && !state.tags.every((t) => (d.tags || []).indexOf(t) >= 0)) return false;
+    if (q.login && q.login.dest_ids.indexOf(d.id) < 0) return false;
+    const hay = norm([d.name, d.kind, d.source, d.host, d.agent_name, d.container, (d.tags || []).join(' '), loginsFor(d.id).map((l) => l.name + ' ' + l.username).join(' ')].join(' '));
+    return q.words.every((w) => hay.indexOf(w) >= 0);
+  });
+  return { list: list, login: q.login };
+}
+function tileHTML(d) {
+  const ls = loginsFor(d.id), def = defLogin(d.id), pinned = isFav(d.id), pending = state.pending.some((p) => p.id === d.id);
+  const live = state.terms.some((t) => t.targetId === d.id && !t.closed), popped = state.pop && state.pop.id === d.id, confirming = state.confirm && state.confirm.type === 'target' && state.confirm.id === d.id;
+  const parts = [];
+  if (d.locked) parts.push(pending ? '<span class="st st-wait"><i class="wait-dot"></i>En attente d’approbation</span>' : '<span class="st st-lock">' + ico('lock', 12) + 'Sur demande</span>');
+  else {
+    if (d.expires_at) parts.push('<span class="st st-temp">' + ico('clock', 12) + '<span class="num" data-until="' + Date.parse(d.expires_at) + '">' + fmtLeft(Date.parse(d.expires_at) - Date.now()) + '</span></span>');
+    if (!isSSH(d)) parts.push('<span class="chip-s mono">docker exec</span>');
+    else if (!ls.length) parts.push('<span class="st st-warn">Aucun login</span>');
+    else parts.push(def ? '<span class="chip-s mono">' + ico('key', 11) + esc(def.username) + '</span>' : '<span class="chip-s">' + ls.length + ' logins</span>');
+  }
+  const tags = (d.tags || []).map((t) => '<span class="chip-s">' + esc(t) + '</span>').join('') + (d.source === 'personal' ? '<span class="chip-s">personnelle</span>' : '') + (live ? '<span class="st st-live"><i class="live-dot"></i>ouverte</span>' : '');
+  return '<div class="tile ' + (d.locked ? 'locked' : '') + ' ' + (popped ? 'open' : '') + '" ' + (popped || confirming ? '' : 'draggable="true"') + ' tabindex="0" role="button" data-dest="' + esc(d.id) + '" aria-label="' + (d.locked ? 'Demander l’accès à ' : 'Ouvrir ') + esc(d.name) + '">' +
+    '<div class="flex items-start gap-3"><span class="tico ' + esc(d.kind) + '">' + ico(d.kind === 'docker' ? 'box' : d.locked ? 'lock' : 'terminal', 17) + '</span>' +
+    '<div class="min-w-0 grow"><div class="font-semibold truncate">' + esc(d.name) + '</div><div class="mono text-xs mute truncate">' + esc(d.locked ? 'sur demande' : hostOf(d)) + '</div></div>' +
+    (d.locked ? '' : '<button class="ibtn tact star ' + (pinned ? 'on' : '') + '" data-act="pin" data-id="' + esc(d.id) + '" title="' + (pinned ? 'Désépingler' : 'Épingler') + ' (P)" aria-label="' + (pinned ? 'Désépingler ' : 'Épingler ') + esc(d.name) + '">' + icoFill('star', 16, pinned) + '</button>') + '</div>' +
+    (tags ? '<div class="flex flex-wrap gap-1 mt-2.5">' + tags + '</div>' : '') +
+    '<div class="flex items-center gap-2 mt-3 min-h-[28px] flex-wrap">' + parts.join('') + '<span class="grow"></span>' +
+    (d.locked ? '' : '<button class="ibtn tact" data-act="copyssh" data-id="' + esc(d.id) + '" title="Copier la commande ssh (S)" aria-label="Copier la commande ssh pour ' + esc(d.name) + '">' + ico('copy', 15) + '</button>') +
+    (d.source === 'personal' ? (confirming ? '<span class="flex items-center gap-1 text-xs"><button class="btn btn-bad" style="height:28px" data-act="deltarget" data-id="' + esc(d.id) + '">Supprimer</button><button class="btn" style="height:28px" data-act="cancelconfirm">Non</button></span>' : '<button class="ibtn tact" data-act="askdeltarget" data-id="' + esc(d.id) + '" title="Supprimer cette cible" aria-label="Supprimer ' + esc(d.name) + '">' + ico('trash', 15) + '</button>') : '') +
+    '</div>' + (popped ? popHTML(d, ls, def) : '') + '</div>';
+}
+function popHTML(d, ls, def) {
+  const p = state.pop;
+  if (p.mode === 'login') {
+    const list = (p.logins && p.logins.length ? p.logins : ls).map((l) => ({ ref: l.ref, origin: l.origin, name: l.name, username: l.username, def: l.default !== undefined ? !!l.default : (def && def.ref === l.ref) }));
+    return '<div class="pop" data-pop><div class="text-xs mute mb-2">' + (p.intent === 'ssh' ? 'Copier la commande ssh avec' : 'Se connecter avec') + ' <span class="text-[11px]">· touche 1-' + list.length + '</span></div>' +
+      '<div class="flex flex-col gap-1.5">' + list.map((l, i) => '<button class="lopt" data-act="connect" data-id="' + esc(d.id) + '" data-login="' + esc(l.ref) + '"><span class="lico">' + ico(l.origin === 'shared' ? 'lock' : 'key', 14) + '</span><span class="min-w-0 grow"><b class="mono text-[13px]">' + esc(l.username) + '</b><small>' + esc(l.name) + (l.origin === 'shared' ? ' · préconfiguré' : ' · personnel') + '</small></span>' + (l.def ? '<span class="text-warn">★</span>' : '') + '<kbd>' + (i + 1) + '</kbd></button>').join('') + '</div>' +
+      '<label class="flex items-center gap-2 mt-3 text-xs mute cursor-pointer"><input type="checkbox" id="remember" checked class="accent-[rgb(var(--accent))]"> Retenir mon choix pour cette destination</label></div>';
+  }
+  const mins = STEPS[p.step];
+  return '<div class="pop" data-pop><div class="flex items-center gap-2"><b>Demander l’accès</b></div>' +
+    '<div class="flex items-baseline justify-between mt-3"><span class="text-xs mute">Durée</span><b class="num" id="rqDur">' + durLabel(mins) + '</b></div>' +
+    '<input id="rqRange" type="range" class="rng" min="0" max="' + (STEPS.length - 1) + '" step="1" value="' + p.step + '" style="--p:' + (p.step / (STEPS.length - 1) * 100) + '%" aria-label="Durée de l’accès">' +
+    '<div class="flex justify-between text-[11px] mute"><span>' + durLabel(STEPS[0]) + '</span><span>' + durLabel(STEPS[STEPS.length - 1]) + '</span></div>' +
+    '<div class="text-xs mute mt-1">Jusqu’à <b class="text-ink num" id="rqUntil">' + hhmm(Date.now() + mins * MIN) + '</b> si approuvé maintenant</div>' +
+    '<input id="rqWhy" class="input mt-3" placeholder="Motif : ticket, intervention prévue…" maxlength="500" value="' + esc(p.why) + '" autocomplete="off">' +
+    '<div class="flex flex-wrap gap-1.5 mt-2">' + REASONS.map((r) => '<button class="fchip" style="height:26px;padding:0 10px;font-size:12px" data-act="reason" data-r="' + r + '">' + r + '</button>').join('') + '</div>' +
+    '<div class="err" id="rqErr" style="margin-top:8px;min-height:0">' + esc(p.err || '') + '</div>' +
+    '<button class="btn btn-p w-full mt-2" data-act="sendreq" data-id="' + esc(d.id) + '">Demander <kbd style="background:rgb(255 255 255/.2);color:inherit;border-color:transparent">↵</kbd></button></div>';
+}
+function addTargetHTML() {
+  return '<div class="tile" style="cursor:default" id="addTargetCard"><div class="font-semibold mb-3">Nouvelle cible personnelle</div>' +
+    '<div class="flex flex-col gap-2"><input id="atName" class="input" placeholder="Nom" autocomplete="off"><div class="flex gap-2"><input id="atHost" class="input" placeholder="Hôte ou IP" autocomplete="off"><input id="atPort" class="input" style="width:84px" type="number" value="22" aria-label="Port"></div>' +
+    '<input id="atUser" class="input" placeholder="Identifiant SSH" autocomplete="off"><input id="atPass" class="input" type="password" placeholder="Mot de passe, ou collez une clé privée" autocomplete="new-password">' +
+    '<div class="flex gap-2"><button class="btn btn-p" data-act="attsave">Enregistrer</button><button class="btn" data-act="attcancel">Annuler</button></div></div><div class="err" id="atErr"></div></div>';
+}
+V.lanceur = {
+  mount() {
+    byId('view').innerHTML = '<section class="mb-5"><div class="mb-4"><h2 class="font-display text-[26px] sm:text-[30px] font-semibold leading-tight">Où allez-vous&nbsp;?</h2><p id="lSub" class="mute mt-1"></p></div>' +
+      '<div class="relative"><span class="absolute left-4 top-1/2 -translate-y-1/2 mute pointer-events-none">' + ico('search', 20) + '</span>' +
+      '<input id="q" class="input big" placeholder="Chercher… ou deploy@prod" autocomplete="off" spellcheck="false" value="' + esc(state.q) + '" aria-label="Chercher une destination">' +
+      '<kbd class="absolute right-4 top-1/2 -translate-y-1/2 hidden sm:inline">/</kbd></div><div id="tagbar" class="flex flex-wrap items-center gap-2 mt-3"></div></section><div id="res"></div>';
+  },
+  update() {
+    const vd = visibleDests(), list = vd.list, login = vd.login, all = allDests();
+    if (!state.loaded) { byId('lSub').textContent = 'Chargement…'; byId('res').innerHTML = ''; return; }
+    const open = all.filter((d) => !d.locked).length, locked = all.length - open, live = state.terms.filter((t) => !t.closed).length;
+    byId('lSub').innerHTML = open + ' destination' + (open > 1 ? 's' : '') + ' à portée de clic' + (locked ? ', ' + locked + ' sur demande' : '') + (live ? ' · <b class="text-ok">' + live + ' session' + (live > 1 ? 's' : '') + ' ouverte' + (live > 1 ? 's' : '') + '</b>' : '');
+    const tagSet = {}; all.forEach((d) => (d.tags || []).forEach((t) => { tagSet[t] = 1; }));
+    byId('tagbar').innerHTML = Object.keys(tagSet).sort().map((t) => '<button class="fchip ' + (state.tags.indexOf(t) >= 0 ? 'on' : '') + '" data-act="tag" data-t="' + esc(t) + '" aria-pressed="' + (state.tags.indexOf(t) >= 0) + '">' + esc(t) + '</button>').join('') +
+      (login ? '<span class="st st-temp">' + ico('key', 12) + 'avec ' + esc(login.username) + '</span>' : '') +
+      '<span class="mute text-xs hidden md:inline ml-auto"><kbd>↵</kbd> ouvrir · <kbd>⇧↵</kbd> copier ssh · <kbd>↓</kbd> parcourir · <kbd>P</kbd> épingler</span>';
+    const filtered = state.q || state.tags.length;
+    const pins = state.favorites.map((id) => list.find((d) => d.id === id)).filter(Boolean), rest = list.filter((d) => !isFav(d.id));
+    let h = '';
+    if (!filtered || pins.length) h += '<div class="mb-6"><div class="h3">' + ico('star', 13) + 'Épinglés <span class="font-normal normal-case tracking-normal">· glissez une tuile ici pour réordonner</span></div><div class="zone ' + (pins.length ? '' : 'empty') + '" data-zone="pins">' + (pins.length ? pins.map(tileHTML).join('') : 'Glissez vos destinations favorites ici, ou cliquez sur l’étoile d’une tuile.') + '</div></div>';
+    const addTile = state.me.allow_personal_targets ? (state.addTarget ? addTargetHTML() : '<button class="tile add" data-act="addtarget">' + ico('plus', 16) + 'Cible personnelle</button>') : '';
+    h += '<div><div class="h3">' + ico('grid', 13) + (filtered ? 'Résultats' : 'Toutes les destinations') + ' · ' + rest.length + '</div><div class="zone ' + (rest.length || addTile ? '' : 'empty') + '" data-zone="all">' +
+      (rest.length || addTile ? rest.map(tileHTML).join('') + addTile : (filtered && !pins.length ? 'Aucune destination ne correspond à « ' + esc(state.q) + ' ». <button class="btn ml-3" data-act="clearq">Tout afficher</button>' : (all.length ? 'Tout est épinglé. Glissez une tuile ici pour la désépingler.' : 'Aucune destination visible pour votre compte.'))) + '</div></div>';
+    byId('res').innerHTML = h;
+  }
+};
+
+/* ───────── Favoris (épinglés) ───────── */
+async function setFavorites(list, label, quiet) {
+  const prev = state.favorites.slice();
+  state.favorites = list; draw();
+  try {
+    const d = await api('/api/favorites', { method: 'PUT', body: JSON.stringify({ favorites: list }) });
+    state.favorites = d.favorites || list; draw();
+    if (!quiet) withUndo(label, () => setFavorites(prev, '', true));
+  } catch (e) { state.favorites = prev; draw(); toast(errText(e)); }
+}
+function togglePin(id) {
+  const was = isFav(id), d = destById(id);
+  setFavorites(was ? state.favorites.filter((x) => x !== id) : state.favorites.concat(id), (d ? d.name : id) + (was ? ' désépinglée.' : ' épinglée.'));
+}
+
+/* ───────── Connexion à une destination ───────── */
+const noLoginAction = { label: 'Ouvrir le Coffre', fn: () => go('coffre') };
+function showPop(p) {
+  state.pop = p; if (state.view !== 'lanceur') { state.view = 'lanceur'; }
+  draw(); const t = $('.tile[data-dest="' + CSS.escape(p.id) + '"]'); if (t) t.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  if (p.mode === 'req') setTimeout(() => { const w = byId('rqWhy'); if (w) w.focus({ preventScroll: true }); }, 30);
+}
+async function putDefault(destId, ref) { await api('/api/vault/defaults/' + encodeURIComponent(destId), { method: 'PUT', body: JSON.stringify({ login: ref }) }); state.vault.defaults[destId] = ref; if (!ref) delete state.vault.defaults[destId]; }
+async function connect(id, facade, loginRef, remember) {
+  const d = destById(id); if (!d) return;
+  if (d.locked) { showPop({ id: id, mode: 'req', step: 3, why: '', err: '' }); return; }
+  if (isSSH(d) && state.loaded && !loginsFor(id).length) {
+    try { await loadVault(); } catch (_) {}
+    if (!loginsFor(id).length) { toast('Aucun login pour ' + d.name + '. Liez-en un dans le Coffre.', noLoginAction); return; }
+  }
+  let r;
+  try { r = await api('/api/sessions', { method: 'POST', body: JSON.stringify({ target_id: id, source: d.source || 'catalog', facade: facade, login_id: loginRef || '' }) }); }
+  catch (e) {
+    let j = null; try { j = JSON.parse(e.message); } catch (_) {}
+    if (j && j.error === 'login_required' && !loginRef) { showPop({ id: id, mode: 'login', intent: facade, logins: j.logins || [] }); return; }
+    const m = errText(e); toast(m, /login/i.test(m) ? noLoginAction : null); return;
+  }
+  state.pop = null;
+  if (remember && loginRef) { try { await putDefault(id, loginRef); } catch (_) {} }
+  const lg = loginRef ? allLogins().find((l) => l.ref === loginRef) : defLogin(id);
+  if (facade === 'ssh') { copy(r.ssh).then(() => toast('Commande SSH copiée pour ' + d.name + (lg ? ' (' + lg.username + ')' : '') + ' · à utiliser dans ' + r.ttl_sec + ' s')); draw(); loadSessions().then(draw); return; }
+  openTerm(r.uuid, { targetId: id, name: d.name, loginRef: loginRef || (lg ? lg.ref : ''), loginName: lg ? lg.username : '' });
+  go('terminal'); loadSessions().then(draw); loadAudit().then(draw);
+}
+
+/* ───────── Terminaux (xterm.js sur /api/ws/{uuid}) ───────── */
+function termTheme() {
+  const cs = getComputedStyle(document.documentElement), rgb = (n) => 'rgb(' + cs.getPropertyValue('--' + n).trim().split(/\s+/).join(',') + ')';
+  return { background: rgb('term'), foreground: rgb('term-ink'), cursor: rgb('accent') };
+}
+const curTerm = () => state.terms.find((t) => t.id === state.activeTerm);
+function termSize(T) { if (T.ws && T.ws.readyState === 1) T.ws.send('\x00gpx-resize:' + T.term.cols + 'x' + T.term.rows); }
+function openTerm(uuid, meta) {
+  if (typeof Terminal === 'undefined') { toast('xterm.js est indisponible (CDN injoignable).'); return null; }
+  const el = document.createElement('div'); el.className = 'tpane';
+  const T = { id: uuid, targetId: meta.targetId, name: meta.name, loginRef: meta.loginRef || '', loginName: meta.loginName || '', start: Date.now(), el: el, closed: false, ws: null };
+  T.term = new Terminal({ cursorBlink: true, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: 13, theme: termTheme() });
+  T.fit = new FitAddon.FitAddon(); T.term.loadAddon(T.fit);
+  state.terms.push(T); state.activeTerm = T.id;
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(proto + '//' + location.host + '/api/ws/' + uuid); T.ws = ws; ws.binaryType = 'arraybuffer';
+  ws.onopen = () => { try { T.fit.fit(); } catch (_) {} termSize(T); };
+  ws.onmessage = (ev) => { if (typeof ev.data === 'string') T.term.write(ev.data); else T.term.write(new Uint8Array(ev.data)); };
+  ws.onclose = () => { T.closed = true; T.term.writeln('\r\n[session fermée]'); draw(); loadSessions().then(draw); loadAudit().then(draw); };
+  ws.onerror = () => { T.term.writeln('\r\n[erreur WS]'); };
+  T.term.onData((data) => { if (ws.readyState === 1) ws.send(data); });
+  T.term.onResize(() => termSize(T));
+  return T;
+}
+function mountTerm(T) {
+  const host = byId('tHost'); if (!host) return;
+  while (host.firstChild) host.removeChild(host.firstChild);
+  host.appendChild(T.el);
+  if (!T.opened) { T.term.open(T.el); T.opened = true; }
+  requestAnimationFrame(() => { try { T.fit.fit(); } catch (_) {} T.term.focus(); });
+}
+function closeTerm(id) {
+  const i = state.terms.findIndex((t) => t.id === id); if (i < 0) return; const T = state.terms[i];
+  try { T.ws.onclose = null; T.ws.close(); } catch (_) {}
+  try { T.term.dispose(); } catch (_) {}
+  state.terms.splice(i, 1);
+  if (state.activeTerm === id) state.activeTerm = (state.terms[i] || state.terms[i - 1] || {}).id || null;
+  draw(); loadSessions().then(draw);
+}
+function closeAllTerms() { state.terms.slice().forEach((t) => { try { t.ws.onclose = null; t.ws.close(); } catch (_) {} try { t.term.dispose(); } catch (_) {} }); state.terms = []; state.activeTerm = null; mounted = null; }
+function termSend(text, enter) {
+  const T = curTerm(); if (!T || !T.ws || T.ws.readyState !== 1) { toast('Aucun terminal connecté.'); return; }
+  T.ws.send(text + (enter ? '\r' : '')); T.term.focus();
+}
+async function reopenTerm(id) {
+  const T = state.terms.find((t) => t.id === id); if (!T) return;
+  await connect(T.targetId, 'web', T.loginRef);
+  if (state.terms.some((t) => t.id !== id && t.targetId === T.targetId && !t.closed)) closeTerm(id);
+}
+V.terminal = {
+  mount() { byId('view').innerHTML = '<div id="tTabs" class="flex items-center gap-2 overflow-x-auto pb-3"></div><div id="tMain"></div>'; this._for = null; },
+  update() {
+    byId('tTabs').innerHTML = state.terms.map((T) => '<div class="stab" draggable="true" data-stab="' + esc(T.id) + '" role="tab" aria-selected="' + (T.id === state.activeTerm) + '"><span class="' + (T.closed ? '' : 'live-dot') + '"></span><span>' + esc(T.name) + '</span>' + (T.loginName ? '<span class="mono mute text-xs">' + esc(T.loginName) + '</span>' : '') + '<button class="ibtn" style="width:24px;height:24px" data-act="closeterm" data-id="' + esc(T.id) + '" aria-label="Fermer le terminal ' + esc(T.name) + '" title="Fermer (clic molette)">' + ico('x', 13) + '</button></div>').join('') +
+      '<button class="btn ibtn" style="border:1px solid rgb(var(--line));flex:none" data-tab="lanceur" title="Ouvrir une autre destination" aria-label="Ouvrir une autre destination">' + ico('plus', 16) + '</button>';
+    const T = curTerm(), main = byId('tMain');
+    if (!T) {
+      const rec = state.favorites.map(destById).filter(Boolean).slice(0, 5);
+      main.innerHTML = '<div class="card p-10 text-center"><div class="w-12 h-12 rounded-2xl bg-sunk grid place-items-center mx-auto mb-3 mute">' + ico('terminal', 22) + '</div><h3 class="font-display text-lg font-semibold">Aucun terminal ouvert</h3><p class="mute mt-1 mb-4">Ouvrez une destination depuis le lanceur, ou tapez son nom dans la palette.</p><div class="flex justify-center gap-2 flex-wrap"><button class="btn btn-p" data-tab="lanceur">Choisir une destination</button><button class="btn" data-act="pal">Palette <kbd>Ctrl K</kbd></button></div>' +
+        (rec.length ? '<div class="mt-5 flex justify-center gap-2 flex-wrap items-center"><span class="mute text-xs">Épinglés</span>' + rec.map((d) => '<button class="fchip" data-act="open" data-id="' + esc(d.id) + '">' + esc(d.name) + '</button>').join('') + '</div>' : '') + '</div>';
+      this._for = null; return;
+    }
+    if (this._for !== T.id) {
+      this._for = T.id;
+      const d = destById(T.targetId);
+      main.innerHTML = '<div class="card overflow-hidden"><div class="flex flex-wrap items-center gap-3 px-4 py-3"><span class="tico ' + (d ? esc(d.kind) : '') + '">' + ico(d && d.kind === 'docker' ? 'box' : 'terminal', 17) + '</span>' +
+        '<div class="min-w-0 grow"><div class="font-semibold truncate flex items-center gap-2">' + esc(T.name) + (T.loginName ? ' <span class="chip-s mono">' + esc(T.loginName) + '</span>' : '') + '</div><div class="text-xs mute mono truncate">' + esc(d ? hostOf(d) : T.id) + ' · ouverte à ' + hhmm(T.start) + ' · <span class="num" data-elapsed="' + T.start + '"></span></div></div>' +
+        '<button class="btn" data-act="termssh" data-id="' + esc(T.targetId) + '">' + ico('copy', 14) + '<span class="hidden sm:inline">Copier la commande ssh</span></button>' +
+        '<button class="ibtn" data-act="closeterm" data-id="' + esc(T.id) + '" title="Fermer le terminal" aria-label="Fermer le terminal">' + ico('x', 16) + '</button></div>' +
+        '<div class="flex items-center gap-2 px-4 py-2 border-t border-line overflow-x-auto" id="snipRail"></div>' +
+        '<div id="tBox" class="term"><div id="tHost" style="height:' + state.termH + 'px"></div><div id="tGrip" class="grip-h" title="Glisser pour redimensionner"></div><div id="tOver"></div></div></div>';
+      mountTerm(T);
+    }
+    byId('snipRail').innerHTML = '<span class="mute text-xs flex-none">Commandes rapides</span>' + state.snips.map((s, i) => '<span class="snip" draggable="true" data-snip="' + i + '" title="Clic : insérer · double-clic : exécuter · glisser dans le terminal">' + esc(s) + '<button class="x" data-act="delsnip" data-i="' + i + '" aria-label="Retirer la commande ' + esc(s) + '">' + ico('x', 12) + '</button></span>').join('') +
+      (state.addSnip ? '<input id="snipIn" class="input" style="height:28px;width:220px;flex:none" placeholder="Commande, puis Entrée" autocomplete="off" spellcheck="false">' : '<button class="snip" style="cursor:pointer;color:rgb(var(--mute))" data-act="addsnip">' + ico('plus', 12) + ' Ajouter</button>');
+    byId('tOver').innerHTML = T.closed ? '<div class="tover"><span class="grow">Session fermée.</span><button class="btn" style="height:30px;color:#fff;background:rgb(255 255 255 / .18);border-color:transparent" data-act="reopen" data-id="' + esc(T.id) + '">Rouvrir</button></div>' : '';
+  }
+};
+
+/* ───────── Coffre ───────── */
+function chipHTML(l, did) {
+  const isDef = state.vault.defaults[did] === l.ref, sh = l.origin === 'shared';
+  return '<span class="lchip ' + (isDef ? 'def' : '') + '" ' + (sh ? '' : 'draggable="true"') + ' data-chip="' + esc(l.id) + '" data-from="' + esc(did) + '"><button class="f ' + (isDef ? 'on' : '') + '" data-act="fav" data-id="' + esc(did) + '" data-ref="' + esc(l.ref) + '" title="' + (isDef ? 'Login par défaut' : 'Définir par défaut') + '" aria-label="Login par défaut : ' + esc(l.username) + '">' + icoFill('star', 13, isDef) + '</button>' + esc(l.username) +
+    (sh ? '<span class="x" title="Préconfiguré : posé par l’administrateur" style="cursor:default">' + ico('lock', 12) + '</span>' : '<button class="x" data-act="unlink" data-id="' + esc(did) + '" data-login="' + esc(l.id) + '" aria-label="Retirer ' + esc(l.username) + ' de ' + esc(did) + '">' + ico('x', 12) + '</button>') + '</span>';
+}
+function loginCard(l) {
+  const n = l.dest_ids.length, ed = state.editSecret === l.id, conf = state.confirm && state.confirm.type === 'login' && state.confirm.id === l.id;
+  const cnt = n + ' destination' + (n > 1 ? 's' : '');
+  const sub = l.origin === 'shared' ? '<span class="mono">' + esc(l.username) + '</span> · préconfiguré · ' + cnt : '<span class="ed mono" data-edit="username" data-id="' + esc(l.id) + '" tabindex="0" title="Cliquer pour modifier">' + esc(l.username) + '</span> · ' + (l.has_private_key ? 'clé privée' : '') + (l.has_private_key && l.has_password ? ' + ' : '') + (l.has_password ? 'mot de passe' : '') + ' enregistré · ' + cnt;
+  return '<div class="lcard ' + (l.origin === 'shared' ? 'shared' : '') + ' ' + (state.armed === l.id ? 'armed' : '') + '" ' + (l.origin === 'shared' || ed ? '' : 'draggable="true"') + ' data-login="' + esc(l.id) + '" data-origin="' + l.origin + '">' +
+    '<span class="grip">' + ico('grip', 16) + '</span><span class="lico">' + ico(l.origin === 'shared' ? 'lock' : l.has_private_key ? 'key' : 'lock', 15) + '</span>' +
+    '<div class="min-w-0 grow"><div class="font-semibold truncate">' + (l.origin === 'shared' ? esc(l.name) : '<span class="ed" data-edit="name" data-id="' + esc(l.id) + '" tabindex="0" title="Cliquer pour renommer">' + esc(l.name) + '</span>') + '</div><div class="text-xs mute leading-snug">' + sub + '</div>' +
+    (ed ? '<div class="flex gap-2 mt-2"><input id="secIn" class="input" style="height:32px" type="password" placeholder="Nouveau secret, ou collez une clé privée" autocomplete="new-password" data-id="' + esc(l.id) + '"><button class="btn" data-act="secdone">Annuler</button></div>' : '') + '</div>' +
+    (l.origin === 'shared' ? '<span class="chip-s">' + ico('shield', 11) + 'scellé</span>' : conf ? '<span class="flex items-center gap-1"><button class="btn btn-bad" style="height:30px" data-act="dellogin" data-id="' + esc(l.id) + '">Supprimer</button><button class="btn" style="height:30px" data-act="cancelconfirm">Non</button></span>' :
+      '<button class="ibtn del" data-act="secret" data-id="' + esc(l.id) + '" title="Changer le secret ou déposer une clé" aria-label="Changer le secret">' + ico('key', 15) + '</button><button class="ibtn del" data-act="askdellogin" data-id="' + esc(l.id) + '" title="Supprimer ce login" aria-label="Supprimer ' + esc(l.name) + '">' + ico('trash', 15) + '</button>') + '</div>';
+}
+V.coffre = {
+  mount() {
+    byId('view').innerHTML = '<div class="mb-5"><h2 class="font-display text-[26px] font-semibold leading-tight">Coffre</h2><p class="mute mt-1">Glissez un login sur une machine pour l’y lier. Cliquez un nom ou un identifiant pour le modifier. Les secrets sont chiffrés sur la passerelle et ne sont jamais réaffichés.</p></div>' +
+      '<div class="grid lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] gap-6 items-start"><section><div class="h3">' + ico('key', 13) + 'Mes logins</div><div id="cLogins" class="flex flex-col gap-2.5"></div></section>' +
+      '<section><div class="h3 justify-between"><span class="flex items-center gap-2">' + ico('link', 13) + 'Destinations</span><span id="armMsg" class="normal-case tracking-normal font-normal text-accent"></span></div><div id="cDests" class="flex flex-col gap-2"></div></section></div>';
+  },
+  update() {
+    if (document.activeElement && document.activeElement.isContentEditable) return;
+    const logins = allLogins().sort((a, b) => (a.origin === b.origin ? norm(a.name).localeCompare(norm(b.name)) : (a.origin === 'shared' ? -1 : 1)));
+    byId('cLogins').innerHTML = logins.map(loginCard).join('') + (state.newLogin
+      ? '<div class="lcard" style="cursor:default;align-items:flex-start;border-color:rgb(var(--accent))"><span class="lico">' + ico('plus', 15) + '</span><div class="grow min-w-0 flex flex-col gap-2"><input id="nlUser" class="input" placeholder="Identifiant SSH, par exemple root" autocomplete="off" spellcheck="false"><input id="nlSec" class="input" type="password" placeholder="Mot de passe, ou collez une clé privée" autocomplete="new-password"><div class="flex items-center gap-2"><button class="btn btn-p" data-act="nlsave">Ajouter <kbd style="background:rgb(255 255 255/.2);color:inherit;border-color:transparent">↵</kbd></button><button class="btn" data-act="nlcancel">Annuler</button><span class="mute text-xs">Le nom se déduit de l’identifiant.</span></div></div></div>'
+      : '<button class="lcard" style="border-style:dashed;justify-content:center;color:rgb(var(--mute));min-height:56px" data-act="newlogin">' + ico('plus', 16) + ' Nouveau login <span class="text-xs">ou déposez un fichier de clé sur un login</span></button>');
+    const al = state.armed && logins.find((l) => l.id === state.armed);
+    byId('armMsg').textContent = al ? 'Cliquez une destination pour y lier « ' + al.username + ' » · Échap' : '';
+    byId('cDests').innerHTML = state.targets.map((d) => {
+      const ls = loginsFor(d.id), dock = !isSSH(d);
+      return '<div class="drow ' + (dock ? 'nodrop' : '') + ' ' + (al && !dock ? 'target' : '') + '" data-drow="' + esc(d.id) + '"><div class="flex items-center gap-2.5 min-w-0"><span class="tico ' + esc(d.kind) + '" style="width:30px;height:30px">' + ico(dock ? 'box' : 'terminal', 15) + '</span><div class="min-w-0"><div class="font-medium truncate">' + esc(d.name) + '</div><div class="mono text-[11px] mute truncate">' + esc(hostOf(d)) + '</div></div></div>' +
+        '<div class="flex flex-wrap items-center gap-1.5 min-w-0">' + (dock ? '<span class="mute text-xs">Sans login : docker exec via l’Agent</span>' : ls.length ? ls.map((l) => chipHTML(l, d.id)).join('') : '<span class="mute text-xs">Déposez un login ici</span>') + '</div></div>';
+    }).join('') || '<div class="card p-6 text-center mute">Aucune destination visible.</div>';
+  }
+};
+async function putLogin(id, patch) {
+  const l = state.vault.personal.find((x) => x.id === id);
+  const body = Object.assign({ name: l.name, username: l.username }, patch);
+  await api('/api/vault/logins/' + encodeURIComponent(id), { method: 'PUT', body: JSON.stringify(body) });
+  await loadVault();
+}
+async function setLinks(id, destIds, label, undoIds) {
+  const prev = undoIds || (state.vault.personal.find((x) => x.id === id) || {}).dest_ids || [];
+  try { await putLogin(id, { dest_ids: destIds }); draw(); if (label) withUndo(label, () => setLinks(id, prev).catch((e) => toast(errText(e)))); }
+  catch (e) { toast(errText(e)); await loadVault().catch(() => {}); draw(); }
+}
+function link(loginId, destId) {
+  const d = destById(destId), l = state.vault.personal.find((x) => x.id === loginId);
+  if (!l || !d) return;
+  if (!isSSH(d)) { toast('Une destination docker n’utilise aucun login.'); return; }
+  if ((l.dest_ids || []).indexOf(destId) >= 0) { toast(l.username + ' est déjà lié à ' + d.name + '.'); return; }
+  setLinks(loginId, (l.dest_ids || []).concat(destId), l.username + ' lié à ' + d.name + '.');
+}
+function unlink(loginId, destId) {
+  const l = state.vault.personal.find((x) => x.id === loginId), d = destById(destId); if (!l) return;
+  setLinks(loginId, (l.dest_ids || []).filter((x) => x !== destId), l.username + ' retiré de ' + (d ? d.name : destId) + '.');
+}
+function secretKind(v) { return /^-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(String(v).trim()) ? 'key' : 'password'; }
+async function saveNewLogin() {
+  const u = byId('nlUser'), s = byId('nlSec'), user = u.value.trim();
+  if (!user) { u.classList.add('bad'); u.focus(); return; }
+  if (!s.value) { s.classList.add('bad'); s.focus(); return; }
+  const kind = secretKind(s.value), body = { name: user, username: user, dest_ids: [] };
+  body[kind === 'key' ? 'private_key' : 'password'] = s.value;
+  try {
+    const m = await api('/api/vault/logins', { method: 'POST', body: JSON.stringify(body) });
+    state.newLogin = false; await loadVault(); state.armed = m.id; draw();
+    toast('Login ' + user + ' ajouté (' + (kind === 'key' ? 'clé privée' : 'mot de passe') + '). Cliquez une destination pour le lier.');
+  } catch (e) { toast(errText(e)); }
+}
+function startEdit(el) {
+  if (el.isContentEditable) return;
+  const card = el.closest('.lcard'); if (card) card.draggable = false;
+  const old = el.textContent; el.contentEditable = 'true'; el.focus();
+  const r = document.createRange(); r.selectNodeContents(el); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+  const done = async (ok) => {
+    el.onblur = el.onkeydown = null; el.contentEditable = 'false';
+    const v = el.textContent.trim().replace(/\s+/g, ' '), f = el.dataset.edit, id = el.dataset.id;
+    if (ok && v && v !== old) {
+      try { const prevPatch = {}; prevPatch[f] = old; const patch = {}; patch[f] = v; await putLogin(id, patch); withUndo((f === 'name' ? 'Nom' : 'Identifiant') + ' changé en « ' + v + ' ».', () => putLogin(id, prevPatch).then(draw).catch((e) => toast(errText(e)))); }
+      catch (e) { toast(errText(e)); }
+    } else el.textContent = old;
+    draw();
+  };
+  el.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); done(true); } else if (e.key === 'Escape') { e.preventDefault(); done(false); } };
+  el.onblur = () => done(true);
+}
+function readKeyFile(file) {
+  return new Promise((resolve, reject) => {
+    if (file.size > 65536) { reject(new Error('Fichier trop volumineux pour une clé privée (64 Ko maximum).')); return; }
+    const fr = new FileReader(); fr.onload = () => resolve(String(fr.result)); fr.onerror = () => reject(new Error('Lecture du fichier impossible.')); fr.readAsText(file);
+  });
+}
+
+/* ───────── Activité : accès temporaires, demandes, sessions, historique ───────── */
+async function revokeSession(id) {
+  try { await api('/api/sessions/' + encodeURIComponent(id), { method: 'DELETE' }); await Promise.all([loadSessions(), loadAudit()]); draw(); toast('Session révoquée.'); }
+  catch (e) { toast(errText(e)); }
+}
+V.activite = {
+  mount() {
+    byId('view').innerHTML = '<div class="mb-5"><h2 class="font-display text-[26px] font-semibold leading-tight">Activité</h2><p class="mute mt-1">Vos accès temporaires, vos demandes en attente, vos sessions actives et l’historique. Glissez une session vers la gauche pour la révoquer.</p></div>' +
+      '<div class="grid lg:grid-cols-2 gap-6 items-start"><section><div class="h3">' + ico('clock', 13) + 'Accès temporaires et demandes</div><div id="aMine" class="flex flex-col gap-2.5"></div><div class="h3 mt-7">' + ico('terminal', 13) + 'Sessions actives</div><div id="aSess" class="flex flex-col gap-2.5"></div></section>' +
+      '<section><div class="h3">' + ico('activity', 13) + 'Historique</div><div id="aAudit" class="card divide-y divide-line"></div></section></div>';
+  },
+  update() {
+    const grants = state.targets.filter((t) => t.expires_at);
+    let h = grants.map((d) => '<div class="card p-3.5 flex items-center gap-3"><span class="tico" style="background:rgb(var(--ok)/.14);color:rgb(var(--ok))">' + ico('clock', 16) + '</span><div class="min-w-0 grow"><div class="font-semibold truncate">' + esc(d.name) + '</div><div class="text-xs mute">Jusqu’à ' + hhmm(d.expires_at) + ' · reste <b class="text-ink num" data-until="' + Date.parse(d.expires_at) + '">' + fmtLeft(Date.parse(d.expires_at) - Date.now()) + '</b></div></div><button class="btn btn-p" data-act="open" data-id="' + esc(d.id) + '">Ouvrir</button></div>').join('');
+    h += state.pending.map((p) => '<div class="card p-3.5 flex items-center gap-3"><span class="tico" style="background:rgb(var(--warn)/.16);color:rgb(var(--warn))"><i class="wait-dot" style="width:9px;height:9px"></i></span><div class="min-w-0 grow"><div class="font-semibold truncate">' + esc(p.name) + ' <span class="mute font-normal">· ' + durLabel(p.duration_min) + '</span></div><div class="text-xs mute">Envoyée à ' + hhmm(p.at) + ' · en attente d’un approbateur · « ' + esc(p.reason) + ' »</div></div><button class="ibtn" data-act="dismissreq" data-id="' + esc(p.id) + '" title="Ne plus suivre cette demande" aria-label="Ne plus suivre cette demande">' + ico('x', 16) + '</button></div>').join('');
+    byId('aMine').innerHTML = h || '<div class="card p-6 text-center mute">Aucun accès temporaire. Cliquez une tuile « Sur demande » dans le lanceur.<div class="mt-3"><button class="btn" data-tab="lanceur">Voir le lanceur</button></div></div>';
+    byId('aSess').innerHTML = state.sessions.length ? state.sessions.map((s) => {
+      const d = destById(s.target_id), exp = Date.parse(s.expires_at);
+      return '<div class="swipe" data-sess="' + esc(s.id) + '"><div class="swipe-bg"><button data-act="revoke" data-id="' + esc(s.id) + '">' + ico('trash', 16) + 'Révoquer</button></div><div class="swipe-fg"><div class="flex items-center gap-3"><span class="tico">' + ico(s.facade === 'web' ? 'terminal' : 'key', 16) + '</span><div class="min-w-0 grow"><div class="font-semibold truncate">' + esc(d ? d.name : 'Cible supprimée') + ' <span class="chip-s">' + esc(s.facade) + '</span></div><div class="text-xs mute">' + (s.used ? 'Utilisée' : 'Pas encore utilisée') + ' · expire dans <span class="num" data-until="' + exp + '">' + fmtLeft(exp - Date.now()) + '</span></div></div><div class="sact"><button class="btn btn-bad" style="height:32px" data-act="revoke" data-id="' + esc(s.id) + '">Révoquer</button></div></div></div></div>';
+    }).join('') : '<div class="card p-6 text-center mute">Aucune session active.</div>';
+    byId('aAudit').innerHTML = state.audit.length ? state.audit.slice(0, 30).map((e) => '<div class="flex items-start gap-3 px-4 py-2.5"><span class="' + (e.success ? 'text-ok' : 'text-bad') + ' mt-0.5">' + ico(e.success ? 'check' : 'x', 14) + '</span><div class="min-w-0 grow"><div class="truncate">' + esc(e.detail || (e.success ? 'ok' : 'échec')) + '</div><div class="text-xs mute mono truncate">' + esc((destById(e.target_id) || {}).name || e.target_id || '') + ' · ' + esc(e.facade || '') + '</div></div><span class="text-xs mute num flex-none">' + esc(e.ts ? new Date(e.ts).toLocaleString([], { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '') + '</span></div>').join('') : '<div class="p-6 text-center mute">Aucun événement.</div>';
+  }
+};
+
+/* ───────── Compte et 2FA ───────── */
+function twofaTile(kind) {
+  const on = kind === 'totp' ? state.me.totp_enabled : state.me.email_otp_enabled, conf = state.confirm && state.confirm.type === '2fa' && state.confirm.id === kind;
+  const title = kind === 'totp' ? 'Application TOTP' : 'Code par email', sub = kind === 'totp' ? 'Google Authenticator, Aegis, 1Password…' : 'Code à usage unique envoyé par email';
+  let actions;
+  if (on) actions = conf ? '<button class="btn btn-bad" data-act="twofaoff" data-kind="' + kind + '">Désactiver</button><button class="btn" data-act="cancelconfirm">Non</button>' : '<button class="btn" data-act="asktwofaoff" data-kind="' + kind + '">Désactiver</button>';
+  else actions = kind === 'totp' ? '<button class="btn btn-p" data-act="totpsetup">Configurer</button>' : '<button class="btn btn-p" data-act="emailon">Activer</button>';
+  return '<div class="card p-5"><div class="flex items-center gap-3"><span class="tico" style="' + (on ? 'background:rgb(var(--ok)/.14);color:rgb(var(--ok))' : '') + '">' + ico(kind === 'totp' ? 'phone' : 'mail', 17) + '</span><div class="grow min-w-0"><b>' + title + '</b><div class="text-xs mute">' + sub + '</div></div><span class="st ' + (on ? 'st-temp' : 'st-lock') + '">' + (on ? 'Actif' : 'Inactif') + '</span></div><div class="flex gap-2 mt-4">' + actions + '</div>' +
+    (kind === 'totp' && state.totpSetup ? '<div class="mt-4 pt-4 border-t border-line text-center"><p class="mute text-xs mb-3">Scannez ce QR code, puis saisissez le code généré.</p>' + (state.totpSetup.qr_code ? '<img src="' + esc(state.totpSetup.qr_code) + '" alt="QR code TOTP" width="176" height="176" class="mx-auto rounded-lg bg-white p-2">' : '') + (state.totpSetup.otpauth_uri ? '<p class="text-xs mt-2"><a class="text-accent underline" href="' + esc(state.totpSetup.otpauth_uri) + '">Ouvrir dans l’application</a></p>' : '') + '<p class="text-xs mute mt-2">Clé manuelle : <code class="mono">' + esc(state.totpSetup.secret || '') + '</code></p><div id="totpOtp" class="flex justify-center gap-2 mt-4"></div><div class="err" id="totpErr"></div></div>' : '') + '</div>';
+}
+V.compte = {
+  mount() { byId('view').innerHTML = '<div class="mb-5"><h2 class="font-display text-[26px] font-semibold leading-tight">Compte</h2><p class="mute mt-1" id="cInfo"></p></div><div class="grid md:grid-cols-2 gap-4 items-start" id="cGrid"></div>'; },
+  update() {
+    const m = state.me, bits = []; if (m.totp_enabled) bits.push('application TOTP'); if (m.email_otp_enabled) bits.push('code par email');
+    byId('cInfo').textContent = state.user + (m.require_2fa ? ' · double authentification obligatoire' : '') + (bits.length ? ' · actif : ' + bits.join(', ') : '');
+    byId('cGrid').innerHTML = twofaTile('totp') + twofaTile('email') +
+      '<div class="card p-5"><div class="h3">Raccourcis</div><div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-[13px] items-center"><kbd>Ctrl K</kbd><span>Palette : ouvrir, demander, aller à…</span><kbd>/</kbd><span>Chercher une destination</span><kbd>deploy@prod</kbd><span>Choisir le login dans la recherche</span><kbd>⇧ ↵</kbd><span>Copier la commande ssh au lieu d’ouvrir</span><kbd>P · S</kbd><span>Sur une tuile : épingler · copier ssh</span><kbd>Ctrl Z</kbd><span>Annuler la dernière action</span></div></div>' +
+      '<div class="card p-5"><div class="h3">Session</div><p class="mute text-[13px] mb-3">Vos terminaux ouverts se ferment à la déconnexion.</p><button class="btn btn-bad" data-act="logout">' + ico('logout', 14) + 'Se déconnecter</button></div>';
+    if (state.totpSetup && byId('totpOtp') && !byId('totpOtp').children.length) {
+      const o = mountOtp(byId('totpOtp'), async (code) => {
+        try { await api('/api/2fa/totp/verify', { method: 'POST', body: JSON.stringify({ code: code }) }); state.totpSetup = null; await loadMe(); draw(); toast('Application TOTP activée.'); }
+        catch (e) { byId('totpErr').textContent = errText(e); o.fail(); setTimeout(() => o.reset(), 450); }
+      });
+      o.focus();
+    }
+  }
+};
+async function twofaCall(path, method, body, after) {
+  try { await api(path, { method: method, body: body || '{}' }); state.confirm = null; await loadMe(); draw(); if (after) toast(after); }
+  catch (e) { toast(errText(e)); }
+}
+
+/* ───────── Palette de commandes ───────── */
+let palSel = 0, palRows = [];
+const score = (t, hay) => { const h = norm(hay), w = norm(t).split(/\s+/).filter(Boolean); if (!w.length) return 1; if (w.every((x) => h.indexOf(x) >= 0)) return 100 - h.indexOf(w[0]); let i = 0; const flat = w.join(''); for (let k = 0; k < flat.length; k++) { i = h.indexOf(flat[k], i); if (i < 0) return 0; i++; } return 20; };
+function palItems(q) {
+  const items = [], pq = (function () { let login = null, term = q; const at = q.indexOf('@'); if (at > 0) { const lq = norm(q.slice(0, at)); login = allLogins().find((l) => norm(l.username) === lq || norm(l.name) === lq) || null; if (login) term = q.slice(at + 1); } return { login: login, term: term }; })();
+  allDests().forEach((d) => {
+    if (pq.login && pq.login.dest_ids.indexOf(d.id) < 0) return;
+    const sc = score(pq.term.trim(), d.name + ' ' + (d.host || '') + ' ' + (d.tags || []).join(' ') + ' ' + (d.container || '')); if (!sc) return;
+    items.push({ sc: sc + (isFav(d.id) ? 6 : 0) + (state.terms.some((t) => t.targetId === d.id) ? 4 : 0), ic: d.kind === 'docker' ? 'box' : d.locked ? 'lock' : 'terminal',
+      label: (d.locked ? 'Demander l’accès à ' : 'Ouvrir ') + d.name + (pq.login ? ' avec ' + pq.login.username : ''), meta: (d.tags || []).join(' · '),
+      run: (shift) => connect(d.id, shift ? 'ssh' : 'web', pq.login ? pq.login.ref : '') });
+  });
+  const acts = [['Aller au lanceur', 'lanceur accueil destinations', 'grid', () => go('lanceur')], ['Aller aux terminaux', 'terminal sessions', 'terminal', () => go('terminal')],
+    ['Aller au coffre', 'coffre logins secrets cles', 'vault', () => go('coffre')], ['Aller à l’activité', 'activite acces demandes sessions historique audit', 'activity', () => go('activite')],
+    ['Aller à mon compte', 'compte profil 2fa totp raccourcis', 'person', () => go('compte')],
+    ['Nouveau login dans le coffre', 'creer login ajouter', 'plus', () => { state.newLogin = true; go('coffre'); setTimeout(() => { const u = byId('nlUser'); if (u) u.focus(); }, 30); }],
+    ['Se déconnecter', 'deconnecter logout quitter', 'logout', () => logout()]];
+  if (curTerm()) acts.unshift(['Fermer le terminal actif', 'fermer terminer', 'x', () => closeTerm(state.activeTerm)]);
+  if (state.undoFns.length) acts.unshift(['Annuler la dernière action', 'annuler undo', 'refresh', () => undo()]);
+  acts.forEach((a) => { const sc = pq.term.trim() ? score(pq.term.trim(), a[0] + ' ' + a[1]) : 0.5; if (sc && !pq.login) items.push({ sc: sc - (pq.term.trim() ? 15 : 0), ic: a[2], label: a[0], meta: '', run: a[3] }); });
+  return items.sort((a, b) => b.sc - a.sc).slice(0, 9);
+}
+function palRender() {
+  palRows = palItems(byId('palq').value); palSel = clamp(palSel, 0, Math.max(0, palRows.length - 1));
+  byId('pallist').innerHTML = palRows.length ? palRows.map((r, i) => '<li><button class="pi ' + (i === palSel ? 'on' : '') + '" data-pi="' + i + '"><span class="ic">' + ico(r.ic, 15) + '</span><span class="grow min-w-0 truncate">' + esc(r.label) + '</span><span class="mute text-xs truncate">' + esc(r.meta) + '</span></button></li>').join('') : '<li class="px-4 py-6 text-center mute">Aucun résultat. Essayez le nom d’une machine ou « coffre ».</li>';
+}
+const palOpen = () => { byId('pal').hidden = false; byId('palq').value = ''; palSel = 0; palRender(); byId('palq').focus(); };
+const palClose = () => { byId('pal').hidden = true; };
+function palRun(i, shift) { const r = palRows[i]; if (!r) return; palClose(); r.run(shift); }
+
+/* ───────── Envoi d'une demande d'accès ───────── */
+async function sendRequest(id) {
+  const p = state.pop, d = destById(id), why = (byId('rqWhy').value || '').trim();
+  if (!why) { byId('rqWhy').classList.add('bad'); byId('rqErr').textContent = 'Le motif est obligatoire.'; byId('rqWhy').focus(); return; }
+  const mins = STEPS[p.step];
+  try {
+    await api('/api/access/requests', { method: 'POST', body: JSON.stringify({ target_id: id, reason: why, duration_min: mins }) });
+    state.pending = state.pending.filter((x) => x.id !== id).concat({ id: id, name: d.name, reason: why, duration_min: mins, at: Date.now() }); writeLS(reqKey(), state.pending);
+    state.pop = null; draw(); toast('Demande envoyée pour ' + d.name + ' · ' + durLabel(mins) + '. Elle apparaîtra ici dès qu’elle sera approuvée.');
+  } catch (e) { p.err = errText(e); byId('rqErr').textContent = p.err; }
+}
+
+/* ───────── Clics ───────── */
+document.addEventListener('click', (e) => {
+  const t = e.target;
+  if (t.closest('#pal') && !t.closest('.panel')) { palClose(); return; }
+  const pi = t.closest('[data-pi]'); if (pi) { palRun(+pi.dataset.pi, e.shiftKey); return; }
+  const tab = t.closest('[data-tab]'); if (tab) { go(tab.dataset.tab); return; }
+  const a = t.closest('[data-act]');
+  if (a) {
+    const id = a.dataset.id;
+    switch (a.dataset.act) {
+      case 'pal': palOpen(); break;
+      case 'logout': logout(); break;
+      case 'tag': { const x = a.dataset.t; state.tags = state.tags.indexOf(x) >= 0 ? state.tags.filter((y) => y !== x) : state.tags.concat(x); draw(); break; }
+      case 'clearq': state.q = ''; state.tags = []; byId('q').value = ''; draw(); break;
+      case 'pin': e.stopPropagation(); togglePin(id); break;
+      case 'copyssh': e.stopPropagation(); connect(id, 'ssh'); break;
+      case 'termssh': connect(id, 'ssh'); break;
+      case 'connect': { const intent = state.pop && state.pop.intent, rm = byId('remember'); connect(id, intent === 'ssh' ? 'ssh' : 'web', a.dataset.login, !!(rm && rm.checked)); break; }
+      case 'reason': { const w = byId('rqWhy'); w.value = a.dataset.r; state.pop.why = a.dataset.r; w.classList.remove('bad'); byId('rqErr').textContent = ''; w.focus(); break; }
+      case 'sendreq': sendRequest(id); break;
+      case 'open': go('lanceur'); setTimeout(() => connect(id, 'web'), 0); break;
+      case 'addtarget': state.addTarget = true; draw(); setTimeout(() => { const n = byId('atName'); if (n) n.focus(); }, 20); break;
+      case 'attcancel': state.addTarget = false; draw(); break;
+      case 'attsave': saveTarget(); break;
+      case 'askdeltarget': e.stopPropagation(); state.confirm = { type: 'target', id: id }; draw(); break;
+      case 'deltarget': e.stopPropagation(); deleteTarget(id); break;
+      case 'cancelconfirm': e.stopPropagation(); state.confirm = null; draw(); break;
+      case 'closeterm': e.stopPropagation(); closeTerm(id); break;
+      case 'reopen': reopenTerm(id); break;
+      case 'addsnip': state.addSnip = true; draw(); setTimeout(() => { const n = byId('snipIn'); if (n) n.focus(); }, 20); break;
+      case 'delsnip': e.stopPropagation(); state.snips.splice(+a.dataset.i, 1); writeLS(snipKey(), state.snips); draw(); break;
+      case 'fav': e.stopPropagation(); toggleDefault(id, a.dataset.ref); break;
+      case 'unlink': e.stopPropagation(); unlink(a.dataset.login, id); break;
+      case 'newlogin': state.newLogin = true; draw(); setTimeout(() => { const u = byId('nlUser'); if (u) u.focus(); }, 20); break;
+      case 'nlcancel': state.newLogin = false; draw(); break;
+      case 'nlsave': saveNewLogin(); break;
+      case 'secret': e.stopPropagation(); state.editSecret = id; draw(); setTimeout(() => { const s = byId('secIn'); if (s) s.focus(); }, 20); break;
+      case 'secdone': state.editSecret = null; draw(); break;
+      case 'askdellogin': e.stopPropagation(); state.confirm = { type: 'login', id: id }; draw(); break;
+      case 'dellogin': e.stopPropagation(); deleteLogin(id); break;
+      case 'revoke': e.stopPropagation(); revokeSession(id); break;
+      case 'dismissreq': state.pending = state.pending.filter((p) => p.id !== id); writeLS(reqKey(), state.pending); draw(); break;
+      case 'totpsetup': api('/api/2fa/totp/setup', { method: 'POST', body: '{}' }).then((d) => { state.totpSetup = d; draw(); }).catch((er) => toast(errText(er))); break;
+      case 'emailon': twofaCall('/api/2fa/email/enable', 'POST', '{}', 'Code par email activé.'); break;
+      case 'asktwofaoff': state.confirm = { type: '2fa', id: a.dataset.kind }; draw(); break;
+      case 'twofaoff': twofaCall(a.dataset.kind === 'totp' ? '/api/2fa/totp' : '/api/2fa/email', 'DELETE', null, 'Méthode désactivée.'); break;
+    }
+    return;
+  }
+  if (t.closest('.pop')) return;
+  const tile = t.closest('.tile[data-dest]');
+  if (tile) { const id = tile.dataset.dest; if (state.pop && state.pop.id === id) { state.pop = null; draw(); } else connect(id, e.shiftKey ? 'ssh' : 'web'); return; }
+  if (state.pop) { state.pop = null; draw(); }
+  const lc = t.closest('.lcard[data-login]');
+  if (lc && !t.closest('.ed, input, button')) { const id = lc.dataset.login; if (lc.dataset.origin === 'personal') { state.armed = state.armed === id ? null : id; draw(); } return; }
+  const dr = t.closest('[data-drow]');
+  if (dr && state.armed) { link(state.armed, dr.dataset.drow); state.armed = null; draw(); return; }
+  if (t.closest('.ed')) { startEdit(t.closest('.ed')); return; }
+  const st = t.closest('[data-stab]'); if (st) { state.activeTerm = st.dataset.stab; draw(); return; }
+  const sn = t.closest('[data-snip]'); if (sn) { termSend(state.snips[+sn.dataset.snip], false); return; }
+  $$('.swipe.open').forEach((s) => { if (!s.contains(t)) closeSwipe(s); });
+});
+document.addEventListener('dblclick', (e) => { const sn = e.target.closest('[data-snip]'); if (sn) termSend(state.snips[+sn.dataset.snip], true); });
+document.addEventListener('auxclick', (e) => { const st = e.target.closest('[data-stab]'); if (st && e.button === 1) { e.preventDefault(); closeTerm(st.dataset.stab); } });
+
+async function toggleDefault(destId, ref) {
+  const was = state.vault.defaults[destId] || '', next = was === ref ? '' : ref;
+  try { await putDefault(destId, next); draw(); const d = destById(destId); withUndo(next ? 'Login par défaut défini sur ' + (d ? d.name : destId) + '.' : 'Plus de login par défaut sur ' + (d ? d.name : destId) + '.', () => putDefault(destId, was).then(draw).catch((er) => toast(errText(er)))); }
+  catch (er) { toast(errText(er)); }
+}
+async function deleteLogin(id) {
+  const l = state.vault.personal.find((x) => x.id === id);
+  try { await api('/api/vault/logins/' + encodeURIComponent(id), { method: 'DELETE' }); state.confirm = null; await loadVault(); draw(); toast('Login ' + (l ? l.name : '') + ' supprimé. Son secret est effacé de la passerelle.'); }
+  catch (e) { toast(errText(e)); }
+}
+async function deleteTarget(id) {
+  try { await api('/api/targets/' + encodeURIComponent(id), { method: 'DELETE' }); state.confirm = null; await Promise.all([loadTargets(), loadVault(), loadMe()]); draw(); toast('Cible supprimée.'); }
+  catch (e) { toast(errText(e)); }
+}
+async function saveTarget() {
+  const name = byId('atName').value.trim(), host = byId('atHost').value.trim(), secret = byId('atPass').value;
+  if (!name || !host) { byId('atErr').textContent = 'Nom et hôte requis.'; return; }
+  const body = { name: name, kind: 'ssh', host: host, port: +byId('atPort').value || 22, username: byId('atUser').value.trim() };
+  if (secret) body[secretKind(secret) === 'key' ? 'private_key' : 'password'] = secret;
+  try { await api('/api/targets', { method: 'POST', body: JSON.stringify(body) }); state.addTarget = false; await Promise.all([loadTargets(), loadVault()]); draw(); toast('Cible ' + name + ' enregistrée.'); }
+  catch (e) { byId('atErr').textContent = errText(e); }
+}
+
+/* ───────── Saisie et clavier ───────── */
+document.addEventListener('input', (e) => {
+  const t = e.target;
+  if (t.id === 'q') { state.q = t.value; draw(); }
+  else if (t.id === 'rqRange') { const p = state.pop; p.step = +t.value; t.style.setProperty('--p', p.step / (STEPS.length - 1) * 100 + '%'); byId('rqDur').textContent = durLabel(STEPS[p.step]); byId('rqUntil').textContent = hhmm(Date.now() + STEPS[p.step] * MIN); }
+  else if (t.id === 'rqWhy') { state.pop.why = t.value; t.classList.remove('bad'); byId('rqErr').textContent = ''; }
+  else if (t.id === 'palq') { palSel = 0; palRender(); }
+  else if (t.classList && (t.classList.contains('input')) && t.classList.contains('bad')) t.classList.remove('bad');
+});
+document.addEventListener('paste', (e) => {
+  const t = e.target;
+  if (t.id === 'nlSec' || t.id === 'secIn' || t.id === 'atPass') { const txt = e.clipboardData.getData('text') || ''; if (secretKind(txt) === 'key') toast('Clé privée détectée. Elle sera chiffrée par la passerelle.'); }
+});
+document.addEventListener('keydown', (e) => {
+  const t = e.target, typing = /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable;
+  if (byId('app').classList.contains('hidden')) return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); byId('pal').hidden ? palOpen() : palClose(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !typing) { e.preventDefault(); undo(); return; }
+  if (!byId('pal').hidden) {
+    if (e.key === 'Escape') palClose();
+    else if (e.key === 'ArrowDown') { e.preventDefault(); palSel = (palSel + 1) % Math.max(1, palRows.length); palRender(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); palSel = (palSel - 1 + palRows.length) % Math.max(1, palRows.length); palRender(); }
+    else if (e.key === 'Enter') { e.preventDefault(); palRun(palSel, e.shiftKey); }
+    return;
+  }
+  if (t.id === 'q') {
+    if (e.key === 'Enter') { e.preventDefault(); const vd = visibleDests(), d = state.favorites.map((id) => vd.list.find((x) => x.id === id)).find(Boolean) || vd.list[0]; if (d) connect(d.id, e.shiftKey ? 'ssh' : 'web', vd.login ? vd.login.ref : ''); else toast('Aucune destination ne correspond.'); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); const f = $('.tile[data-dest]'); if (f) f.focus(); }
+    else if (e.key === 'Escape') { state.q = ''; t.value = ''; draw(); }
+    return;
+  }
+  if (t.id === 'rqWhy' && e.key === 'Enter') { e.preventDefault(); sendRequest(state.pop.id); return; }
+  if (t.id === 'rqRange' && e.key === 'Enter') { e.preventDefault(); sendRequest(state.pop.id); return; }
+  if ((t.id === 'nlUser' || t.id === 'nlSec') && e.key === 'Enter') { e.preventDefault(); saveNewLogin(); return; }
+  if ((t.id === 'nlUser' || t.id === 'nlSec') && e.key === 'Escape') { state.newLogin = false; draw(); return; }
+  if (['atName', 'atHost', 'atPort', 'atUser', 'atPass'].indexOf(t.id) >= 0) { if (e.key === 'Enter') { e.preventDefault(); saveTarget(); } else if (e.key === 'Escape') { state.addTarget = false; draw(); } return; }
+  if (t.id === 'snipIn') {
+    if (e.key === 'Enter') { e.preventDefault(); const v = t.value.trim(); if (v) { state.snips.push(v); writeLS(snipKey(), state.snips); } state.addSnip = false; draw(); }
+    else if (e.key === 'Escape') { state.addSnip = false; draw(); }
+    return;
+  }
+  if (t.id === 'secIn') {
+    if (e.key === 'Enter') {
+      e.preventDefault(); const id = t.dataset.id, v = t.value; if (!v) return;
+      const patch = {}; patch[secretKind(v) === 'key' ? 'private_key' : 'password'] = v;
+      putLogin(id, patch).then(() => { state.editSecret = null; draw(); toast('Secret mis à jour. Il n’est jamais réaffiché.'); }).catch((er) => toast(errText(er)));
+    } else if (e.key === 'Escape') { state.editSecret = null; draw(); }
+    return;
+  }
+  if (typing) return;
+  if (e.key === 'Escape') { if (state.pop || state.armed || state.newLogin || state.addTarget || state.confirm) { state.pop = null; state.armed = null; state.newLogin = false; state.addTarget = false; state.confirm = null; draw(); } return; }
+  if (state.pop && state.pop.mode === 'login' && /^[1-9]$/.test(e.key)) { const b = $$('[data-act="connect"]')[+e.key - 1]; if (b) { e.preventDefault(); b.click(); } return; }
+  if (e.key === '/' && state.view === 'lanceur') { e.preventDefault(); const q = byId('q'); if (q) q.focus(); return; }
+  const tile = t.closest && t.closest('.tile[data-dest]');
+  if (tile) {
+    const id = tile.dataset.dest, tiles = $$('.tile[data-dest]'), i = tiles.indexOf(tile);
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); connect(id, e.shiftKey ? 'ssh' : 'web'); }
+    else if (e.key === 'p' || e.key === 'P') { if (!destById(id).locked) togglePin(id); }
+    else if (e.key === 's' || e.key === 'S') { if (!destById(id).locked) connect(id, 'ssh'); }
+    else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); (tiles[i + 1] || tiles[i]).focus(); }
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); if (i === 0) { const q = byId('q'); if (q) q.focus(); } else tiles[i - 1].focus(); }
+  }
+});
+
+/* ───────── Glisser-déposer ───────── */
+function clearHot() { $$('.hot,.ins,.ins-l,.ins-r').forEach((x) => x.classList.remove('hot', 'ins', 'ins-l', 'ins-r')); }
+function endDrag() { if (state.drag) state.drag.el.classList.remove('dragging'); state.drag = null; clearHot(); byId('dropbar').classList.remove('show'); }
+document.addEventListener('dragstart', (e) => {
+  const c = (sel) => e.target.closest && e.target.closest(sel);
+  const chip = c('.lchip[draggable="true"]'), tile = c('.tile[data-dest]'), card = c('.lcard[draggable="true"]'), snip = c('.snip[data-snip]'), stab = c('.stab');
+  if (chip) state.drag = { type: 'chip', id: chip.dataset.chip, from: chip.dataset.from, el: chip };
+  else if (tile && !tile.classList.contains('locked')) state.drag = { type: 'dest', id: tile.dataset.dest, el: tile };
+  else if (card) state.drag = { type: 'login', id: card.dataset.login, el: card };
+  else if (snip) state.drag = { type: 'snip', text: state.snips[+snip.dataset.snip], el: snip };
+  else if (stab) state.drag = { type: 'stab', id: stab.dataset.stab, el: stab };
+  else { if (tile) e.preventDefault(); return; }
+  e.dataTransfer.effectAllowed = 'copyMove'; try { e.dataTransfer.setData('text/plain', state.drag.id || state.drag.text || ''); } catch (_) {}
+  setTimeout(() => { if (state.drag) state.drag.el.classList.add('dragging'); }, 0);
+  if (state.drag.type === 'chip') byId('dropbar').classList.add('show');
+});
+document.addEventListener('dragend', endDrag);
+document.addEventListener('dragover', (e) => {
+  const files = e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types, 'Files') >= 0;
+  const lc = e.target.closest && e.target.closest('.lcard[data-login]');
+  if (files && lc && lc.dataset.origin === 'personal') { e.preventDefault(); clearHot(); lc.classList.add('hot'); return; }
+  const d = state.drag; if (!d) return;
+  if (d.type === 'dest') {
+    const z = e.target.closest('[data-zone]'); if (!z) return; e.preventDefault(); clearHot(); z.classList.add('hot');
+    if (z.dataset.zone === 'pins') {
+      const tiles = $$('.tile[data-dest]:not(.dragging)', z); let idx = tiles.length;
+      for (let i = 0; i < tiles.length; i++) { const r = tiles[i].getBoundingClientRect(); if (e.clientY < r.top || (e.clientY <= r.bottom && e.clientX < r.left + r.width / 2)) { idx = i; break; } }
+      if (tiles[idx]) tiles[idx].classList.add('ins'); d.ref = tiles[idx] ? tiles[idx].dataset.dest : null;
+    }
+  } else if (d.type === 'login' || d.type === 'chip') {
+    const r = e.target.closest('[data-drow]'), dz = e.target.closest('[data-dz]'); clearHot();
+    if (r && !r.classList.contains('nodrop')) { e.preventDefault(); r.classList.add('hot'); } else if (dz && d.type === 'chip') { e.preventDefault(); dz.classList.add('hot'); }
+  } else if (d.type === 'snip') { const b = e.target.closest('#tBox'); clearHot(); if (b) { e.preventDefault(); b.classList.add('hot'); } }
+  else if (d.type === 'stab') { const s = e.target.closest('[data-stab]'); clearHot(); if (s && s !== d.el) { e.preventDefault(); const r = s.getBoundingClientRect(); s.classList.add(e.clientX < r.left + r.width / 2 ? 'ins-l' : 'ins-r'); } }
+});
+document.addEventListener('drop', (e) => {
+  const nFiles = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length, lc = e.target.closest && e.target.closest('.lcard[data-login]');
+  if (nFiles && lc && lc.dataset.origin === 'personal') {
+    e.preventDefault(); clearHot(); const file = e.dataTransfer.files[0], id = lc.dataset.login;
+    readKeyFile(file).then((txt) => { if (secretKind(txt) !== 'key') throw new Error('Ce fichier ne contient pas de clé privée.'); return putLogin(id, { private_key: txt }); })
+      .then(() => { draw(); toast('Clé ' + file.name + ' enregistrée. Elle est chiffrée par la passerelle.'); }).catch((er) => toast(errText(er)));
+    return;
+  }
+  const d = state.drag; if (!d) return; e.preventDefault(); endDrag();
+  if (d.type === 'dest') {
+    const z = e.target.closest('[data-zone]'); if (!z) return;
+    if (z.dataset.zone === 'all') { if (isFav(d.id)) setFavorites(state.favorites.filter((x) => x !== d.id), (destById(d.id) || {}).name + ' désépinglée.'); return; }
+    const arr = state.favorites.filter((x) => x !== d.id), at = d.ref ? arr.indexOf(d.ref) : -1;
+    if (at < 0 || state.q || state.tags.length) arr.push(d.id); else arr.splice(at, 0, d.id);
+    if (JSON.stringify(arr) !== JSON.stringify(state.favorites)) setFavorites(arr, (destById(d.id) || {}).name + (isFav(d.id) ? ' déplacée.' : ' épinglée.'));
+  } else if (d.type === 'login' || d.type === 'chip') {
+    const r = e.target.closest('[data-drow]'), dz = e.target.closest('[data-dz]');
+    if (dz && d.type === 'chip') unlink(d.id, d.from);
+    else if (r) {
+      if (d.type === 'chip' && d.from !== r.dataset.drow) {
+        const l = state.vault.personal.find((x) => x.id === d.id), to = r.dataset.drow, dest = destById(to);
+        if (l && dest && isSSH(dest) && (l.dest_ids || []).indexOf(to) < 0) setLinks(d.id, l.dest_ids.filter((x) => x !== d.from).concat(to), l.username + ' déplacé vers ' + dest.name + '.');
+      } else if (d.type === 'login') link(d.id, r.dataset.drow);
+    }
+  } else if (d.type === 'snip') termSend(d.text, false);
+  else if (d.type === 'stab') {
+    const s = e.target.closest('[data-stab]'); if (!s || s === d.el) return; const r = s.getBoundingClientRect(), after = e.clientX >= r.left + r.width / 2;
+    const arr = state.terms.filter((x) => x.id !== d.id), moved = state.terms.find((x) => x.id === d.id), at = arr.findIndex((x) => x.id === s.dataset.stab);
+    arr.splice(at + (after ? 1 : 0), 0, moved); state.terms = arr; draw();
+  }
+});
+
+/* ───────── Gestes : redimensionner le terminal, révoquer par glissement ───────── */
+document.addEventListener('pointerdown', (e) => {
+  const g = e.target.closest('#tGrip');
+  if (g) {
+    e.preventDefault(); const y0 = e.clientY, h0 = state.termH, host = byId('tHost');
+    const mv = (ev) => { state.termH = clamp(h0 + ev.clientY - y0, 200, 760); host.style.height = state.termH + 'px'; const T = curTerm(); if (T) { try { T.fit.fit(); } catch (_) {} } };
+    const up = () => { removeEventListener('pointermove', mv); removeEventListener('pointerup', up); };
+    addEventListener('pointermove', mv); addEventListener('pointerup', up); return;
+  }
+  const fg = e.target.closest('.swipe-fg'); if (!fg || e.target.closest('button') || e.button !== 0) return;
+  sw = { fg: fg, x: e.clientX, id: e.pointerId, dx: 0, on: false, row: fg.closest('.swipe'), was: fg.closest('.swipe').classList.contains('open') };
+});
+let sw = null;
+function closeSwipe(row) { row.classList.remove('open'); row.removeAttribute('data-dir'); const fg = $('.swipe-fg', row); fg.style.transform = ''; }
+addEventListener('pointermove', (e) => {
+  if (!sw || e.pointerId !== sw.id) return; let dx = e.clientX - sw.x; if (!sw.on && Math.abs(dx) < 6) return; sw.on = true;
+  dx = clamp(dx + (sw.was ? -100 : 0), -140, 0); sw.dx = dx; sw.fg.style.transition = 'none'; sw.fg.style.transform = 'translateX(' + dx + 'px)'; sw.row.dataset.dir = dx < 0 ? 'left' : ''; sw.row.style.setProperty('--p', Math.min(1, Math.abs(dx) / 100));
+});
+const swEnd = (e) => {
+  if (!sw || e.pointerId !== sw.id) return; const s = sw; sw = null; s.fg.style.transition = ''; if (!s.on) return;
+  if (e.type === 'pointerup' && s.dx <= -60) { s.row.classList.add('open'); s.fg.style.transform = 'translateX(-100px)'; } else closeSwipe(s.row);
+};
+addEventListener('pointerup', swEnd); addEventListener('pointercancel', swEnd);
+
+/* ───────── Horloge : décomptes, durée des terminaux, rafraîchissement ───────── */
+/* Les logins préconfigurés ne sont listés que pour les destinations visibles : une approbation ou une expiration change aussi le coffre. */
+function refreshVisibility() {
+  return Promise.all([loadTargets(), loadRequestable(), loadSessions(), loadVault()]).then(() => { reconcilePending(); draw(); }).catch(() => {});
+}
+let lastGrantCheck = 0;
+function tick() {
+  const t = Date.now(); let expired = false;
+  $$('[data-until]').forEach((el) => { const left = +el.dataset.until - t; el.textContent = fmtLeft(left); if (left <= 0) expired = true; });
+  $$('[data-elapsed]').forEach((el) => { el.textContent = fmtElapsed(t - +el.dataset.elapsed); });
+  if (expired && t - lastGrantCheck > 4000) { lastGrantCheck = t; refreshVisibility(); }
+}
+setInterval(tick, 1000);
+setInterval(() => {
+  if (!state.token || document.hidden || byId('app').classList.contains('hidden') || !state.loaded) return;
+  if (document.activeElement && /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName)) return;
+  if (state.pop || state.addTarget || state.newLogin || state.editSecret) return;
+  refreshVisibility();
+}, 15000);
+
+/* ───────── Démarrage (mêmes entrées que l'interface standard : invitation, SSO, lien #term=) ───────── */
+paintIcons();
+(async () => {
+  if (new URLSearchParams(location.search).get('invite')) { showScreen('invite'); return; }
+  const sso2fa = location.hash.match(/sso_2fa=([^&]+)/);
+  if (sso2fa) {
+    const params = new URLSearchParams(location.hash.replace(/^#/, ''));
+    state.user = params.get('user') || '';
+    const methods = (params.get('methods') || 'totp').split(',').filter(Boolean);
+    const cid = decodeURIComponent(sso2fa[1]);
+    history.replaceState(null, '', location.pathname + location.search);
+    startTwoFA(cid, methods); return;
+  }
+  const ssoMatch = location.hash.match(/(?:^|[&#])sso=([^&]+)/);
+  if (ssoMatch) {
+    try {
+      state.token = decodeURIComponent(ssoMatch[1]); persistSession();
+      history.replaceState(null, '', location.pathname + location.search);
+      const me = await api('/api/me'); state.user = me.username || ''; persistSession();
+      await enterApp(); await loadAuthInfo(); return;
+    } catch (e) { clearSession(); byId('authErr').textContent = errText(e) || 'SSO échoué'; }
+  }
+  await loadAuthInfo();
+  if (state.token) {
+    try { const me = await api('/api/me'); state.user = me.username || state.user; persistSession(); await enterApp(); }
+    catch (_) { clearSession(); showScreen('auth'); return; }
+  }
+  const m = location.hash.match(/term=([0-9a-f-]{36})/i);
+  if (m && state.token) { const T = openTerm(m[1], { targetId: '', name: 'Terminal', loginRef: '', loginName: '' }); if (T) go('terminal'); }
+})();
+</script>
+</body>
+</html>

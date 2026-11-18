@@ -46,3 +46,26 @@ func TestMatchAllowlistIgnoresForgedForwardedFor(t *testing.T) {
 		t.Error("derrière un proxy de confiance, une adresse transmise hors liste est refusée")
 	}
 }
+
+// Une liste vide ne veut plus dire « ouvert » : elle refuse tout, y compris le réseau privé. Ouvrir à tous se dit
+// explicitement (0.0.0.0/0 et ::/0).
+func TestMatchAllowlistEmptyDeniesAndExplicitOpenAllows(t *testing.T) {
+	t.Cleanup(func() { edgelog.SetTrustedProxies(nil) })
+	edgelog.SetTrustedProxies(nil)
+	from := func(allow []string, remote string) bool {
+		r := httptest.NewRequest("POST", "/mcp", nil)
+		r.RemoteAddr = remote
+		return matchAllowlist(allow, r)
+	}
+	for _, remote := range []string{"10.0.0.1:1", "198.51.100.9:1", "[2001:db8::1]:1"} {
+		if from(nil, remote) {
+			t.Errorf("liste vide : %s ne doit pas passer", remote)
+		}
+	}
+	open := []string{"0.0.0.0/0", "::/0"}
+	for _, remote := range []string{"198.51.100.9:1", "[2001:db8::1]:1"} {
+		if !from(open, remote) {
+			t.Errorf("ouverture explicite : %s doit passer", remote)
+		}
+	}
+}

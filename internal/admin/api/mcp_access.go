@@ -163,6 +163,7 @@ func (h *McpAccessHandler) putAllowedIPs(w http.ResponseWriter, r *http.Request)
 		writeErr(w, r, http.StatusBadRequest, "api.err.bad_request")
 		return
 	}
+	n := 0
 	for _, entry := range body.IPs {
 		entry = strings.TrimSpace(entry)
 		if entry == "" {
@@ -172,6 +173,11 @@ func (h *McpAccessHandler) putAllowedIPs(w http.ResponseWriter, r *http.Request)
 			writeErr(w, r, http.StatusBadRequest, "api.err.bad_request")
 			return
 		}
+		n++
+	}
+	if n == 0 {
+		writeErr(w, r, http.StatusBadRequest, "api.err.bad_request")
+		return
 	}
 	if err := mcpaccess.SetAllowedIPs(h.DB, body.IPs); err != nil {
 		h.Log.Error("mcp_access: set allowed ips", "err", err)

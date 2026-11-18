@@ -257,6 +257,19 @@ func TestEngine_SecurityLabelsReachThePayload(t *testing.T) {
 	}
 }
 
+func TestEngine_ImageReachesThePayload(t *testing.T) {
+	g := newFakeGateway(t)
+	l := &fakeLister{}
+	e := newEngine(g, l)
+	in := web("web-1", "http://10.0.0.1:80", nil)
+	in.Image = "grafana/grafana:10.2.0"
+	l.set([]Instance{in}, nil)
+	e.cycle(context.Background())
+	if g.posts[0]["image"] != "grafana/grafana:10.2.0" {
+		t.Errorf("l'image n'est pas transmise à la passerelle : %v", g.posts[0])
+	}
+}
+
 func TestPrefixIsNormalised(t *testing.T) {
 	g := newFakeGateway(t)
 	l := &fakeLister{}
@@ -315,5 +328,32 @@ func TestEngine_ReconcilesStaleInstancesOnce(t *testing.T) {
 	}
 	if len(g.stops) != 1 || g.stops[0]["container_id"] != stale {
 		t.Fatalf("retraits = %v (seule l'instance périmée de cette source doit partir)", g.stops)
+	}
+}
+
+// Les candidats d'une instance partent dans la charge utile, l'adresse sûre restant dans backends.
+func TestEngine_PublishesCandidates(t *testing.T) {
+	g := newFakeGateway(t)
+	l := &fakeLister{}
+	e := newEngine(g, l)
+	in := web("web-1", "http://10.0.0.5:32788", nil)
+	in.Candidates = []string{"http://10.20.0.77:8080", "http://10.0.0.5:32788"}
+	solo := web("web-2", "http://10.0.0.6:80", nil)
+	solo.Candidates = []string{"http://10.0.0.6:80"}
+	l.set([]Instance{in, solo}, nil)
+	e.cycle(context.Background())
+	var withC, withoutC int
+	for _, p := range g.posts {
+		if c, ok := p["candidates"].([]any); ok && len(c) == 2 && c[0] == "http://10.20.0.77:8080" {
+			withC++
+			if be, _ := p["backends"].([]any); len(be) != 1 || be[0] != "http://10.0.0.5:32788" {
+				t.Errorf("backends = %v", p["backends"])
+			}
+		} else if !ok {
+			withoutC++
+		}
+	}
+	if withC != 1 || withoutC != 1 {
+		t.Errorf("candidats envoyés : %d avec, %d sans (un seul candidat : rien à choisir)", withC, withoutC)
 	}
 }

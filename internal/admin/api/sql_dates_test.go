@@ -157,13 +157,9 @@ func TestNodeTokenExpiryIgnoresTheProcessTimezone(t *testing.T) {
 	json.Unmarshal(rec.Body.Bytes(), &created) //nolint:errcheck
 
 	// Heure locale UTC-5 comparée en texte à CURRENT_TIMESTAMP (UTC) : le token naissait expiré.
-	auth := adminauth.RequireBearerToken(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	req := httptest.NewRequest(http.MethodGet, "/internal/v1/ping", nil)
-	req.Header.Set("Authorization", "Bearer "+created.Token)
-	authRec := httptest.NewRecorder()
-	auth.ServeHTTP(authRec, req)
-	if authRec.Code != http.StatusOK {
-		t.Fatalf("token valide 1 h rejeté aussitôt : status %d", authRec.Code)
+	var live int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM tokens WHERE node_name = 'lyon-03' AND revoked = 0 AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)`).Scan(&live); err != nil || live != 1 {
+		t.Fatalf("token valide 1 h déjà expiré : %d actif(s), err %v", live, err)
 	}
 
 	for id, age := range map[string]time.Duration{"old": 7*24*time.Hour + 2*time.Hour, "recent": 7*24*time.Hour - 2*time.Hour} {

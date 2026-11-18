@@ -1,5 +1,5 @@
 // ── Shared: formulaire / liste / streams proxy ─────────────────────────────
-// Chargé avant pages/* (trafic.js dépend de openProxyModal, etc.).
+// Chargé avant pages/* (proxies.js dépend de openProxyModal, etc.).
 // Extrait de pages-all.js — phase 1 du plan split pages-all.
 
 // ── YAML lite engine ────────────────────────────────────────────────────────

@@ -71,6 +71,7 @@ func Load[T AdminConfig | EdgeConfig | AgentConfig | LandingConfig](configPath s
 	bindIfMissing(v, "engine.metrics_disabled")
 	bindIfMissing(v, "engine.access_log_disabled")
 	bindIfMissing(v, "network.unknown_host_action")
+	bindIfMissing(v, "server.mcp_port")
 
 	var cfg T
 	if err := v.Unmarshal(&cfg); err != nil {
@@ -146,6 +147,9 @@ func applyAgentEnvOverrides(cfg *AgentConfig) {
 	}
 	if v := os.Getenv("GPX_IDENTITY_AGENT_NODE_NAME"); v != "" {
 		cfg.Identity.NodeName = v
+	}
+	if v := os.Getenv("GPX_HOST_ADDRESS"); v != "" {
+		cfg.HostAddress = v
 	}
 	if v := os.Getenv("GPX_NETWORK_MANAGEMENT_EDGE_CONTAINER_NAME"); v != "" {
 		cfg.NetworkManagement.EdgeContainerName = v

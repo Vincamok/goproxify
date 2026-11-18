@@ -120,6 +120,9 @@ type ProxySpec struct {
 	Paths       []string // préfixes publics (locations + strip)
 	Port        int
 	BackendURL  string
+	// Candidates : adresses du même conteneur, de la plus à la moins préférée, que la passerelle sonde (ADR 0026).
+	// BackendURL reste l'adresse sûre. Vide : une seule adresse.
+	Candidates  []string
 	TLS         bool
 	Passthrough bool
 	RedirectHTTPS bool

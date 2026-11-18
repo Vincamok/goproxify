@@ -30,6 +30,7 @@ function _searchNavMeta() {
   (APP_CONFIG.pageTabs || []).forEach(g => g.tabs.forEach(tab => {
     meta[tab.page] = meta[tab.page] || {};
     if (tab.page !== g.root) meta[tab.page].parent = meta[tab.page].parent || g.root;
+    (tab.also || []).forEach(p => { meta[p] = meta[p] || {}; meta[p].parent = meta[p].parent || g.root; });
   }));
   return meta;
 }
@@ -190,19 +191,30 @@ function _searchWhenListed(marker, fn) {
   tick();
 }
 
+// Actions contextuelles d'une page : chaque fournisseur reçoit la saisie et renvoie des entrées
+// { action: true, label, group, scope: 'action', run }. Ils passent avant les pages et les éléments.
+window.gpxPaletteProviders = window.gpxPaletteProviders || [];
+
+function _searchActions(q) {
+  return window.gpxPaletteProviders.flatMap(p => { try { return p(q) || []; } catch { return []; } });
+}
+
 function _searchRun(q) {
   const entries = _searchIndex();
   const whole = _searchNorm(q).trim();
+  const actions = _searchActions(q);
   if (!whole) {
-    return entries.filter(e => e.scope === (state.selectedEdge ? 'edge' : 'admin')).slice(0, 12);
+    return [...actions, ...entries.filter(e => e.scope === (state.selectedEdge ? 'edge' : 'admin')).slice(0, 12)];
   }
+  // Une adresse ou un CIDR saisi n'est pas une recherche de page : seules ses actions sont proposées.
+  if (actions.length && typeof SecUX !== 'undefined' && SecUX.parseTarget(q.trim().split(/\s+/)[0])) return actions;
   const tokens = whole.split(/\s+/);
   const rank = list => list
     .map(e => ({ e, s: _searchScore(e, tokens, whole) }))
     .filter(x => x.s >= 0)
     .sort((a, b) => b.s - a.s || a.e.label.localeCompare(b.e.label))
     .map(x => x.e);
-  return [...rank(entries).slice(0, 20), ...rank(_searchEntities).slice(0, 15)];
+  return [...actions, ...rank(entries).slice(0, 20), ...rank(_searchEntities).slice(0, 15)];
 }
 
 function _searchRender() {
@@ -271,6 +283,7 @@ window.searchHover = function(i) {
 window.searchOpen = function(i) {
   const e = _searchResults[i];
   if (!e) return;
+  if (e.action) { closeSearch(); e.run(); return; }
   if (e.entity) { _searchOpenEntity(e); return; }
   if (e.needsEdge && !state.selectedEdge) {
     const edges = window._navEdges || [];

@@ -297,12 +297,16 @@ func (h *HTTPServer) oidcViewSlug(cookie string) string {
 // pageHTML rend la page du portail pour une vue (thème, titre et sous-titre injectés côté serveur).
 func pageHTML(v ResolvedView) string {
 	meta, _ := json.Marshal(map[string]string{"slug": v.Slug, "key": v.Key})
+	page := portalIndexHTML
+	if v.Theme == ThemeBoussole {
+		page = boussoleIndexHTML
+	}
 	out := strings.NewReplacer(
 		"__PORTAL_THEME__", v.Theme,
 		"__PORTAL_VIEW__", string(meta),
 		"__PORTAL_TITLE__", htmlEscape(v.Title),
 		"__PORTAL_TAGLINE__", htmlEscape(v.Tagline),
-	).Replace(portalIndexHTML)
+	).Replace(page)
 	return out
 }
 

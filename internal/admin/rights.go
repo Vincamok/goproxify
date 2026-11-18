@@ -23,8 +23,6 @@ const (
 	kindStatic routeKind = "static"
 	// kindSecret : authentifiée par un secret porté par la requête (jeton de ticket, d'appairage, de récupération).
 	kindSecret routeKind = "secret"
-	// kindGateway : appelée par une passerelle ou un Agent avec son jeton.
-	kindGateway routeKind = "gateway"
 	// kindMCP : serveur MCP, dont chaque outil déclare sa permission (rbac.ToolPermission).
 	kindMCP routeKind = "mcp"
 )
@@ -74,17 +72,6 @@ var routeDeclarations = map[string]routeRights{
 	"POST /internal/v1/pair":        {Kind: kindSecret, Note: "secret d'appairage"},
 	"GET /internal/v1/pair/status":  {Kind: kindSecret, Note: "secret d'appairage"},
 	"/api/v1/cert-bundle":           {Kind: kindSecret, Note: "jeton de récupération d'un certificat"},
-
-	// Passerelles et Agents
-	"POST /internal/v1/edges/register": {Kind: kindGateway},
-	"GET /internal/v1/routes":          {Kind: kindGateway},
-	"GET /internal/v1/nodes/metrics":   {Kind: kindGateway},
-	"/internal/v1/logs":                {Kind: kindGateway},
-	"/internal/v1/security/bans":       {Kind: kindGateway},
-	"/internal/v1/security/threats":    {Kind: kindGateway},
-	"/internal/v1/security/cves":       {Kind: kindGateway},
-	"/internal/v1/heartbeat":           {Kind: kindGateway},
-	"/internal/v1/events":              {Kind: kindGateway},
 
 	// MCP
 	"/mcp":  {Kind: kindMCP},
@@ -178,29 +165,31 @@ var routeDeclarations = map[string]routeRights{
 	"/api/v1/portal-page-templates/": svc("portal_templates", "portal_templates:read", "portal_templates:manage"),
 
 	// Administration
-	"/api/v1/backups":             mixed(svc("backups", "backups:list", "backups:create"), "restauration"),
-	"/api/v1/backups/":            mixed(svc("backups", "backups:list", "backups:create"), "restauration"),
-	"/api/v1/internal-ca":         svc("pki", "pki:read", "pki:write"),
-	"/api/v1/internal-ca/":        svc("pki", "pki:read", "pki:write"),
-	"/api/v1/ech":                 svc("pki", "pki:read", "pki:write"),
-	"/api/v1/ech/":                svc("pki", "pki:read", "pki:write"),
-	"/api/v1/acme/provider-types": svc("pki", "pki:read", "pki:write"),
-	"/api/v1/acme/providers":      svc("pki", "pki:read", "pki:write"),
-	"/api/v1/acme/providers/":     svc("pki", "pki:read", "pki:write"),
-	"/api/v1/settings/acme":       svc("pki", "pki:read", "pki:write"),
-	"/api/v1/plugins":             svc("plugins", "plugins:read", "plugins:write"),
-	"/api/v1/plugins/":            svc("plugins", "plugins:read", "plugins:write"),
-	"/api/v1/plugin-keys":         svc("plugins", "plugins:read", "plugins:write"),
-	"/api/v1/plugin-keys/":        svc("plugins", "plugins:read", "plugins:write"),
-	"/api/v1/plugin-repos":        svc("plugins", "plugins:read", "plugins:write"),
-	"/api/v1/plugin-repos/":       svc("plugins", "plugins:read", "plugins:write"),
-	"/api/v1/users":               svc("accounts", "accounts:read", "users:write"),
-	"/api/v1/users/":              svc("accounts", "accounts:read", "users:write"),
-	"/api/v1/rights/":             svc("accounts", "accounts:read", "teams:write"),
-	"/api/v1/teams":               svc("accounts", "accounts:read", "teams:write"),
-	"/api/v1/teams/":              svc("accounts", "accounts:read", "teams:write"),
-	"/api/v1/mcp-access/":         svc("accounts", "accounts:read", "users:write"),
-	"/api/v1/settings/mfa/":       svc("settings", "settings:read", "settings:write"),
-	"/api/v1/settings/smtp":       svc("settings", "settings:read", "settings:write"),
-	"/api/v1/settings/smtp/":      svc("settings", "settings:read", "settings:write"),
+	"/api/v1/backups":               mixed(svc("backups", "backups:list", "backups:create"), "restauration"),
+	"/api/v1/backups/":              mixed(svc("backups", "backups:list", "backups:create"), "restauration"),
+	"/api/v1/internal-ca":           svc("pki", "pki:read", "pki:write"),
+	"/api/v1/internal-ca/":          svc("pki", "pki:read", "pki:write"),
+	"/api/v1/ech":                   svc("pki", "pki:read", "pki:write"),
+	"/api/v1/ech/":                  svc("pki", "pki:read", "pki:write"),
+	"/api/v1/acme/provider-types":   svc("pki", "pki:read", "pki:write"),
+	"/api/v1/acme/providers":        svc("pki", "pki:read", "pki:write"),
+	"/api/v1/acme/providers/":       svc("pki", "pki:read", "pki:write"),
+	"/api/v1/settings/acme":         svc("pki", "pki:read", "pki:write"),
+	"/api/v1/plugins":               svc("plugins", "plugins:read", "plugins:write"),
+	"/api/v1/plugins/":              svc("plugins", "plugins:read", "plugins:write"),
+	"/api/v1/plugin-keys":           svc("plugins", "plugins:read", "plugins:write"),
+	"/api/v1/plugin-keys/":          svc("plugins", "plugins:read", "plugins:write"),
+	"/api/v1/plugin-repos":          svc("plugins", "plugins:read", "plugins:write"),
+	"/api/v1/plugin-repos/":         svc("plugins", "plugins:read", "plugins:write"),
+	"/api/v1/users":                 svc("accounts", "accounts:read", "users:write"),
+	"/api/v1/users/":                svc("accounts", "accounts:read", "users:write"),
+	"/api/v1/rights/":               svc("accounts", "accounts:read", "teams:write"),
+	"/api/v1/teams":                 svc("accounts", "accounts:read", "teams:write"),
+	"/api/v1/teams/":                svc("accounts", "accounts:read", "teams:write"),
+	"/api/v1/mcp-access/":           svc("accounts", "accounts:read", "users:write"),
+	"/api/v1/settings/mfa/":         svc("settings", "settings:read", "settings:write"),
+	"/api/v1/settings/smtp":         svc("settings", "settings:read", "settings:write"),
+	"/api/v1/settings/smtp/":        svc("settings", "settings:read", "settings:write"),
+	"/api/v1/settings/diagnostics":  svc("settings", "settings:read", "settings:write"),
+	"/api/v1/settings/diagnostics/": svc("settings", "settings:read", "settings:write"),
 }

@@ -193,7 +193,7 @@ function renderPortalPage(cfg, edgeName, edgeLabel, metricsData) {
         <div class="field">
           <label class="field-label">${esc(t('portal.theme') || 'Thème du portail')}</label>
           <select class="input" id="portal-theme">
-            ${[['auto', 'portal.theme_auto', 'Automatique (suit le système)'], ['clair', 'portal.theme_clair', 'Clair'], ['sombre', 'portal.theme_sombre', 'Sombre'], ['ocean', 'portal.theme_ocean', 'Océan'], ['foret', 'portal.theme_foret', 'Forêt'], ['amethyste', 'portal.theme_amethyste', 'Améthyste'], ['contraste', 'portal.theme_contraste', 'Contraste élevé']].map(([v, k, d]) => `<option value="${v}" ${(cfg.theme || 'auto') === v ? 'selected' : ''}>${esc(t(k) || d)}</option>`).join('')}
+            ${[['auto', 'portal.theme_auto', 'Automatique (suit le système)'], ['clair', 'portal.theme_clair', 'Clair'], ['sombre', 'portal.theme_sombre', 'Sombre'], ['ocean', 'portal.theme_ocean', 'Océan'], ['foret', 'portal.theme_foret', 'Forêt'], ['amethyste', 'portal.theme_amethyste', 'Améthyste'], ['contraste', 'portal.theme_contraste', 'Contraste élevé'], ['boussole', 'portal.theme_boussole', 'Boussole (interface complète)']].map(([v, k, d]) => `<option value="${v}" ${(cfg.theme || 'auto') === v ? 'selected' : ''}>${esc(t(k) || d)}</option>`).join('')}
           </select>
         </div>
         ${haSessionField(cfg)}
@@ -216,7 +216,7 @@ function renderPortalPage(cfg, edgeName, edgeLabel, metricsData) {
   const destGroupItems = (refs.destGroups || []).map((g) => ({ value: g.id, label: g.name, sub: (g.targets || []).length + ' ' + (t('pdgroups.dests_n') || 'destination(s)') }));
   const destItems = refs.dests.map((d) => ({ value: d.id, label: d.name, sub: [d.kind, d.host].filter(Boolean).join(' · ') }));
   const viewsHost = document.getElementById('portal-views');
-  const themeOpts = (cur) => [['', 'portal.theme_inherit', '(thème du portail)'], ['auto', 'portal.theme_auto', 'Automatique (suit le système)'], ['clair', 'portal.theme_clair', 'Clair'], ['sombre', 'portal.theme_sombre', 'Sombre'], ['ocean', 'portal.theme_ocean', 'Océan'], ['foret', 'portal.theme_foret', 'Forêt'], ['amethyste', 'portal.theme_amethyste', 'Améthyste'], ['contraste', 'portal.theme_contraste', 'Contraste élevé']]
+  const themeOpts = (cur) => [['', 'portal.theme_inherit', '(thème du portail)'], ['auto', 'portal.theme_auto', 'Automatique (suit le système)'], ['clair', 'portal.theme_clair', 'Clair'], ['sombre', 'portal.theme_sombre', 'Sombre'], ['ocean', 'portal.theme_ocean', 'Océan'], ['foret', 'portal.theme_foret', 'Forêt'], ['amethyste', 'portal.theme_amethyste', 'Améthyste'], ['contraste', 'portal.theme_contraste', 'Contraste élevé'], ['boussole', 'portal.theme_boussole', 'Boussole (interface complète)']]
     .map(([v, k, d]) => `<option value="${v}" ${(cur || '') === v ? 'selected' : ''}>${esc(t(k) || d)}</option>`).join('');
   const f = (key, label, val, ph) => `<div class="field"><label class="field-label">${esc(label)}</label><input class="input" data-f="${key}" value="${esc(val || '')}" placeholder="${esc(ph || '')}"/></div>`;
   const section = (label, hint, inner) => `<div class="field" style="margin-top:12px"><label class="field-label">${esc(label)}</label>${hint ? `<div style="font-size:11px;color:var(--text2);margin:-2px 0 6px;line-height:1.4">${esc(hint)}</div>` : ''}${inner}</div>`;

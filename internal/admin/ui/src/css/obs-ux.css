@@ -1,0 +1,73 @@
+/* ── Observabilité : noyau d'interactions (shared/obs-ux.js) ─────────────────────────────── */
+
+/* Période : puces + champ libre (« 3h », « 2j », « 90min ») */
+.oux-range{align-items:center}
+.oux-range-in{width:78px;height:26px;margin-left:4px;padding:0 8px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--text);font:inherit;font-size:12px}
+.oux-range-in::placeholder{color:var(--text3)}
+.oux-range-in:hover{border-color:var(--border)}
+.oux-range-in:focus{border-color:var(--accent);background:var(--bg);outline:none}
+.oux-range-in.on{border-color:var(--accent);color:var(--accent);font-weight:600}
+.oux-range-in.bad{border-color:var(--red);animation:secux-shake .25s}
+
+/* Plage tracée sur un graphique */
+.logs-hist-h{flex-wrap:wrap;gap:2px 12px}
+svg.gpx-hist-svg,svg.prism-svg[data-unit]{touch-action:pan-y;-webkit-user-select:none;user-select:none;cursor:crosshair}
+.oux-brush{fill:var(--accent);fill-opacity:.18;stroke:var(--accent);stroke-width:1;vector-effect:non-scaling-stroke}
+
+/* IP déplaçable */
+.oux-ipb{cursor:grab;font-family:var(--mono,ui-monospace,monospace)}
+.oux-ipb:active{cursor:grabbing}
+.oux-ipb:focus-visible,.oux-act:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+
+/* Saisie assistée */
+.oux-q{position:relative;flex:1;min-width:180px}
+.oux-q>input{width:100%}
+.oux-sg{position:absolute;z-index:40;left:0;top:calc(100% + 4px);min-width:220px;max-width:min(420px,100%);max-height:240px;overflow:auto;padding:4px;border:1px solid var(--border);border-radius:10px;background:var(--bg2);box-shadow:0 10px 30px rgba(0,0,0,.28)}
+.oux-sg-i{display:block;width:100%;text-align:left;padding:5px 8px;border:0;border-radius:6px;background:none;color:inherit;font:inherit;font-family:var(--mono,ui-monospace,monospace);font-size:12px;cursor:pointer}
+.oux-sg-i:hover,.oux-sg-i.hl{background:var(--bg3)}
+.oux-qhint{margin:6px 2px 0;font-size:11.5px;color:var(--text3)}
+.oux-qhint code{font-family:var(--mono,ui-monospace,monospace);padding:0 4px;border-radius:4px;background:var(--bg3);color:var(--text2)}
+
+/* Objectif SLO */
+.oux-slo{display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap}
+.oux-slo .secux-chip{font-variant-numeric:tabular-nums}
+
+/* Indicateurs cliquables */
+.prism-kpi.oux-kpi-link{cursor:pointer;transition:border-color .12s,background .12s}
+.prism-kpi.oux-kpi-link:hover,.prism-kpi.oux-kpi-link:focus-visible{border-color:var(--accent);background:var(--bg3);outline:none}
+
+/* Passerelles en puces */
+.oux-nodes{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
+
+/* Alertes : lignes à glisser */
+.sx-swipe-bg.r.info{background:var(--accent)}
+.oa-rows{margin:0 -16px}
+.oa-row{grid-template-columns:auto minmax(0,1fr) auto;cursor:pointer}
+.oa-row .oa-dot{width:9px;height:9px;border-radius:50%;background:var(--yellow)}
+.oa-row.acked .oa-dot{background:var(--green)}
+.oa-row.silenced .oa-dot{background:var(--text3)}
+.oa-row-top{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;font-size:13px}
+.oa-row-msg{margin-top:2px;font-size:12px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.oa-row-end{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--text3);white-space:nowrap}
+@media (hover:hover){.oa-row .oa-ack{opacity:0;transition:opacity .12s}.oa-row:hover .oa-ack,.oa-row:focus-within .oa-ack{opacity:1}}
+
+/* Vue Proxy : tuiles réordonnables, vues enregistrées */
+.pxi-tile[draggable="true"]{cursor:grab}
+.pxi-tile.oux-dragging{opacity:.45}
+.pxi-tile.oux-over{outline:2px dashed var(--accent);outline-offset:2px}
+.oux-views{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12px}
+.oux-views-l{color:var(--text3)}
+.oux-view{display:inline-flex;align-items:center;gap:4px}
+
+/* Prism : plage précise et comparaison */
+.oux-precise{position:relative}
+.oux-precise>summary{list-style:none;cursor:pointer;height:28px;display:inline-flex;align-items:center;padding:0 8px;border-radius:6px;font-size:12px;color:var(--text3)}
+.oux-precise>summary::-webkit-details-marker{display:none}
+.oux-precise>summary:hover,.oux-precise[open]>summary{color:var(--text);background:var(--bg3)}
+.oux-precise-body{position:absolute;z-index:30;left:0;top:calc(100% + 4px);display:flex;align-items:center;gap:6px;flex-wrap:wrap;width:max-content;max-width:min(520px,calc(100vw - 32px));padding:8px 10px;border:1px solid var(--border);border-radius:10px;background:var(--bg2);box-shadow:0 10px 30px rgba(0,0,0,.28)}
+
+/* Journal d'audit : valeurs filtrantes */
+.oux-f{background:none;border:0;padding:0;font:inherit;color:inherit;cursor:pointer;border-bottom:1px dashed color-mix(in srgb,var(--accent) 45%,transparent)}
+.oux-f:hover{color:var(--accent);border-bottom-color:var(--accent)}
+
+@media (prefers-reduced-motion:reduce){.oux-range-in.bad,.prism-kpi.oux-kpi-link,.oa-row .oa-ack{transition:none;animation:none}}

@@ -163,8 +163,9 @@ type k8sIngressItems struct {
 type k8sService struct {
 	Metadata k8sMeta `json:"metadata"`
 	Spec     struct {
-		ClusterIP string    `json:"clusterIP"`
-		Ports     []k8sPort `json:"ports"`
+		ClusterIP string            `json:"clusterIP"`
+		Ports     []k8sPort         `json:"ports"`
+		Selector  map[string]string `json:"selector"`
 	} `json:"spec"`
 }
 
@@ -393,6 +394,9 @@ type k8sRoute struct {
 	host    string
 	backend string
 	tls     bool
+	// target : le Service dont les pods servent la route, d'où vient l'image. Nil quand l'étiquette backend désigne autre
+	// chose que ce Service.
+	target *serviceTarget
 }
 
 // upsertService traduit un Service K8s en route proxy et la pousse à la passerelle.
@@ -404,7 +408,7 @@ func (d *Discovery) upsertService(ctx context.Context, svc k8sService) {
 		return
 	}
 	if r, ok := d.serviceRoute(svc); ok {
-		d.pushRoute(ctx, r.key, r.ann, r.host, r.backend, r.tls)
+		d.pushRoute(ctx, r.key, r.ann, r.host, r.backend, r.tls, d.routeImage(ctx, r.target, nil))
 	}
 }
 
@@ -432,17 +436,21 @@ func (d *Discovery) serviceRoute(svc k8sService) (k8sRoute, bool) {
 		fmt.Sscanf(ann[p+"port"], "%d", &backendPort)
 	}
 	backendURL := fmt.Sprintf("http://%s:%d", svc.Spec.ClusterIP, backendPort)
+	var target *serviceTarget
 	if ann[p+"backend"] != "" {
 		backendURL = ann[p+"backend"]
+	} else {
+		target = &serviceTarget{ns: svc.Metadata.Namespace, name: svc.Metadata.Name, selector: svc.Spec.Selector}
 	}
 
-	return k8sRoute{key: svcKey(svc.Metadata), ann: ann, host: host, backend: backendURL, tls: ann[p+"tls"] == "true"}, true
+	return k8sRoute{key: svcKey(svc.Metadata), ann: ann, host: host, backend: backendURL, tls: ann[p+"tls"] == "true", target: target}, true
 }
 
 // upsertIngress traduit un Ingress K8s en routes proxy et les pousse à la passerelle.
 func (d *Discovery) upsertIngress(ctx context.Context, ing k8sIngress) {
+	cache := map[string]string{}
 	for _, r := range d.ingressRoutes(ing) {
-		d.pushRoute(ctx, r.key, r.ann, r.host, r.backend, r.tls)
+		d.pushRoute(ctx, r.key, r.ann, r.host, r.backend, r.tls, d.routeImage(ctx, r.target, cache))
 	}
 }
 
@@ -475,6 +483,7 @@ func (d *Discovery) ingressRoutes(ing k8sIngress) []k8sRoute {
 
 		// Backend : annotation > première règle HTTP
 		backendURL := ann[p+"backend"]
+		var target *serviceTarget
 		if backendURL == "" && rule.HTTP != nil && len(rule.HTTP.Paths) > 0 {
 			svcName := ""
 			svcPort := 80
@@ -490,13 +499,14 @@ func (d *Discovery) ingressRoutes(ing k8sIngress) []k8sRoute {
 					ns = "default"
 				}
 				backendURL = fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", svcName, ns, svcPort)
+				target = &serviceTarget{ns: ns, name: svcName}
 			}
 		}
 		if backendURL == "" {
 			continue
 		}
 
-		out = append(out, k8sRoute{key: ingKey(ing.Metadata) + ":" + host, ann: ann, host: host, backend: backendURL, tls: tls})
+		out = append(out, k8sRoute{key: ingKey(ing.Metadata) + ":" + host, ann: ann, host: host, backend: backendURL, tls: tls, target: target})
 	}
 	return out
 }
@@ -504,7 +514,7 @@ func (d *Discovery) ingressRoutes(ing k8sIngress) []k8sRoute {
 // routePayload construit le payload Agent→Passerelle d'une route. Les annotations suivent exactement la
 // sémantique des labels Docker (waf, rate_limit, jwt, mtls, backpressure…) : elles passent par le même
 // parseur, préfixe configurable normalisé vers "goproxify.". Retourne nil si l'hôte est invalide.
-func (d *Discovery) routePayload(key string, ann map[string]string, host, backendURL string, tls bool) (map[string]any, *docker.ProxySpec) {
+func (d *Discovery) routePayload(key string, ann map[string]string, host, backendURL string, tls bool, image string) (map[string]any, *docker.ProxySpec) {
 	labels := make(map[string]string, len(ann)+4)
 	for k, v := range ann {
 		if rest, ok := strings.CutPrefix(k, d.labelPrefix); ok {
@@ -518,7 +528,7 @@ func (d *Discovery) routePayload(key string, ann map[string]string, host, backen
 	if tls {
 		labels[docker.LabelTLS] = "true"
 	}
-	spec := docker.ParseLabels("k8s:"+key, key, "", "", labels, nil, "")
+	spec := docker.ParseLabels("k8s:"+key, key, image, "", labels, nil, "")
 	if spec == nil {
 		return nil, nil
 	}
@@ -533,6 +543,7 @@ func (d *Discovery) routePayload(key string, ann map[string]string, host, backen
 		"redirect_https": spec.RedirectHTTPS,
 		"source":       "k8s",
 		"container_id": "k8s:" + key,
+		"image":        spec.Image,
 		"agent_name":   d.cfg.Identity.NodeName,
 		"role":         spec.Role,
 	}
@@ -544,8 +555,8 @@ func (d *Discovery) routePayload(key string, ann map[string]string, host, backen
 }
 
 // pushRoute envoie un payload agentContainerPayload compatible à la passerelle.
-func (d *Discovery) pushRoute(ctx context.Context, key string, ann map[string]string, host, backendURL string, tls bool) {
-	payload, spec := d.routePayload(key, ann, host, backendURL, tls)
+func (d *Discovery) pushRoute(ctx context.Context, key string, ann map[string]string, host, backendURL string, tls bool, image string) {
+	payload, spec := d.routePayload(key, ann, host, backendURL, tls, image)
 	if payload == nil {
 		d.log.Warn("k8s discovery: hôte invalide, route ignorée", "host", host, "key", key)
 		return
@@ -705,8 +716,13 @@ func (d *Discovery) snapshot(ctx context.Context) (svcRV, ingRV string) {
 	routes := make([]map[string]any, 0, len(wanted))
 	var inactive []map[string]any
 	hosts := make(map[string]string, len(wanted))
+	images := map[string]string{}
 	for _, r := range wanted {
-		payload, spec := d.routePayload(r.key, r.ann, r.host, r.backend, r.tls)
+		image := ""
+		if !idle[r.key] {
+			image = d.routeImage(ctx, r.target, images)
+		}
+		payload, spec := d.routePayload(r.key, r.ann, r.host, r.backend, r.tls, image)
 		if payload == nil {
 			d.log.Warn("k8s discovery: hôte invalide, route ignorée", "host", r.host, "key", r.key)
 			continue

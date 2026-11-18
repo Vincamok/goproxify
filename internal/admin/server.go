@@ -22,6 +22,7 @@ import (
 
 	"github.com/vincamok/goproxify/internal/admin/acme"
 	"github.com/vincamok/goproxify/internal/admin/alerting"
+	"github.com/vincamok/goproxify/internal/admin/mcpaccess"
 	"github.com/vincamok/goproxify/internal/admin/analytics"
 	"github.com/vincamok/goproxify/internal/admin/api"
 	"github.com/vincamok/goproxify/internal/admin/archstore"
@@ -66,13 +67,14 @@ type Server struct {
 	db             *sql.DB
 	log            *slog.Logger
 	srv            *http.Server
+	mcpSrv         *http.Server
 	haManager      *ha.Manager
 	auditor        *audit.Logger
 	alertingEngine *alerting.Engine
 	automation     *automation.Service
 	logStore       *logs.Store
-	logKey         []byte           // clé de pseudonymisation de l'Admin, aussi celle du volume de logs
-	logVault       *edgelogs.Vault  // volume de logs de l'Admin (ADR 0018) ; nil sans dossier
+	logKey         []byte          // clé de pseudonymisation de l'Admin, aussi celle du volume de logs
+	logVault       *edgelogs.Vault // volume de logs de l'Admin (ADR 0018) ; nil sans dossier
 	wsManager      *edgews.Manager // manager WS Admin→Passerelle
 	loginLimit     *loginLimiter
 }
@@ -160,6 +162,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	s.wsManager = manager
 	manager.SetSettings(s.runtimeSettings())
+	manager.SetAlertEngine(s.alertingEngine)
 	manager.ConnectFromEnv(ctx)
 	if archStore != nil {
 		groups := api.NewGroupResolver(archStore, s.db)
@@ -393,8 +396,7 @@ func (s *Server) Start(ctx context.Context) error {
 		CertFile:  func() string { return os.Getenv("GPX_ADMIN_TLS_CERT") },
 		Registry:  os.Getenv("GPX_DEPLOY_REGISTRY"), Tag: os.Getenv("GPX_DEPLOY_TAG"), TZ: os.Getenv("TZ"),
 	}
-	heartbeatH := &api.HeartbeatHandler{DB: s.db, Log: s.log}
-	nodeEventsH := &api.NodeEventsHandler{DB: s.db, Log: s.log, AlertingEngine: s.alertingEngine}
+	nodeEventsH := &api.NodeEventsHandler{DB: s.db, Log: s.log}
 	healthH := &api.HealthHandler{
 		DB:      s.db,
 		Log:     s.log,
@@ -493,26 +495,26 @@ func (s *Server) Start(ctx context.Context) error {
 	} else {
 		attackRefMiner = &attackref.Miner{Store: &attackref.Store{DB: s.db}, Traffic: attackref.EdgeTraffic{Source: &prismedge.Source{DB: s.db}}, Cfg: attackref.DefaultConfig()}
 		if os.Getenv("GPX_ATTACKREF") != "off" {
-			go attackRefMiner.Loop(ctx, 10*time.Minute, time.Hour)
+			go attackRefMiner.Loop(ctx, 30*time.Minute, 6*time.Hour)
 		}
 	}
 	securityH := &api.SecurityHandler{
-		Proxies:      proxiesH,
-		DB:           s.db,
-		Edge:         prismSrc,
-		AttackRef:    attackRefMiner,
-		Log:          s.log,
-		Store:        security.New(s.db),
-		Fleet:        fleetEngine,
-		VulnScan:     vsScanner,
-		CrowdSec:     csBouncer,
-		ScanCtx:      ctx,
-		DomainWatch:  domainWatcher,
-		OnBansChange: pushBans,
-		OnUnban:      pushUnban,
-		OnUnbanMany:  pushUnbanMany,
-		ASN:          asnStore,
-		OnASNChange:  pushASN,
+		Proxies:           proxiesH,
+		DB:                s.db,
+		Edge:              prismSrc,
+		AttackRef:         attackRefMiner,
+		Log:               s.log,
+		Store:             security.New(s.db),
+		Fleet:             fleetEngine,
+		VulnScan:          vsScanner,
+		CrowdSec:          csBouncer,
+		ScanCtx:           ctx,
+		DomainWatch:       domainWatcher,
+		OnBansChange:      pushBans,
+		OnUnban:           pushUnban,
+		OnUnbanMany:       pushUnbanMany,
+		ASN:               asnStore,
+		OnASNChange:       pushASN,
 		OnWhitelistChange: pushIPProfiles,
 		OnThreatConfigChange: func(scope string, cfg any) {
 			if manager != nil {
@@ -579,7 +581,7 @@ func (s *Server) Start(ctx context.Context) error {
 			}
 		},
 		FleetLastActivity: fleetEngine.LastActivity,
-		CrowdSecLastSync: csBouncer.LastSync,
+		CrowdSecLastSync:  csBouncer.LastSync,
 		RunBackup: func(_ context.Context, name string, retention int) error {
 			return backupSched.TakeSnapshot(name, "", retention)
 		},
@@ -763,16 +765,9 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("POST /api/v1/auth/mfa/webauthn/login/begin", mfaH.ServeHTTP)
 	mux.HandleFunc("POST /api/v1/auth/mfa/webauthn/login/finish", mfaH.ServeHTTP)
 
-	// Routes internes — passerelles et Agents (token d'appairage)
+	// Appairage — passerelles et Agents (secret d'appairage)
 	mux.HandleFunc("POST /internal/v1/pair", s.handlePair)
 	mux.HandleFunc("GET /internal/v1/pair/status", s.handlePairStatus)
-	mux.Handle("POST /internal/v1/edges/register", auth.RequireBearerToken(s.db)(http.HandlerFunc(s.handleEdgeRegister(manager))))
-	mux.Handle("GET /internal/v1/routes", auth.RequireBearerToken(s.db)(http.HandlerFunc(s.handleEdgeRoutes)))
-	mux.Handle("GET /internal/v1/nodes/metrics", auth.RequireBearerToken(s.db)(http.HandlerFunc(s.handleNodeMetrics)))
-	mux.Handle("/internal/v1/logs", auth.RequireBearerToken(s.db)(http.HandlerFunc(s.handleAgentLogs)))
-	mux.Handle("/internal/v1/security/bans", auth.RequireBearerToken(s.db)(http.HandlerFunc(s.handleInternalBans)))
-	mux.Handle("/internal/v1/security/threats", auth.RequireBearerToken(s.db)(http.HandlerFunc(s.handleInternalThreats)))
-	mux.Handle("/internal/v1/security/cves", auth.RequireBearerToken(s.db)(http.HandlerFunc(s.handleInternalCVEs)))
 
 	// Middleware d'accès : JWT session UI ou PAT utilisateur ; scopes PAT appliqués ensuite.
 	// L'origine publique de l'Admin ne s'apprend plus des sessions : voir explicitAdminPublicURL.
@@ -969,6 +964,9 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.Handle("/api/v1/settings/smtp", adminOnly(&api.SMTPSettingsHandler{DB: s.db, Log: s.log}))
 	mux.Handle("/api/v1/settings/smtp/", adminOnly(&api.SMTPSettingsHandler{DB: s.db, Log: s.log}))
 	mux.Handle("/api/v1/settings/acme", adminOnly(acmeSettingsH))
+	diagnosticsH := api.NewDiagnosticsSettingsHandler(s.db, s.log)
+	mux.Handle("/api/v1/settings/diagnostics", adminOnly(diagnosticsH))
+	mux.Handle("/api/v1/settings/diagnostics/", adminOnly(diagnosticsH))
 	echH := &api.ECHHandler{DB: s.db, Log: s.log, Pusher: manager}
 	mux.Handle("/api/v1/ech", adminOnly(echH))
 	mux.Handle("/api/v1/ech/", adminOnly(echH))
@@ -1011,28 +1009,48 @@ func (s *Server) Start(ctx context.Context) error {
 			manager.BroadcastRevokeAgent(agentID)
 			agentStore.Upsert(agentID, agentID, "", "revoked")
 		},
-		OnBansChange: pushBans,
-		OnUnban:      pushUnban,
-		OnUnbanMany:  pushUnbanMany,
-		ASN:          asnStore,
+		OnBansChange:      pushBans,
+		OnUnban:           pushUnban,
+		OnUnbanMany:       pushUnbanMany,
+		ASN:               asnStore,
 		OnWhitelistChange: pushIPProfiles,
-		Automation:   s.automation,
-		Groups:       banGroups,
-		CertDeployer: certDeployer,
-		InternalCA:   internalCAMgr,
+		Automation:        s.automation,
+		Groups:            banGroups,
+		CertDeployer:      certDeployer,
+		InternalCA:        internalCAMgr,
 	}
-	mux.Handle("/mcp", auth.RequirePAT(s.db)(mcpH))
-	mux.Handle("/mcp/", auth.RequirePAT(s.db)(mcpH))
-
-	// Heartbeat et events — authentifiés par token d'appairage
-	mux.Handle("/internal/v1/heartbeat", auth.RequireBearerToken(s.db)(heartbeatH))
-	mux.Handle("/internal/v1/events", auth.RequireBearerToken(s.db)(nodeEventsH))
+	patLockout := auth.WithPATLockoutHook(func(r *http.Request, ip string) {
+		s.auditor.Log(r.Context(), audit.Event{
+			Action: "mcp_auth_locked", IP: ip, Severity: audit.Warning,
+			Detail: "jetons MCP refusés en rafale : adresse verrouillée",
+		})
+		s.alertingEngine.Emit(alerting.Event{
+			Trigger: alerting.TriggerAdminAuthFailures, Severity: alerting.SevWarning,
+			Component: "admin", Detail: map[string]any{"surface": "mcp", "ip": ip},
+		})
+	})
+	patGate := auth.WithPATSourceGate(func(r *http.Request) bool { return mcpaccess.Allowed(s.db, r) })
+	mux.Handle("/mcp", auth.RequirePAT(s.db, patGate, patLockout)(mcpH))
+	mux.Handle("/mcp/", auth.RequirePAT(s.db, patGate, patLockout)(mcpH))
 
 	addr := fmt.Sprintf("%s:%d", s.cfg.Server.ListenAddr, s.cfg.Server.APIPort)
-	var handler http.Handler = securityHeaders(limitRequestBodies(s.logMiddleware(mux)))
-	if s.haManager != nil {
-		handler = s.haManager.ForwardOrHandle(handler)
+	mcpPort := s.cfg.Server.MCPPort
+	if mcpPort < 0 || mcpPort > 65535 || (mcpPort > 0 && (mcpPort == s.cfg.Server.APIPort || mcpPort == s.cfg.Server.LocalPort)) {
+		return fmt.Errorf("server.mcp_port %d : port invalide ou déjà pris par api_port / local_port", mcpPort)
 	}
+	// Avec un port MCP dédié, /mcp n'existe plus que sur ce listener ; les listeners d'administration le répondent en 404.
+	adminMux := http.Handler(mux)
+	if mcpPort > 0 {
+		adminMux = hideMCP(mux)
+	}
+	serve := func(h http.Handler) http.Handler {
+		h = securityHeaders(limitRequestBodies(s.logMiddleware(h)))
+		if s.haManager != nil {
+			h = s.haManager.ForwardOrHandle(h)
+		}
+		return h
+	}
+	handler := serve(adminMux)
 	s.srv = httpx.Harden(&http.Server{
 		Addr:         addr,
 		Handler:      handler,
@@ -1059,13 +1077,36 @@ func (s *Server) Start(ctx context.Context) error {
 		}()
 	}
 
+	if mcpPort > 0 {
+		mcpAddr := fmt.Sprintf("%s:%d", s.cfg.Server.ListenAddr, mcpPort)
+		s.mcpSrv = httpx.Harden(&http.Server{
+			Addr:         mcpAddr,
+			Handler:      serve(onlyMCP(mux)),
+			ReadTimeout:  30 * time.Second,
+			WriteTimeout: 30 * time.Second,
+		})
+		go func() {
+			var err error
+			if tlsCert != "" && tlsKey != "" {
+				s.log.Info("MCP sur son listener dédié (HTTPS) — /mcp n'est plus servi par l'administration", "addr", mcpAddr)
+				err = s.mcpSrv.ListenAndServeTLS(tlsCert, tlsKey)
+			} else {
+				s.log.Warn("MCP sur son listener dédié en HTTP clair — le jeton circule en clair : terminaison TLS obligatoire avant Internet (reverse-proxy ou GPX_ADMIN_TLS_CERT/KEY)", "addr", mcpAddr)
+				err = s.mcpSrv.ListenAndServe()
+			}
+			if err != nil && err != http.ErrServerClosed {
+				s.log.Error("mcp server", "err", err)
+			}
+		}()
+	}
+
 	// Port local de secours : accès direct sans passer par la passerelle.
 	// Utile si Ephor ou une règle de sécurité bloque l'accès proxifié.
 	if s.cfg.Server.LocalPort > 0 {
 		localAddr := fmt.Sprintf("0.0.0.0:%d", s.cfg.Server.LocalPort)
 		localSrv := httpx.Harden(&http.Server{
 			Addr:         localAddr,
-			Handler:      securityHeaders(limitRequestBodies(s.logMiddleware(mux))), // sans HA forward
+			Handler:      securityHeaders(limitRequestBodies(s.logMiddleware(adminMux))), // sans HA forward
 			ReadTimeout:  30 * time.Second,
 			WriteTimeout: 30 * time.Second,
 		})
@@ -1087,6 +1128,9 @@ func (s *Server) Stop(ctx context.Context) {
 	}
 	if s.srv != nil {
 		s.srv.Shutdown(ctx) //nolint:errcheck
+	}
+	if s.mcpSrv != nil {
+		s.mcpSrv.Shutdown(ctx) //nolint:errcheck
 	}
 	s.closeLogVault()
 	// Avant la base : les étapes en cours enregistrent leur avancement.

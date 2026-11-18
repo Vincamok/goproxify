@@ -137,6 +137,9 @@ type agentContainerPayload struct {
 	Paths        []string `json:"paths"`
 	RouteType    string   `json:"route_type"`
 	Backends     []string `json:"backends"`
+	// Candidates : les adresses du conteneur de la plus à la moins préférée ; Backends[0] reste l'adresse sûre servie
+	// tant que la sonde n'a pas retenu mieux (ADR 0026).
+	Candidates   []string `json:"candidates"`
 	TLSEnabled   bool     `json:"tls_enabled"`
 	Passthrough  bool     `json:"passthrough"`
 	RedirectHTTPS bool    `json:"redirect_https"`
@@ -521,17 +524,22 @@ func (s *Server) applyAgentRoute(in *agentContainerPayload) (int, string) {
 
 	// role normal (défaut) : pool backends
 	backends := make([]router.Backend, 0, len(p.Backends))
+	candidates := cleanCandidates(p.Candidates, len(p.Backends))
 	for _, u := range p.Backends {
 		backends = append(backends, router.Backend{
 			URL:         u,
 			ContainerID: p.ContainerID,
 			Image:       p.Image,
 			AgentName:   p.AgentName,
+			Candidates:  candidates,
 		})
+	}
+	if len(candidates) > 0 {
+		defer s.kickCandidateProbe()
 	}
 	if existing != nil {
 		merged := mergeDiscoveryBackends(existing.Backends, backends)
-		unchanged := slices.Equal(existing.Backends, merged)
+		unchanged := slices.EqualFunc(existing.Backends, merged, sameBackend)
 		existing.Backends = merged
 		// Re-label : ce conteneur n'est plus canary/shadow
 		if existing.Canary != nil && containerIDMatch(existing.Canary.ContainerID, p.ContainerID) {
@@ -569,6 +577,12 @@ func (s *Server) applyAgentRoute(in *agentContainerPayload) (int, string) {
 	metrics.Edge.RouteCount.Set(float64(s.table.Len()))
 	s.log.Info("agent: route label ajoutée", "host", p.Host, "container", p.ContainerID, "agent", p.AgentName)
 	return http.StatusNoContent, ""
+}
+
+func sameBackend(a, b router.Backend) bool {
+	return a.URL == b.URL && a.Weight == b.Weight && a.ContainerID == b.ContainerID && a.Image == b.Image &&
+		a.AgentName == b.AgentName && a.OwnerEdgeEndpoint == b.OwnerEdgeEndpoint && a.OwnerEdgeName == b.OwnerEdgeName &&
+		slices.Equal(a.Candidates, b.Candidates)
 }
 
 func dockerHostRouteID(host string) string {
@@ -859,6 +873,18 @@ func isDockerDiscoveryRoute(r *router.Route) bool {
 	return strings.HasPrefix(r.ID, "docker:") || strings.HasPrefix(r.ID, "docker-host:")
 }
 
+// directorySourceOf rend le nom de l'annuaire (consul, arcane…) dont viennent les conteneurs d'une route : ses routes
+// sont rangées dans les pools « docker-host: » comme celles de Docker, seul le suffixe « @source » de l'identifiant les
+// distingue. Vide pour une route Docker.
+func directorySourceOf(containerIDs []string) string {
+	for _, id := range containerIDs {
+		if i := strings.LastIndex(id, "@"); i > 0 && directorySourceName.MatchString(id[i+1:]) {
+			return id[i+1:]
+		}
+	}
+	return ""
+}
+
 func isWholeCompareID(id string) bool {
 	return strings.HasPrefix(id, "k8s:") || strings.Contains(id, "@")
 }
@@ -902,6 +928,10 @@ func mergeDiscoveryBackends(existing, incoming []router.Backend) []router.Backen
 		replaced := false
 		for i := range out {
 			if in.ContainerID != "" && out[i].ContainerID == in.ContainerID {
+				// Mêmes candidats : l'adresse que la sonde a retenue reste servie.
+				if len(in.Candidates) > 1 && slices.Equal(in.Candidates, out[i].Candidates) && slices.Contains(in.Candidates, out[i].URL) {
+					in.URL = out[i].URL
+				}
 				out[i] = in
 				replaced = true
 				break
@@ -1077,6 +1107,11 @@ func (s *Server) handleListAgentContainers(w http.ResponseWriter, r *http.Reques
 		if rt.Shadow != nil && rt.Shadow.ContainerID != "" {
 			if _, ok := seenCID[rt.Shadow.ContainerID]; !ok {
 				containerIDs = append(containerIDs, rt.Shadow.ContainerID)
+			}
+		}
+		if src == "docker" {
+			if d := directorySourceOf(containerIDs); d != "" {
+				src = d
 			}
 		}
 		shadowedBy, _ := s.table.ShadowedBy(rt)

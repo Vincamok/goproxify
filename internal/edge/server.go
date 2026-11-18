@@ -61,6 +61,10 @@ import (
 
 // Server est le Data Plane — reverse proxy HTTP/TLS/TCP/UDP.
 type Server struct {
+	// Candidats d'adresse des backends découverts (ADR 0026) : demande de sonde, et sondes ratées par backend.
+	candidateKick  chan struct{}
+	candidateFails map[string]int
+
 	logGate      *logserve.Gate // plafond des recherches simultanées dans la base de logs
 	logGateOnce  sync.Once
 	cfg          *config.EdgeConfig
@@ -204,6 +208,7 @@ func New(cfg *config.EdgeConfig) (*Server, error) {
 		log.Logger().Warn("edge: ouverture bansdb échouée, fallback mémoire", "err", err)
 	}
 	s := &Server{
+		candidateKick:   make(chan struct{}, 1),
 		cfg:             cfg,
 		log:             log,
 		accessLog:       accessLog,
@@ -452,6 +457,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Sondes de santé : suivent la table (proxies fichiers, révisions, agents) sans l'Admin.
 	go s.healthSyncLoop(ctx)
+	go s.candidateLoop(ctx)
 
 	// Sync pools discovery depuis les passerelles pairs (LB cross-passerelle)
 	s.startPeerSyncLoop(ctx)

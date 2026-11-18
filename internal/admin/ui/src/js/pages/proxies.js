@@ -1723,6 +1723,11 @@ async function renderTraficPage(ctx) {
         const raw = edgeName ? all.filter(c => c.edge_name === edgeName) : all;
         // Un conteneur arrêté n'a pas de route : il ne sert pas à rapprocher un proxy d'un conteneur.
         window._traficDiscovered = raw.filter(c => !c.inactive && !c.disabled);
+        // Le nom d'une section vient du registre des sources : une nouvelle source n'a rien à déclarer ici.
+        if (!window._srcManifestLabels) {
+          window._srcManifestLabels = {};
+          try { for (const m of await api('GET', '/discovery-sources') || []) window._srcManifestLabels[m.type] = m.label; } catch (_) {}
+        }
         api('GET', '/discovered-containers/orphans').then(list => {
           window._traficOrphans = new Map((list || []).map(o => [o.proxy_id, o]));
           if (typeof window.renderPage === 'function') window.renderPage();
@@ -1766,11 +1771,12 @@ async function renderTraficPage(ctx) {
         </div>`; return;
       }
       const srcColor = { docker:'#0ea5e9', k8s:'#326ce5' };
-      const srcLabel = { docker:'Docker', k8s:'Kubernetes' };
+      const known = { docker:'Docker', k8s:'Kubernetes', kubernetes:'Kubernetes', podman:'Podman', portainer:'Portainer' };
+      const srcLabel = (s) => known[s] || (window._srcManifestLabels || {})[s] || String(s).charAt(0).toUpperCase() + String(s).slice(1);
       const bySource = {};
       for (const c of items) { (bySource[c.source] = bySource[c.source] || []).push(c); }
       const cols = window._tc || 3;
-      const srcHead = (src, n) => `<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span style="font-size:12px;font-weight:700;color:${srcColor[src]||'var(--text2)'}">${srcLabel[src]||src}</span><span class="chip">${n}</span></div>`;
+      const srcHead = (src, n) => `<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span style="font-size:12px;font-weight:700;color:${srcColor[src]||'var(--text2)'}">${esc(srcLabel(src))}</span><span class="chip">${n}</span></div>`;
       let html = '';
 
       // Les mêmes quatre vues que les proxies : tuiles, état, tableau, maître / détail.
@@ -1778,7 +1784,7 @@ async function renderTraficPage(ctx) {
         const cur = items.find(c => containerModel(c).id === window._tdSel.container) || items[0];
         window._tdSel.container = containerModel(cur).id;
         const list = Object.entries(bySource).map(([src, group]) =>
-          `<div class="trafic-md-group">${esc(srcLabel[src] || src)} <span>${group.length}</span></div>${group.map(c => buildContainerMasterItem(c, window._tdSel.container)).join('')}`).join('');
+          `<div class="trafic-md-group">${esc(srcLabel(src))} <span>${group.length}</span></div>${group.map(c => buildContainerMasterItem(c, window._tdSel.container)).join('')}`).join('');
         el.innerHTML = `<div class="trafic-md"><div class="trafic-md-list">${list}</div><div class="trafic-md-detail">${buildContainerDetail(cur)}</div></div>`;
         return;
       }

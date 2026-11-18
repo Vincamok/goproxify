@@ -246,6 +246,9 @@ type Backend struct {
 	AgentName         string `json:"agent_name,omitempty"`
 	OwnerEdgeEndpoint string `json:"owner_edge_endpoint,omitempty"` // si distant : gateway vers cette passerelle
 	OwnerEdgeName     string `json:"owner_edge_name,omitempty"`
+	// Candidates : adresses du même conteneur, de la plus à la moins préférée (ADR 0026). URL est celle que la
+	// passerelle sert ; la sonde des candidats la remplace par le premier candidat qui répond.
+	Candidates []string `json:"candidates,omitempty"`
 }
 
 type LBAlgorithm string

@@ -117,7 +117,7 @@ func TestUpsertServiceHostCSVAndPrefix(t *testing.T) {
 func TestAnnotationsCannotOverrideResourceHost(t *testing.T) {
 	d := testDiscovery(t, "http://unused")
 	payload, _ := d.routePayload("k", map[string]string{"goproxify.host": "evil.example.fr", "goproxify.enable": "false"},
-		"real.example.fr", "http://svc:80", false)
+		"real.example.fr", "http://svc:80", false, "")
 	if payload == nil || payload["host"] != "real.example.fr" {
 		t.Fatalf("payload = %v", payload)
 	}
@@ -137,7 +137,7 @@ func TestSetTokenIsUsedForRouteRequests(t *testing.T) {
 	d.authToken = ""
 
 	push := func() {
-		d.pushRoute(context.Background(), "prod/web", map[string]string{"goproxify.backend": "http://web:80"}, "app.example.fr", "http://web:80", false)
+		d.pushRoute(context.Background(), "prod/web", map[string]string{"goproxify.backend": "http://web:80"}, "app.example.fr", "http://web:80", false, "")
 	}
 	push()
 	d.SetToken("paired-token")
@@ -162,7 +162,7 @@ func TestEndpointFollowsTheCurrentGateway(t *testing.T) {
 	current := a.URL
 	d.SetEndpointFunc(func() string { return current })
 	push := func() {
-		d.pushRoute(context.Background(), "prod/web", map[string]string{"goproxify.backend": "http://web:80"}, "app.example.fr", "http://web:80", false)
+		d.pushRoute(context.Background(), "prod/web", map[string]string{"goproxify.backend": "http://web:80"}, "app.example.fr", "http://web:80", false, "")
 	}
 
 	push()
@@ -253,7 +253,7 @@ func TestFailedPushTriggersAResync(t *testing.T) {
 	d := testDiscovery(t, gw.URL)
 	d.resync = make(chan struct{}, 1)
 	push := func() {
-		d.pushRoute(context.Background(), "prod/web", map[string]string{"goproxify.backend": "http://web:80"}, "app.example.fr", "http://web:80", false)
+		d.pushRoute(context.Background(), "prod/web", map[string]string{"goproxify.backend": "http://web:80"}, "app.example.fr", "http://web:80", false, "")
 	}
 
 	push() // 503
@@ -327,7 +327,7 @@ func TestFailedDeleteIsRetried(t *testing.T) {
 	d.hostByKey["prod/web"] = "app.example.fr"
 	d.deleteByKey(context.Background(), "prod/web")
 	up = true
-	d.pushRoute(context.Background(), "prod/web", map[string]string{"goproxify.backend": "http://web:80"}, "app.example.fr", "http://web:80", false)
+	d.pushRoute(context.Background(), "prod/web", map[string]string{"goproxify.backend": "http://web:80"}, "app.example.fr", "http://web:80", false, "")
 	if len(d.pendingDel) != 0 {
 		t.Fatalf("suppression périmée conservée : %v", d.pendingDel)
 	}

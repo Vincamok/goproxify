@@ -21,7 +21,7 @@ type Config struct {
 	SessionTTLSec        int    `json:"session_ttl_sec"`        // défaut 60 (KTD1)
 	SessionMode          string `json:"session_mode"`           // one_shot | multi
 	Policy               Policy `json:"policy"`                 // restrictions d'accès (poussées par l'Admin)
-	Theme                string `json:"theme,omitempty"`        // apparence du portail : auto (défaut) | clair | sombre | ocean | foret | amethyste | contraste
+	Theme                string `json:"theme,omitempty"`        // apparence du portail : auto (défaut) | clair | sombre | ocean | foret | amethyste | contraste | boussole
 	Views                []View `json:"views,omitempty"`        // entrées dédiées (/prestataire, /interne…) : thème, auth et périmètre propres
 
 	// Haute disponibilité (poussés par l'Admin) : réplication du magasin entre les passerelles du groupe.
@@ -135,9 +135,14 @@ const (
 )
 
 // Thèmes proposés pour l'interface du portail (choisis côté Admin).
-const ThemeAuto = "auto"
+const (
+	ThemeAuto = "auto"
+	// ThemeBoussole n'est pas qu'une palette : c'est une interface complète (lanceur, coffre par glisser-déposer, terminaux
+	// à onglets, palette de commandes) qui suit seule le thème clair ou sombre du système.
+	ThemeBoussole = "boussole"
+)
 
-var themes = []string{ThemeAuto, "clair", "sombre", "ocean", "foret", "amethyste", "contraste"}
+var themes = []string{ThemeAuto, "clair", "sombre", "ocean", "foret", "amethyste", "contraste", ThemeBoussole}
 
 // Themes liste les thèmes valides.
 func Themes() []string { return append([]string(nil), themes...) }

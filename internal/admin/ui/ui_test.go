@@ -199,3 +199,83 @@ func TestConsoleSkinContrast(t *testing.T) {
 		}
 	}
 }
+
+// Un chemin d'API ou interne inconnu répond 404 : il ne rend pas l'interface en 200, ce qui ferait passer une route retirée
+// pour une route vivante aux yeux d'un client ou d'un scanner. Les autres chemins inconnus gardent le repli SPA.
+func TestUnknownAPIPathsAre404NotTheSPA(t *testing.T) {
+	for _, tc := range []struct {
+		method, path string
+		want         int
+	}{
+		{http.MethodPost, "/internal/v1/heartbeat", http.StatusNotFound},
+		{http.MethodGet, "/internal/v1/routes", http.StatusNotFound},
+		{http.MethodGet, "/api/v1/inexistant", http.StatusNotFound},
+		{http.MethodGet, "/une-page-de-l-interface", http.StatusOK},
+		{http.MethodGet, "/", http.StatusOK},
+	} {
+		w := httptest.NewRecorder()
+		Handler().ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))
+		if w.Code != tc.want {
+			t.Errorf("%s %s : %d, attendu %d", tc.method, tc.path, w.Code, tc.want)
+		}
+	}
+}
+
+// Skin Encre (style de la maquette du menu Sécurité) : mêmes variables que Console, texte et accents lisibles (WCAG AA),
+// polices déclarées dans le catalogue et jamais dans la feuille.
+func TestEncreSkin(t *testing.T) {
+	css, cfg := readSrc(t, "themes/encre.css"), readSrc(t, "app.config.js")
+	if externalRef.MatchString(css) || strings.Contains(css, "@import") {
+		t.Error("encre.css : aucune URL ni @import externe attendu (les polices se déclarent dans app.config.js)")
+	}
+	light, dark := cssVars(themeBlock(t, css, ":root")), cssVars(themeBlock(t, css, `[data-theme="dark"]`))
+	required := []string{"--bg", "--bg2", "--bg3", "--border", "--text", "--text2", "--text3", "--accent", "--accent-hover", "--on-accent",
+		"--green", "--red", "--yellow", "--blue", "--cyan", "--purple", "--orange", "--radius", "--radius-lg", "--shadow", "--shadow-lg",
+		"--sidebar-w", "--font", "--font-heading", "--font-mono", "--color-accent", "--color-accent-100", "--color-surface", "--color-divider"}
+	for _, v := range required {
+		if light[v] == "" {
+			t.Errorf("variable %s absente du thème clair", v)
+		}
+	}
+	for name, v := range map[string]map[string]string{"clair": light, "sombre": dark} {
+		for _, fg := range []string{"--text", "--text2", "--text3", "--accent", "--green", "--red", "--yellow", "--blue", "--cyan", "--purple", "--orange"} {
+			for _, bg := range []string{"--bg", "--bg2", "--bg3"} {
+				if c := contrast(v[fg], v[bg]); c < 4.5 {
+					t.Errorf("thème %s : %s sur %s = %.2f:1 (< 4,5)", name, fg, bg, c)
+				}
+			}
+		}
+		if v["--green"] == v["--accent"] {
+			t.Errorf("thème %s : le vert de statut doit se distinguer de l'accent", name)
+		}
+	}
+	i := strings.Index(cfg, "id: 'encre'")
+	if i < 0 {
+		t.Fatal("skin Encre absent du catalogue")
+	}
+	slice := cfg[i:]
+	slice = slice[:strings.Index(slice, "\n    },")]
+	if !strings.Contains(slice, "fonts.googleapis.com") {
+		t.Error("les polices du skin Encre se déclarent dans le catalogue")
+	}
+	accents := regexp.MustCompile(`color: '(#[0-9a-f]{6})', hover: '(#[0-9a-f]{6})', dark: \{ color: '(#[0-9a-f]{6})', hover: '(#[0-9a-f]{6})' \}`).FindAllStringSubmatch(slice, -1)
+	if len(accents) != 4 {
+		t.Fatalf("accents Encre : %d, attendu 4 avec variante sombre", len(accents))
+	}
+	for _, a := range accents {
+		for _, bg := range []string{"--bg", "--bg2", "--bg3"} {
+			if c := contrast(a[1], light[bg]); c < 4.5 {
+				t.Errorf("accent %s sur %s clair = %.2f:1", a[1], bg, c)
+			}
+			if c := contrast(a[3], dark[bg]); c < 4.5 {
+				t.Errorf("accent sombre %s sur %s sombre = %.2f:1", a[3], bg, c)
+			}
+		}
+		if c := contrast(a[2], light["--on-accent"]); c < 4.5 {
+			t.Errorf("survol %s : texte blanc = %.2f:1", a[2], c)
+		}
+		if c := contrast(a[3], dark["--on-accent"]); c < 4.5 {
+			t.Errorf("accent sombre %s : texte sombre = %.2f:1", a[3], c)
+		}
+	}
+}

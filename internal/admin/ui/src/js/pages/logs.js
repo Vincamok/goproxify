@@ -5,7 +5,7 @@
 //   kind=access  → status>0  (HTTP proxies / domaines)
 //   kind=system  → status=0  (process edge / admin / agent)
 //
-// logsFilters doit exister avant trafic.js (liens domaine → logs).
+// logsFilters doit exister avant proxies.js (liens domaine → logs).
 
 const logsFilters = {
   level: '', component: '', node_name: '', kind: 'access',
@@ -264,8 +264,36 @@ function renderLogsPage() {
 
   const content = document.getElementById('content');
   content.innerHTML = `
+    ${ObsUX.subNav()}
     ${logsScopeBanner()}
     <div id="logs-tab-content"></div>`;
+  const staticOnly = fn => (...a) => { if (logsActiveTab === 'static') return fn(...a); };
+  const setRange = staticOnly(ms => {
+    logsQuickMs = ms;
+    logsFilters.date_from = ms ? new Date(Date.now() - ms).toISOString() : '';
+    logsFilters.date_to = '';
+    refreshLogsView();
+  });
+  const setStatus = c => staticOnly(() => { logsFilters[isSystemLogs() ? 'level' : 'status'] = c; refreshLogsView(); });
+  ObsUX.setPage({
+    reload: () => {},
+    refresh: staticOnly(() => refreshLogsView()),
+    range: setRange,
+    brush: staticOnly(r => { logsQuickMs = 0; logsFilters.date_from = r.from; logsFilters.date_to = r.to; refreshLogsView(); }),
+    live: () => toggleLogsLive(),
+    liveOn: () => logsActiveTab === 'live',
+    export: fmt => exportLogs(fmt),
+    actions: () => [
+      ...(isSystemLogs()
+        ? [{ label: t('obs.ux.a_logs_level', { v: 'error' }), kw: 'erreurs errors niveau level', run: setStatus('error') }, { label: t('obs.ux.a_logs_level', { v: 'warn' }), kw: 'avertissements warnings niveau level', run: setStatus('warn') }]
+        : [{ label: t('obs.ux.a_logs_status', { v: '5xx' }), kw: 'erreurs serveur errors 500 502 503', run: setStatus('5xx') }, { label: t('obs.ux.a_logs_status', { v: '4xx' }), kw: 'erreurs client 404 403 401', run: setStatus('4xx') }]),
+      { label: t('logs.clear_all'), kw: 'effacer filtres reset clear', run: staticOnly(() => clearLogFilter('*')) },
+      ...(Role.isAdmin() ? [
+        { label: t('logs.tab_settings'), kw: 'retention conservation reglages settings anonymisation', run: () => openLogsSettingsModal() },
+        { label: t('logs.siem_title'), kw: 'siem export syslog otlp', run: () => openSIEMModal() },
+      ] : []),
+    ],
+  });
 
   // Délégation : filtres cliquables + corrélation (évite les onclick cassés par les guillemets)
   if (!content.dataset.logsWired) {
@@ -353,12 +381,15 @@ function renderFilterChips() {
     `<button type="button" class="btn btn-ghost btn-sm" style="font-size:11px" data-log-chip-clear="*">${t('logs.clear_all')}</button>`;
 }
 
-function logCellFilter(field, value, display) {
+function logCellFilter(field, value, display, ipOk = true) {
   if (value == null || value === '' || value === '—') {
     return `<span style="color:var(--text3)">—</span>`;
   }
   const shown = display != null ? display : value;
   const active = logsFilters[field] === String(value) ? ' is-active' : '';
+  if (field === 'ip') {
+    return ObsUX.ipBtn(String(value), { cls: active.trim(), attrs: `data-log-filter="ip" data-log-value="${esc(String(value))}"`, actionable: ipOk, label: shown });
+  }
   return `<button type="button" class="log-filter-link${active}" data-log-filter="${esc(field)}" data-log-value="${esc(String(value))}" title="${esc(t('logs.filter_title'))}">${shown}</button>`;
 }
 
@@ -457,7 +488,7 @@ async function renderStaticLogs() {
         <div id="logs-period-seg">${logsPeriodSegHTML()}</div>
       </div>
       <div class="logs-filter-row" style="margin-top:10px">
-        <input id="lf-search" class="input search-input" style="flex:1;max-width:none;min-width:180px" placeholder="${esc(t('logs.search_ph'))}" value="${esc(logsFilters.search)}" oninput="logsFilter()">
+        <div class="oux-q"><input id="lf-search" class="input search-input" style="width:100%;max-width:none" placeholder="${esc(t(isSystem ? 'obs.ux.q_ph_sys' : 'obs.ux.q_ph'))}" value="${esc(logsFilters.search)}" autocomplete="off" spellcheck="false" oninput="logsFilter()" onkeydown="if(event.key==='Enter')logsFilter(true)"></div>
         <div id="logs-status-chips">${logsStatusChipsHTML()}</div>
         ${isSystem ? '' : `
         <label class="logs-toggle-inline">
@@ -465,6 +496,7 @@ async function renderStaticLogs() {
           ${esc(t('logs.hide_internal'))}
         </label>`}
       </div>
+      <div class="oux-qhint">${esc(t('obs.ux.q_hint'))} <code>${isSystem ? 'level:error domain:example.com since:6h' : 'status:5xx ip:203.0.113.7 domain:example.com since:6h'}</code></div>
       <div id="logs-hist"></div>
       <div id="logs-filter-chips" class="filter-chips" hidden></div>
     </div>
@@ -485,6 +517,40 @@ async function renderStaticLogs() {
   renderFilterChips();
   loadStaticLogs(0);
   loadLogsHist();
+  const search = document.getElementById('lf-search');
+  if (search) {
+    search.addEventListener('focus', ensureLogsDomains);
+    ObsUX.attachSuggest(search, logsSuggest, () => logsFilter());
+  }
+}
+
+let logsDomains = null;
+async function ensureLogsDomains() {
+  if (logsDomains) return;
+  logsDomains = [];
+  const r = await api('GET', '/prism/proxies' + (logsScope.node_name ? '?node_name=' + encodeURIComponent(logsScope.node_name) : '')).catch(() => []);
+  logsDomains = (Array.isArray(r) ? r : []).map(p => p.domain).filter(Boolean);
+}
+
+// Propositions de la barre de recherche : clés de jetons, puis valeurs connues de la clé choisie.
+function logsSuggest(word) {
+  if (!word) return [];
+  const sys = isSystemLogs();
+  const keys = sys ? ['level', 'domain', 'node', 'component', 'since'] : ['status', 'ip', 'domain', 'path', 'method', 'level', 'node', 'ja4', 'ja3', 'since'];
+  const m = /^([a-z0-9]+):(.*)$/i.exec(word);
+  if (!m) return keys.filter(k => k.startsWith(word.toLowerCase()) && !(logsScope.lockComp && (k === 'node' || k === 'component'))).map(k => ({ label: k + ':', insert: k + ':' }));
+  const key = m[1].toLowerCase(), v = m[2].toLowerCase();
+  const vals = {
+    status: ['2xx', '3xx', '4xx', '5xx', '200', '301', '401', '403', '404', '429', '500', '502', '503'],
+    level: ['info', 'warn', 'error', 'debug'],
+    method: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'],
+    component: ['admin', 'agent', 'edge'],
+    since: ['15min', '1h', '6h', '24h', '7j', '30j'],
+    node: (logsAllEdges || []).map(n => n.node_name || n.display_name || n.id),
+    domain: logsDomains || [],
+  }[key];
+  if (!vals || (logsScope.lockComp && (key === 'node' || key === 'component'))) return [];
+  return vals.filter(x => String(x).toLowerCase().startsWith(v) && String(x).toLowerCase() !== v).slice(0, 8).map(x => ({ label: key + ':' + x, insert: key + ':' + x }));
 }
 
 function logEntrySep() {
@@ -494,7 +560,7 @@ function logEntrySep() {
 function renderAccessLogEntry(e, i) {
   const parts = [];
   if (e.domain || e.path) parts.push(`<span class="mono">${e.domain ? logCellFilter('domain', e.domain) : ''}${e.path ? logCellFilter('path', e.path) : ''}</span>`);
-  if (e.ip) parts.push(`<span class="mono">${logCellFilter('ip', e.ip)}</span>`);
+  if (e.ip) parts.push(`<span class="mono">${logCellFilter('ip', e.ip, undefined, obsIPActionable(e))}</span>`);
   if (e.country) parts.push(`<span>${countryFlag(e.country)} ${esc(e.country)}</span>`);
   if (!logsScope.lockComp && e.node_name) parts.push(`<span class="mono"><span class="logs-node-dot" style="background:${nodeColor(e.node_name)}"></span>${esc(nodeDisplayName(e.node_name))}</span>`);
   if (e.latency_ms != null && e.latency_ms !== '') parts.push(`<span>${esc(String(e.latency_ms))}ms</span>`);
@@ -570,7 +636,7 @@ function renderAccessLogRow(e, i) {
     <td>${e.status ? logCellFilter('status', String(e.status), httpStatusBadge(e.status)) : '<span style="color:var(--text3)">—</span>'}</td>
     <td><b>${logCellFilter('method', e.method)}</b></td>
     <td class="mono logs-cell-clip" style="font-size:11px;max-width:340px">${hostPath}</td>
-    <td class="mono" style="font-size:11px">${logCellFilter('ip', e.ip)}</td>
+    <td class="mono" style="font-size:11px">${logCellFilter('ip', e.ip, undefined, obsIPActionable(e))}</td>
     <td style="font-size:11px">${countryCellHTML(e)}</td>
     <td class="mono logs-cell-clip" style="font-size:11px;max-width:120px">${e.tls_ja4 ? logCellFilter('tls_ja4', e.tls_ja4, esc(e.tls_ja4.slice(0, 10) + '…')) : '<span style="color:var(--text3)">—</span>'}</td>
     <td style="color:var(--text2);font-size:11px">${e.latency_ms}ms</td>
@@ -591,8 +657,24 @@ function renderSystemLogRow(e, i) {
 // Pas de filtres avancés séparés : la recherche libre couvre déjà domaine, chemin, IP,
 // méthode, code, niveau et nœud (voir buildWhere côté backend) ; le filtrage précis par
 // champ reste possible en cliquant une cellule (logCellFilter / applyLogCellFilter).
-window.logsFilter = function() {
-  logsFilters.search = document.getElementById('lf-search')?.value || '';
+window.logsFilter = function(final) {
+  const inp = document.getElementById('lf-search');
+  const fields = (isSystemLogs() ? ['level', 'domain', 'node_name', 'component'] : ['status', 'ip', 'domain', 'path', 'method', 'level', 'node_name', 'tls_ja3', 'tls_ja4'])
+    .filter(f => !(logsScope.lockComp && (f === 'node_name' || f === 'component')));
+  const q = ObsUX.parseQuery(inp?.value || '', { final: final === true, fields });
+  if (q.matched) {
+    Object.assign(logsFilters, q.filters);
+    if (q.since) {
+      logsQuickMs = q.since;
+      logsFilters.date_from = new Date(Date.now() - q.since).toISOString();
+      logsFilters.date_to = '';
+    }
+    logsFilters.search = q.rest.trim();
+    refreshLogsView();
+    if (inp) inp.value = q.rest;
+    return;
+  }
+  logsFilters.search = inp?.value || '';
   renderFilterChips();
   loadStaticLogs(0);
 };
@@ -1188,9 +1270,8 @@ function logsPeriodsForRetention(retentionDays) {
 // Toggle de période (segmenté, façon maquette), échelonné selon la rétention configurée.
 function logsPeriodSegHTML() {
   const periods = logsPeriodsForRetention(logsRetentionDays());
-  const per = periods.map(c => `<button type="button" class="seg-btn${logsQuickMs === c.ms ? ' active' : ''}" data-log-quick="${c.ms}">${c.label}</button>`).join('');
   const all = `<button type="button" class="seg-btn${logsQuickMs ? '' : ' active'}" data-log-quick="0">${esc(t('lg.q_all'))}</button>`;
-  return `<div class="logs-seg">${per}${all}</div>`;
+  return ObsUX.rangeHTML(periods.map(c => [c.label, c.ms]), logsQuickMs, { attr: 'data-log-quick', all });
 }
 
 // Chips de classe de statut (ou niveau en logs système) : Tous/2xx/3xx/4xx/5xx.
@@ -1353,7 +1434,7 @@ function openLogDrawer(en, i) {
   const ipCell = !en.ip ? '' : pseudo
     ? `<span class="mono" id="log-drawer-ip">${esc(t('logs.ip_pseudonymized'))}</span>
        ${Role.canRevealIP() ? `<button type="button" id="log-drawer-reveal" class="btn btn-ghost btn-sm" data-log-dact="reveal" data-log-di="${i}">${esc(t('logs.reveal_ip'))}</button>` : ''}`
-    : `<span class="mono">${logCellFilter('ip', en.ip)}</span> ${truncated ? '' : trBtn(en.ip)}
+    : `<span class="mono">${logCellFilter('ip', en.ip, undefined, actionable)}</span> ${truncated ? '' : trBtn(en.ip)}
        ${truncated ? `<span class="tag tag-neutral" style="font-size:11px">${esc(t('logs.ip_truncated'))}</span>` : ''}`;
 
   col.hidden = false;
@@ -1425,10 +1506,8 @@ async function logDrawerAction(act, i) {
     const cmd = `curl -i -X ${en.method || 'GET'} 'https://${en.domain}${en.path || '/'}'`;
     try { await navigator.clipboard.writeText(cmd); toast(t('lg.copied'), 'success'); } catch { toast(cmd, 'info'); }
   } else if (act === 'ban') {
-    if (!confirm(t('prism.ban_confirm', { ip: en.ip }))) return;
     try {
-      await api('POST', '/security/bans', { ip: en.ip, reason: t('prism.ban_reason'), source: 'native' });
-      toast(t('security.ban_success'), 'success');
+      await SecUX.ban(en.ip, { ms: null, reason: t('prism.ban_reason') });
     } catch (err) { toast(err.message, 'error'); }
   }
 }

@@ -4,6 +4,7 @@
 package sources
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -69,6 +70,8 @@ func init() {
 		text("url", "Arcane URL", "https://arcane.example.com", true),
 		secret("api_key", "API key", true),
 		kind("skip_environments", "Environments to skip (name or ID)", modules.KindList),
+		kind("environment_hosts", "Environment addresses (name=address)", modules.KindList),
+		kind("routable_networks", "Routable container networks (CIDR)", modules.KindList),
 		text("ca_cert", "CA certificate (PEM or path)", "", false),
 	}, common()...)}, arcaneSource)
 }
@@ -126,10 +129,13 @@ func settingList(m map[string]any, key string) []string {
 	return out
 }
 
-func pollInterval(m map[string]any) time.Duration {
+func pollInterval(m map[string]any) time.Duration { return pollIntervalOr(m, 30) }
+
+// pollIntervalOr : intervalle de sondage de la source, `def` secondes quand il n'est pas réglé ; jamais sous 5 s.
+func pollIntervalOr(m map[string]any, def int) time.Duration {
 	n := settingInt(m, "poll_interval_s")
 	if n <= 0 {
-		n = 30
+		n = def
 	}
 	if n < 5 {
 		n = 5
@@ -139,7 +145,12 @@ func pollInterval(m map[string]any) time.Duration {
 
 // catalogInstance câble un moteur d'annuaire sur la passerelle de l'Agent.
 func catalogInstance(d Deps, typ string, l catalog.Lister, s map[string]any) *Instance {
-	eng := catalog.New(typ, l, pollInterval(s), settingString(s, "label_prefix"),
+	return catalogInstanceEvery(d, typ, l, s, 30)
+}
+
+// catalogInstanceEvery : comme catalogInstance, avec l'intervalle de sondage par défaut de la source (secondes).
+func catalogInstanceEvery(d Deps, typ string, l catalog.Lister, s map[string]any, defPoll int) *Instance {
+	eng := catalog.New(typ, l, pollIntervalOr(s, defPoll), settingString(s, "label_prefix"),
 		d.Cfg.ControlPlane.EdgeEndpoint, d.Cfg.ControlPlane.AuthToken, d.Cfg.Identity.NodeName, d.Log)
 	eng.SetEndpointFunc(d.Edges.Current)
 	eng.SetStatePublisher(d.State)
@@ -215,10 +226,45 @@ func arcaneSource(d Deps) (*Instance, error) {
 	}
 	l, err := catalog.NewArcane(catalog.ArcaneConfig{
 		URL: settingString(s, "url"), APIKey: settingString(s, "api_key"), CACert: settingString(s, "ca_cert"),
-		Prefix: settingString(s, "label_prefix"), SkipEnvironments: settingList(s, "skip_environments"), Log: d.Log,
+		Prefix: settingString(s, "label_prefix"), SkipEnvironments: settingList(s, "skip_environments"),
+		EnvironmentHosts: settingPairs(settingList(s, "environment_hosts")),
+		RoutableNetworks: settingList(s, "routable_networks"), Join: joinLocalNetworks(d), HostAddress: d.HostAddr, Log: d.Log,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return catalogInstance(d, "arcane", l, s), nil
+	return catalogInstanceEvery(d, "arcane", l, s, arcanePollDefaultS), nil
+}
+
+// arcanePollDefaultS : un conteneur redémarré sans port fixe change de port publié ; l'Agent doit s'en apercevoir vite.
+const arcanePollDefaultS = 15
+
+// settingPairs lit des entrées « clé=valeur » ; une entrée sans « = » est ignorée.
+func settingPairs(entries []string) map[string]string {
+	out := make(map[string]string, len(entries))
+	for _, e := range entries {
+		if k, v, ok := strings.Cut(e, "="); ok {
+			if k, v = strings.TrimSpace(k), strings.TrimSpace(v); k != "" && v != "" {
+				out[k] = v
+			}
+		}
+	}
+	return out
+}
+
+// joinLocalNetworks : si le conteneur est sur le Docker de l'Agent, connecte la passerelle de l'hôte à ses réseaux (comme
+// pour Docker et un endpoint Portainer local) et dit qu'il est local.
+func joinLocalNetworks(d Deps) func(ctx context.Context, containerID string, networks []string) bool {
+	if d.Net == nil || d.Docker == nil {
+		return nil
+	}
+	return func(ctx context.Context, containerID string, networks []string) bool {
+		if !d.Net.Joinable(ctx, containerID) {
+			return false
+		}
+		for _, n := range networks {
+			_ = d.Net.ConnectEdgeToNetwork(ctx, n)
+		}
+		return true
+	}
 }

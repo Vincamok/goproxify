@@ -774,6 +774,17 @@ goproxify settings smtp set  -file <smtp.json> [-admin-url …] [-token …]
 goproxify settings smtp test [-admin-url …] [-token …]
 ```
 
+Diagnostic de l'Admin (mémoire, goroutines, profilage du runtime) :
+
+```
+goproxify settings diagnostics get     [-admin-url …] [-token …]
+goproxify settings diagnostics enable  [-admin-url …] [-token …]
+goproxify settings diagnostics disable [-admin-url …] [-token …]
+goproxify settings diagnostics profile -type heap|goroutine|cpu [-seconds N] [-format text|pprof] [-out <fichier>]
+```
+
+`profile` exige que le profilage soit activé. `heap` et `goroutine` s'affichent en texte par défaut ; un profil `pprof` ou `cpu` se lit avec `go tool pprof -top <fichier>`.
+
 Exemple de fichier `smtp.json` :
 
 ```json
@@ -1326,7 +1337,7 @@ GoProxify Access — portail opérateur (terminal web, SSH UUID, coffre secrets)
 
 ```
 goproxify access config get        -edge <nom>
-goproxify access config set        -edge <nom> -enabled true|false [-public-host <host>] [-theme auto|clair|sombre|ocean|foret|amethyste|contraste] [-views '[{"host":"presta.domaine.fr","theme":"ocean","groups":["<id-groupe>"],"target_ids":["<id-destination>"]}]']
+goproxify access config set        -edge <nom> -enabled true|false [-public-host <host>] [-theme auto|clair|sombre|ocean|foret|amethyste|contraste|boussole] [-views '[{"host":"presta.domaine.fr","theme":"ocean","groups":["<id-groupe>"],"target_ids":["<id-destination>"]}]']
 goproxify access config push       -edge <nom>
 
 goproxify access destinations list   -edge <nom>

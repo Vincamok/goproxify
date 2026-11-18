@@ -20,20 +20,20 @@ const App = {
 // ── Ensembles de pages par catégorie ──────────────────────────────────────
   const SETTINGS_PAGES = new Set([
   'snippets','auth-providers','plugins','error-pages','portal-templates','tokens','api-tokens','alerts','alert-channels','audit',
-  'security','security-bans','security-trace','security-attack-ref','security-vulns','security-rules','automation','automation-flow','automation-history','automation-silences','automation-schedules','automation-playbooks','rules-store','mcp-access',
+  'security','security-bans','security-trace','security-attack-ref','security-vulns','security-engines','security-rules','automation','automation-flow','automation-history','automation-silences','automation-schedules','automation-playbooks','rules-store','mcp-access',
   'backups','import','docker-labels','prism','proxy-inspector',
 ]);
 const EDGE_PAGES = new Set([
   'edge-trafic','edge-proxies','edge-streams','edge-waf','edge-ipfilter',
   'edge-certs','edge-auth','edge-logs-access','edge-logs-system',
   'edge-observability','edge-obs-synthese','edge-obs-alerts','edge-prism','edge-proxy-inspector','edge-metrics','edge-cluster','edge-tokens','edge-settings','edge-general','ip-profiles',
-  'edge-security','edge-security-vulns','edge-security-posture','edge-security-bans','edge-security-ephor',
+  'edge-security','edge-security-vulns','edge-security-posture','edge-security-bans','edge-security-ephor','edge-security-engines',
   'edge-tunnel',
   'portal','portal-settings','portal-sessions','portal-approvals','portal-policy','portal-recordings','portal-audit','edge-portal-catalog','edge-portal-users','snippets',
 ]);
 const SECURITY_PAGES = new Set([
-  'security','security-bans','security-trace','security-attack-ref','security-vulns','security-ephor','security-posture','security-rules','automation','automation-flow','automation-history','automation-silences','automation-schedules','automation-playbooks','rules-store',
-  'edge-security','edge-security-vulns','edge-security-posture','edge-security-bans','edge-security-ephor',
+  'security','security-bans','security-trace','security-attack-ref','security-vulns','security-ephor','security-posture','security-engines','security-rules','automation','automation-flow','automation-history','automation-silences','automation-schedules','automation-playbooks','rules-store',
+  'edge-security','edge-security-vulns','edge-security-posture','edge-security-bans','edge-security-ephor','edge-security-engines',
 ]);
 
 // ── Sidebar mobile ────────────────────────────────────────────────────────
@@ -116,6 +116,13 @@ function navigate(page) {
     outgoing._cleanup();
     outgoing._cleanup = null;
   }
+  // Un rendu asynchrone encore en vol (dashboard, logs…) garde sa référence vers #content : on lui
+  // laisse l'ancien nœud, détaché, pour qu'il n'écrase pas la page demandée entre-temps.
+  if (outgoing?.parentNode) {
+    const fresh = document.createElement(outgoing.tagName);
+    fresh.id = 'content';
+    outgoing.replaceWith(fresh);
+  }
   state.page = page;
   if (location.hash.slice(1) !== page) history.pushState(null, '', '#' + page);
 
@@ -135,6 +142,11 @@ function navigate(page) {
   // Reset actions topbar (chaque page les re-remplit si besoin)
   const ta = document.getElementById('topbar-actions');
   if (ta) ta.innerHTML = '';
+
+  if (typeof ObsUX !== 'undefined') {
+    ObsUX.resetPage();
+    if (ObsUX.isObs(page)) ObsUX.loadBadges();
+  }
 
   const fn = pages[page];
   const content = document.getElementById('content');
@@ -160,7 +172,7 @@ window.addEventListener('hashchange', () => {
 });
 
 function pageTabGroup(page) {
-  return (APP_CONFIG.pageTabs || []).find(g => g.tabs.some(tab => tab.page === page)) || null;
+  return (APP_CONFIG.pageTabs || []).find(g => g.tabs.some(tab => tab.page === page || (tab.also || []).includes(page))) || null;
 }
 
 function renderPageTabs(page) {
@@ -171,8 +183,8 @@ function renderPageTabs(page) {
   el.hidden = false;
   el.innerHTML = group.tabs.map(tab => {
     const label = t('sec.tab.' + tab.key);
-    const active = tab.page === page;
-    return `<button type="button" class="tab${active ? ' active' : ''}" role="tab" aria-selected="${active}" onclick="navigate('${esc(tab.page)}')">${esc(label === 'sec.tab.' + tab.key ? tab.label : label)}</button>`;
+    const active = tab.page === page || (tab.also || []).includes(page);
+    return `<button type="button" class="tab${active ? ' active' : ''}" role="tab" aria-selected="${active}" onclick="navigate('${esc(tab.page)}')">${esc(label === 'sec.tab.' + tab.key ? tab.label : label)}${(window._secBadges || {})[tab.badge] ? `<span class="chip-n" style="margin-left:6px">${(window._secBadges || {})[tab.badge]}</span>` : ''}</button>`;
   }).join('');
   el.querySelector('.tab.active')?.scrollIntoView({ inline: 'center', block: 'nearest' });
 }
@@ -259,6 +271,7 @@ const SPACE_EQUIV = {
   'security-vulns': 'edge-security-vulns',
   'security-ephor': 'edge-security-ephor',
   'security-posture': 'edge-security-posture',
+  'security-engines': 'edge-security-engines',
 };
 const SPACE_EQUIV_REV = Object.fromEntries(Object.entries(SPACE_EQUIV).map(([a, e]) => [e, a]));
 

@@ -55,6 +55,20 @@ const APP_CONFIG = {
         { name: 'Cuivre',    color: '#a8501f', hover: '#8c4219', dark: { color: '#e59660', hover: '#eeaa7c' } },
       ],
     },
+    {
+      id: 'encre',
+      label: 'Encre',
+      // Polices du skin : chargées seulement quand il est actif (voir _syncSkinFonts dans theme.js).
+      fonts: [
+        'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600&display=swap',
+      ],
+      accents: [
+        { name: 'Pétrole',  color: '#0b727c', hover: '#09585f', dark: { color: '#3abec9', hover: '#62d0d9' } },
+        { name: 'Indigo',   color: '#3558c8', hover: '#2a47a3', dark: { color: '#7c98ff', hover: '#9db1ff' } },
+        { name: 'Émeraude', color: '#1d7a50', hover: '#16613f', dark: { color: '#42c48c', hover: '#6bd3a6' } },
+        { name: 'Ambre',    color: '#8f5e06', hover: '#764d05', dark: { color: '#e8a934', hover: '#eebc5e' } },
+      ],
+    },
   ],
 
   // ── Navigation admin (liste plate, même shape que edgeNav) ───────────────
@@ -74,49 +88,6 @@ const APP_CONFIG = {
       page: 'admin-observability',
       label: 'Observabilité',
       icon: '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>',
-      children: [
-        {
-          page: 'obs-synthese',
-          label: 'Synthèse',
-          icon: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>',
-        },
-        {
-          page: 'logs',
-          label: 'Logs d\'accès',
-          icon: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h8M4 8h6M4 11h4"/><rect x="2" y="2" width="12" height="12" rx="2"/></svg>',
-        },
-        {
-          page: 'logs-system',
-          label: 'Logs système',
-          icon: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l4-4 4 4 4-6"/></svg>',
-        },
-        {
-          page: 'prism',
-          label: 'Prism',
-          icon: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>',
-        },
-        {
-          page: 'proxy-inspector',
-          label: 'Vue Proxy',
-          icon: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 9v11"/><circle cx="14.5" cy="6.5" r=".6" fill="currentColor" stroke="none"/></svg>',
-        },
-        {
-          page: 'obs-metrics',
-          label: 'Métriques',
-          icon: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="2,12 6,7 10,9 14,3"/><circle cx="6" cy="7" r="1" fill="currentColor"/><circle cx="10" cy="9" r="1" fill="currentColor"/><circle cx="14" cy="3" r="1" fill="currentColor"/></svg>',
-        },
-        {
-          page: 'obs-alerts',
-          label: 'Alertes et SLO',
-          icon: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 2a4 4 0 00-4 4v3l-1.5 2.5h11L12 9V6a4 4 0 00-4-4zM6.5 13a1.5 1.5 0 003 0"/></svg>',
-        },
-        {
-          page: 'audit',
-          label: 'Journal d\'audit',
-          icon: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 2h6l4 4v8a1 1 0 01-1 1H4a1 1 0 01-1-1V3a1 1 0 011-1z"/><path d="M9 2v4h4M5 9h6M5 12h4"/></svg>',
-          guard: (u) => u?.role === 'superadmin' || u?.role === 'admin',
-        },
-      ],
     },
     {
       page: 'security',
@@ -246,43 +217,6 @@ const APP_CONFIG = {
       page: 'edge-observability',
       label: 'Observabilité',
       icon: '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>',
-      children: [
-        {
-          page: 'edge-obs-synthese',
-          label: 'Synthèse',
-          icon: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>',
-        },
-        {
-          page: 'edge-logs-access',
-          label: 'Logs d\'accès',
-          icon: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h8M4 9h6M4 12h4"/><rect x="2" y="2" width="12" height="12" rx="2"/></svg>',
-        },
-        {
-          page: 'edge-logs-system',
-          label: 'Logs système',
-          icon: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l4-4 4 4 4-6"/></svg>',
-        },
-        {
-          page: 'edge-prism',
-          label: 'Prism',
-          icon: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>',
-        },
-        {
-          page: 'edge-proxy-inspector',
-          label: 'Vue Proxy',
-          icon: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 9v11"/><circle cx="14.5" cy="6.5" r=".6" fill="currentColor" stroke="none"/></svg>',
-        },
-        {
-          page: 'edge-metrics',
-          label: 'Métriques',
-          icon: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="2,12 6,7 10,9 14,3"/><circle cx="6" cy="7" r="1" fill="currentColor"/><circle cx="10" cy="9" r="1" fill="currentColor"/><circle cx="14" cy="3" r="1" fill="currentColor"/></svg>',
-        },
-        {
-          page: 'edge-obs-alerts',
-          label: 'Alertes et SLO',
-          icon: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 2a4 4 0 00-4 4v3l-1.5 2.5h11L12 9V6a4 4 0 00-4-4zM6.5 13a1.5 1.5 0 003 0"/></svg>',
-        },
-      ],
     },
     {
       page: 'edge-tunnel',
@@ -326,15 +260,30 @@ const APP_CONFIG = {
       ],
     },
     {
+      root: 'admin-observability',
+      tabs: [
+        { page: 'obs-synthese', key: 'o_overview', label: 'Synthèse' },
+        { page: 'prism',        key: 'o_traffic',  label: 'Trafic', also: ['proxy-inspector'] },
+        { page: 'logs',         key: 'o_logs',     label: 'Journaux', also: ['logs-system', 'audit'] },
+        { page: 'obs-metrics',  key: 'o_health',   label: 'Santé', badge: 'obs_alerts', also: ['obs-alerts'] },
+      ],
+    },
+    {
+      root: 'edge-observability',
+      tabs: [
+        { page: 'edge-obs-synthese', key: 'o_overview', label: 'Synthèse' },
+        { page: 'edge-prism',        key: 'o_traffic',  label: 'Trafic', also: ['edge-proxy-inspector'] },
+        { page: 'edge-logs-access',  key: 'o_logs',     label: 'Journaux', also: ['edge-logs-system'] },
+        { page: 'edge-metrics',      key: 'o_health',   label: 'Santé', badge: 'obs_alerts', also: ['edge-obs-alerts'] },
+      ],
+    },
+    {
       root: 'security',
       tabs: [
-        { page: 'security',          key: 'overview', label: 'Synthèse' },
-        { page: 'security-vulns',    key: 'vulns',    label: 'Vulnérabilités' },
-        { page: 'security-bans',     key: 'bans',     label: 'Bans' },
-        { page: 'security-trace',    key: 'trace',    label: 'Traçage IP' },
-        { page: 'security-attack-ref', key: 'attackref', label: 'Référentiel' },
-        { page: 'security-ephor', key: 'ephor', label: 'Ephor' },
-        { page: 'security-posture',  key: 'posture',  label: 'Score par proxy' },
+        { page: 'security',        key: 'overview',  label: 'Synthèse' },
+        { page: 'security-bans',   key: 'threats',   label: 'Menaces', badge: 'bans', also: ['security-trace', 'security-attack-ref'] },
+        { page: 'security-ephor',  key: 'defenses',  label: 'Défenses', badge: 'engines_off', also: ['security-engines'] },
+        { page: 'security-vulns',  key: 'exposure',  label: 'Exposition', badge: 'vulns', also: ['security-posture'] },
       ],
     },
     {
@@ -358,11 +307,10 @@ const APP_CONFIG = {
     {
       root: 'edge-security',
       tabs: [
-        { page: 'edge-security',          key: 'overview', label: 'Synthèse' },
-        { page: 'edge-security-vulns',    key: 'vulns',    label: 'Vulnérabilités' },
-        { page: 'edge-security-bans',     key: 'bans',     label: 'Bans' },
-        { page: 'edge-security-ephor', key: 'ephor', label: 'Ephor' },
-        { page: 'edge-security-posture',  key: 'posture',  label: 'Score par proxy' },
+        { page: 'edge-security',        key: 'overview',  label: 'Synthèse' },
+        { page: 'edge-security-bans',   key: 'threats',   label: 'Menaces', badge: 'bans' },
+        { page: 'edge-security-ephor',  key: 'defenses',  label: 'Défenses', badge: 'engines_off', also: ['edge-security-engines'] },
+        { page: 'edge-security-vulns',  key: 'exposure',  label: 'Exposition', badge: 'vulns', also: ['edge-security-posture'] },
       ],
     },
   ],
@@ -398,6 +346,8 @@ const APP_CONFIG = {
     'security-trace':       'Traçage IP — parcours complet',
     'security-attack-ref':  'Référentiel des attaques',
     'security-vulns':       'Vulnérabilités — toutes les passerelles',
+    'security-engines':     'Moteurs de sécurité',
+    'security-ephor':       'Ephor',
     'security-rules':       'Règles',
     'automation-flow':      'Éditeur de flux',
     'automation-history':   'Journal d\'automatisation',
@@ -430,6 +380,7 @@ const APP_CONFIG = {
     'edge-security-vulns':     'Vulnérabilités',
     'edge-security-posture':   'Score par proxy',
     'edge-security-bans':      'Bans',
+    'edge-security-engines':   'Moteurs de sécurité',
     'edge-cluster':     'Nœuds / Raft',
     'edge-settings':    'Paramètres passerelle',
     'edge-general':     'Paramètres généraux',
@@ -450,6 +401,7 @@ const APP_CONFIG = {
     'admin-portal-users':   'Users Access',
     'edge-portal-users':    'Users Access',
     smtp:               'SMTP',
+    diagnostics:        'Diagnostic',
     profile:            'Mon profil',
   },
 
@@ -485,6 +437,8 @@ const APP_CONFIG = {
     'edge-security-bans': 'bans ban ip bannir unban débannir blocklist seuils ephor',
     'security-ephor':  'ephor détection comportementale anomalies auto-ban scoring',
     'edge-security-ephor': 'ephor détection comportementale anomalies auto-ban scoring',
+    'security-engines':   'moteurs de sécurité ephor waf crowdsec seuils multi-passerelles règles domaines scan sla interrupteurs',
+    'edge-security-engines': 'moteurs de sécurité ephor waf crowdsec seuils multi-passerelles scan sla interrupteurs',
     'security-posture':   'score par proxy posture note grade en-têtes headers hsts csp',
     'edge-security-posture': 'score par proxy posture note grade en-têtes headers hsts csp',
     'security-rules':     'automatisations règles rules automation si alors trigger action condition événement métrique seuil flux',
@@ -519,6 +473,7 @@ const APP_CONFIG = {
     'settings-mfa':       'mfa 2fa totp double authentification two-factor webauthn passkey',
     'ha-status':          'ha haute disponibilité high availability groupe group bascule failover pairs clé de groupe',
     smtp:                 'smtp email mail serveur d\'envoi notifications relais',
+    diagnostics:          'diagnostic diagnostics mémoire ram cpu profilage pprof performance consommation goroutines tas heap runtime',
     backups:              'sauvegardes backups restauration restore snapshot export chiffré',
     import:               'import restore restauration migration nginx traefik caddy npm nginx proxy manager yaml json',
     onboarding:           'assistant d\'intégration onboarding premiers pas getting started wizard',

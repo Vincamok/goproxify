@@ -1,5 +1,5 @@
 // ── PAGE: Contexte passerelle (waf, ipfilter, certs, auth, metrics, cluster…) ─
-// Extrait de pages-all.js — phase 3. Trafic passerelle reste dans trafic.js.
+// Extrait de pages-all.js — phase 3. Trafic passerelle reste dans proxies.js.
 
 const _stubPage = (label) => function() {
   document.getElementById('content').innerHTML = `
@@ -817,7 +817,9 @@ pages['edge-metrics'] = async function() {
       </tr>`;
     }).join('');
 
+    ObsUX.setPage({ reload: () => pages['edge-metrics'](), refresh: () => pages['edge-metrics']() });
     content.innerHTML = `
+      ${ObsUX.subNav()}
       <div style="margin-bottom:20px">
         <h1 style="margin:0 0 4px;font-size:28px;font-family:var(--font-heading);font-weight:600;">${t('page.edge-metrics')}</h1>
         <p style="margin:0;opacity:0.65;font-size:14px;">${t('edgepage.metrics.subtitle', { edge: esc(edgeLabel) })}</p>

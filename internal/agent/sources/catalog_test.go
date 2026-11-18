@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/vincamok/goproxify/internal/agent/edgeset"
 	"github.com/vincamok/goproxify/internal/config"
@@ -87,5 +88,30 @@ func TestSettingHelpers(t *testing.T) {
 	}
 	if pollInterval(map[string]any{}).Seconds() != 30 || pollInterval(map[string]any{"poll_interval_s": 1}).Seconds() != 5 {
 		t.Error("pollInterval")
+	}
+}
+
+func TestPollIntervalOr(t *testing.T) {
+	for name, tc := range map[string]struct {
+		m    map[string]any
+		def  int
+		want time.Duration
+	}{
+		"défaut de la source": {nil, 15, 15 * time.Second},
+		"réglé":               {map[string]any{"poll_interval_s": 40}, 15, 40 * time.Second},
+		"plancher de 5 s":     {map[string]any{"poll_interval_s": 1}, 15, 5 * time.Second},
+		"autres annuaires":    {map[string]any{}, 30, 30 * time.Second},
+	} {
+		if got := pollIntervalOr(tc.m, tc.def); got != tc.want {
+			t.Errorf("%s : %s, attendu %s", name, got, tc.want)
+		}
+	}
+}
+
+func TestSettingPairs(t *testing.T) {
+	got := settingPairs([]string{"vm-docker=192.168.10.91", " lab = 10.0.0.7 ", "sans-egal", "=x", "vide="})
+	want := map[string]string{"vm-docker": "192.168.10.91", "lab": "10.0.0.7"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("%v, attendu %v", got, want)
 	}
 }

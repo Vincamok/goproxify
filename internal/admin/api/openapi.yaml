@@ -822,6 +822,30 @@ paths:
         "200":
           description: OK
 
+  /api/v1/settings/diagnostics:
+    get:
+      tags: [settings]
+      summary: État du runtime de l'Admin et du profilage
+      responses:
+        "200":
+          description: OK
+    put:
+      tags: [settings]
+      summary: Activer ou désactiver le profilage du runtime
+      responses:
+        "200":
+          description: OK
+
+  /api/v1/settings/diagnostics/profile:
+    get:
+      tags: [settings]
+      summary: Profil du runtime (type=cpu|heap|allocs|goroutine), profilage activé requis
+      responses:
+        "200":
+          description: Profil pprof, ou texte avec format=text
+        "403":
+          description: Profilage désactivé
+
   /api/v1/settings/acme:
     get:
       tags: [settings]
